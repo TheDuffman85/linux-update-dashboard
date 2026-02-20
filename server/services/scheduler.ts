@@ -5,10 +5,12 @@ import * as cacheService from "./cache-service";
 import * as updateService from "./update-service";
 import * as notificationService from "./notification-service";
 
-const CHECK_INTERVAL = 900_000; // 15 minutes in ms
-
 let timer: ReturnType<typeof setInterval> | null = null;
 let initialTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function getCheckIntervalMs(): number {
+  return cacheService.getCheckIntervalMinutes() * 60_000;
+}
 
 async function runCheck(): Promise<void> {
   try {
@@ -81,11 +83,21 @@ async function runCheck(): Promise<void> {
 }
 
 export function start(): void {
+  const intervalMs = getCheckIntervalMs();
+  console.log(`Scheduler: check interval set to ${intervalMs / 60_000} minutes`);
   // Wait 30s before first check to let the app fully start
   initialTimeout = setTimeout(() => {
     runCheck();
-    timer = setInterval(runCheck, CHECK_INTERVAL);
+    timer = setInterval(runCheck, intervalMs);
   }, 30_000);
+}
+
+export function restart(): void {
+  stop();
+  const intervalMs = getCheckIntervalMs();
+  console.log(`Scheduler: restarting with interval ${intervalMs / 60_000} minutes`);
+  runCheck();
+  timer = setInterval(runCheck, intervalMs);
 }
 
 export function stop(): void {

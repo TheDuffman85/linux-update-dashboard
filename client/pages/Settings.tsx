@@ -64,22 +64,37 @@ export default function Settings() {
   return (
     <Layout title="Settings">
       {/* Cache */}
-      <SettingSection title="Cache">
-        <div className="max-w-xs">
-          <label className={labelClass}>Cache Duration (hours)</label>
-          <input
-            type="number"
-            min={1}
-            max={168}
-            value={form.cache_duration_hours || "12"}
-            onChange={(e) =>
-              setForm({ ...form, cache_duration_hours: e.target.value })
-            }
-            className={inputClass}
-          />
+      <SettingSection title="Update Schedule">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md">
+          <div>
+            <label className={labelClass}>Check Interval (minutes)</label>
+            <input
+              type="number"
+              min={5}
+              max={1440}
+              value={form.check_interval_minutes || "15"}
+              onChange={(e) =>
+                setForm({ ...form, check_interval_minutes: e.target.value })
+              }
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Cache Duration (hours)</label>
+            <input
+              type="number"
+              min={1}
+              max={168}
+              value={form.cache_duration_hours || "12"}
+              onChange={(e) =>
+                setForm({ ...form, cache_duration_hours: e.target.value })
+              }
+              className={inputClass}
+            />
+          </div>
         </div>
         <button
-          onClick={() => handleSave(["cache_duration_hours"])}
+          onClick={() => handleSave(["check_interval_minutes", "cache_duration_hours"])}
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >

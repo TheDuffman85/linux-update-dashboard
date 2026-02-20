@@ -16,6 +16,10 @@ export function getCacheDurationHours(): number {
   return parseInt(getSetting("cache_duration_hours") || "12", 10);
 }
 
+export function getCheckIntervalMinutes(): number {
+  return parseInt(getSetting("check_interval_minutes") || "15", 10);
+}
+
 export function getCachedUpdates(systemId: number) {
   const db = getDb();
   return db

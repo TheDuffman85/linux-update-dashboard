@@ -5,6 +5,7 @@ import { settings } from "../db/schema";
 import { configureOidc } from "../auth/oidc";
 import { config } from "../config";
 import { getEncryptor } from "../security";
+import * as scheduler from "../services/scheduler";
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
 
@@ -50,6 +51,11 @@ settingsRouter.put("/", async (c) => {
       })
       .where(eq(settings.key, key))
       .run();
+  }
+
+  // Restart scheduler if check interval was changed
+  if ("check_interval_minutes" in body) {
+    scheduler.restart();
   }
 
   // Reconfigure OIDC if any OIDC settings were changed

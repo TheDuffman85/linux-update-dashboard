@@ -15,6 +15,11 @@ const DEFAULT_SETTINGS = [
     description: "How long to cache update check results (hours)",
   },
   {
+    key: "check_interval_minutes",
+    value: "15",
+    description: "How often to check for stale systems (minutes)",
+  },
+  {
     key: "concurrent_connections",
     value: "5",
     description: "Max simultaneous SSH connections",

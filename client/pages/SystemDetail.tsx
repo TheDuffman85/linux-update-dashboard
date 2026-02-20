@@ -105,6 +105,20 @@ function UpdatesTable({
   );
 }
 
+function formatTimeAgo(dateStr: string): string {
+  const date = new Date(dateStr + "Z");
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function HistoryList({ history }: { history: HistoryEntry[] }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
@@ -179,9 +193,14 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
                   </p>
                 )}
               </div>
-              <span className="text-xs text-slate-400 whitespace-nowrap">
-                {h.pkgManager}
-              </span>
+              <div className="flex flex-col items-end gap-0.5 shrink-0">
+                <span className="text-xs text-slate-400 whitespace-nowrap">
+                  {h.pkgManager}
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-500 whitespace-nowrap">
+                  {formatTimeAgo(h.startedAt)}
+                </span>
+              </div>
             </button>
 
             {isOpen && hasDetails && (
