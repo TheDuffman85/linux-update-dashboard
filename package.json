@@ -1,0 +1,41 @@
+{
+  "name": "linux-update-dashboard",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --filter '*' dev:*",
+    "dev:server": "bun run --watch server/index.ts",
+    "dev:client": "bunx --bun vite",
+    "build": "vite build && bun build server/index.ts --outdir dist/server --target bun",
+    "start": "bun run dist/server/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "test": "bun test",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^11.0.0",
+    "drizzle-orm": "^0.39.0",
+    "hono": "^4.7.0",
+    "jose": "^6.0.0",
+    "openid-client": "^6.3.0",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@tanstack/react-query": "^5.65.0",
+    "@types/bun": "^1.2.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ssh2": "^1.15.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "drizzle-kit": "^0.30.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^7.2.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.1.0"
+  }
+}

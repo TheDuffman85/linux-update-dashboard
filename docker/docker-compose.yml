@@ -1,0 +1,20 @@
+services:
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: linux-update-dashboard
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - dashboard_data:/data
+    environment:
+      - LUDASH_ENCRYPTION_KEY=${LUDASH_ENCRYPTION_KEY}
+      - LUDASH_DB_PATH=/data/dashboard.db
+      - LUDASH_LOG_LEVEL=info
+      - LUDASH_PORT=3001
+      - NODE_ENV=production
+
+volumes:
+  dashboard_data:
