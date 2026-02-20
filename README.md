@@ -14,7 +14,7 @@
 
 # Linux Update Dashboard
 
-A self-hosted web application for centralized Linux package update management. Connect to remote servers over SSH, check for available updates, and apply them — all from a single browser-based dashboard.
+A self-hosted web app for managing Linux package updates across multiple servers. Connect via SSH, check for updates, and apply them from a single dashboard in your browser.
 
 <div align="center">
   <a href="https://bun.sh/"><img src="https://img.shields.io/badge/Bun-%23000000.svg?style=for-the-badge&logo=bun&logoColor=white" alt="Bun" /></a>
@@ -29,17 +29,17 @@ A self-hosted web application for centralized Linux package update management. C
 
 ## Features
 
-- **Multi-Distribution Support** — APT (Debian/Ubuntu), DNF (Fedora/RHEL 8+), YUM (CentOS/older RHEL), Pacman (Arch/Manjaro), Flatpak, and Snap
-- **Automatic Detection** — All supported package managers and system info are auto-detected on first connection; individual managers can be disabled per system
-- **Granular Updates** — Upgrade all packages at once or select individual packages per system
-- **Background Scheduling** — Automatic periodic checks keep your dashboard current (configurable cache duration)
-- **Flexible Notifications** — Multiple notification channels per type (Email/SMTP, ntfy.sh), each scoped to specific systems or all, with per-channel event selection
-- **Secure Credentials** — SSH passwords and private keys are encrypted at rest with AES-256-GCM
-- **Three Auth Methods** — Password, Passkeys (WebAuthn), and SSO (OpenID Connect)
-- **Dark Mode** — Full dark/light theme with OS preference detection
-- **Update History** — Track every check and upgrade operation per system
-- **Real-Time Status** — See which systems are online, up-to-date, or need attention at a glance
-- **Docker Ready** — Multi-stage Dockerfile with persistent volume for production deployment
+- **Multi-distribution support:** APT (Debian/Ubuntu), DNF (Fedora/RHEL 8+), YUM (CentOS/older RHEL), Pacman (Arch/Manjaro), Flatpak, and Snap
+- **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
+- **Granular updates:** upgrade everything at once or pick individual packages per system
+- **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
+- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, ntfy.sh), scope them to specific systems, and pick which events trigger each channel
+- **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
+- **Three auth methods:** password, Passkeys (WebAuthn), and SSO (OpenID Connect)
+- **Dark mode:** dark/light theme with OS preference detection
+- **Update history:** logs every check and upgrade operation per system
+- **Real-time status:** see which systems are online, up to date, or need attention at a glance
+- **Docker ready:** multi-stage Dockerfile with a persistent volume for production
 
 ## Quick Start
 
@@ -133,34 +133,34 @@ docker compose up -d
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LUDASH_ENCRYPTION_KEY` | **Yes** | — | AES-256 key for encrypting stored SSH credentials |
+| `LUDASH_ENCRYPTION_KEY` | **Yes** | - | AES-256 key for encrypting stored SSH credentials |
 | `LUDASH_DB_PATH` | No | `./data/dashboard.db` | SQLite database file path |
 | `LUDASH_SECRET_KEY` | No | Auto-generated | JWT session signing secret (auto-persisted to `.secret_key`) |
 | `LUDASH_PORT` | No | `3001` | HTTP server port |
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
-| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL (required for WebAuthn and OIDC) |
+| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL (needed for WebAuthn and OIDC) |
 | `LUDASH_LOG_LEVEL` | No | `info` | Log level |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
-| `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Maximum simultaneous SSH connections |
-| `NODE_ENV` | No | — | Set to `production` for static file serving |
+| `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Max simultaneous SSH connections |
+| `NODE_ENV` | No | - | Set to `production` for static file serving |
 
 ## Authentication
 
-Three authentication methods are supported simultaneously:
+Three auth methods are supported and can be used at the same time:
 
 ### Password
 
-Standard username and password login. Passwords are hashed with bcrypt (cost factor 12). Sessions are stored as JWT cookies with a 7-day expiry.
+Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use JWT cookies with a 7-day expiry.
 
 ### Passkeys (WebAuthn)
 
-Register hardware keys or platform authenticators (Touch ID, Windows Hello) for passwordless login. Requires `LUDASH_BASE_URL` to be set correctly.
+Register hardware keys or platform authenticators (Touch ID, Windows Hello) for passwordless login. You need to set `LUDASH_BASE_URL` correctly for this to work.
 
 ### SSO (OpenID Connect)
 
-Connect any OIDC-compatible identity provider (Authentik, Keycloak, Okta, Auth0, etc.) via the Settings page. Users are auto-provisioned on first login. The callback URL to configure in your provider is:
+Hook up any OIDC-compatible identity provider (Authentik, Keycloak, Okta, Auth0, etc.) through the Settings page. Users get auto-provisioned on first login. Set the callback URL in your provider to:
 
 ```
 {LUDASH_BASE_URL}/api/auth/oidc/callback
@@ -177,7 +177,7 @@ Connect any OIDC-compatible identity provider (Authentik, Keycloak, Okta, Auth0,
 | Flatpak | Any (cross-distribution) |
 | Snap | Any (cross-distribution) |
 
-All supported package managers are automatically detected on each system via SSH during connection testing or first check. Detected managers are enabled by default and can be individually disabled per system in the edit dialog. Security updates are identified where supported (e.g., APT security repositories).
+Package managers are auto-detected on each system over SSH when you test the connection or run the first check. Detected managers are enabled by default, and you can toggle them individually per system in the edit dialog. Security updates are identified where possible (e.g. APT security repos).
 
 ## Project Structure
 
@@ -213,14 +213,14 @@ All supported package managers are automatically detected on each system via SSH
 
 ## Development
 
-The project includes a helper script `run.sh` to manage services.
+There's a helper script `run.sh` to manage services.
 
-**Development Mode** (Hot Reload — server on :3001, client on :5173):
+**Development mode** (hot reload, server on :3001, client on :5173):
 ```bash
 ./run.sh dev
 ```
 
-**Production Mode** (Build and start on :3001):
+**Production mode** (build and start on :3001):
 ```bash
 ./run.sh
 ```
@@ -317,15 +317,11 @@ All endpoints require authentication unless noted. Responses are JSON.
 
 ## Security
 
-- **Credential encryption** — SSH passwords and private keys are encrypted at rest using AES-256-GCM with per-entry random IVs and authentication tags
-- **Notification secrets** — SMTP passwords and ntfy tokens are encrypted at rest within notification channel configs
-- **Key derivation** — Supports both raw base64 keys and passphrase-derived keys (PBKDF2-SHA256, 480,000 iterations)
-- **Session security** — HTTP-only, SameSite=Lax cookies with JWT (HS256)
-- **Input validation** — Strict type, format, and range validation on all API inputs
-- **SSRF protection** — Outbound notification URLs are validated against private/internal IP ranges
-- **Concurrent access control** — Per-system mutex prevents conflicting SSH operations
-- **Connection pooling** — Semaphore-based concurrency limiting to prevent SSH connection exhaustion
-
-## License
-
-MIT
+- **Credential encryption:** SSH passwords and private keys are encrypted at rest using AES-256-GCM with per-entry random IVs and auth tags
+- **Notification secrets:** SMTP passwords and ntfy tokens are also encrypted at rest within notification channel configs
+- **Key derivation:** supports both raw base64 keys and passphrase-derived keys (PBKDF2-SHA256, 480k iterations)
+- **Session security:** HTTP-only, SameSite=Lax cookies with JWT (HS256)
+- **Input validation:** strict type, format, and range validation on all API inputs
+- **SSRF protection:** outbound notification URLs are validated against private/internal IP ranges
+- **Concurrent access control:** per-system mutex prevents conflicting SSH operations
+- **Connection pooling:** semaphore-based concurrency limiting to prevent SSH connection exhaustion
