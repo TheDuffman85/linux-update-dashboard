@@ -1,12 +1,31 @@
+<div align="center">
+  <img src="assets/logo.svg" alt="Linux Update Dashboard Logo" width="250" />
+</div>
+
+<div align="center">
+
+  [![Build](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/release.yml?style=flat-square&logo=github&label=build)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/release.yml)
+  [![Trivy Scan](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/trivy-scan.yml?style=flat-square&logo=aqua&label=security)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/trivy-scan.yml)
+  [![GitHub License](https://img.shields.io/github/license/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/blob/main/LICENSE)
+  [![GitHub last commit](https://img.shields.io/github/last-commit/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/commits/main)
+  [![Latest Container](https://img.shields.io/badge/ghcr.io-latest-blue?style=flat-square&logo=github)](https://github.com/users/TheDuffman85/packages/container/package/linux-update-dashboard)
+
+</div>
+
 # Linux Update Dashboard
 
 A self-hosted web application for centralized Linux package update management. Connect to remote servers over SSH, check for available updates, and apply them — all from a single browser-based dashboard.
 
-[![Build](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/release.yml?style=flat-square&logo=github&label=build)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/release.yml)
-[![Trivy Scan](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/trivy-scan.yml?style=flat-square&logo=aqua&label=security)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/trivy-scan.yml)
-[![GitHub License](https://img.shields.io/github/license/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/blob/main/LICENSE)
-[![GitHub last commit](https://img.shields.io/github/last-commit/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/commits/main)
-[![Latest Container](https://img.shields.io/badge/ghcr.io-latest-blue?style=flat-square&logo=github)](https://github.com/users/TheDuffman85/packages/container/package/linux-update-dashboard)
+<div align="center">
+  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/Bun-%23000000.svg?style=for-the-badge&logo=bun&logoColor=white" alt="Bun" /></a>
+  <a href="https://hono.dev/"><img src="https://img.shields.io/badge/hono-%23E36002.svg?style=for-the-badge&logo=hono&logoColor=white" alt="Hono" /></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/react-%2320232a.svg?style=for-the-badge&logo=react&logoColor=%2361DAFB" alt="React" /></a>
+  <a href="https://vite.dev/"><img src="https://img.shields.io/badge/vite-%23646CFF.svg?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" /></a>
+  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/tailwindcss-%2338B2AC.svg?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" /></a>
+  <a href="https://orm.drizzle.team/"><img src="https://img.shields.io/badge/drizzle-%23C5F74F.svg?style=for-the-badge&logo=drizzle&logoColor=black" alt="Drizzle ORM" /></a>
+  <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/sqlite-%23003B57.svg?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" /></a>
+  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" /></a>
+</div>
 
 ## Features
 
@@ -21,20 +40,6 @@ A self-hosted web application for centralized Linux package update management. C
 - **Update History** — Track every check and upgrade operation per system
 - **Real-Time Status** — See which systems are online, up-to-date, or need attention at a glance
 - **Docker Ready** — Multi-stage Dockerfile with persistent volume for production deployment
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Runtime | [Bun](https://bun.sh) |
-| Backend | [Hono](https://hono.dev) |
-| Database | SQLite (via `bun:sqlite`) + [Drizzle ORM](https://orm.drizzle.team) |
-| SSH | [ssh2](https://github.com/mscdex/ssh2) |
-| Frontend | [React 19](https://react.dev) + [React Router 7](https://reactrouter.com) |
-| Data Fetching | [TanStack Query 5](https://tanstack.com/query) |
-| Styling | [Tailwind CSS 4](https://tailwindcss.com) |
-| Build | [Vite 6](https://vite.dev) |
-| Auth | [jose](https://github.com/panva/jose) (JWT), [@simplewebauthn/server](https://simplewebauthn.dev) (Passkeys), [openid-client](https://github.com/panva/node-openid-client) (OIDC) |
 
 ## Quick Start
 
