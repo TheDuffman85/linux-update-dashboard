@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Layout } from "../components/Layout";
-import { useSettings, useUpdateSettings } from "../api/settings";
+import { useSettings, useUpdateSettings } from "../lib/settings";
 import { useToast } from "../context/ToastContext";
 
 function SettingSection({
@@ -11,7 +11,7 @@ function SettingSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-6 mb-4">
+    <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 md:p-6 mb-4">
       <h2 className="text-sm font-semibold mb-4">{title}</h2>
       {children}
     </div>
@@ -35,7 +35,13 @@ export default function Settings() {
       data[k] = form[k] ?? "";
     }
     updateSettings.mutate(data, {
-      onSuccess: () => addToast("Settings saved", "success"),
+      onSuccess: (res) => {
+        if (res.oidcError) {
+          addToast(`Settings saved, but OIDC configuration failed: ${res.oidcError}`, "danger");
+        } else {
+          addToast("Settings saved", "success");
+        }
+      },
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -132,47 +138,6 @@ export default function Settings() {
               "concurrent_connections",
             ])
           }
-          disabled={updateSettings.isPending}
-          className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-        >
-          Save
-        </button>
-      </SettingSection>
-
-      {/* Optional Package Managers */}
-      <SettingSection title="Optional Package Managers">
-        <div className="space-y-3">
-          <label className="flex items-center gap-3 text-sm">
-            <input
-              type="checkbox"
-              checked={form.check_flatpak === "1"}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  check_flatpak: e.target.checked ? "1" : "0",
-                })
-              }
-              className="rounded"
-            />
-            Check for Flatpak updates
-          </label>
-          <label className="flex items-center gap-3 text-sm">
-            <input
-              type="checkbox"
-              checked={form.check_snap === "1"}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  check_snap: e.target.checked ? "1" : "0",
-                })
-              }
-              className="rounded"
-            />
-            Check for Snap updates
-          </label>
-        </div>
-        <button
-          onClick={() => handleSave(["check_flatpak", "check_snap"])}
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >

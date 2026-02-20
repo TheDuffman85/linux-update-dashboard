@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "./context/AuthContext";
 import { ToastProvider } from "./context/ToastContext";
+import { UpgradeProvider } from "./context/UpgradeContext";
 import { ThemeProvider } from "./hooks/useTheme";
 import App from "./App";
 import "./styles/app.css";
@@ -25,7 +26,9 @@ createRoot(document.getElementById("root")!).render(
         <ThemeProvider>
           <AuthProvider>
             <ToastProvider>
-              <App />
+              <UpgradeProvider>
+                <App />
+              </UpgradeProvider>
             </ToastProvider>
           </AuthProvider>
         </ThemeProvider>

@@ -1,6 +1,6 @@
 import { eq, sql, count } from "drizzle-orm";
 import { getDb } from "../db";
-import { systems, updateCache, settings } from "../db/schema";
+import { systems, updateCache } from "../db/schema";
 import { getEncryptor } from "../security";
 import { SYSTEM_INFO_CMD, parseSystemInfo } from "../ssh/system-info";
 import { detectPackageManagers } from "../ssh/detector";
@@ -30,6 +30,8 @@ export function createSystem(data: {
   password?: string;
   privateKey?: string;
   keyPassphrase?: string;
+  sudoPassword?: string;
+  disabledPkgManagers?: string[];
 }): number {
   const encryptor = getEncryptor();
   const db = getDb();
@@ -50,6 +52,12 @@ export function createSystem(data: {
   if (data.keyPassphrase) {
     values.encryptedKeyPassphrase = encryptor.encrypt(data.keyPassphrase);
   }
+  if (data.sudoPassword) {
+    values.encryptedSudoPassword = encryptor.encrypt(data.sudoPassword);
+  }
+  if (data.disabledPkgManagers) {
+    values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
+  }
 
   const result = db.insert(systems).values(values as typeof systems.$inferInsert).returning({ id: systems.id }).get();
   return result.id;
@@ -66,6 +74,8 @@ export function updateSystem(
     password?: string;
     privateKey?: string;
     keyPassphrase?: string;
+    sudoPassword?: string;
+    disabledPkgManagers?: string[];
   }
 ): void {
   const encryptor = getEncryptor();
@@ -87,6 +97,12 @@ export function updateSystem(
   }
   if (data.keyPassphrase) {
     values.encryptedKeyPassphrase = encryptor.encrypt(data.keyPassphrase);
+  }
+  if (data.sudoPassword) {
+    values.encryptedSudoPassword = encryptor.encrypt(data.sudoPassword);
+  }
+  if (data.disabledPkgManagers !== undefined) {
+    values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
 
   db.update(systems)
@@ -139,36 +155,51 @@ export async function detectAndStorePkgManager(
   sshManager: SSHConnectionManager,
   conn: Client
 ): Promise<string[]> {
+  const detected = await detectPackageManagers(sshManager, conn);
   const db = getDb();
-  const checkFlatpak =
-    (db
-      .select({ value: settings.value })
-      .from(settings)
-      .where(eq(settings.key, "check_flatpak"))
-      .get()?.value || "0") === "1";
-
-  const checkSnap =
-    (db
-      .select({ value: settings.value })
-      .from(settings)
-      .where(eq(settings.key, "check_snap"))
-      .get()?.value || "0") === "1";
-
-  const detected = await detectPackageManagers(
-    sshManager,
-    conn,
-    checkFlatpak,
-    checkSnap
-  );
 
   if (detected.length > 0) {
     db.update(systems)
-      .set({ pkgManager: detected[0] })
+      .set({
+        pkgManager: detected[0],
+        detectedPkgManagers: JSON.stringify(detected),
+      })
       .where(eq(systems.id, systemId))
       .run();
   }
 
   return detected;
+}
+
+export function getActivePkgManagers(system: {
+  detectedPkgManagers: string | null;
+  disabledPkgManagers: string | null;
+  pkgManager: string | null;
+}): string[] {
+  const detected: string[] = system.detectedPkgManagers
+    ? JSON.parse(system.detectedPkgManagers)
+    : system.pkgManager
+      ? [system.pkgManager]
+      : [];
+  const disabled: string[] = system.disabledPkgManagers
+    ? JSON.parse(system.disabledPkgManagers)
+    : [];
+  return detected.filter((m) => !disabled.includes(m));
+}
+
+/**
+ * Resolve the sudo password for a system.
+ * Uses the dedicated sudo password if set, otherwise falls back to the SSH password.
+ */
+export function getSudoPassword(system: Record<string, unknown>): string | undefined {
+  const encryptor = getEncryptor();
+  if (system.encryptedSudoPassword) {
+    return encryptor.decrypt(system.encryptedSudoPassword as string);
+  }
+  if (system.authType === "password" && system.encryptedPassword) {
+    return encryptor.decrypt(system.encryptedPassword as string);
+  }
+  return undefined;
 }
 
 export function markUnreachable(systemId: number): void {

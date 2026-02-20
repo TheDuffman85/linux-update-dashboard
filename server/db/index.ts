@@ -30,16 +30,6 @@ const DEFAULT_SETTINGS = [
     description: "SSH command execution timeout (seconds)",
   },
   {
-    key: "check_flatpak",
-    value: "0",
-    description: "Check for Flatpak updates (0=no, 1=yes)",
-  },
-  {
-    key: "check_snap",
-    value: "0",
-    description: "Check for Snap updates (0=no, 1=yes)",
-  },
-  {
     key: "oidc_issuer",
     value: "",
     description: "OIDC provider issuer URL",
@@ -94,7 +84,10 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     encrypted_password TEXT,
     encrypted_private_key TEXT,
     encrypted_key_passphrase TEXT,
+    encrypted_sudo_password TEXT,
     pkg_manager TEXT,
+    detected_pkg_managers TEXT,
+    disabled_pkg_managers TEXT,
     os_name TEXT,
     os_version TEXT,
     kernel TEXT,
@@ -133,6 +126,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     pkg_manager TEXT NOT NULL,
     package_count INTEGER,
     packages TEXT,
+    command TEXT,
     status TEXT NOT NULL,
     output TEXT,
     error TEXT,
@@ -147,6 +141,57 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    notify_on TEXT NOT NULL DEFAULT '["updates"]',
+    system_ids TEXT,
+    config TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // Migration: add command column to existing databases
+  try {
+    _db.run(sql`ALTER TABLE update_history ADD COLUMN command TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: add per-system package manager detection columns
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN detected_pkg_managers TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN disabled_pkg_managers TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: add sudo password column
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN encrypted_sudo_password TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: add notification tracking column
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN last_notified_hash TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Cleanup: remove obsolete settings
+  _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap')`);
+
+  // Migration: migrate old settings-based notifications to notifications table
+  migrateNotificationSettings(_db);
+
   // Seed default settings
   for (const s of DEFAULT_SETTINGS) {
     _db.run(
@@ -154,7 +199,74 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     );
   }
 
+  // Cleanup: remove obsolete notification settings
+  _db.run(sql`DELETE FROM settings WHERE key IN (
+    'notifications_enabled', 'notification_methods', 'notify_on_updates', 'notify_on_unreachable',
+    'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password', 'smtp_from', 'notification_email_to',
+    'ntfy_url', 'ntfy_topic', 'ntfy_token', 'ntfy_priority'
+  )`);
+
   return _db;
+}
+
+function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void {
+  // Check if there are already rows in the notifications table
+  const existing = db.run(sql`SELECT COUNT(*) as count FROM notifications`);
+  // If notifications table already has data, skip migration
+  const countRow = db.all(sql`SELECT COUNT(*) as count FROM notifications`);
+  if (countRow.length > 0 && (countRow[0] as any).count > 0) return;
+
+  // Read old settings
+  const rows = db.all(sql`SELECT key, value FROM settings WHERE key IN (
+    'notifications_enabled', 'notification_methods', 'notify_on_updates', 'notify_on_unreachable',
+    'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password', 'smtp_from', 'notification_email_to',
+    'ntfy_url', 'ntfy_topic', 'ntfy_token', 'ntfy_priority'
+  )`);
+
+  if (rows.length === 0) return;
+
+  const s: Record<string, string> = {};
+  for (const row of rows) {
+    s[(row as any).key] = (row as any).value;
+  }
+
+  const enabled = s.notifications_enabled === "true";
+  let methods: string[] = [];
+  try {
+    methods = JSON.parse(s.notification_methods || "[]");
+  } catch { /* ignore */ }
+
+  const notifyOn: string[] = [];
+  if (s.notify_on_updates !== "false") notifyOn.push("updates");
+  if (s.notify_on_unreachable === "true") notifyOn.push("unreachable");
+  const notifyOnJson = JSON.stringify(notifyOn.length > 0 ? notifyOn : ["updates"]);
+
+  // Migrate email config if it was configured
+  if (methods.includes("email") && s.smtp_host) {
+    const config = JSON.stringify({
+      smtpHost: s.smtp_host || "",
+      smtpPort: s.smtp_port || "587",
+      smtpSecure: s.smtp_secure || "true",
+      smtpUser: s.smtp_user || "",
+      smtpPassword: s.smtp_password || "",
+      smtpFrom: s.smtp_from || "",
+      emailTo: s.notification_email_to || "",
+    });
+    db.run(sql`INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config)
+      VALUES ('Email', 'email', ${enabled ? 1 : 0}, ${notifyOnJson}, NULL, ${config})`);
+  }
+
+  // Migrate ntfy config if it was configured
+  if (methods.includes("ntfy") && s.ntfy_topic) {
+    const config = JSON.stringify({
+      ntfyUrl: s.ntfy_url || "https://ntfy.sh",
+      ntfyTopic: s.ntfy_topic || "",
+      ntfyToken: s.ntfy_token || "",
+      ntfyPriority: s.ntfy_priority || "default",
+    });
+    db.run(sql`INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config)
+      VALUES ('ntfy', 'ntfy', ${enabled ? 1 : 0}, ${notifyOnJson}, NULL, ${config})`);
+  }
 }
 
 export function getDb(): BunSQLiteDatabase<typeof schema> {

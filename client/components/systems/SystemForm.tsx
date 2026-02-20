@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTestConnection } from "../../lib/systems";
 
 interface SystemFormData {
   name: string;
@@ -9,19 +10,28 @@ interface SystemFormData {
   password?: string;
   privateKey?: string;
   keyPassphrase?: string;
+  sudoPassword?: string;
+  disabledPkgManagers?: string[];
 }
 
 export function SystemForm({
   initial,
+  systemId,
   onSubmit,
   onCancel,
   loading = false,
 }: {
-  initial?: Partial<SystemFormData>;
+  initial?: Partial<SystemFormData> & {
+    detectedPkgManagers?: string[] | null;
+    disabledPkgManagers?: string[] | null;
+  };
+  systemId?: number;
   onSubmit: (data: SystemFormData) => void;
   onCancel: () => void;
   loading?: boolean;
 }) {
+  const testConnection = useTestConnection();
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [name, setName] = useState(initial?.name || "");
   const [hostname, setHostname] = useState(initial?.hostname || "");
   const [port, setPort] = useState(initial?.port || 22);
@@ -30,6 +40,25 @@ export function SystemForm({
   const [password, setPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [keyPassphrase, setKeyPassphrase] = useState("");
+  const [sudoPassword, setSudoPassword] = useState("");
+  const [detectedManagers, setDetectedManagers] = useState<string[]>(
+    initial?.detectedPkgManagers ?? []
+  );
+  const [disabledManagers, setDisabledManagers] = useState<Set<string>>(
+    new Set(initial?.disabledPkgManagers ?? [])
+  );
+
+  const toggleManager = (manager: string) => {
+    setDisabledManagers((prev) => {
+      const next = new Set(prev);
+      if (next.has(manager)) {
+        next.delete(manager);
+      } else {
+        next.add(manager);
+      }
+      return next;
+    });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +71,8 @@ export function SystemForm({
       password: password || undefined,
       privateKey: privateKey || undefined,
       keyPassphrase: keyPassphrase || undefined,
+      sudoPassword: sudoPassword || undefined,
+      disabledPkgManagers: disabledManagers.size > 0 ? [...disabledManagers] : undefined,
     });
   };
 
@@ -112,9 +143,86 @@ export function SystemForm({
         </>
       )}
 
+      <div>
+        <label className={labelClass}>Sudo Password (optional)</label>
+        <input type="password" value={sudoPassword} onChange={(e) => setSudoPassword(e.target.value)} className={inputClass} placeholder={initial ? "(unchanged — defaults to SSH password)" : "Defaults to SSH password"} />
+        <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH password</p>
+      </div>
+
+      {testResult && (
+        <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>
+          {testResult.message}
+        </div>
+      )}
+
+      {detectedManagers.length > 0 && (
+        <div>
+          <label className={labelClass}>Detected Package Managers</label>
+          <div className="flex flex-wrap gap-2 mt-1">
+            {detectedManagers.map((m) => (
+              <label
+                key={m}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
+                  !disabledManagers.has(m)
+                    ? "border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                    : "border-border bg-slate-50 dark:bg-slate-800 text-slate-400"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={!disabledManagers.has(m)}
+                  onChange={() => toggleManager(m)}
+                  className="rounded"
+                />
+                {m}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-end gap-3 pt-2">
         <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
           Cancel
+        </button>
+        <button
+          type="button"
+          disabled={testConnection.isPending || !hostname || !username}
+          onClick={() => {
+            setTestResult(null);
+            testConnection.mutate(
+              {
+                hostname,
+                port,
+                username,
+                authType,
+                password: password || undefined,
+                privateKey: privateKey || undefined,
+                keyPassphrase: keyPassphrase || undefined,
+                systemId,
+              },
+              {
+                onSuccess: (data) => {
+                  setTestResult(data);
+                  if (data.detectedManagers?.length) {
+                    setDetectedManagers(data.detectedManagers);
+                    // Keep existing disabled state, but remove managers no longer detected
+                    setDisabledManagers((prev) => {
+                      const next = new Set<string>();
+                      for (const m of prev) {
+                        if (data.detectedManagers!.includes(m)) next.add(m);
+                      }
+                      return next;
+                    });
+                  }
+                },
+                onError: (err) => setTestResult({ success: false, message: err.message }),
+              }
+            );
+          }}
+          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+        >
+          {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Test Connection"}
         </button>
         <button type="submit" disabled={loading} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50">
           {loading ? <span className="spinner spinner-sm" /> : initial ? "Save Changes" : "Add System"}

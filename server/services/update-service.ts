@@ -1,6 +1,6 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { updateCache, updateHistory, settings } from "../db/schema";
+import { updateCache, updateHistory } from "../db/schema";
 import { getSSHManager } from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import * as cacheService from "./cache-service";
@@ -53,6 +53,7 @@ function logHistory(
   opts?: {
     packageCount?: number;
     packages?: string;
+    command?: string;
     output?: string;
     error?: string;
   }
@@ -70,6 +71,7 @@ function logHistory(
       status,
       packageCount: opts?.packageCount ?? null,
       packages: opts?.packages ?? null,
+      command: opts?.command ?? null,
       output: opts?.output ?? null,
       error: opts?.error ?? null,
       completedAt,
@@ -85,8 +87,11 @@ async function checkUpdatesUnlocked(
 
   const sshManager = getSSHManager();
   const allUpdates: ParsedUpdate[] = [];
+  const allCommands: string[] = [];
+  let checkOutput = "";
 
   let conn;
+  let pkgManagers: string[] = [];
   try {
     conn = await sshManager.connect(system as Record<string, unknown>);
 
@@ -97,72 +102,43 @@ async function checkUpdatesUnlocked(
       conn
     );
 
-    // Detect package managers if not set
-    let pkgManagers: string[] = [];
-    if (system.pkgManager) {
-      pkgManagers = [system.pkgManager];
+    // Detect package managers if not yet detected
+    if (!system.detectedPkgManagers) {
+      await systemService.detectAndStorePkgManager(systemId, sshManager, conn);
+      // Re-read system to get updated detected list
+      const updated = systemService.getSystem(systemId);
+      if (updated) {
+        pkgManagers = systemService.getActivePkgManagers(updated);
+      }
     } else {
-      pkgManagers = await systemService.detectAndStorePkgManager(
-        systemId,
-        sshManager,
-        conn
-      );
+      pkgManagers = systemService.getActivePkgManagers(system);
     }
 
     if (!pkgManagers.length) return [];
 
-    // Check optional managers
-    const db = getDb();
-    const checkFlatpak =
-      (db
-        .select({ value: settings.value })
-        .from(settings)
-        .where(eq(settings.key, "check_flatpak"))
-        .get()?.value || "0") === "1";
-    const checkSnap =
-      (db
-        .select({ value: settings.value })
-        .from(settings)
-        .where(eq(settings.key, "check_snap"))
-        .get()?.value || "0") === "1";
-
-    if (checkFlatpak && !pkgManagers.includes("flatpak")) {
-      const { stdout, exitCode } = await sshManager.runCommand(
-        conn,
-        "which flatpak 2>/dev/null && echo 'found'",
-        10
-      );
-      if (exitCode === 0 && stdout.includes("found"))
-        pkgManagers.push("flatpak");
-    }
-    if (checkSnap && !pkgManagers.includes("snap")) {
-      const { stdout, exitCode } = await sshManager.runCommand(
-        conn,
-        "which snap 2>/dev/null && echo 'found'",
-        10
-      );
-      if (exitCode === 0 && stdout.includes("found"))
-        pkgManagers.push("snap");
-    }
+    const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
 
     // Run check for each package manager
+
     for (const pmName of pkgManagers) {
       try {
         const parser = getParser(pmName);
         if (!parser) continue;
 
         const commands = parser.getCheckCommands();
+        allCommands.push(...commands);
         let stdout = "";
         let stderr = "";
         let exitCode = 0;
 
         for (let i = 0; i < commands.length; i++) {
-          const result = await sshManager.runCommand(conn, commands[i]);
+          const result = await sshManager.runCommand(conn, commands[i], undefined, sudoPassword);
           stdout = result.stdout;
           stderr = result.stderr;
           exitCode = result.exitCode;
         }
 
+        checkOutput += stdout;
         const updates = parser.parseCheckOutput(stdout, stderr, exitCode);
         allUpdates.push(...updates);
       } catch (e) {
@@ -172,7 +148,7 @@ async function checkUpdatesUnlocked(
   } catch (e) {
     console.error(`System ${systemId}: connection failed:`, e);
     systemService.markUnreachable(systemId);
-    logHistory(systemId, "check", "unknown", "failed", {
+    logHistory(systemId, "check", system.pkgManager || "unknown", "failed", {
       error: String(e),
     });
     return [];
@@ -190,9 +166,13 @@ async function checkUpdatesUnlocked(
     "check",
     allUpdates.length > 0
       ? [...new Set(allUpdates.map((u) => u.pkgManager))].join(",")
-      : "unknown",
+      : pkgManagers.join(","),
     "success",
-    { packageCount: allUpdates.length }
+    {
+      packageCount: allUpdates.length,
+      command: allCommands.join(" && "),
+      output: checkOutput.slice(0, 5000) || undefined,
+    }
   );
 
   return allUpdates;
@@ -209,53 +189,91 @@ export async function applyUpgradeAll(
 ): Promise<{ success: boolean; output: string }> {
   return withLock(systemId, async () => {
     const system = systemService.getSystem(systemId);
-    if (!system?.pkgManager) {
-      return {
-        success: false,
-        output: "System not found or no package manager detected",
-      };
+    if (!system) {
+      return { success: false, output: "System not found" };
     }
 
-    const parser = getParser(system.pkgManager);
-    if (!parser) return { success: false, output: "Unknown package manager" };
+    // Collect all distinct package managers from the cached updates
+    const db = getDb();
+    const cachedManagers = db
+      .selectDistinct({ pkgManager: updateCache.pkgManager })
+      .from(updateCache)
+      .where(eq(updateCache.systemId, systemId))
+      .all()
+      .map((r) => r.pkgManager);
 
-    const cmd = parser.getUpgradeAllCommand();
-    logHistory(systemId, "upgrade_all", system.pkgManager, "started");
+    // Fall back to stored primary manager if cache is empty
+    const pkgManagers =
+      cachedManagers.length > 0
+        ? cachedManagers
+        : system.pkgManager
+          ? [system.pkgManager]
+          : [];
+
+    if (!pkgManagers.length) {
+      return { success: false, output: "No package manager detected" };
+    }
+
+    const allCommands: string[] = [];
+    const allOutputs: string[] = [];
+    let overallSuccess = true;
 
     const sshManager = getSSHManager();
+    const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
     try {
       conn = await sshManager.connect(system as Record<string, unknown>);
-      const { stdout, stderr, exitCode } = await sshManager.runCommand(
-        conn,
-        cmd,
-        600
-      );
 
-      const success = exitCode === 0;
+      for (const pmName of pkgManagers) {
+        const parser = getParser(pmName);
+        if (!parser) continue;
+
+        const cmd = parser.getUpgradeAllCommand();
+        allCommands.push(cmd);
+        logHistory(systemId, "upgrade_all", pmName, "started", { command: cmd });
+
+        const { stdout, stderr, exitCode } = await sshManager.runCommand(
+          conn,
+          cmd,
+          600,
+          sudoPassword
+        );
+
+        const success = exitCode === 0;
+        if (!success) overallSuccess = false;
+        allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
+
+        logHistory(
+          systemId,
+          "upgrade_all",
+          pmName,
+          success ? "success" : "failed",
+          {
+            command: cmd,
+            output: stdout.slice(0, 5000),
+            error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          }
+        );
+      }
+
+      // Re-check after upgrade
+      sshManager.disconnect(conn);
+      conn = null;
+      await checkUpdatesUnlocked(systemId);
+
+      const combinedOutput = allOutputs.join("\n\n");
+      return { success: overallSuccess, output: combinedOutput };
+    } catch (e) {
       logHistory(
         systemId,
         "upgrade_all",
-        system.pkgManager,
-        success ? "success" : "failed",
+        pkgManagers.join(","),
+        "failed",
         {
-          output: stdout.slice(0, 5000),
-          error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          command: allCommands.join(" && "),
+          error: String(e),
         }
       );
-
-      // Re-check after upgrade
-      if (success) {
-        sshManager.disconnect(conn);
-        conn = null;
-        await checkUpdatesUnlocked(systemId);
-      }
-
-      return { success, output: success ? stdout : stderr || stdout };
-    } catch (e) {
-      logHistory(systemId, "upgrade_all", system.pkgManager, "failed", {
-        error: String(e),
-      });
       return { success: false, output: String(e) };
     } finally {
       if (conn) sshManager.disconnect(conn);
@@ -269,18 +287,31 @@ export async function applyUpgradePackage(
 ): Promise<{ success: boolean; output: string }> {
   return withLock(systemId, async () => {
     const system = systemService.getSystem(systemId);
-    if (!system?.pkgManager) {
-      return {
-        success: false,
-        output: "System not found or no package manager detected",
-      };
+    if (!system) {
+      return { success: false, output: "System not found" };
     }
 
-    const parser = getParser(system.pkgManager);
+    // Look up the package manager from the cache for this specific package
+    const db = getDb();
+    const cached = db
+      .select({ pkgManager: updateCache.pkgManager })
+      .from(updateCache)
+      .where(
+        sql`${updateCache.systemId} = ${systemId} AND ${updateCache.packageName} = ${packageName}`
+      )
+      .get();
+
+    const pmName = cached?.pkgManager || system.pkgManager;
+    if (!pmName) {
+      return { success: false, output: "No package manager detected" };
+    }
+
+    const parser = getParser(pmName);
     if (!parser) return { success: false, output: "Unknown package manager" };
 
     const cmd = parser.getUpgradePackageCommand(packageName);
     const sshManager = getSSHManager();
+    const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
 
     try {
@@ -288,18 +319,20 @@ export async function applyUpgradePackage(
       const { stdout, stderr, exitCode } = await sshManager.runCommand(
         conn,
         cmd,
-        300
+        300,
+        sudoPassword
       );
 
       const success = exitCode === 0;
       logHistory(
         systemId,
         "upgrade_package",
-        system.pkgManager,
+        pmName,
         success ? "success" : "failed",
         {
           packageCount: 1,
           packages: JSON.stringify([packageName]),
+          command: cmd,
           output: stdout.slice(0, 5000),
           error: success ? undefined : (stderr || stdout).slice(0, 2000),
         }
@@ -313,7 +346,8 @@ export async function applyUpgradePackage(
 
       return { success, output: success ? stdout : stderr || stdout };
     } catch (e) {
-      logHistory(systemId, "upgrade_package", system.pkgManager, "failed", {
+      logHistory(systemId, "upgrade_package", pmName, "failed", {
+        command: cmd,
         error: String(e),
       });
       return { success: false, output: String(e) };

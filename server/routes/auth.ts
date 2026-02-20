@@ -283,12 +283,32 @@ auth.get("/oidc/login", async (c) => {
   const nonce = crypto.randomUUID();
   const url = oidc.getAuthorizationUrl(state, nonce);
 
+  // Capture the frontend origin so we can redirect back after callback.
+  // In dev, the login request comes through Vite's proxy (port 5173),
+  // but the callback hits the backend (port 3001) directly from the IdP.
+  const referer = c.req.header("referer");
+  const returnOrigin = referer ? new URL(referer).origin : "";
+
   setCookie(c, "oidc_state", state, {
     httpOnly: true,
     sameSite: "Lax",
     maxAge: 300,
     path: "/",
   });
+  setCookie(c, "oidc_nonce", nonce, {
+    httpOnly: true,
+    sameSite: "Lax",
+    maxAge: 300,
+    path: "/",
+  });
+  if (returnOrigin) {
+    setCookie(c, "oidc_return_origin", returnOrigin, {
+      httpOnly: true,
+      sameSite: "Lax",
+      maxAge: 300,
+      path: "/",
+    });
+  }
 
   return c.redirect(url);
 });
@@ -298,8 +318,10 @@ auth.get("/oidc/callback", async (c) => {
     return c.json({ error: "OIDC not configured" }, 400);
   }
 
+  const nonce = getCookie(c, "oidc_nonce");
+
   try {
-    const result = await oidc.handleCallback(new URL(c.req.url));
+    const result = await oidc.handleCallback(new URL(c.req.url), nonce);
     if (!result) {
       return c.json({ error: "OIDC authentication failed" }, 400);
     }
@@ -322,9 +344,13 @@ auth.get("/oidc/callback", async (c) => {
 
     await createSession(c, user.id, user.username);
     deleteCookie(c, "oidc_state", { path: "/" });
+    deleteCookie(c, "oidc_nonce", { path: "/" });
 
-    // Redirect to SPA dashboard
-    return c.redirect("/dashboard");
+    const returnOrigin = getCookie(c, "oidc_return_origin");
+    deleteCookie(c, "oidc_return_origin", { path: "/" });
+
+    // Redirect to SPA dashboard (use stored origin for dev where SPA is on a different port)
+    return c.redirect(returnOrigin ? `${returnOrigin}/dashboard` : "/dashboard");
   } catch (e) {
     console.error("OIDC callback error:", e);
     return c.json({ error: "OIDC authentication failed" }, 400);

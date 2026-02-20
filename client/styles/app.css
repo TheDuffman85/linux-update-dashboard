@@ -5,8 +5,8 @@
 @theme {
   --color-surface: #ffffff;
   --color-surface-hover: #f1f5f9;
-  --color-sidebar: #1e293b;
-  --color-sidebar-hover: #334155;
+  --color-sidebar: #ffffff;
+  --color-sidebar-hover: #f1f5f9;
   --color-border: #e2e8f0;
 }
 
@@ -67,4 +67,18 @@ body {
 
 .spinner-sm {
   @apply w-3 h-3;
+}
+
+/* Pulsing indicator for active upgrades */
+@keyframes pulse-blue {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.pulse-upgrade {
+  animation: pulse-blue 1.5s ease-in-out infinite;
 }

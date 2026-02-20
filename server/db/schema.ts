@@ -42,7 +42,10 @@ export const systems = sqliteTable(
     encryptedPassword: text("encrypted_password"),
     encryptedPrivateKey: text("encrypted_private_key"),
     encryptedKeyPassphrase: text("encrypted_key_passphrase"),
+    encryptedSudoPassword: text("encrypted_sudo_password"),
     pkgManager: text("pkg_manager"),
+    detectedPkgManagers: text("detected_pkg_managers"),
+    disabledPkgManagers: text("disabled_pkg_managers"),
     osName: text("os_name"),
     osVersion: text("os_version"),
     kernel: text("kernel"),
@@ -58,6 +61,7 @@ export const systems = sqliteTable(
     createdAt: text("created_at")
       .notNull()
       .default(sql`(datetime('now'))`),
+    lastNotifiedHash: text("last_notified_hash"),
     updatedAt: text("updated_at")
       .notNull()
       .default(sql`(datetime('now'))`),
@@ -97,6 +101,7 @@ export const updateHistory = sqliteTable("update_history", {
   pkgManager: text("pkg_manager").notNull(),
   packageCount: integer("package_count"),
   packages: text("packages"),
+  command: text("command"),
   status: text("status").notNull(),
   output: text("output"),
   error: text("error"),
@@ -110,6 +115,24 @@ export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   description: text("description"),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
+export const notifications = sqliteTable("notifications", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  enabled: integer("enabled").notNull().default(1),
+  notifyOn: text("notify_on")
+    .notNull()
+    .default('["updates"]'),
+  systemIds: text("system_ids"),
+  config: text("config").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
   updatedAt: text("updated_at")
     .notNull()
     .default(sql`(datetime('now'))`),

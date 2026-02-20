@@ -95,7 +95,8 @@ export class SSHConnectionManager {
   async runCommand(
     conn: Client,
     command: string,
-    timeout?: number
+    timeout?: number,
+    sudoPassword?: string
   ): Promise<CommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const fullCommand = PATH_PREFIX + command;
@@ -129,6 +130,12 @@ export class SSHConnectionManager {
           clearTimeout(timer);
           resolve({ stdout, stderr, exitCode: code ?? 0 });
         });
+
+        // Pipe sudo password via stdin if provided (for sudo -S)
+        if (sudoPassword) {
+          stream.write(sudoPassword + "\n");
+          stream.end();
+        }
       });
     });
   }

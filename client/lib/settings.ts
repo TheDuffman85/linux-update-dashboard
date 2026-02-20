@@ -15,7 +15,7 @@ export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Record<string, string>) =>
-      apiFetch("/settings", { method: "PUT", body: JSON.stringify(data) }),
+      apiFetch<{ status: string; oidcError?: string }>("/settings", { method: "PUT", body: JSON.stringify(data) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
     },

@@ -71,13 +71,16 @@ export function useUpgradePackage() {
 export function useRefreshCache() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      apiFetch<{ status: string }>("/cache/refresh", { method: "POST" }),
+    mutationFn: async () => {
+      const result = await apiFetch<{ status: string }>("/cache/refresh", { method: "POST" });
+      // Wait for background checks to complete before resolving,
+      // so isPending stays true and the spinner remains visible
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      return result;
+    },
     onSuccess: () => {
-      setTimeout(() => {
-        qc.invalidateQueries({ queryKey: ["systems"] });
-        qc.invalidateQueries({ queryKey: ["dashboard"] });
-      }, 5000);
+      qc.invalidateQueries({ queryKey: ["systems"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

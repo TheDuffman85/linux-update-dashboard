@@ -9,6 +9,8 @@ export interface System {
   authType: string;
   username: string;
   pkgManager: string | null;
+  detectedPkgManagers: string[] | null;
+  disabledPkgManagers: string[] | null;
   osName: string | null;
   osVersion: string | null;
   kernel: string | null;
@@ -48,6 +50,7 @@ export interface HistoryEntry {
   packageCount: number | null;
   packages: string | null;
   packagesList: string[];
+  command: string | null;
   status: string;
   output: string | null;
   error: string | null;
@@ -85,6 +88,8 @@ export function useCreateSystem() {
       password?: string;
       privateKey?: string;
       keyPassphrase?: string;
+      sudoPassword?: string;
+      disabledPkgManagers?: string[];
     }) => apiFetch<{ id: number }>("/systems", { method: "POST", body: JSON.stringify(data) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["systems"] });
@@ -106,6 +111,8 @@ export function useUpdateSystem() {
       password?: string;
       privateKey?: string;
       keyPassphrase?: string;
+      sudoPassword?: string;
+      disabledPkgManagers?: string[];
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["systems"] });
@@ -128,10 +135,19 @@ export function useDeleteSystem() {
 
 export function useTestConnection() {
   return useMutation({
-    mutationFn: (id: number) =>
-      apiFetch<{ success: boolean; message: string }>(
-        `/systems/${id}/test-connection`,
-        { method: "POST" }
+    mutationFn: (data: {
+      hostname: string;
+      port: number;
+      username: string;
+      authType: string;
+      password?: string;
+      privateKey?: string;
+      keyPassphrase?: string;
+      systemId?: number;
+    }) =>
+      apiFetch<{ success: boolean; message: string; detectedManagers?: string[] }>(
+        "/systems/test-connection",
+        { method: "POST", body: JSON.stringify(data) }
       ),
   });
 }

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { apiFetch } from "../api/client";
+import { apiFetch } from "../lib/client";
 
 interface User {
   userId: number;

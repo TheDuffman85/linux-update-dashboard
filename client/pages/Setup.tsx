@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PenguinLogo } from "../components/PenguinLogo";
 import { useAuth } from "../context/AuthContext";
 
 export default function Setup() {
@@ -29,9 +30,7 @@ export default function Setup() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-4">
       <div className="w-full max-w-sm bg-white dark:bg-slate-800 rounded-xl shadow-lg p-8">
         <div className="text-center mb-6">
-          <span className="bg-blue-500 text-white text-sm font-bold px-3 py-1.5 rounded">
-            LUD
-          </span>
+          <PenguinLogo size={48} />
           <h1 className="mt-3 text-xl font-semibold">Initial Setup</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             Create your admin account

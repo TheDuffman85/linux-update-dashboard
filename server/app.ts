@@ -7,6 +7,7 @@ import dashboardRoutes from "./routes/dashboard";
 import systemsRoutes from "./routes/systems";
 import updatesRoutes from "./routes/updates";
 import settingsRoutes from "./routes/settings";
+import notificationsRoutes from "./routes/notifications";
 
 export function createApp() {
   const app = new Hono();
@@ -31,6 +32,7 @@ export function createApp() {
   app.route("/api/systems", systemsRoutes);
   app.route("/api", updatesRoutes);
   app.route("/api/settings", settingsRoutes);
+  app.route("/api/notifications", notificationsRoutes);
 
   // In production, serve built SPA files
   if (process.env.NODE_ENV === "production") {

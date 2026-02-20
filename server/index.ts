@@ -1,11 +1,14 @@
 import { mkdirSync } from "fs";
 import { dirname } from "path";
+import { eq } from "drizzle-orm";
 import { config } from "./config";
-import { initDatabase, closeDatabase } from "./db";
+import { initDatabase, closeDatabase, getDb } from "./db";
+import { settings } from "./db/schema";
 import { initEncryptor, getEncryptor } from "./security";
 import { initSSHManager } from "./ssh/connection";
 import { initSession } from "./auth/session";
 import { setRpId } from "./auth/webauthn";
+import { configureOidc } from "./auth/oidc";
 import * as scheduler from "./services/scheduler";
 import { createApp } from "./app";
 
@@ -37,6 +40,27 @@ initSSHManager(
   config.defaultCmdTimeout,
   getEncryptor()
 );
+
+// Initialize OIDC from database settings
+console.log("Initializing OIDC...");
+{
+  const dbInstance = getDb();
+  const oidcIssuer = dbInstance.select().from(settings).where(eq(settings.key, "oidc_issuer")).get();
+  const oidcClientId = dbInstance.select().from(settings).where(eq(settings.key, "oidc_client_id")).get();
+  const oidcClientSecret = dbInstance.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();
+
+  const encryptor = getEncryptor();
+  const decryptedSecret = oidcClientSecret?.value
+    ? encryptor.decrypt(oidcClientSecret.value)
+    : "";
+
+  configureOidc(
+    oidcIssuer?.value || "",
+    oidcClientId?.value || "",
+    decryptedSecret,
+    config.baseUrl
+  ).catch((e) => console.log("OIDC not configured:", (e as Error).message));
+}
 
 // Start background scheduler
 console.log("Starting update scheduler...");

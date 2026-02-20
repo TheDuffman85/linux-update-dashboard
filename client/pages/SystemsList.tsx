@@ -4,18 +4,23 @@ import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { useSystems, useCreateSystem, useDeleteSystem } from "../api/systems";
-import { useCheckUpdates } from "../api/updates";
+import { useSystems, useCreateSystem, useUpdateSystem, useDeleteSystem } from "../lib/systems";
+import type { System } from "../lib/systems";
+import { useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
+import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
 
 export default function SystemsList() {
   const { data: systems, isLoading } = useSystems();
   const createSystem = useCreateSystem();
+  const updateSystem = useUpdateSystem();
   const deleteSystem = useDeleteSystem();
   const checkUpdates = useCheckUpdates();
   const { addToast } = useToast();
+  const { isUpgrading } = useUpgrade();
   const [showForm, setShowForm] = useState(false);
+  const [editSystem, setEditSystem] = useState<System | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
   const handleCreate = (data: Parameters<typeof createSystem.mutate>[0]) => {
@@ -26,6 +31,20 @@ export default function SystemsList() {
       },
       onError: (err) => addToast(err.message, "danger"),
     });
+  };
+
+  const handleUpdate = (data: Parameters<typeof createSystem.mutate>[0]) => {
+    if (!editSystem) return;
+    updateSystem.mutate(
+      { id: editSystem.id, ...data },
+      {
+        onSuccess: () => {
+          setEditSystem(null);
+          addToast("System updated successfully", "success");
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      }
+    );
   };
 
   const handleDelete = () => {
@@ -72,30 +91,30 @@ export default function SystemsList() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3 hidden sm:table-cell">Host</th>
-                <th className="px-4 py-3 hidden md:table-cell">OS</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Updates</th>
-                <th className="px-4 py-3 hidden lg:table-cell">Last Checked</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-2 sm:px-4 py-3">Name</th>
+                <th className="px-2 sm:px-4 py-3 hidden sm:table-cell">Host</th>
+                <th className="px-2 sm:px-4 py-3 hidden md:table-cell">OS</th>
+                <th className="px-2 sm:px-4 py-3">Status</th>
+                <th className="px-2 sm:px-4 py-3">Updates</th>
+                <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">Last Checked</th>
+                <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody>
               {systems.map((s) => (
                 <tr key={s.id} className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                  <td className="px-4 py-3">
+                  <td className="px-2 sm:px-4 py-3">
                     <Link to={`/systems/${s.id}`} className="font-medium text-blue-600 dark:text-blue-400 hover:underline">
                       {s.name}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
+                  <td className="px-2 sm:px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
                     {s.hostname}{s.port !== 22 && `:${s.port}`}
                   </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400 truncate max-w-[200px]">
+                  <td className="px-2 sm:px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400 truncate max-w-[200px]">
                     {s.osName || "-"}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-2 sm:px-4 py-3">
                     {s.isReachable === 1 ? (
                       <Badge variant="success" small>Online</Badge>
                     ) : s.isReachable === -1 ? (
@@ -104,8 +123,15 @@ export default function SystemsList() {
                       <Badge variant="muted" small>Unknown</Badge>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    {s.updateCount > 0 ? (
+                  <td className="px-2 sm:px-4 py-3">
+                    {isUpgrading(s.id) ? (
+                      <Badge variant="info" small>
+                        <span className="flex items-center gap-1">
+                          <span className="spinner spinner-sm !w-2.5 !h-2.5" />
+                          Upgrading...
+                        </span>
+                      </Badge>
+                    ) : s.updateCount > 0 ? (
                       <Badge variant="warning" small>{s.updateCount}</Badge>
                     ) : s.isReachable === 1 ? (
                       <span className="text-green-600 text-xs">0</span>
@@ -113,14 +139,14 @@ export default function SystemsList() {
                       <span className="text-slate-400 text-xs">-</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 hidden lg:table-cell text-xs text-slate-400">
+                  <td className="px-2 sm:px-4 py-3 hidden lg:table-cell text-xs text-slate-400">
                     {s.cacheAge || "Never"}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
+                  <td className="px-2 sm:px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-0.5 sm:gap-1">
                       <button
                         onClick={() => handleCheck(s.id)}
-                        className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                         title="Check for updates"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -128,8 +154,17 @@ export default function SystemsList() {
                         </svg>
                       </button>
                       <button
+                        onClick={() => setEditSystem(s)}
+                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        title="Edit system"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
                         onClick={() => setDeleteId(s.id)}
-                        className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
+                        className="p-1 sm:p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
                         title="Delete system"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -162,6 +197,27 @@ export default function SystemsList() {
           onCancel={() => setShowForm(false)}
           loading={createSystem.isPending}
         />
+      </Modal>
+
+      {/* Edit system modal */}
+      <Modal open={editSystem !== null} onClose={() => setEditSystem(null)} title="Edit System">
+        {editSystem && (
+          <SystemForm
+            initial={{
+              name: editSystem.name,
+              hostname: editSystem.hostname,
+              port: editSystem.port,
+              authType: editSystem.authType,
+              username: editSystem.username,
+              detectedPkgManagers: editSystem.detectedPkgManagers ?? undefined,
+              disabledPkgManagers: editSystem.disabledPkgManagers ?? undefined,
+            }}
+            systemId={editSystem.id}
+            onSubmit={handleUpdate}
+            onCancel={() => setEditSystem(null)}
+            loading={updateSystem.isPending}
+          />
+        )}
       </Modal>
 
       {/* Delete confirmation */}

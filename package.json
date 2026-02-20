@@ -2,8 +2,9 @@
   "name": "linux-update-dashboard",
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "bun@1.3.5",
   "scripts": {
-    "dev": "bun run --filter '*' dev:*",
+    "dev": "bun run dev:server & bun run dev:client",
     "dev:server": "bun run --watch server/index.ts",
     "dev:client": "bunx --bun vite",
     "build": "vite build && bun build server/index.ts --outdir dist/server --target bun",
@@ -19,6 +20,7 @@
     "drizzle-orm": "^0.39.0",
     "hono": "^4.7.0",
     "jose": "^6.0.0",
+    "nodemailer": "^8.0.1",
     "openid-client": "^6.3.0",
     "ssh2": "^1.16.0"
   },
@@ -26,6 +28,7 @@
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/react-query": "^5.65.0",
     "@types/bun": "^1.2.0",
+    "@types/nodemailer": "^7.0.10",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ssh2": "^1.15.0",

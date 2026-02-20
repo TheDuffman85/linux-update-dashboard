@@ -1,9 +1,12 @@
+import { useState } from "react";
 import { Link } from "react-router";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
-import { useDashboardStats, useDashboardSystems } from "../api/dashboard";
-import { useRefreshCache } from "../api/updates";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useDashboardStats, useDashboardSystems } from "../lib/dashboard";
+import { useRefreshCache } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
+import { useUpgrade } from "../context/UpgradeContext";
 
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
@@ -14,9 +17,10 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; cacheAge: string | null; isStale?: boolean } }) {
-  const borderColor =
-    system.isReachable === -1
+function SystemCard({ system, upgrading }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean }) {
+  const borderColor = upgrading
+    ? "border-l-blue-500"
+    : system.isReachable === -1
       ? "border-l-red-500"
       : system.updateCount > 0
         ? "border-l-amber-500"
@@ -31,15 +35,19 @@ function SystemCard({ system }: { system: { id: number; name: string; hostname: 
     >
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-medium text-sm truncate">{system.name}</h3>
-        <span
-          className={`w-2 h-2 rounded-full ${
-            system.isReachable === 1
-              ? "bg-green-500"
-              : system.isReachable === -1
-                ? "bg-red-500"
-                : "bg-slate-400"
-          }`}
-        />
+        {upgrading ? (
+          <span className="spinner spinner-sm !w-2.5 !h-2.5 !border-blue-500 !border-t-transparent" />
+        ) : (
+          <span
+            className={`w-2 h-2 rounded-full ${
+              system.isReachable === 1
+                ? "bg-green-500"
+                : system.isReachable === -1
+                  ? "bg-red-500"
+                  : "bg-slate-400"
+            }`}
+          />
+        )}
       </div>
       <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
         {system.hostname}
@@ -50,7 +58,9 @@ function SystemCard({ system }: { system: { id: number; name: string; hostname: 
       )}
       <div className="flex items-center justify-between mt-3">
         <div>
-          {system.isReachable === -1 ? (
+          {upgrading ? (
+            <Badge variant="info" small>Upgrading...</Badge>
+          ) : system.isReachable === -1 ? (
             <Badge variant="danger" small>Unreachable</Badge>
           ) : system.updateCount > 0 ? (
             <Badge variant="warning" small>{system.updateCount} updates</Badge>
@@ -75,6 +85,8 @@ export default function Dashboard() {
   const { data: systems } = useDashboardSystems();
   const refreshCache = useRefreshCache();
   const { addToast } = useToast();
+  const { upgradeAll, isUpgrading, upgradingCount } = useUpgrade();
+  const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
 
   const handleRefresh = () => {
     refreshCache.mutate(undefined, {
@@ -83,17 +95,53 @@ export default function Dashboard() {
     });
   };
 
+  const systemsWithUpdates = systems?.filter((s) => s.updateCount > 0 && !isUpgrading(s.id)) ?? [];
+
+  const handleUpgradeAll = () => {
+    setShowUpgradeConfirm(false);
+    for (const s of systemsWithUpdates) {
+      upgradeAll(s.id, {
+        onSuccess: (d: any) =>
+          addToast(
+            d.status === "success"
+              ? `${s.name}: Upgrade complete`
+              : `${s.name}: Upgrade failed`,
+            d.status === "success" ? "success" : "danger"
+          ),
+        onError: (err: Error) => addToast(`${s.name}: ${err.message}`, "danger"),
+      });
+    }
+  };
+
   return (
     <Layout
       title="Dashboard"
       actions={
-        <button
-          onClick={handleRefresh}
-          disabled={refreshCache.isPending}
-          className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-        >
-          {refreshCache.isPending ? <span className="spinner spinner-sm" /> : "Refresh All"}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button
+            onClick={handleRefresh}
+            disabled={refreshCache.isPending}
+            className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 whitespace-nowrap"
+          >
+            {refreshCache.isPending ? <span className="spinner spinner-sm" /> : "Refresh All"}
+          </button>
+          {((stats?.needsUpdates ?? 0) > 0 || upgradingCount > 0) && (
+            <button
+              onClick={() => setShowUpgradeConfirm(true)}
+              disabled={upgradingCount > 0}
+              className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+            >
+              {upgradingCount > 0 ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="spinner spinner-sm" />
+                  Upgrading...
+                </span>
+              ) : (
+                `Upgrade All (${stats?.totalUpdates ?? 0})`
+              )}
+            </button>
+          )}
+        </div>
       }
     >
       {/* Stats */}
@@ -111,7 +159,7 @@ export default function Dashboard() {
       {systems && systems.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {systems.map((s) => (
-            <SystemCard key={s.id} system={s} />
+            <SystemCard key={s.id} system={s} upgrading={isUpgrading(s.id)} />
           ))}
         </div>
       ) : (
@@ -125,6 +173,15 @@ export default function Dashboard() {
           </Link>
         </div>
       )}
+
+      <ConfirmDialog
+        open={showUpgradeConfirm}
+        onClose={() => setShowUpgradeConfirm(false)}
+        onConfirm={handleUpgradeAll}
+        title="Upgrade All Systems"
+        message={`Apply all ${stats?.totalUpdates ?? 0} updates across ${stats?.needsUpdates ?? 0} system${(stats?.needsUpdates ?? 0) !== 1 ? "s" : ""}?`}
+        confirmLabel="Upgrade All"
+      />
     </Layout>
   );
 }

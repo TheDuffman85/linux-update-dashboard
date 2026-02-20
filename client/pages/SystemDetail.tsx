@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { useSystem, useDeleteSystem } from "../api/systems";
-import { useCheckUpdates, useUpgradeAll, useUpgradePackage } from "../api/updates";
+import { useSystem } from "../lib/systems";
+import { useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
-import type { CachedUpdate, HistoryEntry } from "../api/systems";
+import { useUpgrade } from "../context/UpgradeContext";
+import type { CachedUpdate, HistoryEntry } from "../lib/systems";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -14,9 +15,9 @@ function InfoCard({ title, items }: { title: string; items: { label: string; val
       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">{title}</h3>
       <dl className="space-y-2">
         {items.map((item) => (
-          <div key={item.label} className="flex justify-between text-sm">
-            <dt className="text-slate-500 dark:text-slate-400">{item.label}</dt>
-            <dd className="font-medium truncate ml-4">{item.value || "-"}</dd>
+          <div key={item.label} className="flex justify-between text-sm gap-3">
+            <dt className="text-slate-500 dark:text-slate-400 shrink-0">{item.label}</dt>
+            <dd className="font-medium truncate text-right">{item.value || "-"}</dd>
           </div>
         ))}
       </dl>
@@ -31,17 +32,15 @@ function UpdatesTable({
   updates: CachedUpdate[];
   systemId: number;
 }) {
-  const upgradePackage = useUpgradePackage();
+  const { upgradePackage, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
+  const upgrading = isUpgrading(systemId);
 
   const handleUpgrade = (packageName: string) => {
-    upgradePackage.mutate(
-      { systemId, packageName },
-      {
-        onSuccess: () => addToast(`${packageName} upgraded`, "success"),
-        onError: (err) => addToast(err.message, "danger"),
-      }
-    );
+    upgradePackage(systemId, packageName, {
+      onSuccess: () => addToast(`${packageName} upgraded`, "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
   };
 
   if (!updates.length) {
@@ -57,39 +56,39 @@ function UpdatesTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
-            <th className="px-4 py-2">Package</th>
-            <th className="px-4 py-2 hidden sm:table-cell">Current</th>
-            <th className="px-4 py-2">Available</th>
-            <th className="px-4 py-2 hidden md:table-cell">Manager</th>
-            <th className="px-4 py-2 hidden lg:table-cell">Repository</th>
-            <th className="px-4 py-2 text-right">Action</th>
+            <th className="px-2 sm:px-4 py-2">Package</th>
+            <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">Current</th>
+            <th className="px-2 sm:px-4 py-2">Available</th>
+            <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
+            <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
+            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Action</th>
           </tr>
         </thead>
         <tbody>
           {updates.map((u) => (
             <tr key={u.id} className="border-b border-border last:border-0">
-              <td className="px-4 py-2">
+              <td className="px-2 sm:px-4 py-2 break-all">
                 {u.packageName}
                 {u.isSecurity ? (
                   <Badge variant="danger" small>security</Badge>
                 ) : null}
               </td>
-              <td className="px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
+              <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
                 {u.currentVersion || "-"}
               </td>
-              <td className="px-4 py-2 font-mono text-xs font-medium">
+              <td className="px-2 sm:px-4 py-2 font-mono text-xs font-medium break-all">
                 {u.newVersion}
               </td>
-              <td className="px-4 py-2 hidden md:table-cell text-slate-500">
+              <td className="px-2 sm:px-4 py-2 hidden md:table-cell text-slate-500">
                 {u.pkgManager}
               </td>
-              <td className="px-4 py-2 hidden lg:table-cell text-slate-500 truncate max-w-[150px]">
+              <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500 truncate max-w-[150px]">
                 {u.repository || "-"}
               </td>
-              <td className="px-4 py-2 text-right">
+              <td className="px-2 sm:px-4 py-2 text-right">
                 <button
                   onClick={() => handleUpgrade(u.packageName)}
-                  disabled={upgradePackage.isPending}
+                  disabled={upgrading}
                   className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 transition-colors disabled:opacity-50"
                   title={`Upgrade ${u.packageName}`}
                 >
@@ -107,6 +106,17 @@ function UpdatesTable({
 }
 
 function HistoryList({ history }: { history: HistoryEntry[] }) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const toggle = useCallback((id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   if (!history.length) {
     return (
       <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
@@ -116,45 +126,89 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
   }
 
   return (
-    <div className="space-y-3">
-      {history.map((h) => (
-        <div key={h.id} className="flex items-start gap-3 text-sm">
-          <Badge
-            variant={
-              h.status === "success"
-                ? "success"
-                : h.status === "failed"
-                  ? "danger"
-                  : "muted"
-            }
-            small
-          >
-            {h.status}
-          </Badge>
-          <div className="flex-1 min-w-0">
-            <p className="font-medium">
-              {h.action === "check"
-                ? "Checked for updates"
-                : h.action === "upgrade_all"
-                  ? "Upgraded all packages"
-                  : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
-            </p>
-            {h.packageCount !== null && h.action === "check" && (
-              <p className="text-xs text-slate-500">
-                {h.packageCount} update{h.packageCount !== 1 ? "s" : ""} found
-              </p>
-            )}
-            {h.error && (
-              <p className="text-xs text-red-500 mt-1 font-mono truncate">
-                {h.error}
-              </p>
+    <div className="space-y-1">
+      {history.map((h) => {
+        const hasDetails = !!(h.command || h.output || h.error);
+        const isOpen = expanded.has(h.id);
+
+        return (
+          <div key={h.id}>
+            <button
+              type="button"
+              onClick={() => hasDetails && toggle(h.id)}
+              className={`w-full flex items-start gap-3 text-sm px-2 py-2 rounded-lg transition-colors text-left ${
+                hasDetails
+                  ? "hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer"
+                  : "cursor-default"
+              }`}
+            >
+              {hasDetails && (
+                <svg
+                  className={`w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              )}
+              {!hasDetails && <span className="w-3.5 shrink-0" />}
+              <Badge
+                variant={
+                  h.status === "success"
+                    ? "success"
+                    : h.status === "failed"
+                      ? "danger"
+                      : "muted"
+                }
+                small
+              >
+                {h.status}
+              </Badge>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium">
+                  {h.action === "check"
+                    ? "Checked for updates"
+                    : h.action === "upgrade_all"
+                      ? "Upgraded all packages"
+                      : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
+                </p>
+                {h.packageCount !== null && h.action === "check" && (
+                  <p className="text-xs text-slate-500">
+                    {h.packageCount} update{h.packageCount !== 1 ? "s" : ""} found
+                  </p>
+                )}
+              </div>
+              <span className="text-xs text-slate-400 whitespace-nowrap">
+                {h.pkgManager}
+              </span>
+            </button>
+
+            {isOpen && hasDetails && (
+              <div className="ml-10 mr-2 mb-2 space-y-2">
+                {h.command && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Command</p>
+                    <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{h.command}</pre>
+                  </div>
+                )}
+                {h.output && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Output</p>
+                    <pre className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">{h.output}</pre>
+                  </div>
+                )}
+                {h.error && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-red-500 mb-1 font-semibold">Error</p>
+                    <pre className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">{h.error}</pre>
+                  </div>
+                )}
+              </div>
             )}
           </div>
-          <span className="text-xs text-slate-400 whitespace-nowrap">
-            {h.pkgManager}
-          </span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -165,10 +219,9 @@ export default function SystemDetail() {
   const systemId = parseInt(id!, 10);
   const { data, isLoading } = useSystem(systemId);
   const checkUpdates = useCheckUpdates();
-  const upgradeAll = useUpgradeAll();
-  const deleteSystem = useDeleteSystem();
+  const { upgradeAll, isUpgrading } = useUpgrade();
+  const upgrading = isUpgrading(systemId);
   const { addToast } = useToast();
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
 
   if (isLoading || !data) {
@@ -196,23 +249,13 @@ export default function SystemDetail() {
 
   const handleUpgradeAll = () => {
     setShowUpgradeConfirm(false);
-    upgradeAll.mutate(systemId, {
-      onSuccess: (d) =>
+    upgradeAll(systemId, {
+      onSuccess: (d: any) =>
         addToast(
           d.status === "success" ? "Upgrade complete" : "Upgrade failed",
           d.status === "success" ? "success" : "danger"
         ),
-      onError: (err) => addToast(err.message, "danger"),
-    });
-  };
-
-  const handleDelete = () => {
-    deleteSystem.mutate(systemId, {
-      onSuccess: () => {
-        addToast("System deleted", "success");
-        navigate("/systems");
-      },
-      onError: (err) => addToast(err.message, "danger"),
+      onError: (err: Error) => addToast(err.message, "danger"),
     });
   };
 
@@ -220,7 +263,16 @@ export default function SystemDetail() {
     <Layout
       title={system.name}
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button
+            onClick={() => navigate(-1)}
+            className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back
+          </button>
           <button
             onClick={handleCheck}
             disabled={checkUpdates.isPending}
@@ -228,28 +280,22 @@ export default function SystemDetail() {
           >
             {checkUpdates.isPending ? <span className="spinner spinner-sm" /> : "Refresh"}
           </button>
-          {system.updateCount > 0 && (
+          {(system.updateCount > 0 || upgrading) && (
             <button
               onClick={() => setShowUpgradeConfirm(true)}
-              disabled={upgradeAll.isPending}
-              className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+              disabled={upgrading}
+              className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
             >
-              {upgradeAll.isPending ? (
-                <span className="spinner spinner-sm" />
+              {upgrading ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="spinner spinner-sm" />
+                  Upgrading...
+                </span>
               ) : (
                 `Upgrade All (${system.updateCount})`
               )}
             </button>
           )}
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-            title="Delete system"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-          </button>
         </div>
       }
     >
@@ -271,7 +317,12 @@ export default function SystemDetail() {
             { label: "Version", value: system.osVersion },
             { label: "Kernel", value: system.kernel },
             { label: "Architecture", value: system.arch },
-            { label: "Pkg Manager", value: system.pkgManager },
+            { label: "Pkg Managers", value: (() => {
+              const detected: string[] = system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []);
+              const disabled: string[] = system.disabledPkgManagers ?? [];
+              const active = detected.filter((m) => !disabled.includes(m));
+              return active.length > 0 ? active.join(", ") : null;
+            })() },
           ]}
         />
         <InfoCard
@@ -322,17 +373,7 @@ export default function SystemDetail() {
         title="Upgrade All Packages"
         message={`Apply all ${system.updateCount} updates to ${system.name}?`}
         confirmLabel="Upgrade All"
-        loading={upgradeAll.isPending}
-      />
-      <ConfirmDialog
-        open={showDeleteConfirm}
-        onClose={() => setShowDeleteConfirm(false)}
-        onConfirm={handleDelete}
-        title="Delete System"
-        message={`Are you sure you want to delete ${system.name}? This action cannot be undone.`}
-        confirmLabel="Delete"
-        danger
-        loading={deleteSystem.isPending}
+        loading={upgrading}
       />
     </Layout>
   );
