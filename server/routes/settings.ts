@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings } from "../db/schema";
 import { configureOidc } from "../auth/oidc";
-import { config } from "../config";
 import { getEncryptor } from "../security";
 import * as scheduler from "../services/scheduler";
 
@@ -74,7 +73,6 @@ settingsRouter.put("/", async (c) => {
         issuer?.value || "",
         clientId?.value || "",
         decryptedSecret,
-        config.baseUrl
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

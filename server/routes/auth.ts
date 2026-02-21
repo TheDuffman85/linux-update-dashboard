@@ -15,14 +15,13 @@ import * as wa from "../auth/webauthn";
 import * as oidc from "../auth/oidc";
 import { config } from "../config";
 
-/** Derive WebAuthn origin and rpId from the incoming request headers. */
-function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
+/** Derive the public-facing origin from the incoming request headers. */
+function getPublicOrigin(c: Context): string {
   // Prefer the Origin header (present on POST requests)
   const originHeader = c.req.header("origin");
   if (originHeader) {
     try {
-      const url = new URL(originHeader);
-      return { origin: url.origin, rpId: url.hostname };
+      return new URL(originHeader).origin;
     } catch { /* fall through */ }
   }
 
@@ -31,18 +30,22 @@ function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
   const proto = c.req.header("x-forwarded-proto") || "https";
   if (host) {
     try {
-      const url = new URL(`${proto}://${host}`);
-      return { origin: url.origin, rpId: url.hostname };
+      return new URL(`${proto}://${host}`).origin;
     } catch { /* fall through */ }
   }
 
   // Fall back to configured base URL
   try {
-    const url = new URL(config.baseUrl);
-    return { origin: url.origin, rpId: url.hostname };
+    return new URL(config.baseUrl).origin;
   } catch {
-    return { origin: "http://localhost:3001", rpId: "localhost" };
+    return "http://localhost:3001";
   }
+}
+
+/** Derive WebAuthn origin and rpId from the incoming request headers. */
+function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
+  const origin = getPublicOrigin(c);
+  return { origin, rpId: new URL(origin).hostname };
 }
 
 const auth = new Hono();
@@ -317,9 +320,12 @@ auth.get("/oidc/login", async (c) => {
     return c.json({ error: "OIDC not configured" }, 400);
   }
 
+  const publicOrigin = getPublicOrigin(c);
+  const redirectUri = `${publicOrigin}/api/auth/oidc/callback`;
+
   const state = crypto.randomUUID();
   const nonce = crypto.randomUUID();
-  const url = oidc.getAuthorizationUrl(state, nonce);
+  const url = oidc.getAuthorizationUrl(state, nonce, redirectUri);
 
   // Capture the frontend origin so we can redirect back after callback.
   // In dev, the login request comes through Vite's proxy (port 5173),
@@ -359,7 +365,13 @@ auth.get("/oidc/callback", async (c) => {
   const nonce = getCookie(c, "oidc_nonce");
 
   try {
-    const result = await oidc.handleCallback(new URL(c.req.url), nonce);
+    // Reconstruct callback URL with the public-facing origin so it matches
+    // the redirect_uri that was sent to the IdP during authorization.
+    const publicOrigin = getPublicOrigin(c);
+    const internalUrl = new URL(c.req.url);
+    const callbackUrl = new URL(`${publicOrigin}${internalUrl.pathname}${internalUrl.search}`);
+
+    const result = await oidc.handleCallback(callbackUrl, nonce);
     if (!result) {
       return c.json({ error: "OIDC authentication failed" }, 400);
     }

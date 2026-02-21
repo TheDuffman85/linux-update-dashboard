@@ -3,13 +3,11 @@ import * as client from "openid-client";
 let _config: client.Configuration | null = null;
 let _configured = false;
 let _clientId = "";
-let _redirectUri = "";
 
 export async function configureOidc(
   issuer: string,
   clientId: string,
   clientSecret: string,
-  baseUrl: string
 ): Promise<void> {
   if (!issuer || !clientId) {
     _configured = false;
@@ -23,7 +21,6 @@ export async function configureOidc(
       clientSecret || undefined
     );
     _clientId = clientId;
-    _redirectUri = `${baseUrl.replace(/\/$/, "")}/api/auth/oidc/callback`;
     _configured = true;
   } catch (e) {
     console.error("Failed to configure OIDC:", e);
@@ -35,12 +32,12 @@ export function isConfigured(): boolean {
   return _configured;
 }
 
-export function getAuthorizationUrl(state: string, nonce: string): string {
+export function getAuthorizationUrl(state: string, nonce: string, redirectUri: string): string {
   if (!_config) throw new Error("OIDC not configured");
 
   const params = new URLSearchParams({
     client_id: _clientId,
-    redirect_uri: _redirectUri,
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: "openid profile email",
     state,

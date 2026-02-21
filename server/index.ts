@@ -49,7 +49,6 @@ console.log("Initializing OIDC...");
     oidcIssuer?.value || "",
     oidcClientId?.value || "",
     decryptedSecret,
-    config.baseUrl
   ).catch((e) => console.log("OIDC not configured:", (e as Error).message));
 }
 
