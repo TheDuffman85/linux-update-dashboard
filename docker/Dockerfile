@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y openssh-client && rm -rf /var/lib/apt/l
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
-COPY --from=build /app/drizzle ./drizzle
 COPY --from=build /app/package.json ./
 COPY docker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh && mkdir -p /data
