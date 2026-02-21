@@ -12,7 +12,7 @@ import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
 
 export default function SystemsList() {
-  const { data: systems, isLoading } = useSystems();
+  const { data: systems, isLoading, refetch } = useSystems();
   const createSystem = useCreateSystem();
   const updateSystem = useUpdateSystem();
   const deleteSystem = useDeleteSystem();
@@ -25,7 +25,8 @@ export default function SystemsList() {
 
   const handleCreate = (data: Parameters<typeof createSystem.mutate>[0]) => {
     createSystem.mutate(data, {
-      onSuccess: () => {
+      onSuccess: async () => {
+        await refetch();
         setShowForm(false);
         addToast("System added successfully", "success");
       },
@@ -38,7 +39,8 @@ export default function SystemsList() {
     updateSystem.mutate(
       { id: editSystem.id, ...data },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
+          await refetch();
           setEditSystem(null);
           addToast("System updated successfully", "success");
         },
@@ -50,7 +52,8 @@ export default function SystemsList() {
   const handleDelete = () => {
     if (deleteId === null) return;
     deleteSystem.mutate(deleteId, {
-      onSuccess: () => {
+      onSuccess: async () => {
+        await refetch();
         setDeleteId(null);
         addToast("System deleted", "success");
       },
@@ -124,11 +127,18 @@ export default function SystemsList() {
                     )}
                   </td>
                   <td className="px-2 sm:px-4 py-3">
-                    {isUpgrading(s.id) ? (
+                    {(isUpgrading(s.id) || s.activeOperation?.type?.startsWith("upgrade")) ? (
                       <Badge variant="info" small>
                         <span className="flex items-center gap-1">
                           <span className="spinner spinner-sm !w-2.5 !h-2.5" />
                           Upgrading...
+                        </span>
+                      </Badge>
+                    ) : s.activeOperation?.type === "check" ? (
+                      <Badge variant="info" small>
+                        <span className="flex items-center gap-1">
+                          <span className="spinner spinner-sm !w-2.5 !h-2.5" />
+                          Checking...
                         </span>
                       </Badge>
                     ) : s.updateCount > 0 ? (

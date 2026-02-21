@@ -1,6 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
+export interface ActiveOperation {
+  type: "check" | "upgrade_all" | "upgrade_package";
+  startedAt: string;
+  packageName?: string;
+}
+
 export interface System {
   id: number;
   name: string;
@@ -27,6 +33,7 @@ export interface System {
   updateCount: number;
   cacheAge: string | null;
   isStale?: boolean;
+  activeOperation?: ActiveOperation | null;
 }
 
 export interface CachedUpdate {
@@ -63,17 +70,26 @@ export function useSystems() {
     queryKey: ["systems"],
     queryFn: () =>
       apiFetch<{ systems: System[] }>("/systems").then((r) => r.systems),
+    refetchInterval: (query) => {
+      const hasActiveOps = query.state.data?.some((s) => s.activeOperation);
+      return hasActiveOps ? 3000 : false;
+    },
   });
 }
 
 export function useSystem(id: number) {
-  return useQuery({
+  const query = useQuery({
     queryKey: ["system", id],
     queryFn: () =>
       apiFetch<{ system: System; updates: CachedUpdate[]; history: HistoryEntry[] }>(
         `/systems/${id}`
       ),
+    refetchInterval: (query) => {
+      const op = query.state.data?.system?.activeOperation;
+      return op ? 3000 : false;
+    },
   });
+  return query;
 }
 
 export function useCreateSystem() {

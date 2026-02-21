@@ -29,3 +29,23 @@ export async function apiFetch<T>(
 
   return res.json();
 }
+
+// Poll a background job until it completes
+export async function pollJob<T>(
+  jobId: string,
+  intervalMs = 2000,
+  maxAttempts = 300 // 10 minutes at 2s interval
+): Promise<T> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const job = await apiFetch<{ status: string; result?: T }>(
+      `/jobs/${jobId}`
+    );
+    if (job.status === "done") return job.result as T;
+    if (job.status === "failed") {
+      const err = (job.result as { error?: string })?.error ?? "Job failed";
+      throw new ApiError(500, err);
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new ApiError(504, "Operation timed out");
+}

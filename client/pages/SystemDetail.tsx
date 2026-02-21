@@ -28,13 +28,15 @@ function InfoCard({ title, items }: { title: string; items: { label: string; val
 function UpdatesTable({
   updates,
   systemId,
+  busy,
 }: {
   updates: CachedUpdate[];
   systemId: number;
+  busy?: boolean;
 }) {
   const { upgradePackage, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
-  const upgrading = isUpgrading(systemId);
+  const upgrading = isUpgrading(systemId) || busy;
 
   const handleUpgrade = (packageName: string) => {
     upgradePackage(systemId, packageName, {
@@ -239,9 +241,13 @@ export default function SystemDetail() {
   const { data, isLoading } = useSystem(systemId);
   const checkUpdates = useCheckUpdates();
   const { upgradeAll, isUpgrading } = useUpgrade();
-  const upgrading = isUpgrading(systemId);
   const { addToast } = useToast();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
+
+  // Combine client-side mutation state with server-side active operation
+  const activeOp = data?.system?.activeOperation;
+  const checking = checkUpdates.isPending || activeOp?.type === "check";
+  const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "upgrade_package";
 
   if (isLoading || !data) {
     return (
@@ -294,15 +300,20 @@ export default function SystemDetail() {
           </button>
           <button
             onClick={handleCheck}
-            disabled={checkUpdates.isPending}
+            disabled={checking || upgrading}
             className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
           >
-            {checkUpdates.isPending ? <span className="spinner spinner-sm" /> : "Refresh"}
+            {checking ? (
+              <span className="flex items-center gap-1.5">
+                <span className="spinner spinner-sm" />
+                Checking...
+              </span>
+            ) : "Refresh"}
           </button>
           {(system.updateCount > 0 || upgrading) && (
             <button
               onClick={() => setShowUpgradeConfirm(true)}
-              disabled={upgrading}
+              disabled={upgrading || checking}
               className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
             >
               {upgrading ? (
@@ -318,6 +329,21 @@ export default function SystemDetail() {
         </div>
       }
     >
+      {/* Active operation banner */}
+      {activeOp && (
+        <div className="flex items-center gap-2 px-4 py-2.5 mb-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-300">
+          <span className="spinner spinner-sm !w-3.5 !h-3.5" />
+          {activeOp.type === "check"
+            ? "Checking for updates..."
+            : activeOp.type === "upgrade_all"
+              ? "Upgrading all packages..."
+              : `Upgrading ${activeOp.packageName}...`}
+          <span className="text-xs text-blue-500 dark:text-blue-400 ml-auto">
+            started {formatTimeAgo(activeOp.startedAt)}
+          </span>
+        </div>
+      )}
+
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <InfoCard
@@ -371,7 +397,7 @@ export default function SystemDetail() {
             </span>
           )}
         </div>
-        <UpdatesTable updates={updates} systemId={systemId} />
+        <UpdatesTable updates={updates} systemId={systemId} busy={upgrading || checking} />
       </div>
 
       {/* History */}

@@ -6,6 +6,23 @@ import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import * as cacheService from "./cache-service";
 import * as systemService from "./system-service";
 
+// Active operation tracking (visible to the API)
+export interface ActiveOperation {
+  type: "check" | "upgrade_all" | "upgrade_package";
+  startedAt: string;
+  packageName?: string;
+}
+
+const activeOperations = new Map<number, ActiveOperation>();
+
+export function getActiveOperation(systemId: number): ActiveOperation | null {
+  return activeOperations.get(systemId) ?? null;
+}
+
+export function getAllActiveOperations(): ReadonlyMap<number, ActiveOperation> {
+  return activeOperations;
+}
+
 // Per-system locks using a simple promise-based mutex
 const systemLocks = new Map<number, Promise<void>>();
 
@@ -181,13 +198,24 @@ async function checkUpdatesUnlocked(
 export async function checkUpdates(
   systemId: number
 ): Promise<ParsedUpdate[]> {
-  return withLock(systemId, () => checkUpdatesUnlocked(systemId));
+  return withLock(systemId, async () => {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    activeOperations.set(systemId, { type: "check", startedAt: now });
+    try {
+      return await checkUpdatesUnlocked(systemId);
+    } finally {
+      activeOperations.delete(systemId);
+    }
+  });
 }
 
 export async function applyUpgradeAll(
   systemId: number
 ): Promise<{ success: boolean; output: string }> {
   return withLock(systemId, async () => {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    activeOperations.set(systemId, { type: "upgrade_all", startedAt: now });
+    try {
     const system = systemService.getSystem(systemId);
     if (!system) {
       return { success: false, output: "System not found" };
@@ -235,7 +263,7 @@ export async function applyUpgradeAll(
         const { stdout, stderr, exitCode } = await sshManager.runCommand(
           conn,
           cmd,
-          600,
+          3600,
           sudoPassword
         );
 
@@ -278,6 +306,9 @@ export async function applyUpgradeAll(
     } finally {
       if (conn) sshManager.disconnect(conn);
     }
+    } finally {
+      activeOperations.delete(systemId);
+    }
   });
 }
 
@@ -286,6 +317,9 @@ export async function applyUpgradePackage(
   packageName: string
 ): Promise<{ success: boolean; output: string }> {
   return withLock(systemId, async () => {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    activeOperations.set(systemId, { type: "upgrade_package", startedAt: now, packageName });
+    try {
     const system = systemService.getSystem(systemId);
     if (!system) {
       return { success: false, output: "System not found" };
@@ -353,6 +387,9 @@ export async function applyUpgradePackage(
       return { success: false, output: String(e) };
     } finally {
       if (conn) sshManager.disconnect(conn);
+    }
+    } finally {
+      activeOperations.delete(systemId);
     }
   });
 }

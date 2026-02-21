@@ -1,14 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiFetch } from "./client";
+import { apiFetch, pollJob } from "./client";
 
 export function useCheckUpdates() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (systemId: number) =>
-      apiFetch<{ status: string; updateCount: number }>(
+    mutationFn: async (systemId: number) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
         `/systems/${systemId}/check`,
         { method: "POST" }
-      ),
+      );
+      return pollJob<{ updateCount: number }>(jobId);
+    },
     onSuccess: async (_data, systemId) => {
       await qc.invalidateQueries({ queryKey: ["system", systemId] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
@@ -35,11 +37,13 @@ export function useCheckAll() {
 export function useUpgradeAll() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (systemId: number) =>
-      apiFetch<{ status: string; output: string }>(
+    mutationFn: async (systemId: number) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
         `/systems/${systemId}/upgrade`,
         { method: "POST" }
-      ),
+      );
+      return pollJob<{ status: string; output: string }>(jobId, 3000);
+    },
     onSuccess: async (_data, systemId) => {
       await qc.invalidateQueries({ queryKey: ["system", systemId] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
@@ -51,16 +55,19 @@ export function useUpgradeAll() {
 export function useUpgradePackage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       systemId,
       packageName,
     }: {
       systemId: number;
       packageName: string;
-    }) =>
-      apiFetch<{ status: string }>(`/systems/${systemId}/upgrade/${packageName}`, {
-        method: "POST",
-      }),
+    }) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
+        `/systems/${systemId}/upgrade/${packageName}`,
+        { method: "POST" }
+      );
+      return pollJob<{ status: string; package: string; output: string }>(jobId, 3000);
+    },
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
       await qc.invalidateQueries({ queryKey: ["systems"] });

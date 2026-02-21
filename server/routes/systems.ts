@@ -27,6 +27,7 @@ systems.get("/", (c) => {
   const systemsWithMeta = allSystems.map((s) => ({
     ...serializeSystem(s as Record<string, unknown>),
     cacheAge: cacheService.getCacheAge(s.id),
+    activeOperation: updateService.getActiveOperation(s.id),
   }));
   return c.json({ systems: systemsWithMeta });
 });
@@ -48,6 +49,7 @@ systems.get("/:id", (c) => {
       ...serializeSystem(system as Record<string, unknown>),
       cacheAge: cacheService.getCacheAge(id),
       isStale: cacheService.isCacheStale(id),
+      activeOperation: updateService.getActiveOperation(id),
     },
     updates,
     history,
