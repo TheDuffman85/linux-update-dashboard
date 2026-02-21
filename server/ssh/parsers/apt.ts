@@ -46,6 +46,14 @@ export const aptParser: PackageParser = {
     );
   },
 
+  getFullUpgradeAllCommand() {
+    return (
+      "export DEBIAN_FRONTEND=noninteractive; " +
+      sudo(`apt-get ${LOCK_WAIT} full-upgrade -y`) +
+      " 2>&1"
+    );
+  },
+
   getUpgradePackageCommand(pkg) {
     return (
       "export DEBIAN_FRONTEND=noninteractive; " +

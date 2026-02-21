@@ -17,6 +17,7 @@ export interface PackageParser {
   ): ParsedUpdate[];
   getCheckCommands(): string[];
   getUpgradeAllCommand(): string;
+  getFullUpgradeAllCommand(): string | null;
   getUpgradePackageCommand(pkg: string): string;
 }
 

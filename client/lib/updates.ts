@@ -52,6 +52,24 @@ export function useUpgradeAll() {
   });
 }
 
+export function useFullUpgradeAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (systemId: number) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
+        `/systems/${systemId}/full-upgrade`,
+        { method: "POST" }
+      );
+      return pollJob<{ status: string; output: string }>(jobId, 3000);
+    },
+    onSuccess: async (_data, systemId) => {
+      await qc.invalidateQueries({ queryKey: ["system", systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
 export function useUpgradePackage() {
   const qc = useQueryClient();
   return useMutation({

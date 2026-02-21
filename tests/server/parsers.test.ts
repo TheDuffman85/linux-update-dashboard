@@ -54,6 +54,13 @@ describe("AptParser", () => {
     expect(aptParser.getUpgradeAllCommand()).toContain("upgrade");
     expect(aptParser.getUpgradePackageCommand("curl")).toContain("curl");
   });
+
+  test("full upgrade command", () => {
+    const cmd = aptParser.getFullUpgradeAllCommand();
+    expect(cmd).not.toBeNull();
+    expect(cmd).toContain("full-upgrade");
+    expect(cmd).toContain("apt-get");
+  });
 });
 
 describe("DnfParser", () => {
@@ -95,6 +102,12 @@ describe("DnfParser", () => {
     const updates = dnfParser.parseCheckOutput("", "", 0);
     expect(updates).toHaveLength(0);
   });
+
+  test("full upgrade command", () => {
+    const cmd = dnfParser.getFullUpgradeAllCommand();
+    expect(cmd).not.toBeNull();
+    expect(cmd).toContain("distro-sync");
+  });
 });
 
 describe("YumParser", () => {
@@ -108,6 +121,10 @@ describe("YumParser", () => {
   test("yum commands", () => {
     expect(yumParser.getUpgradeAllCommand()).toContain("yum");
     expect(yumParser.getCheckCommands()[0]).toContain("yum");
+  });
+
+  test("no full upgrade command", () => {
+    expect(yumParser.getFullUpgradeAllCommand()).toBeNull();
   });
 });
 
@@ -134,6 +151,10 @@ describe("PacmanParser", () => {
     expect(cmds[0]).toContain("pacman -Sy");
     expect(cmds[1]).toContain("pacman -Qu");
   });
+
+  test("no full upgrade command", () => {
+    expect(pacmanParser.getFullUpgradeAllCommand()).toBeNull();
+  });
 });
 
 describe("FlatpakParser", () => {
@@ -148,6 +169,10 @@ describe("FlatpakParser", () => {
   test("empty", () => {
     const updates = flatpakParser.parseCheckOutput("", "", 0);
     expect(updates).toHaveLength(0);
+  });
+
+  test("no full upgrade command", () => {
+    expect(flatpakParser.getFullUpgradeAllCommand()).toBeNull();
   });
 });
 
@@ -172,5 +197,9 @@ describe("SnapParser", () => {
   test("empty", () => {
     const updates = snapParser.parseCheckOutput("", "", 0);
     expect(updates).toHaveLength(0);
+  });
+
+  test("no full upgrade command", () => {
+    expect(snapParser.getFullUpgradeAllCommand()).toBeNull();
   });
 });

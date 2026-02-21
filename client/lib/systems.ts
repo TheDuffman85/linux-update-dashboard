@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
 export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "upgrade_package";
+  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package";
   startedAt: string;
   packageName?: string;
 }
@@ -34,6 +34,7 @@ export interface System {
   cacheAge: string | null;
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
+  supportsFullUpgrade?: boolean;
 }
 
 export interface CachedUpdate {

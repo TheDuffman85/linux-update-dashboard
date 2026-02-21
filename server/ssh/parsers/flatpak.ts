@@ -38,6 +38,10 @@ export const flatpakParser: PackageParser = {
     return "flatpak update -y 2>&1";
   },
 
+  getFullUpgradeAllCommand() {
+    return null;
+  },
+
   getUpgradePackageCommand(pkg) {
     return `flatpak update -y ${pkg} 2>&1`;
   },

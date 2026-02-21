@@ -68,6 +68,19 @@ updates.post("/systems/:id/upgrade", async (c) => {
   return c.json({ status: "started", jobId });
 });
 
+// Full upgrade all packages on a system (async)
+updates.post("/systems/:id/full-upgrade", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const jobId = startJob(async () => {
+    const result = await updateService.applyFullUpgradeAll(id);
+    return {
+      status: result.success ? "success" : "failed",
+      output: result.output,
+    };
+  });
+  return c.json({ status: "started", jobId });
+});
+
 // Upgrade single package (async)
 updates.post("/systems/:id/upgrade/:packageName", async (c) => {
   const id = parseInt(c.req.param("id"), 10);

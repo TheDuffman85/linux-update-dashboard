@@ -8,7 +8,7 @@ import * as systemService from "./system-service";
 
 // Active operation tracking (visible to the API)
 export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "upgrade_package";
+  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package";
   startedAt: string;
   packageName?: string;
 }
@@ -295,6 +295,116 @@ export async function applyUpgradeAll(
       logHistory(
         systemId,
         "upgrade_all",
+        pkgManagers.join(","),
+        "failed",
+        {
+          command: allCommands.join(" && "),
+          error: String(e),
+        }
+      );
+      return { success: false, output: String(e) };
+    } finally {
+      if (conn) sshManager.disconnect(conn);
+    }
+    } finally {
+      activeOperations.delete(systemId);
+    }
+  });
+}
+
+export function supportsFullUpgrade(systemId: number): boolean {
+  const system = systemService.getSystem(systemId);
+  if (!system) return false;
+  const pkgManagers = systemService.getActivePkgManagers(system);
+  return pkgManagers.some((pmName) => {
+    const parser = getParser(pmName);
+    return parser?.getFullUpgradeAllCommand() != null;
+  });
+}
+
+export async function applyFullUpgradeAll(
+  systemId: number
+): Promise<{ success: boolean; output: string }> {
+  return withLock(systemId, async () => {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    activeOperations.set(systemId, { type: "full_upgrade_all", startedAt: now });
+    try {
+    const system = systemService.getSystem(systemId);
+    if (!system) {
+      return { success: false, output: "System not found" };
+    }
+
+    const db = getDb();
+    const cachedManagers = db
+      .selectDistinct({ pkgManager: updateCache.pkgManager })
+      .from(updateCache)
+      .where(eq(updateCache.systemId, systemId))
+      .all()
+      .map((r) => r.pkgManager);
+
+    const pkgManagers =
+      cachedManagers.length > 0
+        ? cachedManagers
+        : system.pkgManager
+          ? [system.pkgManager]
+          : [];
+
+    if (!pkgManagers.length) {
+      return { success: false, output: "No package manager detected" };
+    }
+
+    const allCommands: string[] = [];
+    const allOutputs: string[] = [];
+    let overallSuccess = true;
+
+    const sshManager = getSSHManager();
+    const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
+    let conn;
+    try {
+      conn = await sshManager.connect(system as Record<string, unknown>);
+
+      for (const pmName of pkgManagers) {
+        const parser = getParser(pmName);
+        if (!parser) continue;
+
+        const cmd = parser.getFullUpgradeAllCommand() ?? parser.getUpgradeAllCommand();
+        allCommands.push(cmd);
+        logHistory(systemId, "full_upgrade_all", pmName, "started", { command: cmd });
+
+        const { stdout, stderr, exitCode } = await sshManager.runCommand(
+          conn,
+          cmd,
+          3600,
+          sudoPassword
+        );
+
+        const success = exitCode === 0;
+        if (!success) overallSuccess = false;
+        allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
+
+        logHistory(
+          systemId,
+          "full_upgrade_all",
+          pmName,
+          success ? "success" : "failed",
+          {
+            command: cmd,
+            output: stdout.slice(0, 5000),
+            error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          }
+        );
+      }
+
+      sshManager.disconnect(conn);
+      conn = null;
+      await checkUpdatesUnlocked(systemId);
+
+      const combinedOutput = allOutputs.join("\n\n");
+      return { success: overallSuccess, output: combinedOutput };
+    } catch (e) {
+      logHistory(
+        systemId,
+        "full_upgrade_all",
         pkgManagers.join(","),
         "failed",
         {

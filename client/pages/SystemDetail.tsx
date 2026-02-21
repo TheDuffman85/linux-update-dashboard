@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
@@ -187,7 +187,9 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
                     ? "Checked for updates"
                     : h.action === "upgrade_all"
                       ? "Upgraded all packages"
-                      : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
+                      : h.action === "full_upgrade_all"
+                        ? "Full upgraded all packages"
+                        : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
                 </p>
                 {h.packageCount !== null && h.action === "check" && (
                   <p className="text-xs text-slate-500">
@@ -240,14 +242,29 @@ export default function SystemDetail() {
   const systemId = parseInt(id!, 10);
   const { data, isLoading } = useSystem(systemId);
   const checkUpdates = useCheckUpdates();
-  const { upgradeAll, isUpgrading } = useUpgrade();
+  const { upgradeAll, fullUpgradeAll, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
+  const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
+  const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowUpgradeDropdown(false);
+      }
+    }
+    if (showUpgradeDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showUpgradeDropdown]);
 
   // Combine client-side mutation state with server-side active operation
   const activeOp = data?.system?.activeOperation;
   const checking = checkUpdates.isPending || activeOp?.type === "check";
-  const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "upgrade_package";
+  const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "full_upgrade_all" || activeOp?.type === "upgrade_package";
 
   if (isLoading || !data) {
     return (
@@ -284,6 +301,18 @@ export default function SystemDetail() {
     });
   };
 
+  const handleFullUpgradeAll = () => {
+    setShowFullUpgradeConfirm(false);
+    fullUpgradeAll(systemId, {
+      onSuccess: (d: any) =>
+        addToast(
+          d.status === "success" ? "Full upgrade complete" : "Full upgrade failed",
+          d.status === "success" ? "success" : "danger"
+        ),
+      onError: (err: Error) => addToast(err.message, "danger"),
+    });
+  };
+
   return (
     <Layout
       title={system.name}
@@ -311,20 +340,63 @@ export default function SystemDetail() {
             ) : "Refresh"}
           </button>
           {(system.updateCount > 0 || upgrading) && (
-            <button
-              onClick={() => setShowUpgradeConfirm(true)}
-              disabled={upgrading || checking}
-              className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
-            >
-              {upgrading ? (
-                <span className="flex items-center gap-1.5">
-                  <span className="spinner spinner-sm" />
-                  Upgrading...
-                </span>
-              ) : (
-                `Upgrade All (${system.updateCount})`
-              )}
-            </button>
+            system.supportsFullUpgrade ? (
+              <div className="relative" ref={dropdownRef}>
+                <div className="flex">
+                  <button
+                    onClick={() => setShowUpgradeConfirm(true)}
+                    disabled={upgrading || checking}
+                    className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {upgrading ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="spinner spinner-sm" />
+                        Upgrading...
+                      </span>
+                    ) : (
+                      `Upgrade All (${system.updateCount})`
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowUpgradeDropdown((v) => !v)}
+                    disabled={upgrading || checking}
+                    className="px-1.5 py-1.5 text-sm rounded-r-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 border-l border-blue-500"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </div>
+                {showUpgradeDropdown && (
+                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-border rounded-lg shadow-lg z-10">
+                    <button
+                      onClick={() => {
+                        setShowUpgradeDropdown(false);
+                        setShowFullUpgradeConfirm(true);
+                      }}
+                      className="w-full px-3 py-2 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                    >
+                      Full Upgrade
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowUpgradeConfirm(true)}
+                disabled={upgrading || checking}
+                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {upgrading ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="spinner spinner-sm" />
+                    Upgrading...
+                  </span>
+                ) : (
+                  `Upgrade All (${system.updateCount})`
+                )}
+              </button>
+            )
           )}
         </div>
       }
@@ -337,7 +409,9 @@ export default function SystemDetail() {
             ? "Checking for updates..."
             : activeOp.type === "upgrade_all"
               ? "Upgrading all packages..."
-              : `Upgrading ${activeOp.packageName}...`}
+              : activeOp.type === "full_upgrade_all"
+                ? "Full upgrading all packages..."
+                : `Upgrading ${activeOp.packageName}...`}
           <span className="text-xs text-blue-500 dark:text-blue-400 ml-auto">
             started {formatTimeAgo(activeOp.startedAt)}
           </span>
@@ -418,6 +492,16 @@ export default function SystemDetail() {
         title="Upgrade All Packages"
         message={`Apply all ${system.updateCount} updates to ${system.name}?`}
         confirmLabel="Upgrade All"
+        loading={upgrading}
+      />
+      <ConfirmDialog
+        open={showFullUpgradeConfirm}
+        onClose={() => setShowFullUpgradeConfirm(false)}
+        onConfirm={handleFullUpgradeAll}
+        title="Full Upgrade All Packages"
+        message={`Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`}
+        confirmLabel="Full Upgrade"
+        danger
         loading={upgrading}
       />
     </Layout>

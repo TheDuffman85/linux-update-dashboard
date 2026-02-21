@@ -37,6 +37,10 @@ export const snapParser: PackageParser = {
     return sudo("snap refresh") + " 2>&1";
   },
 
+  getFullUpgradeAllCommand() {
+    return null;
+  },
+
   getUpgradePackageCommand(pkg) {
     return sudo(`snap refresh ${pkg}`) + " 2>&1";
   },

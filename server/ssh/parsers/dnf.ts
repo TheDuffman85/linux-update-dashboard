@@ -55,6 +55,10 @@ export const dnfParser: PackageParser = {
     return sudo("dnf upgrade -y") + " 2>&1";
   },
 
+  getFullUpgradeAllCommand() {
+    return sudo("dnf distro-sync -y") + " 2>&1";
+  },
+
   getUpgradePackageCommand(pkg) {
     return sudo(`dnf upgrade -y ${pkg}`) + " 2>&1";
   },

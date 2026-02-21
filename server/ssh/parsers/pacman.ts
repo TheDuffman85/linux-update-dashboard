@@ -39,6 +39,10 @@ export const pacmanParser: PackageParser = {
     return sudo("pacman -Syu --noconfirm") + " 2>&1";
   },
 
+  getFullUpgradeAllCommand() {
+    return null;
+  },
+
   getUpgradePackageCommand(pkg) {
     return sudo(`pacman -S --noconfirm ${pkg}`) + " 2>&1";
   },

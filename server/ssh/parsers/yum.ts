@@ -19,6 +19,10 @@ export const yumParser: PackageParser = {
     return sudo("yum update -y") + " 2>&1";
   },
 
+  getFullUpgradeAllCommand() {
+    return null;
+  },
+
   getUpgradePackageCommand(pkg) {
     return sudo(`yum update -y ${pkg}`) + " 2>&1";
   },

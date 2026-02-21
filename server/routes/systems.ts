@@ -50,6 +50,7 @@ systems.get("/:id", (c) => {
       cacheAge: cacheService.getCacheAge(id),
       isStale: cacheService.isCacheStale(id),
       activeOperation: updateService.getActiveOperation(id),
+      supportsFullUpgrade: updateService.supportsFullUpgrade(id),
     },
     updates,
     history,

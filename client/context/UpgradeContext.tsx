@@ -5,10 +5,10 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { useUpgradeAll, useUpgradePackage } from "../lib/updates";
+import { useUpgradeAll, useFullUpgradeAll, useUpgradePackage } from "../lib/updates";
 
 interface UpgradeEntry {
-  type: "all" | "package";
+  type: "all" | "full_all" | "package";
   packageName?: string;
 }
 
@@ -20,6 +20,7 @@ interface UpgradeCallbacks {
 interface UpgradeContextType {
   upgradingSystems: Map<number, UpgradeEntry>;
   upgradeAll: (systemId: number, callbacks?: UpgradeCallbacks) => void;
+  fullUpgradeAll: (systemId: number, callbacks?: UpgradeCallbacks) => void;
   upgradePackage: (
     systemId: number,
     packageName: string,
@@ -37,6 +38,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
   >(new Map());
 
   const upgradeAllMutation = useUpgradeAll();
+  const fullUpgradeAllMutation = useFullUpgradeAll();
   const upgradePackageMutation = useUpgradePackage();
 
   const addUpgrading = useCallback(
@@ -71,6 +73,23 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
     [upgradeAllMutation, addUpgrading, removeUpgrading]
   );
 
+  const fullUpgradeAll = useCallback(
+    (systemId: number, callbacks?: UpgradeCallbacks) => {
+      addUpgrading(systemId, { type: "full_all" });
+      fullUpgradeAllMutation.mutate(systemId, {
+        onSuccess: (data) => {
+          removeUpgrading(systemId);
+          callbacks?.onSuccess?.(data);
+        },
+        onError: (err) => {
+          removeUpgrading(systemId);
+          callbacks?.onError?.(err);
+        },
+      });
+    },
+    [fullUpgradeAllMutation, addUpgrading, removeUpgrading]
+  );
+
   const upgradePackage = useCallback(
     (systemId: number, packageName: string, callbacks?: UpgradeCallbacks) => {
       addUpgrading(systemId, { type: "package", packageName });
@@ -101,6 +120,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
       value={{
         upgradingSystems,
         upgradeAll,
+        fullUpgradeAll,
         upgradePackage,
         isUpgrading,
         upgradingCount: upgradingSystems.size,
