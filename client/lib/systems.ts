@@ -91,9 +91,9 @@ export function useCreateSystem() {
       sudoPassword?: string;
       disabledPkgManagers?: string[];
     }) => apiFetch<{ id: number }>("/systems", { method: "POST", body: JSON.stringify(data) }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["systems"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
@@ -114,9 +114,9 @@ export function useUpdateSystem() {
       sudoPassword?: string;
       disabledPkgManagers?: string[];
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["systems"] });
-      qc.invalidateQueries({ queryKey: ["system", vars.id] });
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["system", vars.id] });
     },
   });
 }
@@ -126,9 +126,9 @@ export function useDeleteSystem() {
   return useMutation({
     mutationFn: (id: number) =>
       apiFetch(`/systems/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["systems"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

@@ -9,10 +9,10 @@ export function useCheckUpdates() {
         `/systems/${systemId}/check`,
         { method: "POST" }
       ),
-    onSuccess: (_data, systemId) => {
-      qc.invalidateQueries({ queryKey: ["system", systemId] });
-      qc.invalidateQueries({ queryKey: ["systems"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSuccess: async (_data, systemId) => {
+      await qc.invalidateQueries({ queryKey: ["system", systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
@@ -40,10 +40,10 @@ export function useUpgradeAll() {
         `/systems/${systemId}/upgrade`,
         { method: "POST" }
       ),
-    onSuccess: (_data, systemId) => {
-      qc.invalidateQueries({ queryKey: ["system", systemId] });
-      qc.invalidateQueries({ queryKey: ["systems"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSuccess: async (_data, systemId) => {
+      await qc.invalidateQueries({ queryKey: ["system", systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
@@ -61,9 +61,9 @@ export function useUpgradePackage() {
       apiFetch<{ status: string }>(`/systems/${systemId}/upgrade/${packageName}`, {
         method: "POST",
       }),
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
-      qc.invalidateQueries({ queryKey: ["systems"] });
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
     },
   });
 }
@@ -78,9 +78,9 @@ export function useRefreshCache() {
       await new Promise((resolve) => setTimeout(resolve, 5000));
       return result;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["systems"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
