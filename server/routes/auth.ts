@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { eq, count as countFn } from "drizzle-orm";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { getDb } from "../db";
@@ -13,6 +14,36 @@ import {
 import * as wa from "../auth/webauthn";
 import * as oidc from "../auth/oidc";
 import { config } from "../config";
+
+/** Derive WebAuthn origin and rpId from the incoming request headers. */
+function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
+  // Prefer the Origin header (present on POST requests)
+  const originHeader = c.req.header("origin");
+  if (originHeader) {
+    try {
+      const url = new URL(originHeader);
+      return { origin: url.origin, rpId: url.hostname };
+    } catch { /* fall through */ }
+  }
+
+  // Construct from forwarded / host headers (reverse-proxy setups)
+  const host = c.req.header("x-forwarded-host") || c.req.header("host");
+  const proto = c.req.header("x-forwarded-proto") || "https";
+  if (host) {
+    try {
+      const url = new URL(`${proto}://${host}`);
+      return { origin: url.origin, rpId: url.hostname };
+    } catch { /* fall through */ }
+  }
+
+  // Fall back to configured base URL
+  try {
+    const url = new URL(config.baseUrl);
+    return { origin: url.origin, rpId: url.hostname };
+  } catch {
+    return { origin: "http://localhost:3001", rpId: "localhost" };
+  }
+}
 
 const auth = new Hono();
 
@@ -117,10 +148,12 @@ auth.post("/webauthn/register/options", async (c) => {
     .where(eq(webauthnCredentials.userId, session.userId))
     .all();
 
+  const { rpId } = getWebAuthnParams(c);
   const options = await wa.getRegistrationOptions(
     session.userId,
     session.username,
-    existing
+    existing,
+    rpId
   );
 
   setCookie(c, "webauthn_challenge", options.challenge, {
@@ -144,10 +177,12 @@ auth.post("/webauthn/register/verify", async (c) => {
   }
 
   try {
+    const { origin, rpId } = getWebAuthnParams(c);
     const verification = await wa.verifyRegistration(
       body,
       challenge,
-      config.baseUrl
+      origin,
+      rpId
     );
 
     if (!verification.verified || !verification.registrationInfo) {
@@ -194,7 +229,8 @@ auth.post("/webauthn/login/options", async (c) => {
     }
   }
 
-  const options = await wa.getAuthenticationOptions(credentials);
+  const { rpId } = getWebAuthnParams(c);
+  const options = await wa.getAuthenticationOptions(credentials, rpId);
 
   setCookie(c, "webauthn_challenge", options.challenge, {
     httpOnly: true,
@@ -242,10 +278,12 @@ auth.post("/webauthn/login/verify", async (c) => {
   }
 
   try {
+    const { origin, rpId } = getWebAuthnParams(c);
     const verification = await wa.verifyAuthentication(
       body,
       challenge,
-      config.baseUrl,
+      origin,
+      rpId,
       {
         credentialId: credRow.credentialId,
         publicKey: credRow.publicKey,

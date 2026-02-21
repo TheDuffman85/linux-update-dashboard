@@ -7,7 +7,6 @@ import { settings } from "./db/schema";
 import { initEncryptor, getEncryptor } from "./security";
 import { initSSHManager } from "./ssh/connection";
 import { initSession } from "./auth/session";
-import { setRpId } from "./auth/webauthn";
 import { configureOidc } from "./auth/oidc";
 import * as scheduler from "./services/scheduler";
 import { createApp } from "./app";
@@ -24,14 +23,6 @@ initEncryptor(config.encryptionKey);
 
 console.log("Initializing session management...");
 initSession(config.secretKey);
-
-// Set WebAuthn RP ID from base URL
-try {
-  const url = new URL(config.baseUrl);
-  setRpId(url.hostname);
-} catch {
-  // Keep default "localhost"
-}
 
 console.log("Initializing SSH connection manager...");
 initSSHManager(

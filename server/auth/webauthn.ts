@@ -7,21 +7,13 @@ import {
   type VerifiedAuthenticationResponse,
 } from "@simplewebauthn/server";
 
-let rpID = "localhost";
 const rpName = "Linux Update Dashboard";
-
-export function setRpId(id: string): void {
-  rpID = id;
-}
-
-export function getRpId(): string {
-  return rpID;
-}
 
 export async function getRegistrationOptions(
   userId: number,
   username: string,
-  existingCredentials: Array<{ credentialId: string }>
+  existingCredentials: Array<{ credentialId: string }>,
+  rpID: string
 ) {
   const excludeCredentials = existingCredentials.map((cred) => ({
     id: cred.credentialId,
@@ -44,7 +36,8 @@ export async function getRegistrationOptions(
 export async function verifyRegistration(
   credential: unknown,
   expectedChallenge: string,
-  expectedOrigin: string
+  expectedOrigin: string,
+  rpID: string
 ): Promise<VerifiedRegistrationResponse> {
   return verifyRegistrationResponse({
     response: credential as Parameters<
@@ -57,7 +50,8 @@ export async function verifyRegistration(
 }
 
 export async function getAuthenticationOptions(
-  credentials: Array<{ credentialId: string }>
+  credentials: Array<{ credentialId: string }>,
+  rpID: string
 ) {
   const allowCredentials = credentials.map((cred) => ({
     id: cred.credentialId,
@@ -74,6 +68,7 @@ export async function verifyAuthentication(
   credential: unknown,
   expectedChallenge: string,
   expectedOrigin: string,
+  rpID: string,
   storedCredential: {
     credentialId: string;
     publicKey: string;
