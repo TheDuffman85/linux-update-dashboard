@@ -17,6 +17,13 @@ export const aptParser: PackageParser = {
     ];
   },
 
+  getCheckCommandLabels() {
+    return [
+      "Fetching package lists…",
+      "Listing available updates…",
+    ];
+  },
+
   parseCheckOutput(stdout, _stderr, _exitCode) {
     const updates: ParsedUpdate[] = [];
     for (const raw of stdout.trim().split("\n")) {

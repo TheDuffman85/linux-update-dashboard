@@ -90,6 +90,7 @@ if [ "$MODE" == "dev" ]; then
     done
 else
     log "Starting in PRODUCTION mode..."
+    export NODE_ENV=production
 
     # Build
     log "Building application..."

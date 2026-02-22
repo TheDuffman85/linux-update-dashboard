@@ -96,7 +96,8 @@ export class SSHConnectionManager {
     conn: Client,
     command: string,
     timeout?: number,
-    sudoPassword?: string
+    sudoPassword?: string,
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void
   ): Promise<CommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const fullCommand = PATH_PREFIX + command;
@@ -121,10 +122,14 @@ export class SSHConnectionManager {
         let stderr = "";
 
         stream.on("data", (data: Buffer) => {
-          stdout += data.toString();
+          const text = data.toString();
+          stdout += text;
+          onData?.(text, "stdout");
         });
         stream.stderr.on("data", (data: Buffer) => {
-          stderr += data.toString();
+          const text = data.toString();
+          stderr += text;
+          onData?.(text, "stderr");
         });
         stream.on("close", (code: number | null) => {
           clearTimeout(timer);

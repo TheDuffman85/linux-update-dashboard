@@ -26,7 +26,7 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="p-4 border-b border-border">
+        <div className="p-4">
           <div className="flex items-center gap-2">
             <PenguinLogo size={28} />
             <span className="font-semibold text-sm">Linux Update Dashboard</span>

@@ -16,6 +16,8 @@ export interface PackageParser {
     exitCode: number
   ): ParsedUpdate[];
   getCheckCommands(): string[];
+  /** Human-readable label for each check command step, shown in live output. */
+  getCheckCommandLabels?(): string[];
   getUpgradeAllCommand(): string;
   getFullUpgradeAllCommand(): string | null;
   getUpgradePackageCommand(pkg: string): string;

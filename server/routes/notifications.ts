@@ -158,7 +158,44 @@ notificationsRouter.delete("/:id", (c) => {
   return c.json({ ok: true });
 });
 
-// Test notification
+// Test notification config inline (no saved notification required)
+notificationsRouter.post("/test", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  const { type, config, name } = body;
+
+  if (!VALID_TYPES.includes(type)) {
+    return c.json({ error: `type must be one of: ${VALID_TYPES.join(", ")}` }, 400);
+  }
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return c.json({ error: "config must be an object" }, 400);
+  }
+
+  // Validate name if provided
+  if (name !== undefined && (typeof name !== "string" || name.length > MAX_NAME_LENGTH)) {
+    return c.json({ error: "name must be a string of 1-100 characters" }, 400);
+  }
+
+  // Ensure all config values are strings with bounded length
+  const MAX_CONFIG_VALUE_LENGTH = 1000;
+  for (const [key, val] of Object.entries(config)) {
+    if (typeof val !== "string" || val.length > MAX_CONFIG_VALUE_LENGTH) {
+      return c.json({ error: `config.${key} must be a string (max ${MAX_CONFIG_VALUE_LENGTH} chars)` }, 400);
+    }
+  }
+
+  try {
+    const result = await notificationService.testNotificationConfig(type, config, name);
+    return c.json(result);
+  } catch {
+    return c.json({ success: false, error: "Internal error while sending test notification" }, 500);
+  }
+});
+
+// Test saved notification by ID
 notificationsRouter.post("/:id/test", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid ID" }, 400);

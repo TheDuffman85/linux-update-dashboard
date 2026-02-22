@@ -89,3 +89,13 @@ export function useTestNotification() {
       ),
   });
 }
+
+export function useTestNotificationConfig() {
+  return useMutation({
+    mutationFn: (data: { type: string; config: Record<string, string>; name?: string }) =>
+      apiFetch<{ success: boolean; error?: string }>(
+        `/notifications/test`,
+        { method: "POST", body: JSON.stringify(data) }
+      ),
+  });
+}

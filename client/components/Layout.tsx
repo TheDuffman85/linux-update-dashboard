@@ -16,7 +16,7 @@ export function Layout({ children, title, actions }: {
   return (
     <div className="flex min-h-screen">
       <Sidebar open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
-      <main className="flex-1 ml-0 md:ml-60 min-w-0 overflow-x-hidden">
+      <main className="flex-1 ml-0 md:ml-60 min-w-0">
         {/* Desktop: single-row header */}
         <header className="sticky top-0 z-10 bg-white/80 dark:bg-slate-800/80 backdrop-blur border-b border-border px-4 md:px-6 py-3">
           <div className="flex items-center flex-wrap gap-x-3 gap-y-2">
@@ -43,7 +43,7 @@ export function Layout({ children, title, actions }: {
             {actions && <div className="flex items-center gap-2 flex-wrap ml-auto shrink-0">{actions}</div>}
           </div>
         </header>
-        <div className="p-4 md:p-6 max-w-[1200px]">{children}</div>
+        <div className="p-4 md:p-6 max-w-[1200px] overflow-x-hidden">{children}</div>
       </main>
 
       {/* Toast container */}

@@ -149,16 +149,24 @@ export async function testNotification(id: number): Promise<{ success: boolean; 
   const row = db.select().from(notifications).where(eq(notifications.id, id)).get();
   if (!row) return { success: false, error: "Notification not found" };
 
-  const provider = getProvider(row.type);
-  if (!provider) return { success: false, error: `Unknown provider: ${row.type}` };
-
   const config = parseConfig(row.config);
+  return testNotificationConfig(row.type, config, row.name);
+}
+
+export async function testNotificationConfig(
+  type: string,
+  config: Record<string, string>,
+  name?: string,
+): Promise<{ success: boolean; error?: string }> {
+  const provider = getProvider(type);
+  if (!provider) return { success: false, error: `Unknown provider: ${type}` };
+
   const configError = provider.validateConfig(config);
   if (configError) return { success: false, error: configError };
 
   const payload: NotificationPayload = {
     title: "Test Notification",
-    body: `This is a test notification from Linux Update Dashboard.\nChannel: ${row.name}`,
+    body: `This is a test notification from Linux Update Dashboard.${name ? `\nChannel: ${name}` : ""}`,
     priority: "default",
     tags: ["white_check_mark"],
   };

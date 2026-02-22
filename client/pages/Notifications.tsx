@@ -8,6 +8,7 @@ import {
   useUpdateNotification,
   useDeleteNotification,
   useTestNotification,
+  useTestNotificationConfig,
   type NotificationChannel,
 } from "../lib/notifications";
 import { useSystems } from "../lib/systems";
@@ -30,13 +31,19 @@ function NotificationForm({
   onSubmit,
   onCancel,
   loading,
+  onTest,
+  testLoading,
 }: {
   initial?: NotificationChannel;
   onSubmit: (data: any) => void;
   onCancel: () => void;
   loading: boolean;
+  onTest?: () => void;
+  testLoading?: boolean;
 }) {
   const { data: systemsList } = useSystems();
+  const testConfig = useTestNotificationConfig();
+  const { addToast } = useToast();
   const [name, setName] = useState(initial?.name || "");
   const [type, setType] = useState(initial?.type || "email");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
@@ -85,35 +92,50 @@ function NotificationForm({
     );
   };
 
+  const buildConfig = (): Record<string, string> =>
+    type === "email"
+      ? {
+          smtpHost,
+          smtpPort,
+          smtpSecure: smtpSecure ? "true" : "false",
+          smtpUser,
+          smtpPassword,
+          smtpFrom,
+          emailTo,
+        }
+      : {
+          ntfyUrl,
+          ntfyTopic,
+          ntfyToken,
+          ntfyPriority,
+        };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    const config: Record<string, string> =
-      type === "email"
-        ? {
-            smtpHost,
-            smtpPort,
-            smtpSecure: smtpSecure ? "true" : "false",
-            smtpUser,
-            smtpPassword,
-            smtpFrom,
-            emailTo,
-          }
-        : {
-            ntfyUrl,
-            ntfyTopic,
-            ntfyToken,
-            ntfyPriority,
-          };
-
     onSubmit({
       name,
       type,
       enabled,
       notifyOn,
       systemIds: allSystems ? null : selectedSystemIds,
-      config,
+      config: buildConfig(),
     });
+  };
+
+  const handleInlineTest = () => {
+    testConfig.mutate(
+      { type, config: buildConfig(), name: name || undefined },
+      {
+        onSuccess: (data) => {
+          if (data.success) {
+            addToast("Test notification sent", "success");
+          } else {
+            addToast(`Test failed: ${data.error}`, "danger");
+          }
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      }
+    );
   };
 
   return (
@@ -359,6 +381,19 @@ function NotificationForm({
 
       {/* Actions */}
       <div className="flex justify-end gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onTest ?? handleInlineTest}
+          disabled={onTest ? testLoading : testConfig.isPending}
+          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 mr-auto"
+          title="Send test notification"
+        >
+          {(onTest ? testLoading : testConfig.isPending) ? (
+            <span className="spinner spinner-sm" />
+          ) : (
+            "Send Test"
+          )}
+        </button>
         <button
           type="button"
           onClick={onCancel}
@@ -635,6 +670,8 @@ export default function Notifications() {
             onSubmit={handleUpdate}
             onCancel={() => setEditChannel(null)}
             loading={updateNotification.isPending}
+            onTest={() => handleTest(editChannel.id)}
+            testLoading={testNotification.isPending}
           />
         )}
       </Modal>

@@ -41,6 +41,45 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Real-time status:** see which systems are online, up to date, or need attention at a glance
 - **Docker ready:** multi-stage Dockerfile with a persistent volume for production
 
+## Screenshots
+
+### Dashboard
+Overview of all systems with summary stats and color-coded update status at a glance.
+
+![Dashboard](screenshots/screenshot-1.png)
+
+### Systems List
+Manage all connected servers with status, update counts, and quick actions.
+
+![Systems List](screenshots/screenshot-2.1.png)
+
+### Add System
+Add a new server via SSH with password or key-based authentication.
+
+![Add System](screenshots/screenshot-2.2.png)
+
+### System Detail
+Detailed view of a single system showing connection info, OS details, resource usage, available packages, and upgrade history.
+
+![System Detail](screenshots/screenshot-2.3.png)
+
+### Activity Log
+Expandable history entries with the executed command and its full output.
+
+![Activity Log](screenshots/screenshot-3.png)
+
+### Notifications
+Configure notification channels (Email/SMTP, ntfy.sh) with per-event and per-system filtering.
+
+![Notifications](screenshots/screenshot-4.png)
+
+![Add Notification](screenshots/screenshot-5.png)
+
+### Settings
+Configure update schedules, SSH timeouts, and OIDC single sign-on.
+
+![Settings](screenshots/screenshot-6.png)
+
 ## Quick Start
 
 ### Prerequisites

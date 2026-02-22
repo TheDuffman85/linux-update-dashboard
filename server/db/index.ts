@@ -191,6 +191,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     // Column already exists
   }
 
+  // Cleanup: mark any orphaned "started" history rows as failed (from previous crashes/restarts)
+  _db.run(sql`UPDATE update_history SET status = 'failed', completed_at = datetime('now'),
+    error = 'Server restarted while operation was in progress'
+    WHERE status = 'started'`);
+
   // Cleanup: remove obsolete settings
   _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap')`);
 

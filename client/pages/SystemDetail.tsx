@@ -3,11 +3,14 @@ import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSystem } from "../lib/systems";
 import { useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
-import type { CachedUpdate, HistoryEntry } from "../lib/systems";
+import { useCommandOutput } from "../hooks/useCommandOutput";
+import type { WsMessage } from "../hooks/useCommandOutput";
+import type { CachedUpdate, HistoryEntry, ActiveOperation } from "../lib/systems";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -121,8 +124,86 @@ function formatTimeAgo(dateStr: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function HistoryList({ history }: { history: HistoryEntry[] }) {
+function LiveOutput({ messages, isActive }: { messages: WsMessage[]; isActive: boolean }) {
+  const containerRef = useRef<HTMLPreElement>(null);
+  const isScrolledToBottom = useRef(true);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    isScrolledToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+  };
+
+  useEffect(() => {
+    if (isScrolledToBottom.current && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 font-semibold">Output</p>
+        {isActive && (
+          <span className="flex items-center gap-1 text-[10px] text-green-500">
+            <span className="spinner spinner-sm !w-2.5 !h-2.5" />
+            live
+          </span>
+        )}
+      </div>
+      <pre
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+      >
+        {messages.length === 0 && (
+          <span className="text-slate-500 italic">Waiting for output…</span>
+        )}
+        {messages.map((msg, i) => {
+          switch (msg.type) {
+            case "started":
+              return null;
+            case "output":
+              return (
+                <span key={i} className={msg.stream === "stderr" ? "text-red-400" : undefined}>
+                  {msg.data}
+                </span>
+              );
+            case "phase":
+              return null;
+            case "done":
+              return null;
+            case "error":
+              return (
+                <span key={i} className="text-red-400">
+                  Error: {msg.message}
+                </span>
+              );
+            default:
+              return null;
+          }
+        })}
+      </pre>
+    </div>
+  );
+}
+
+function HistoryList({
+  history,
+  commandOutput,
+  activeOp,
+}: {
+  history: HistoryEntry[];
+  commandOutput: ReturnType<typeof useCommandOutput>;
+  activeOp: ActiveOperation | null | undefined;
+}) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  // Tracks whether we're waiting for the DB result of a check-type op (no "started" row).
+  // Using state (not ref) so that showSynthetic keeps the placeholder visible during the gap
+  // between WS "done" and the next poll returning the new history entry.
+  const [pendingExpand, setPendingExpand] = useState(false);
+  // Initialised to current top so we don't re-trigger on mount
+  const prevTopHistoryIdRef = useRef<number | undefined>(history[0]?.id);
 
   const toggle = useCallback((id: number) => {
     setExpanded((prev) => {
@@ -133,7 +214,54 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
     });
   }, []);
 
-  if (!history.length) {
+  // isLive: stay true until messages are cleared (new command starts)
+  const hasOutput = commandOutput.isActive || commandOutput.messages.length > 0;
+  // The in-progress DB entry (status "started") — appears quickly after polling kicks in
+  const startedEntry = hasOutput ? history.find((h) => h.status === "started") : undefined;
+  // Keep the synthetic visible while the command is active OR while waiting for the DB result
+  // to arrive (the gap between WS "done" and the next poll). This prevents the "vanish then
+  // reappear" flicker for check-type ops.
+  const showSynthetic = (commandOutput.isActive || pendingExpand) && !startedEntry;
+
+  // For upgrade-type ops: clear pendingExpand when the "started" DB entry appears.
+  useEffect(() => {
+    if (startedEntry) {
+      setPendingExpand(false);
+    }
+  }, [startedEntry?.id]);
+
+  // For check-type ops: set pendingExpand so showSynthetic stays true after "done" fires
+  // and until the new history entry arrives.
+  useEffect(() => {
+    if (commandOutput.isActive) {
+      setPendingExpand(true);
+    }
+  }, [commandOutput.isActive]);
+
+  // When the top history entry changes (new result landed), clear the pending flag.
+  const topHistoryId = history[0]?.id;
+  useEffect(() => {
+    if (!pendingExpand) return;
+    if (topHistoryId === prevTopHistoryIdRef.current) return;
+    prevTopHistoryIdRef.current = topHistoryId;
+    setPendingExpand(false);
+  }, [topHistoryId, pendingExpand]);
+
+  // Fallback label for the synthetic placeholder (before DB entry arrives)
+  const syntheticStartedMsg = commandOutput.messages
+    .find((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
+  const syntheticLabel = (() => {
+    if (activeOp) {
+      if (activeOp.type === "check") return "Checking for updates";
+      if (activeOp.type === "upgrade_all") return "Upgrading all packages";
+      if (activeOp.type === "full_upgrade_all") return "Full upgrading all packages";
+      return `Upgrading ${activeOp.packageName || "package"}`;
+    }
+    if (syntheticStartedMsg) return `Running ${syntheticStartedMsg.pkgManager} command`;
+    return "Running…";
+  })();
+
+  if (!hasOutput && !history.length) {
     return (
       <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
         No activity yet
@@ -143,8 +271,38 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
 
   return (
     <div className="space-y-1">
+      {/* Synthetic placeholder shown only during the brief polling lag before the DB entry appears */}
+      {showSynthetic && (
+        <div>
+          <div className="w-full flex items-start gap-3 text-sm px-2 py-2 rounded-lg text-left">
+            <svg
+              className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-400 rotate-90"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <Badge variant="muted" small>running</Badge>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium">{syntheticLabel}</p>
+            </div>
+          </div>
+          <div className="ml-10 mr-2 mb-2 space-y-2">
+            {syntheticStartedMsg?.command && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Command</p>
+                <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{syntheticStartedMsg.command}</pre>
+              </div>
+            )}
+            <LiveOutput messages={commandOutput.messages} isActive={commandOutput.isActive} />
+          </div>
+        </div>
+      )}
       {history.map((h) => {
-        const hasDetails = !!(h.command || h.output || h.error);
+        const isRunningEntry = h.id === startedEntry?.id;
+        // A running entry has the command set; treat it as expandable even without output/error yet
+        const hasDetails = !!(h.command || h.output || h.error) || isRunningEntry;
         const isOpen = expanded.has(h.id);
 
         return (
@@ -179,7 +337,7 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
                 }
                 small
               >
-                {h.status}
+                {isRunningEntry ? "running" : h.status}
               </Badge>
               <div className="flex-1 min-w-0">
                 <p className="font-medium">
@@ -215,17 +373,25 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
                     <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{h.command}</pre>
                   </div>
                 )}
-                {h.output && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Output</p>
-                    <pre className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">{h.output}</pre>
-                  </div>
-                )}
-                {h.error && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-red-500 mb-1 font-semibold">Error</p>
-                    <pre className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">{h.error}</pre>
-                  </div>
+                {isRunningEntry ? (
+                  <LiveOutput messages={commandOutput.messages} isActive={commandOutput.isActive} />
+                ) : (
+                  <>
+                    {(h.command || h.output) && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Output</p>
+                        <pre className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">
+                          {h.output || <span className="text-slate-500 italic">No output</span>}
+                        </pre>
+                      </div>
+                    )}
+                    {h.error && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-red-500 mb-1 font-semibold">Error</p>
+                        <pre className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">{h.error}</pre>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -248,6 +414,16 @@ export default function SystemDetail() {
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const commandOutput = useCommandOutput(systemId);
+  const qc = useQueryClient();
+
+  // When the WebSocket signals an active operation, kick the query into polling mode
+  // (refetchInterval only activates when activeOperation is already in cached data)
+  useEffect(() => {
+    if (commandOutput.isActive) {
+      qc.invalidateQueries({ queryKey: ["system", systemId] });
+    }
+  }, [commandOutput.isActive, systemId, qc]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -279,6 +455,7 @@ export default function SystemDetail() {
   const { system, updates, history } = data;
 
   const handleCheck = () => {
+    commandOutput.clear();
     checkUpdates.mutate(systemId, {
       onSuccess: (d) =>
         addToast(
@@ -374,7 +551,7 @@ export default function SystemDetail() {
                         setShowUpgradeDropdown(false);
                         setShowFullUpgradeConfirm(true);
                       }}
-                      className="w-full px-3 py-2 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                      className="w-full px-3 py-2 text-sm text-left text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
                     >
                       Full Upgrade
                     </button>
@@ -401,23 +578,6 @@ export default function SystemDetail() {
         </div>
       }
     >
-      {/* Active operation banner */}
-      {activeOp && (
-        <div className="flex items-center gap-2 px-4 py-2.5 mb-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-300">
-          <span className="spinner spinner-sm !w-3.5 !h-3.5" />
-          {activeOp.type === "check"
-            ? "Checking for updates..."
-            : activeOp.type === "upgrade_all"
-              ? "Upgrading all packages..."
-              : activeOp.type === "full_upgrade_all"
-                ? "Full upgrading all packages..."
-                : `Upgrading ${activeOp.packageName}...`}
-          <span className="text-xs text-blue-500 dark:text-blue-400 ml-auto">
-            started {formatTimeAgo(activeOp.startedAt)}
-          </span>
-        </div>
-      )}
-
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <InfoCard
@@ -471,16 +631,20 @@ export default function SystemDetail() {
             </span>
           )}
         </div>
-        <UpdatesTable updates={updates} systemId={systemId} busy={upgrading || checking} />
+        <UpdatesTable
+          updates={updates}
+          systemId={systemId}
+          busy={upgrading || checking}
+        />
       </div>
 
       {/* History */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-border">
         <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold">Recent Activity</h2>
+          <h2 className="text-sm font-semibold">Activity</h2>
         </div>
         <div className="p-4">
-          <HistoryList history={history} />
+          <HistoryList history={history} commandOutput={commandOutput} activeOp={activeOp} />
         </div>
       </div>
 

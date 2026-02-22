@@ -1,13 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { serveStatic } from "hono/bun";
+import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import { authMiddleware } from "./middleware/auth";
+import * as outputStream from "./services/output-stream";
 import authRoutes from "./routes/auth";
 import dashboardRoutes from "./routes/dashboard";
 import systemsRoutes from "./routes/systems";
 import updatesRoutes from "./routes/updates";
 import settingsRoutes from "./routes/settings";
 import notificationsRoutes from "./routes/notifications";
+
+export { websocket };
 
 export function createApp() {
   const app = new Hono();
@@ -33,6 +36,33 @@ export function createApp() {
   app.route("/api", updatesRoutes);
   app.route("/api/settings", settingsRoutes);
   app.route("/api/notifications", notificationsRoutes);
+
+  // WebSocket route for live command output streaming
+  // Auth is enforced by authMiddleware on the HTTP GET before upgrade.
+  app.get(
+    "/api/ws/systems/:id/output",
+    upgradeWebSocket((c) => {
+      const systemId = parseInt(c.req.param("id"), 10);
+
+      return {
+        onOpen(_evt, ws) {
+          if (isNaN(systemId)) {
+            ws.send(JSON.stringify({ type: "error", message: "Invalid system ID" }));
+            ws.close(4002, "Invalid system ID");
+            return;
+          }
+
+          outputStream.subscribe(systemId, ws);
+        },
+
+        onClose(_evt, ws) {
+          if (systemId) {
+            outputStream.unsubscribe(systemId, ws);
+          }
+        },
+      };
+    })
+  );
 
   // In production, serve built SPA files
   if (process.env.NODE_ENV === "production") {

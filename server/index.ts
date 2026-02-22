@@ -9,7 +9,7 @@ import { initSSHManager } from "./ssh/connection";
 import { initSession } from "./auth/session";
 import { configureOidc } from "./auth/oidc";
 import * as scheduler from "./services/scheduler";
-import { createApp } from "./app";
+import { createApp, websocket } from "./app";
 
 // Ensure data directory exists
 mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -65,6 +65,7 @@ const server = Bun.serve({
   fetch: app.fetch,
   hostname: config.host,
   port: config.port,
+  websocket,
 });
 
 // Graceful shutdown

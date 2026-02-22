@@ -5,6 +5,7 @@ import * as updateService from "../services/update-service";
 import { getSSHManager } from "../ssh/connection";
 import { getEncryptor } from "../security";
 import { detectPackageManagers } from "../ssh/detector";
+import * as outputStream from "../services/output-stream";
 
 const systems = new Hono();
 
@@ -104,6 +105,7 @@ systems.put("/:id", async (c) => {
 // Delete system
 systems.delete("/:id", (c) => {
   const id = parseInt(c.req.param("id"), 10);
+  outputStream.removeStream(id);
   systemService.deleteSystem(id);
   return c.json({ status: "ok" });
 });
