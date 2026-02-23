@@ -26,6 +26,7 @@ export interface System {
   cpuCores: string | null;
   memory: string | null;
   disk: string | null;
+  needsReboot: number;
   isReachable: number;
   lastSeenAt: string | null;
   createdAt: string;
@@ -107,6 +108,7 @@ export function useCreateSystem() {
       keyPassphrase?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      sourceSystemId?: number;
     }) => apiFetch<{ id: number }>("/systems", { method: "POST", body: JSON.stringify(data) }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["systems"] });

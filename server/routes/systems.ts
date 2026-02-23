@@ -73,6 +73,7 @@ systems.post("/", async (c) => {
     keyPassphrase: body.keyPassphrase || undefined,
     sudoPassword: body.sudoPassword || undefined,
     disabledPkgManagers: body.disabledPkgManagers || undefined,
+    sourceSystemId: body.sourceSystemId || undefined,
   });
 
   // Trigger initial check in background

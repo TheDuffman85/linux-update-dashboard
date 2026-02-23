@@ -55,6 +55,7 @@ export const systems = sqliteTable(
     cpuCores: text("cpu_cores"),
     memory: text("memory"),
     disk: text("disk"),
+    needsReboot: integer("needs_reboot").notNull().default(0),
     systemInfoUpdatedAt: text("system_info_updated_at"),
     isReachable: integer("is_reachable").notNull().default(0),
     lastSeenAt: text("last_seen_at"),
@@ -130,6 +131,9 @@ export const notifications = sqliteTable("notifications", {
     .default('["updates"]'),
   systemIds: text("system_ids"),
   config: text("config").notNull(),
+  schedule: text("schedule"),
+  pendingEvents: text("pending_events"),
+  lastSentAt: text("last_sent_at"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

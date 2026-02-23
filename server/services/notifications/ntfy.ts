@@ -77,7 +77,7 @@ export const ntfyProvider: NotificationProvider = {
 
     const headers: Record<string, string> = {
       "Title": payload.title,
-      "Priority": payload.priority || config.ntfyPriority || "default",
+      "Priority": payload.priority || "default",
     };
 
     if (payload.tags?.length) {

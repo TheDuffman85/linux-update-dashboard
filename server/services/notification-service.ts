@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, and, isNotNull } from "drizzle-orm";
 import { createHash } from "crypto";
+import { Cron } from "croner";
 import { getDb } from "../db";
 import { notifications, systems, updateCache } from "../db/schema";
 import { getProvider, type NotificationPayload } from "./notifications";
@@ -40,6 +41,10 @@ function encryptConfig(type: string, config: Record<string, string>): Record<str
   return encrypted;
 }
 
+function isScheduled(schedule: string | null): boolean {
+  return schedule !== null && schedule !== "immediate";
+}
+
 function serializeNotification(row: any) {
   return {
     id: row.id,
@@ -49,6 +54,8 @@ function serializeNotification(row: any) {
     notifyOn: JSON.parse(row.notifyOn || '["updates"]'),
     systemIds: row.systemIds ? JSON.parse(row.systemIds) : null,
     config: maskConfig(row.type, parseConfig(row.config)),
+    schedule: row.schedule || null,
+    lastSentAt: row.lastSentAt || null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -76,9 +83,11 @@ export function createNotification(data: {
   notifyOn?: string[];
   systemIds?: number[] | null;
   config: Record<string, string>;
+  schedule?: string | null;
 }) {
   const db = getDb();
   const encConfig = encryptConfig(data.type, data.config);
+  const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
   const result = db.insert(notifications).values({
     name: data.name,
     type: data.type,
@@ -86,6 +95,7 @@ export function createNotification(data: {
     notifyOn: JSON.stringify(data.notifyOn || ["updates"]),
     systemIds: data.systemIds ? JSON.stringify(data.systemIds) : null,
     config: JSON.stringify(encConfig),
+    schedule,
   }).returning({ id: notifications.id }).get();
   return result.id;
 }
@@ -99,6 +109,7 @@ export function updateNotification(
     notifyOn?: string[];
     systemIds?: number[] | null;
     config?: Record<string, string>;
+    schedule?: string | null;
   }
 ) {
   const db = getDb();
@@ -114,6 +125,17 @@ export function updateNotification(
   if (data.enabled !== undefined) updates.enabled = data.enabled ? 1 : 0;
   if (data.notifyOn !== undefined) updates.notifyOn = JSON.stringify(data.notifyOn);
   if (data.systemIds !== undefined) updates.systemIds = data.systemIds ? JSON.stringify(data.systemIds) : null;
+
+  if (data.schedule !== undefined) {
+    const newSchedule = data.schedule === "immediate" ? null : (data.schedule || null);
+    const oldSchedule = existing.schedule;
+    updates.schedule = newSchedule;
+    // Clear pending events when schedule changes
+    if (newSchedule !== oldSchedule) {
+      updates.pendingEvents = null;
+      updates.lastSentAt = null;
+    }
+  }
 
   if (data.config) {
     const type = data.type || existing.type;
@@ -273,25 +295,143 @@ export async function processScheduledResults(
 
     if (channelUpdates.length === 0 && channelUnreachable.length === 0) continue;
 
-    const payload = buildBatchPayload(channelUpdates, channelUnreachable);
-    const provider = getProvider(channel.type);
-    if (!provider) continue;
-
-    const config = parseConfig(channel.config);
-    const configError = provider.validateConfig(config);
-    if (configError) {
-      console.warn(`Notification [${channel.name}]: skipped - ${configError}`);
+    // Scheduled channels: buffer events for later digest
+    if (isScheduled(channel.schedule)) {
+      appendPendingEvents(channel.id, channelUpdates, channelUnreachable);
       continue;
     }
 
-    try {
-      const result = await provider.send(payload, config);
-      if (!result.success) {
-        console.error(`Notification [${channel.name}] failed:`, result.error);
-      }
-    } catch (e) {
-      console.error(`Notification [${channel.name}] error:`, e);
+    // Immediate channels: send right away
+    await sendChannelNotification(channel, channelUpdates, channelUnreachable);
+  }
+}
+
+// --- Send notification for a single channel ---
+
+async function sendChannelNotification(
+  channel: { id: number; name: string; type: string; config: string },
+  updateResults: CheckResult[],
+  unreachableResults: CheckResult[],
+): Promise<void> {
+  const payload = buildBatchPayload(updateResults, unreachableResults);
+  const provider = getProvider(channel.type);
+  if (!provider) return;
+
+  const config = parseConfig(channel.config);
+  const configError = provider.validateConfig(config);
+  if (configError) {
+    console.warn(`Notification [${channel.name}]: skipped - ${configError}`);
+    return;
+  }
+
+  try {
+    const result = await provider.send(payload, config);
+    if (!result.success) {
+      console.error(`Notification [${channel.name}] failed:`, result.error);
     }
+  } catch (e) {
+    console.error(`Notification [${channel.name}] error:`, e);
+  }
+}
+
+// --- Pending events for scheduled channels ---
+
+interface PendingEvents {
+  updates: CheckResult[];
+  unreachable: CheckResult[];
+}
+
+function parsePendingEvents(json: string | null): PendingEvents {
+  if (!json) return { updates: [], unreachable: [] };
+  try {
+    const parsed = JSON.parse(json);
+    return {
+      updates: Array.isArray(parsed.updates) ? parsed.updates : [],
+      unreachable: Array.isArray(parsed.unreachable) ? parsed.unreachable : [],
+    };
+  } catch {
+    return { updates: [], unreachable: [] };
+  }
+}
+
+function mergeCheckResults(existing: CheckResult[], incoming: CheckResult[]): CheckResult[] {
+  const map = new Map<number, CheckResult>();
+  for (const r of existing) map.set(r.systemId, r);
+  for (const r of incoming) {
+    const prev = map.get(r.systemId);
+    if (!prev || r.updateCount > prev.updateCount || r.securityCount > prev.securityCount) {
+      map.set(r.systemId, r);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function appendPendingEvents(
+  channelId: number,
+  updateResults: CheckResult[],
+  unreachableResults: CheckResult[],
+): void {
+  const db = getDb();
+  const row = db
+    .select({ pendingEvents: notifications.pendingEvents })
+    .from(notifications)
+    .where(eq(notifications.id, channelId))
+    .get();
+
+  const pending = parsePendingEvents(row?.pendingEvents ?? null);
+  pending.updates = mergeCheckResults(pending.updates, updateResults);
+  pending.unreachable = mergeCheckResults(pending.unreachable, unreachableResults);
+
+  db.update(notifications)
+    .set({ pendingEvents: JSON.stringify(pending) })
+    .where(eq(notifications.id, channelId))
+    .run();
+}
+
+// --- Scheduled digest processing ---
+
+function shouldSendNow(cronExpr: string, lastSentAt: string | null): boolean {
+  try {
+    const ref = lastSentAt ? new Date(lastSentAt) : new Date(0);
+    const cron = new Cron(cronExpr);
+    const next = cron.nextRun(ref);
+    if (!next) return false;
+    return new Date() >= next;
+  } catch {
+    return false;
+  }
+}
+
+export async function processScheduledDigests(): Promise<void> {
+  const db = getDb();
+
+  const channels = db
+    .select()
+    .from(notifications)
+    .where(
+      and(
+        eq(notifications.enabled, 1),
+        isNotNull(notifications.schedule),
+      )
+    )
+    .all();
+
+  for (const channel of channels) {
+    if (!channel.schedule || channel.schedule === "immediate") continue;
+
+    const pending = parsePendingEvents(channel.pendingEvents);
+    if (pending.updates.length === 0 && pending.unreachable.length === 0) continue;
+
+    if (!shouldSendNow(channel.schedule, channel.lastSentAt)) continue;
+
+    console.log(`Notification [${channel.name}]: sending scheduled digest`);
+    await sendChannelNotification(channel, pending.updates, pending.unreachable);
+
+    const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+    db.update(notifications)
+      .set({ pendingEvents: null, lastSentAt: now })
+      .where(eq(notifications.id, channel.id))
+      .run();
   }
 }
 

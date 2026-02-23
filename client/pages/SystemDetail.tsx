@@ -285,7 +285,17 @@ function HistoryList({
             </svg>
             <Badge variant="muted" small>running</Badge>
             <div className="flex-1 min-w-0">
-              <p className="font-medium">{syntheticLabel}</p>
+              <p className="font-medium">
+                {syntheticLabel}
+                {activeOp?.type !== "check" && (
+                  <span className="relative group ml-2 inline-flex">
+                    <Badge variant="info" small>SSH-safe</Badge>
+                    <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-xs rounded bg-slate-900 dark:bg-slate-700 px-2 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                      This command runs via nohup on the remote system and will continue even if the SSH connection drops.
+                    </span>
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           <div className="ml-10 mr-2 mb-2 space-y-2">
@@ -348,6 +358,14 @@ function HistoryList({
                       : h.action === "full_upgrade_all"
                         ? "Full upgraded all packages"
                         : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
+                  {h.action !== "check" && (
+                    <span className="relative group ml-2 inline-flex align-middle">
+                      <Badge variant="info" small>SSH-safe</Badge>
+                      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-xs rounded bg-slate-900 dark:bg-slate-700 px-2 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                        This command ran via nohup on the remote system and would have continued even if the SSH connection dropped.
+                      </span>
+                    </span>
+                  )}
                 </p>
                 {h.packageCount !== null && h.action === "check" && (
                   <p className="text-xs text-slate-500">
@@ -602,6 +620,7 @@ export default function SystemDetail() {
               const active = detected.filter((m) => !disabled.includes(m));
               return active.length > 0 ? active.join(", ") : null;
             })() },
+            ...(system.needsReboot === 1 ? [{ label: "Reboot", value: "Required" }] : []),
           ]}
         />
         <InfoCard
@@ -615,6 +634,17 @@ export default function SystemDetail() {
           ]}
         />
       </div>
+
+      {/* Reboot required warning */}
+      {system.needsReboot === 1 && (
+        <div className="flex items-center gap-2 px-4 py-3 mb-6 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm">
+          <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span className="font-medium">Reboot required</span>
+          <span className="text-amber-600 dark:text-amber-500">A kernel update has been installed. Reboot this system to apply it.</span>
+        </div>
+      )}
 
       {/* Available updates */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">

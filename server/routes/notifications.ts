@@ -1,10 +1,23 @@
 import { Hono } from "hono";
+import { Cron } from "croner";
 import * as notificationService from "../services/notification-service";
 import { getProviderNames } from "../services/notifications";
 
 const VALID_TYPES = getProviderNames();
 const VALID_EVENTS = ["updates", "unreachable"];
 const MAX_NAME_LENGTH = 100;
+
+function isValidSchedule(value: unknown): boolean {
+  if (value === null || value === "immediate") return true;
+  if (typeof value !== "string" || !value.trim()) return false;
+  try {
+    // Validate cron expression — Cron constructor throws on invalid patterns
+    new Cron(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
@@ -73,6 +86,12 @@ notificationsRouter.post("/", async (c) => {
     return c.json({ error: "enabled must be a boolean" }, 400);
   }
 
+  // Validate schedule
+  const { schedule } = body;
+  if (schedule !== undefined && !isValidSchedule(schedule)) {
+    return c.json({ error: "schedule must be null, \"immediate\", or a valid cron expression" }, 400);
+  }
+
   const id = notificationService.createNotification({
     name: name.trim(),
     type,
@@ -80,6 +99,7 @@ notificationsRouter.post("/", async (c) => {
     notifyOn,
     systemIds,
     config,
+    schedule: schedule ?? null,
   });
 
   return c.json({ id }, 201);
@@ -140,6 +160,13 @@ notificationsRouter.put("/:id", async (c) => {
       return c.json({ error: "config must be an object" }, 400);
     }
     allowed.config = body.config;
+  }
+
+  if (body.schedule !== undefined) {
+    if (!isValidSchedule(body.schedule)) {
+      return c.json({ error: "schedule must be null, \"immediate\", or a valid cron expression" }, 400);
+    }
+    allowed.schedule = body.schedule;
   }
 
   const ok = notificationService.updateNotification(id, allowed as any);

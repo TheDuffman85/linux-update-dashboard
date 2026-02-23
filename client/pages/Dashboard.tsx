@@ -17,7 +17,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system, upgrading }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean }) {
+function SystemCard({ system, upgrading }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean }) {
   const borderColor = upgrading
     ? "border-l-blue-500"
     : system.isReachable === -1
@@ -57,7 +57,7 @@ function SystemCard({ system, upgrading }: { system: { id: number; name: string;
         <p className="text-xs text-slate-400 truncate mt-0.5">{system.osName}</p>
       )}
       <div className="flex items-center justify-between mt-3">
-        <div>
+        <div className="flex items-center gap-1.5 flex-wrap">
           {upgrading ? (
             <Badge variant="info" small>Upgrading...</Badge>
           ) : system.isReachable === -1 ? (
@@ -68,6 +68,13 @@ function SystemCard({ system, upgrading }: { system: { id: number; name: string;
             <Badge variant="success" small>Up to date</Badge>
           ) : (
             <Badge variant="muted" small>Unchecked</Badge>
+          )}
+          {system.needsReboot === 1 && (
+            <span className="text-amber-500" title="Reboot required">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </span>
           )}
         </div>
         {system.cacheAge && (
@@ -146,12 +153,15 @@ export default function Dashboard() {
     >
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+        <div className={`grid grid-cols-2 sm:grid-cols-3 ${stats.needsReboot > 0 ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3 mb-6`}>
           <StatCard label="Total Systems" value={stats.total} color="text-slate-700 dark:text-slate-200" />
           <StatCard label="Up to Date" value={stats.upToDate} color="text-green-600" />
           <StatCard label="Need Updates" value={stats.needsUpdates} color="text-amber-600" />
           <StatCard label="Unreachable" value={stats.unreachable} color="text-red-600" />
           <StatCard label="Total Updates" value={stats.totalUpdates} color="text-blue-600" />
+          {stats.needsReboot > 0 && (
+            <StatCard label="Needs Reboot" value={stats.needsReboot} color="text-amber-500" />
+          )}
         </div>
       )}
 

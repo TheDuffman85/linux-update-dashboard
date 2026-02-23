@@ -9,6 +9,8 @@ export interface NotificationChannel {
   notifyOn: string[];
   systemIds: number[] | null;
   config: Record<string, string>;
+  schedule: string | null;
+  lastSentAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +35,7 @@ export function useCreateNotification() {
       notifyOn?: string[];
       systemIds?: number[] | null;
       config: Record<string, string>;
+      schedule?: string | null;
     }) =>
       apiFetch<{ id: number }>("/notifications", {
         method: "POST",
@@ -58,6 +61,7 @@ export function useUpdateNotification() {
       notifyOn?: string[];
       systemIds?: number[] | null;
       config?: Record<string, string>;
+      schedule?: string | null;
     }) =>
       apiFetch(`/notifications/${id}`, {
         method: "PUT",

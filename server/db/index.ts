@@ -191,6 +191,34 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     // Column already exists
   }
 
+  // Migration: add reboot required tracking column
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN needs_reboot INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: add notification schedule columns
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN schedule TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN pending_events TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_sent_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: strip ntfyPriority from ntfy notification configs (priority is now automatic)
+  _db.run(sql`UPDATE notifications SET config = json_remove(config, '$.ntfyPriority')
+    WHERE type = 'ntfy' AND json_extract(config, '$.ntfyPriority') IS NOT NULL`);
+
   // Cleanup: mark any orphaned "started" history rows as failed (from previous crashes/restarts)
   _db.run(sql`UPDATE update_history SET status = 'failed', completed_at = datetime('now'),
     error = 'Server restarted while operation was in progress'
@@ -272,7 +300,6 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
       ntfyUrl: s.ntfy_url || "https://ntfy.sh",
       ntfyTopic: s.ntfy_topic || "",
       ntfyToken: s.ntfy_token || "",
-      ntfyPriority: s.ntfy_priority || "default",
     });
     db.run(sql`INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config)
       VALUES ('ntfy', 'ntfy', ${enabled ? 1 : 0}, ${notifyOnJson}, NULL, ${config})`);

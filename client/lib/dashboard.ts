@@ -8,6 +8,7 @@ export interface DashboardStats {
   needsUpdates: number;
   unreachable: number;
   totalUpdates: number;
+  needsReboot: number;
 }
 
 export function useDashboardStats() {

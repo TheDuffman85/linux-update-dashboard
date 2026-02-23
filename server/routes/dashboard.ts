@@ -27,9 +27,12 @@ dashboard.get("/stats", (c) => {
     (sum, s) => sum + s.updateCount,
     0
   );
+  const needsReboot = systemsWithMeta.filter(
+    (s) => s.needsReboot === 1
+  ).length;
 
   return c.json({
-    stats: { total, upToDate, needsUpdates, unreachable, totalUpdates },
+    stats: { total, upToDate, needsUpdates, unreachable, totalUpdates, needsReboot },
   });
 });
 

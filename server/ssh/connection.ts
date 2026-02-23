@@ -5,10 +5,19 @@ import type { CredentialEncryptor } from "../security";
 const PATH_PREFIX =
   "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ";
 
+/** Sentinel exit code: SSH monitoring was lost but the nohup process likely continues on the remote. */
+export const EXIT_MONITORING_LOST = -2;
+
 export interface CommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+}
+
+export interface PersistentCommandInfo {
+  pid: number;
+  logFile: string;
+  exitFile: string;
 }
 
 export class SSHConnectionManager {
@@ -141,6 +150,181 @@ export class SSHConnectionManager {
           stream.write(sudoPassword + "\n");
           stream.end();
         }
+      });
+    });
+  }
+
+  /**
+   * Run a command via nohup so it survives SSH disconnection.
+   * Output is streamed via `tail --pid` on a remote log file.
+   * Falls back to direct `runCommand` if the nohup setup fails.
+   */
+  async runPersistentCommand(
+    conn: Client,
+    command: string,
+    timeout?: number,
+    sudoPassword?: string,
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void
+  ): Promise<CommandResult> {
+    const cmdTimeout = timeout || this.defaultCmdTimeout;
+
+    // Phase 1: Cache sudo credentials so the nohup'd process can use them
+    if (sudoPassword) {
+      await this.cacheSudoCredentials(conn, sudoPassword);
+    }
+
+    // Phase 2: Start the command in background via nohup
+    const base64Cmd = Buffer.from(command).toString("base64");
+    // The nohup line ends with & which is already a command separator,
+    // so we use { ...; } grouping to keep it in the && chain.
+    const setupCmd = [
+      'SCRIPT=$(mktemp /tmp/ludash_XXXXXX.sh)',
+      `printf '%s' '${base64Cmd}' | base64 -d > "$SCRIPT"`,
+      'LOGFILE="${SCRIPT%.sh}.log"',
+      'EXITFILE="${SCRIPT%.sh}.exit"',
+    ].join(" && ") +
+      ` && { nohup sh -c 'sh "$0"; echo $? > "$1"; rm -f "$0"' "$SCRIPT" "$EXITFILE" > "$LOGFILE" 2>&1 & echo "LUDASH_BG PID=$! LOG=$LOGFILE EXIT=$EXITFILE"; }`;
+
+    const setupResult = await this.runCommand(conn, setupCmd, 30);
+    const info = this.parseNohupOutput(setupResult.stdout);
+
+    if (!info || setupResult.exitCode !== 0) {
+      console.warn(
+        "[SSH] nohup setup failed, falling back to direct execution:",
+        setupResult.stderr || setupResult.stdout
+      );
+      return this.runCommand(conn, command, timeout, sudoPassword, onData);
+    }
+
+    // Phase 3: Monitor via tail --pid
+    const tailCmd =
+      PATH_PREFIX + `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
+    const tailResult = await this.runTailMonitor(
+      conn,
+      tailCmd,
+      cmdTimeout,
+      onData
+    );
+
+    if (tailResult.monitoringLost) {
+      return {
+        stdout: tailResult.stdout,
+        stderr:
+          "SSH connection lost during monitoring. The upgrade process continues on the remote system under nohup.",
+        exitCode: EXIT_MONITORING_LOST,
+      };
+    }
+
+    // Phase 4: Read exit code from the exit file
+    const exitResult = await this.runCommand(
+      conn,
+      `cat "${info.exitFile}" 2>/dev/null`,
+      10
+    );
+    const exitCode = parseInt(exitResult.stdout.trim(), 10);
+
+    // Phase 5: Cleanup temp files
+    this.runCommand(
+      conn,
+      `rm -f "${info.logFile}" "${info.exitFile}"`,
+      10
+    ).catch(() => {});
+
+    return {
+      stdout: tailResult.stdout,
+      stderr: "",
+      exitCode: isNaN(exitCode) ? -1 : exitCode,
+    };
+  }
+
+  private async cacheSudoCredentials(
+    conn: Client,
+    sudoPassword: string
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => resolve(), 10_000);
+      conn.exec(PATH_PREFIX + "sudo -S -v 2>/dev/null", (err, stream) => {
+        if (err) {
+          clearTimeout(timer);
+          resolve();
+          return;
+        }
+        stream.write(sudoPassword + "\n");
+        stream.end();
+        stream.on("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    });
+  }
+
+  private parseNohupOutput(stdout: string): PersistentCommandInfo | null {
+    const match = stdout.match(
+      /LUDASH_BG PID=(\d+) LOG=(\S+) EXIT=(\S+)/
+    );
+    if (!match) return null;
+    return {
+      pid: parseInt(match[1], 10),
+      logFile: match[2],
+      exitFile: match[3],
+    };
+  }
+
+  private runTailMonitor(
+    conn: Client,
+    tailCommand: string,
+    timeout: number,
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void
+  ): Promise<{ stdout: string; monitoringLost: boolean }> {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const finish = (stdout: string, lost: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, monitoringLost: lost });
+      };
+
+      const timer = setTimeout(() => {
+        finish("", true);
+      }, timeout * 1000);
+
+      // If the connection itself drops, the process still runs under nohup
+      const onConnError = () => finish(stdout, true);
+      const onConnClose = () => finish(stdout, true);
+      conn.once("error", onConnError);
+      conn.once("close", onConnClose);
+
+      let stdout = "";
+
+      conn.exec(tailCommand, (err, stream) => {
+        if (err) {
+          conn.removeListener("error", onConnError);
+          conn.removeListener("close", onConnClose);
+          finish("", true);
+          return;
+        }
+
+        stream.on("data", (data: Buffer) => {
+          const text = data.toString();
+          stdout += text;
+          onData?.(text, "stdout");
+        });
+        stream.stderr.on("data", (data: Buffer) => {
+          const text = data.toString();
+          onData?.(text, "stderr");
+        });
+        stream.on("close", () => {
+          conn.removeListener("error", onConnError);
+          conn.removeListener("close", onConnClose);
+          finish(stdout, false);
+        });
+        stream.on("error", () => {
+          conn.removeListener("error", onConnError);
+          conn.removeListener("close", onConnClose);
+          finish(stdout, true);
+        });
       });
     });
   }

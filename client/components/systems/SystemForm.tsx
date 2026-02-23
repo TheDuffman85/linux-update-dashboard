@@ -12,11 +12,13 @@ interface SystemFormData {
   keyPassphrase?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  sourceSystemId?: number;
 }
 
 export function SystemForm({
   initial,
   systemId,
+  sourceSystemId,
   onSubmit,
   onCancel,
   loading = false,
@@ -26,6 +28,7 @@ export function SystemForm({
     disabledPkgManagers?: string[] | null;
   };
   systemId?: number;
+  sourceSystemId?: number;
   onSubmit: (data: SystemFormData) => void;
   onCancel: () => void;
   loading?: boolean;
@@ -60,6 +63,12 @@ export function SystemForm({
     });
   };
 
+  const credentialPlaceholder = sourceSystemId
+    ? "(from source system)"
+    : initial
+      ? "(unchanged)"
+      : "";
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
@@ -73,6 +82,7 @@ export function SystemForm({
       keyPassphrase: keyPassphrase || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: disabledManagers.size > 0 ? [...disabledManagers] : undefined,
+      sourceSystemId,
     });
   };
 
@@ -121,7 +131,7 @@ export function SystemForm({
       {authType === "password" && (
         <div>
           <label className={labelClass}>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} placeholder={initial ? "(unchanged)" : ""} />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} placeholder={credentialPlaceholder} />
         </div>
       )}
 
@@ -145,7 +155,7 @@ export function SystemForm({
 
       <div>
         <label className={labelClass}>Sudo Password (optional)</label>
-        <input type="password" value={sudoPassword} onChange={(e) => setSudoPassword(e.target.value)} className={inputClass} placeholder={initial ? "(unchanged — defaults to SSH password)" : "Defaults to SSH password"} />
+        <input type="password" value={sudoPassword} onChange={(e) => setSudoPassword(e.target.value)} className={inputClass} placeholder={sourceSystemId ? "(from source system)" : initial ? "(unchanged — defaults to SSH password)" : "Defaults to SSH password"} />
         <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH password</p>
       </div>
 
@@ -199,7 +209,7 @@ export function SystemForm({
                 password: password || undefined,
                 privateKey: privateKey || undefined,
                 keyPassphrase: keyPassphrase || undefined,
-                systemId,
+                systemId: systemId ?? sourceSystemId,
               },
               {
                 onSuccess: (data) => {

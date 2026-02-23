@@ -32,6 +32,7 @@ export function createSystem(data: {
   keyPassphrase?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  sourceSystemId?: number;
 }): number {
   const encryptor = getEncryptor();
   const db = getDb();
@@ -55,6 +56,26 @@ export function createSystem(data: {
   if (data.sudoPassword) {
     values.encryptedSudoPassword = encryptor.encrypt(data.sudoPassword);
   }
+
+  // Copy encrypted credentials from source system when duplicating
+  if (data.sourceSystemId) {
+    const source = getSystem(data.sourceSystemId);
+    if (source) {
+      if (!data.password && source.encryptedPassword) {
+        values.encryptedPassword = source.encryptedPassword;
+      }
+      if (!data.privateKey && source.encryptedPrivateKey) {
+        values.encryptedPrivateKey = source.encryptedPrivateKey;
+      }
+      if (!data.keyPassphrase && source.encryptedKeyPassphrase) {
+        values.encryptedKeyPassphrase = source.encryptedKeyPassphrase;
+      }
+      if (!data.sudoPassword && source.encryptedSudoPassword) {
+        values.encryptedSudoPassword = source.encryptedSudoPassword;
+      }
+    }
+  }
+
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
@@ -142,6 +163,7 @@ export async function updateSystemInfo(
       cpuCores: info.cpuCores,
       memory: info.memory,
       disk: info.disk,
+      needsReboot: info.needsReboot ? 1 : 0,
       systemInfoUpdatedAt: now,
       isReachable: 1,
       lastSeenAt: now,

@@ -1,7 +1,7 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
-import { getSSHManager } from "../ssh/connection";
+import { getSSHManager, EXIT_MONITORING_LOST } from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import * as cacheService from "./cache-service";
 import * as systemService from "./system-service";
@@ -12,6 +12,9 @@ export interface ActiveOperation {
   type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package";
   startedAt: string;
   packageName?: string;
+  remotePid?: number;
+  remoteLogFile?: string;
+  remoteExitFile?: string;
 }
 
 const activeOperations = new Map<number, ActiveOperation>();
@@ -333,7 +336,7 @@ export async function applyUpgradeAll(
         const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
 
-        const { stdout, stderr, exitCode } = await sshManager.runCommand(
+        const { stdout, stderr, exitCode } = await sshManager.runPersistentCommand(
           conn,
           cmd,
           3600,
@@ -344,12 +347,15 @@ export async function applyUpgradeAll(
         );
 
         const success = exitCode === 0;
+        const monitoringLost = exitCode === EXIT_MONITORING_LOST;
         if (!success) overallSuccess = false;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
         finishEntry(histId, success ? "success" : "failed", {
           output: stdout.slice(0, 5000),
-          error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          error: monitoringLost
+            ? "SSH connection lost during upgrade. The process may still be running on the remote system."
+            : success ? undefined : (stderr || stdout).slice(0, 2000),
         });
       }
 
@@ -446,7 +452,7 @@ export async function applyFullUpgradeAll(
         const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
 
-        const { stdout, stderr, exitCode } = await sshManager.runCommand(
+        const { stdout, stderr, exitCode } = await sshManager.runPersistentCommand(
           conn,
           cmd,
           3600,
@@ -457,12 +463,15 @@ export async function applyFullUpgradeAll(
         );
 
         const success = exitCode === 0;
+        const monitoringLost = exitCode === EXIT_MONITORING_LOST;
         if (!success) overallSuccess = false;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
         finishEntry(histId, success ? "success" : "failed", {
           output: stdout.slice(0, 5000),
-          error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          error: monitoringLost
+            ? "SSH connection lost during upgrade. The process may still be running on the remote system."
+            : success ? undefined : (stderr || stdout).slice(0, 2000),
         });
       }
 
@@ -538,7 +547,7 @@ export async function applyUpgradePackage(
 
     try {
       conn = await sshManager.connect(system as Record<string, unknown>);
-      const { stdout, stderr, exitCode } = await sshManager.runCommand(
+      const { stdout, stderr, exitCode } = await sshManager.runPersistentCommand(
         conn,
         cmd,
         300,
@@ -549,6 +558,7 @@ export async function applyUpgradePackage(
       );
 
       const success = exitCode === 0;
+      const monitoringLost = exitCode === EXIT_MONITORING_LOST;
       logHistory(
         systemId,
         "upgrade_package",
@@ -559,7 +569,9 @@ export async function applyUpgradePackage(
           packages: JSON.stringify([packageName]),
           command: cmd,
           output: stdout.slice(0, 5000),
-          error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          error: monitoringLost
+            ? "SSH connection lost during upgrade. The process may still be running on the remote system."
+            : success ? undefined : (stderr || stdout).slice(0, 2000),
         }
       );
 

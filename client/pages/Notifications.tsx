@@ -26,6 +26,22 @@ const TYPE_LABELS: Record<string, string> = {
   ntfy: "ntfy.sh",
 };
 
+const SCHEDULE_PRESETS: { label: string; value: string }[] = [
+  { label: "Every hour", value: "0 * * * *" },
+  { label: "Every 3 hours", value: "0 */3 * * *" },
+  { label: "Every 6 hours", value: "0 */6 * * *" },
+  { label: "Daily at 00:00", value: "0 0 * * *" },
+  { label: "Weekly Monday 09:00", value: "0 9 * * 1" },
+  { label: "Custom", value: "custom" },
+];
+
+function describeSchedule(cron: string | null): string {
+  if (!cron) return "Immediate";
+  const presetMatch = SCHEDULE_PRESETS.find((p) => p.value === cron);
+  if (presetMatch) return presetMatch.label;
+  return cron;
+}
+
 function NotificationForm({
   initial,
   onSubmit,
@@ -74,8 +90,22 @@ function NotificationForm({
   );
   const [ntfyTopic, setNtfyTopic] = useState(initial?.config.ntfyTopic || "");
   const [ntfyToken, setNtfyToken] = useState(initial?.config.ntfyToken || "");
-  const [ntfyPriority, setNtfyPriority] = useState(
-    initial?.config.ntfyPriority || "default"
+
+  // Schedule
+  const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
+  const initialPreset = initial?.schedule
+    ? SCHEDULE_PRESETS.find((p) => p.value === initial.schedule)
+      ? initial.schedule
+      : "custom"
+    : SCHEDULE_PRESETS[0].value;
+  const [scheduleMode, setScheduleMode] = useState<"immediate" | "scheduled">(
+    initialScheduleMode
+  );
+  const [schedulePreset, setSchedulePreset] = useState(initialPreset);
+  const [customCron, setCustomCron] = useState(
+    initial?.schedule && !SCHEDULE_PRESETS.find((p) => p.value === initial.schedule)
+      ? initial.schedule
+      : ""
   );
 
   const toggleNotifyOn = (event: string) => {
@@ -107,8 +137,13 @@ function NotificationForm({
           ntfyUrl,
           ntfyTopic,
           ntfyToken,
-          ntfyPriority,
         };
+
+  const getScheduleValue = (): string | null => {
+    if (scheduleMode === "immediate") return null;
+    if (schedulePreset === "custom") return customCron || null;
+    return schedulePreset;
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,6 +154,7 @@ function NotificationForm({
       notifyOn,
       systemIds: allSystems ? null : selectedSystemIds,
       config: buildConfig(),
+      schedule: getScheduleValue(),
     });
   };
 
@@ -242,6 +278,65 @@ function NotificationForm({
         )}
       </div>
 
+      {/* Schedule */}
+      <div>
+        <span className={labelClass}>Schedule</span>
+        <div className="flex gap-4 mb-2">
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="scheduleMode"
+              checked={scheduleMode === "immediate"}
+              onChange={() => setScheduleMode("immediate")}
+              className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm">Immediate</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="scheduleMode"
+              checked={scheduleMode === "scheduled"}
+              onChange={() => setScheduleMode("scheduled")}
+              className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm">Scheduled (digest)</span>
+          </label>
+        </div>
+        {scheduleMode === "scheduled" && (
+          <div className="space-y-2">
+            <select
+              value={schedulePreset}
+              onChange={(e) => setSchedulePreset(e.target.value)}
+              className={inputClass}
+            >
+              {SCHEDULE_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            {schedulePreset === "custom" && (
+              <div>
+                <input
+                  type="text"
+                  value={customCron}
+                  onChange={(e) => setCustomCron(e.target.value)}
+                  className={inputClass}
+                  placeholder="e.g. 0 23 * * 1 (Mon 23:00)"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Standard cron format: minute hour day-of-month month day-of-week
+                </p>
+              </div>
+            )}
+            <p className="text-xs text-slate-500">
+              Events are batched and sent as a digest at the scheduled time.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Type-specific config */}
       {type === "email" && (
         <div className="border-t border-border pt-4">
@@ -360,20 +455,6 @@ function NotificationForm({
                   ntfyToken === "(stored)" ? "(stored)" : ""
                 }
               />
-            </div>
-            <div>
-              <label className={labelClass}>Priority</label>
-              <select
-                value={ntfyPriority}
-                onChange={(e) => setNtfyPriority(e.target.value)}
-                className={inputClass}
-              >
-                <option value="min">Min</option>
-                <option value="low">Low</option>
-                <option value="default">Default</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
             </div>
           </div>
         </div>
@@ -520,6 +601,7 @@ export default function Notifications() {
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3 hidden sm:table-cell">Events</th>
                 <th className="px-4 py-3 hidden md:table-cell">Systems</th>
+                <th className="px-4 py-3 hidden lg:table-cell">Schedule</th>
                 <th className="px-4 py-3">Enabled</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -547,6 +629,9 @@ export default function Notifications() {
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400">
                     {getSystemScopeLabel(ch.systemIds)}
+                  </td>
+                  <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
+                    {describeSchedule(ch.schedule)}
                   </td>
                   <td className="px-4 py-3">
                     <button
@@ -650,6 +735,7 @@ export default function Notifications() {
         open={showForm}
         onClose={() => setShowForm(false)}
         title="Add Notification"
+        dismissible={false}
       >
         <NotificationForm
           onSubmit={handleCreate}
@@ -663,6 +749,7 @@ export default function Notifications() {
         open={editChannel !== null}
         onClose={() => setEditChannel(null)}
         title="Edit Notification"
+        dismissible={false}
       >
         {editChannel && (
           <NotificationForm

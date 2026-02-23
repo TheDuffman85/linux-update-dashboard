@@ -7,6 +7,9 @@ import * as notificationService from "./notification-service";
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let initialTimeout: ReturnType<typeof setTimeout> | null = null;
+let digestTimer: ReturnType<typeof setInterval> | null = null;
+
+const DIGEST_INTERVAL_MS = 60_000; // Check scheduled digests every 60s
 
 function getCheckIntervalMs(): number {
   return cacheService.getCheckIntervalMinutes() * 60_000;
@@ -82,6 +85,14 @@ async function runCheck(): Promise<void> {
   }
 }
 
+async function runDigestCheck(): Promise<void> {
+  try {
+    await notificationService.processScheduledDigests();
+  } catch (e) {
+    console.error("Digest scheduler error:", e);
+  }
+}
+
 export function start(): void {
   const intervalMs = getCheckIntervalMs();
   console.log(`Scheduler: check interval set to ${intervalMs / 60_000} minutes`);
@@ -90,6 +101,9 @@ export function start(): void {
     runCheck();
     timer = setInterval(runCheck, intervalMs);
   }, 30_000);
+
+  // Start digest timer for scheduled notifications
+  digestTimer = setInterval(runDigestCheck, DIGEST_INTERVAL_MS);
 }
 
 export function restart(): void {
@@ -98,6 +112,9 @@ export function restart(): void {
   console.log(`Scheduler: restarting with interval ${intervalMs / 60_000} minutes`);
   runCheck();
   timer = setInterval(runCheck, intervalMs);
+
+  // Restart digest timer
+  digestTimer = setInterval(runDigestCheck, DIGEST_INTERVAL_MS);
 }
 
 export function stop(): void {
@@ -108,5 +125,9 @@ export function stop(): void {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (digestTimer) {
+    clearInterval(digestTimer);
+    digestTimer = null;
   }
 }

@@ -6,7 +6,12 @@ export const SYSTEM_INFO_CMD =
   'echo "===ARCH===" && uname -m && ' +
   'echo "===CPU===" && nproc 2>/dev/null && ' +
   'echo "===MEM===" && free -h 2>/dev/null | grep Mem && ' +
-  'echo "===DISK===" && df -h / 2>/dev/null | tail -1';
+  'echo "===DISK===" && df -h / 2>/dev/null | tail -1 && ' +
+  'echo "===REBOOT===" && ' +
+  'if [ -f /var/run/reboot-required ]; then echo "REBOOT_REQUIRED"; ' +
+  'elif command -v needs-restarting >/dev/null 2>&1; then needs-restarting -r >/dev/null 2>&1; [ $? -eq 1 ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; ' +
+  'else RUNNING=$(uname -r); LATEST=$(ls -1v /lib/modules/ 2>/dev/null | tail -1); ' +
+  '[ -n "$LATEST" ] && [ "$RUNNING" != "$LATEST" ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; fi';
 
 export interface SystemInfo {
   osName: string;
@@ -18,6 +23,7 @@ export interface SystemInfo {
   cpuCores: string;
   memory: string;
   disk: string;
+  needsReboot: boolean;
 }
 
 export function parseSystemInfo(stdout: string): SystemInfo {
@@ -31,6 +37,7 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     cpuCores: "",
     memory: "",
     disk: "",
+    needsReboot: false,
   };
 
   const sections: Record<string, string> = {};
@@ -91,6 +98,9 @@ export function parseSystemInfo(stdout: string): SystemInfo {
       info.disk = parts[1];
     }
   }
+
+  const rebootLine = (sections["REBOOT"] || "").trim();
+  info.needsReboot = rebootLine === "REBOOT_REQUIRED";
 
   return info;
 }
