@@ -2,12 +2,12 @@ import type { Client } from "ssh2";
 import type { SSHConnectionManager } from "./connection";
 
 const DETECTION_COMMANDS: [string, string][] = [
-  ["apt", "which apt 2>/dev/null && echo 'found'"],
-  ["dnf", "which dnf 2>/dev/null && echo 'found'"],
-  ["yum", "which yum 2>/dev/null && echo 'found'"],
-  ["pacman", "which pacman 2>/dev/null && echo 'found'"],
-  ["flatpak", "which flatpak 2>/dev/null && echo 'found'"],
-  ["snap", "which snap 2>/dev/null && echo 'found'"],
+  ["apt", "command -v apt >/dev/null 2>&1 && echo 'found'"],
+  ["dnf", "command -v dnf >/dev/null 2>&1 && echo 'found'"],
+  ["yum", "command -v yum >/dev/null 2>&1 && echo 'found'"],
+  ["pacman", "command -v pacman >/dev/null 2>&1 && echo 'found'"],
+  ["flatpak", "command -v flatpak >/dev/null 2>&1 && echo 'found'"],
+  ["snap", "command -v snap >/dev/null 2>&1 && echo 'found'"],
 ];
 
 export async function detectPackageManagers(

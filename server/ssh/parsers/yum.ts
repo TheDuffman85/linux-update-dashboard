@@ -1,12 +1,12 @@
 import type { PackageParser } from "./types";
 import { sudo } from "./types";
-import { dnfParser } from "./dnf";
+import { buildCheckCommand, dnfParser } from "./dnf";
 
 export const yumParser: PackageParser = {
   name: "yum",
 
   getCheckCommands() {
-    return ['yum check-update --quiet 2>/dev/null; echo "EXIT:$?"'];
+    return [buildCheckCommand("yum")];
   },
 
   // Same output format as DNF

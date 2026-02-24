@@ -1,0 +1,43 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install all packages from an old archive snapshot (June 2025) so they appear
+# upgradable when the dashboard checks. Disables TLS peer verification so we
+# don't need ca-certificates (avoids mixing package versions across repos).
+# The current repos are restored afterward so update checks find newer versions.
+RUN mv /etc/apt/sources.list.d/ubuntu.sources /tmp/ubuntu.sources.bak && \
+    printf '%s\n' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-updates main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-security main universe' \
+      > /etc/apt/sources.list && \
+    apt-get -o Acquire::Check-Valid-Until=false \
+            -o Acquire::https::Verify-Peer=false update && \
+    apt-get -o Acquire::https::Verify-Peer=false install -y \
+        openssh-server sudo \
+        curl wget vim-tiny openssl nano \
+        htop tree zip unzip jq && \
+    rm /etc/apt/sources.list && \
+    mv /tmp/ubuntu.sources.bak /etc/apt/sources.list.d/ubuntu.sources && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    # Override any drop-in configs that might disable password auth
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Create test user with sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

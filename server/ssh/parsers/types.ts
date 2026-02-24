@@ -1,7 +1,7 @@
 export interface ParsedUpdate {
   packageName: string;
   currentVersion: string | null;
-  newVersion: string;
+  newVersion: string | null;
   architecture: string | null;
   repository: string | null;
   isSecurity: boolean;

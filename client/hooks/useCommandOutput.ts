@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 export type WsMessage =
+  | { type: "reset" }
   | { type: "started"; command: string; pkgManager: string }
   | { type: "output"; data: string; stream: "stdout" | "stderr" }
   | { type: "phase"; phase: string }
@@ -41,6 +42,14 @@ export function useCommandOutput(systemId: number) {
         if (disposed) return;
         try {
           const msg: WsMessage = JSON.parse(event.data);
+
+          if (msg.type === "reset") {
+            setMessages([]);
+            setIsActive(false);
+            setPhase(null);
+            return;
+          }
+
           setMessages((prev) => [...prev, msg]);
 
           switch (msg.type) {

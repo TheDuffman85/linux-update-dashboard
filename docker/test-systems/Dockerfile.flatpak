@@ -1,0 +1,89 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install flatpak, dbus and core system packages from current repos first
+# (these have tight lib dependencies on the base image and can't come from an old snapshot)
+RUN apt-get update && \
+    apt-get install -y openssh-server sudo flatpak dbus && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd /run/dbus
+
+# Now install 10 extra packages from an old archive snapshot (June 2025) so they
+# appear upgradable when the dashboard checks.
+RUN mv /etc/apt/sources.list.d/ubuntu.sources /tmp/ubuntu.sources.bak && \
+    printf '%s\n' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-updates main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-security main universe' \
+      > /etc/apt/sources.list && \
+    apt-get -o Acquire::Check-Valid-Until=false \
+            -o Acquire::https::Verify-Peer=false update && \
+    apt-get -o Acquire::https::Verify-Peer=false install -y \
+        curl wget vim-tiny openssl nano \
+        htop tree zip unzip jq && \
+    rm /etc/apt/sources.list && \
+    mv /tmp/ubuntu.sources.bak /etc/apt/sources.list.d/ubuntu.sources && \
+    rm -rf /var/lib/apt/lists/*
+
+# Add Flathub remote
+RUN flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Install 10 flatpak apps
+RUN for app in \
+      org.gnome.Calculator \
+      org.gnome.Calendar \
+      org.gnome.Characters \
+      org.gnome.clocks \
+      org.gnome.Evince \
+      org.gnome.Logs \
+      org.gnome.TextEditor \
+      org.gnome.Weather \
+      org.gnome.baobab \
+      org.gnome.font-viewer; \
+    do flatpak install -y --noninteractive flathub "$app" || true; done
+
+# Pin each app to its parent commit so flatpak always reports available updates.
+# After downgrading, remove the latest commit's deploy directory so that
+# `flatpak update` at runtime can properly deploy it (avoids cross-layer
+# hardlink issues in Docker overlay2).
+RUN for app in \
+      org.gnome.Calculator \
+      org.gnome.Calendar \
+      org.gnome.Characters \
+      org.gnome.clocks \
+      org.gnome.Evince \
+      org.gnome.Logs \
+      org.gnome.TextEditor \
+      org.gnome.Weather \
+      org.gnome.baobab \
+      org.gnome.font-viewer; \
+    do \
+      LATEST=$(flatpak info --show-commit "$app" 2>/dev/null); \
+      PARENT=$(flatpak remote-info --log flathub "$app" 2>/dev/null \
+        | grep 'Commit:' | sed -n '2p' | awk '{print $2}'); \
+      if [ -n "$PARENT" ]; then \
+        flatpak update -y --commit="$PARENT" "$app" 2>&1; \
+        [ -n "$LATEST" ] && rm -rf "/var/lib/flatpak/app/$app/x86_64/stable/$LATEST"; \
+      fi; \
+    done
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Create test user with sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+
+# Start dbus-daemon (needed for flatpak operations) then sshd
+CMD rm -f /run/dbus/pid && dbus-daemon --system --fork && /usr/sbin/sshd -D

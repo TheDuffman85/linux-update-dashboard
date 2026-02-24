@@ -1,0 +1,86 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
+
+# Install systemd, snapd and core system packages from current repos first
+# (these have tight lib dependencies on the base image and can't come from an old snapshot)
+RUN apt-get update && \
+    apt-get install -y systemd systemd-sysv openssh-server sudo snapd dbus && \
+    rm -rf /var/lib/apt/lists/*
+
+# Now install 10 extra packages from an old archive snapshot (June 2025) so they
+# appear upgradable when the dashboard checks.
+RUN mv /etc/apt/sources.list.d/ubuntu.sources /tmp/ubuntu.sources.bak && \
+    printf '%s\n' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-updates main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-security main universe' \
+      > /etc/apt/sources.list && \
+    apt-get -o Acquire::Check-Valid-Until=false \
+            -o Acquire::https::Verify-Peer=false update && \
+    apt-get -o Acquire::https::Verify-Peer=false install -y \
+        curl wget vim-tiny openssl nano \
+        htop tree zip unzip jq && \
+    rm /etc/apt/sources.list && \
+    mv /tmp/ubuntu.sources.bak /etc/apt/sources.list.d/ubuntu.sources && \
+    rm -rf /var/lib/apt/lists/*
+
+# Remove unnecessary systemd units to speed up boot, but keep user-sessions
+RUN (cd /lib/systemd/system/sysinit.target.wants/ && \
+    for i in *; do [ "$i" = "systemd-tmpfiles-setup.service" ] || rm -f "$i"; done) && \
+    rm -f /lib/systemd/system/multi-user.target.wants/* && \
+    rm -f /etc/systemd/system/*.wants/* && \
+    rm -f /lib/systemd/system/local-fs.target.wants/* && \
+    rm -f /lib/systemd/system/sockets.target.wants/*udev* && \
+    rm -f /lib/systemd/system/sockets.target.wants/*initctl* && \
+    rm -f /lib/systemd/system/basic.target.wants/*
+
+# Disable pam_nologin so SSH works before systemd fully boots
+RUN sed -i '/pam_nologin/d' /etc/pam.d/sshd
+
+# Enable SSH and snapd via systemd
+RUN systemctl enable ssh snapd snapd.socket
+
+# First-boot script: installs snaps, then downgrades non-classic ones to
+# their previous store revision so "snap refresh --list" reports updates.
+COPY snap-setup.sh /usr/local/bin/snap-setup.sh
+
+# Systemd oneshot service to install snaps on first boot (skips if already done)
+RUN printf '%s\n' \
+      '[Unit]' \
+      'Description=Install test snaps on first boot' \
+      'After=snapd.seeded.service' \
+      'Requires=snapd.seeded.service' \
+      'ConditionPathExists=!/var/snap/.snaps-installed' \
+      '' \
+      '[Service]' \
+      'Type=oneshot' \
+      'ExecStart=/usr/local/bin/snap-setup.sh' \
+      'RemainAfterExit=yes' \
+      'TimeoutStartSec=600' \
+      '' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > /etc/systemd/system/snap-setup.service && \
+    systemctl enable snap-setup.service
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Create test user with sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Generate host keys
+RUN ssh-keygen -A
+
+# systemd expects SIGRTMIN+3 for clean shutdown
+STOPSIGNAL SIGRTMIN+3
+EXPOSE 22
+CMD ["/sbin/init"]

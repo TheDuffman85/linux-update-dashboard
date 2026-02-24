@@ -1,0 +1,26 @@
+FROM fedora:41
+
+# Install all packages from the release-day base repo only (skip the updates
+# repo) so they appear upgradable when the dashboard checks.
+# Fedora 41 shipped ~Oct 2024; the updates repo has all patches since then.
+RUN dnf install -y --disablerepo='updates' \
+        openssh-server sudo passwd \
+        curl wget vim-minimal git nano \
+        htop tree zip unzip jq && \
+    dnf clean all
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# Create test user with sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testpass' | passwd --stdin testuser && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

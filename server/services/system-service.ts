@@ -142,11 +142,13 @@ export async function updateSystemInfo(
   sshManager: SSHConnectionManager,
   conn: Client
 ): Promise<void> {
-  const { stdout, exitCode } = await sshManager.runCommand(
+  const { stdout } = await sshManager.runCommand(
     conn,
     SYSTEM_INFO_CMD
   );
-  if (exitCode !== 0) return;
+  // Don't bail on non-zero exit: individual sections may fail on minimal
+  // containers (e.g. missing hostname) while the rest still provides data.
+  if (!stdout.includes("===OS===")) return;
 
   const info = parseSystemInfo(stdout);
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
