@@ -29,7 +29,7 @@
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/react-query": "^5.65.0",
     "@types/bun": "^1.2.0",
-    "@types/nodemailer": "^7.0.10",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ssh2": "^1.15.0",
