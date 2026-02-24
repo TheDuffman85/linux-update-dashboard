@@ -96,14 +96,13 @@ export function useUpgradePackage() {
 export function useRefreshCache() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
-      const result = await apiFetch<{ status: string }>("/cache/refresh", { method: "POST" });
-      // Wait for background checks to complete before resolving,
-      // so isPending stays true and the spinner remains visible
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      return result;
-    },
+    mutationFn: () =>
+      apiFetch<{ status: string }>("/cache/refresh", { method: "POST" }),
     onSuccess: async () => {
+      // Invalidate immediately — the server has already set activeOperation
+      // on each system, so the refetch will show "Checking..." state on cards.
+      // The dashboard's 3-second polling (triggered by activeOperation) then
+      // picks up results as each check completes.
       await qc.invalidateQueries({ queryKey: ["systems"] });
       await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
