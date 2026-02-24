@@ -1,0 +1,28 @@
+FROM archlinux:latest
+
+# Install all packages from the Arch Linux Archive (June 2025) so they appear
+# upgradable when the dashboard checks. The current mirror is restored afterward
+# so update checks find newer versions.
+RUN cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak && \
+    echo 'Server = https://archive.archlinux.org/repos/2025/06/01/$repo/os/$arch' > /etc/pacman.d/mirrorlist && \
+    pacman -Syy --noconfirm \
+        openssh sudo \
+        curl wget vim git nano \
+        htop tree zip unzip jq && \
+    mv /etc/pacman.d/mirrorlist.bak /etc/pacman.d/mirrorlist
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# Create test user with sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

@@ -158,12 +158,31 @@ describe("PacmanParser", () => {
 });
 
 describe("FlatpakParser", () => {
-  test("parse tab separated", () => {
+  test("parse combined output with installed versions", () => {
+    const stdout =
+      "===INSTALLED===\n" +
+      "org.mozilla.firefox\t121.0\n" +
+      "org.gnome.Calculator\t45.0\n" +
+      "===UPDATES===\n" +
+      "Firefox\torg.mozilla.firefox\t122.0\tstable\tflathub\n" +
+      "Calculator\torg.gnome.Calculator\t\tstable\tflathub\n";
+    const updates = flatpakParser.parseCheckOutput(stdout, "", 0);
+    expect(updates).toHaveLength(2);
+    expect(updates[0].packageName).toBe("org.mozilla.firefox");
+    expect(updates[0].currentVersion).toBe("121.0");
+    expect(updates[0].newVersion).toBe("122.0");
+    expect(updates[1].packageName).toBe("org.gnome.Calculator");
+    expect(updates[1].currentVersion).toBe("45.0");
+    expect(updates[1].newVersion).toBeNull();
+  });
+
+  test("parse without markers (legacy fallback)", () => {
     const stdout = "Firefox\torg.mozilla.firefox\t122.0\tstable\tflathub\n";
     const updates = flatpakParser.parseCheckOutput(stdout, "", 0);
     expect(updates).toHaveLength(1);
     expect(updates[0].packageName).toBe("org.mozilla.firefox");
     expect(updates[0].newVersion).toBe("122.0");
+    expect(updates[0].currentVersion).toBeNull();
   });
 
   test("empty", () => {
@@ -177,19 +196,44 @@ describe("FlatpakParser", () => {
 });
 
 describe("SnapParser", () => {
-  test("parse with header", () => {
+  test("parse combined output with installed versions", () => {
     const stdout =
+      "===INSTALLED===\n" +
+      "Name      Version   Rev    Tracking       Publisher   Notes\n" +
+      "firefox   121.0     3500   latest/stable  mozilla     -\n" +
+      "vlc       3.0.18    400    latest/stable  videolan    -\n" +
+      "===UPDATES===\n" +
       "Name      Version   Rev   Publisher   Notes\n" +
       "firefox   122.0     123   mozilla     -\n" +
       "vlc       3.0.20    456   videolan    -\n";
     const updates = snapParser.parseCheckOutput(stdout, "", 0);
     expect(updates).toHaveLength(2);
     expect(updates[0].packageName).toBe("firefox");
+    expect(updates[0].currentVersion).toBe("121.0");
     expect(updates[0].newVersion).toBe("122.0");
+    expect(updates[1].packageName).toBe("vlc");
+    expect(updates[1].currentVersion).toBe("3.0.18");
+    expect(updates[1].newVersion).toBe("3.0.20");
+  });
+
+  test("parse without markers (legacy fallback)", () => {
+    const stdout =
+      "Name      Version   Rev   Publisher   Notes\n" +
+      "firefox   122.0     123   mozilla     -\n";
+    const updates = snapParser.parseCheckOutput(stdout, "", 0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].packageName).toBe("firefox");
+    expect(updates[0].newVersion).toBe("122.0");
+    expect(updates[0].currentVersion).toBeNull();
   });
 
   test("no updates message", () => {
-    const stdout = "All snaps up to date.\n";
+    const stdout =
+      "===INSTALLED===\n" +
+      "Name      Version   Rev    Tracking       Publisher   Notes\n" +
+      "firefox   121.0     3500   latest/stable  mozilla     -\n" +
+      "===UPDATES===\n" +
+      "All snaps up to date.\n";
     const updates = snapParser.parseCheckOutput(stdout, "", 0);
     expect(updates).toHaveLength(0);
   });

@@ -1,13 +1,15 @@
+// Each section is separated by ; so a missing tool (e.g. hostname on minimal
+// containers) does not break the entire chain via &&.
 export const SYSTEM_INFO_CMD =
-  'echo "===OS===" && cat /etc/os-release 2>/dev/null && ' +
-  'echo "===KERNEL===" && uname -r && ' +
-  'echo "===HOSTNAME===" && hostname && ' +
-  'echo "===UPTIME===" && (uptime -p 2>/dev/null || uptime) && ' +
-  'echo "===ARCH===" && uname -m && ' +
-  'echo "===CPU===" && nproc 2>/dev/null && ' +
-  'echo "===MEM===" && free -h 2>/dev/null | grep Mem && ' +
-  'echo "===DISK===" && df -h / 2>/dev/null | tail -1 && ' +
-  'echo "===REBOOT===" && ' +
+  'echo "===OS==="; cat /etc/os-release 2>/dev/null; ' +
+  'echo "===KERNEL==="; uname -r 2>/dev/null; ' +
+  'echo "===HOSTNAME==="; (hostname 2>/dev/null || cat /etc/hostname 2>/dev/null); ' +
+  'echo "===UPTIME==="; (uptime -p 2>/dev/null || uptime 2>/dev/null); ' +
+  'echo "===ARCH==="; uname -m 2>/dev/null; ' +
+  'echo "===CPU==="; nproc 2>/dev/null; ' +
+  'echo "===MEM==="; free -h 2>/dev/null | grep Mem; ' +
+  'echo "===DISK==="; df -h / 2>/dev/null | tail -1; ' +
+  'echo "===REBOOT==="; ' +
   'if [ -f /var/run/reboot-required ]; then echo "REBOOT_REQUIRED"; ' +
   'elif command -v needs-restarting >/dev/null 2>&1; then needs-restarting -r >/dev/null 2>&1; [ $? -eq 1 ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; ' +
   'else RUNNING=$(uname -r); LATEST=$(ls -1v /lib/modules/ 2>/dev/null | tail -1); ' +

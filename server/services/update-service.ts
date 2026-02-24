@@ -59,10 +59,34 @@ function storeUpdates(systemId: number, updates: ParsedUpdate[]): void {
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
 
   for (const u of updates) {
-    db.run(
-      sql`INSERT OR REPLACE INTO update_cache (system_id, pkg_manager, package_name, current_version, new_version, architecture, repository, is_security, cached_at)
-          VALUES (${systemId}, ${u.pkgManager}, ${u.packageName}, ${u.currentVersion}, ${u.newVersion}, ${u.architecture}, ${u.repository}, ${u.isSecurity ? 1 : 0}, ${now})`
-    );
+    db.insert(updateCache)
+      .values({
+        systemId,
+        pkgManager: u.pkgManager,
+        packageName: u.packageName,
+        currentVersion: u.currentVersion,
+        newVersion: u.newVersion ?? "",
+        architecture: u.architecture,
+        repository: u.repository,
+        isSecurity: u.isSecurity ? 1 : 0,
+        cachedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          updateCache.systemId,
+          updateCache.pkgManager,
+          updateCache.packageName,
+        ],
+        set: {
+          currentVersion: u.currentVersion,
+          newVersion: u.newVersion ?? "",
+          architecture: u.architecture,
+          repository: u.repository,
+          isSecurity: u.isSecurity ? 1 : 0,
+          cachedAt: now,
+        },
+      })
+      .run();
   }
 }
 
@@ -543,6 +567,7 @@ export async function applyUpgradePackage(
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
 
+    const histId = insertStartedEntry(systemId, "upgrade_package", pmName, cmd);
     outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
 
     try {
@@ -559,34 +584,28 @@ export async function applyUpgradePackage(
 
       const success = exitCode === 0;
       const monitoringLost = exitCode === EXIT_MONITORING_LOST;
-      logHistory(
-        systemId,
-        "upgrade_package",
-        pmName,
-        success ? "success" : "failed",
-        {
-          packageCount: 1,
-          packages: JSON.stringify([packageName]),
-          command: cmd,
-          output: stdout.slice(0, 5000),
-          error: monitoringLost
-            ? "SSH connection lost during upgrade. The process may still be running on the remote system."
-            : success ? undefined : (stderr || stdout).slice(0, 2000),
-        }
-      );
+      finishEntry(histId, success ? "success" : "failed", {
+        packageCount: 1,
+        packages: JSON.stringify([packageName]),
+        output: stdout.slice(0, 5000),
+        error: monitoringLost
+          ? "SSH connection lost during upgrade. The process may still be running on the remote system."
+          : success ? undefined : (stderr || stdout).slice(0, 2000),
+      });
 
-      if (success) {
-        sshManager.disconnect(conn);
-        conn = null;
-        outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-        await checkUpdatesUnlocked(systemId, true);
-      }
+      // Always re-check after upgrade to reflect the actual package state,
+      // even if the upgrade reported a non-zero exit code (e.g. flatpak in
+      // Docker reports exit 1 due to cross-device hardlink errors despite the
+      // update succeeding).
+      sshManager.disconnect(conn);
+      conn = null;
+      outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
+      await checkUpdatesUnlocked(systemId, true);
 
       outputStream.publish(systemId, { type: "done", success });
       return { success, output: success ? stdout : stderr || stdout };
     } catch (e) {
-      logHistory(systemId, "upgrade_package", pmName, "failed", {
-        command: cmd,
+      finishEntry(histId, "failed", {
         error: String(e),
       });
       outputStream.publish(systemId, { type: "error", message: String(e) });

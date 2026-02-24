@@ -1,6 +1,7 @@
 import type { WSContext } from "hono/ws";
 
 export type WsMessage =
+  | { type: "reset" }
   | { type: "started"; command: string; pkgManager: string }
   | { type: "output"; data: string; stream: "stdout" | "stderr" }
   | { type: "phase"; phase: string }
@@ -59,10 +60,19 @@ export function publish(systemId: number, msg: WsMessage): void {
   }
 }
 
-/** Clear buffer for a system. Called when a new operation starts. */
+/** Clear buffer for a system. Called when a new operation starts.
+ *  Broadcasts a "reset" message to existing subscribers so they clear local state. */
 export function resetStream(systemId: number): void {
   const stream = streams.get(systemId);
   if (stream) {
+    const json = JSON.stringify({ type: "reset" });
+    for (const ws of stream.subscribers) {
+      try {
+        ws.send(json);
+      } catch {
+        stream.subscribers.delete(ws);
+      }
+    }
     stream.buffer = [];
   }
 }

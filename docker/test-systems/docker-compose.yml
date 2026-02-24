@@ -1,0 +1,96 @@
+# Test systems for verifying all supported package managers over SSH.
+#
+# Usage:
+#   docker compose up -d --build
+#
+# Credentials (all containers):
+#   User:     testuser
+#   Password: testpass
+#
+# Connect from the dashboard using localhost and the mapped port:
+#   Ubuntu  (APT)     → localhost:2001
+#   Fedora  (DNF)     → localhost:2002
+#   CentOS7 (YUM)     → localhost:2003
+#   Arch    (Pacman)  → localhost:2004
+#   Ubuntu  (Flatpak) → localhost:2005
+#   Ubuntu  (Snap)    → localhost:2006
+#
+# SSH examples:
+#   ssh testuser@localhost -p 2001   # Ubuntu  (APT)
+#   ssh testuser@localhost -p 2002   # Fedora  (DNF)
+#   ssh testuser@localhost -p 2003   # CentOS7 (YUM)
+#   ssh testuser@localhost -p 2004   # Arch    (Pacman)
+#   ssh testuser@localhost -p 2005   # Ubuntu  (Flatpak)
+#   ssh testuser@localhost -p 2006   # Ubuntu  (Snap)
+#
+# Note: Flatpak needs --privileged for bubblewrap (used during install/update).
+# Snap needs systemd as PID 1 + --privileged for snapd to function.
+
+services:
+  ubuntu:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
+    container_name: ludash-test-ubuntu
+    hostname: ubuntu-test
+    ports:
+      - "2001:22"
+    restart: unless-stopped
+
+  fedora:
+    build:
+      context: .
+      dockerfile: Dockerfile.fedora
+    container_name: ludash-test-fedora
+    hostname: fedora-test
+    ports:
+      - "2002:22"
+    restart: unless-stopped
+
+  centos7:
+    build:
+      context: .
+      dockerfile: Dockerfile.centos7
+    container_name: ludash-test-centos7
+    hostname: centos7-test
+    ports:
+      - "2003:22"
+    restart: unless-stopped
+
+  archlinux:
+    build:
+      context: .
+      dockerfile: Dockerfile.archlinux
+    container_name: ludash-test-archlinux
+    hostname: archlinux-test
+    ports:
+      - "2004:22"
+    restart: unless-stopped
+
+  flatpak:
+    build:
+      context: .
+      dockerfile: Dockerfile.flatpak
+    container_name: ludash-test-flatpak
+    hostname: flatpak-test
+    privileged: true
+    ports:
+      - "2005:22"
+    restart: unless-stopped
+
+  snap:
+    build:
+      context: .
+      dockerfile: Dockerfile.snap
+    container_name: ludash-test-snap
+    hostname: snap-test
+    privileged: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    ports:
+      - "2006:22"
+    restart: unless-stopped

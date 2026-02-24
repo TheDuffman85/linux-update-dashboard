@@ -82,7 +82,7 @@ function UpdatesTable({
                 {u.currentVersion || "-"}
               </td>
               <td className="px-2 sm:px-4 py-2 font-mono text-xs font-medium break-all">
-                {u.newVersion}
+                {u.newVersion || "-"}
               </td>
               <td className="px-2 sm:px-4 py-2 hidden md:table-cell text-slate-500">
                 {u.pkgManager}
@@ -156,7 +156,7 @@ function LiveOutput({ messages, isActive }: { messages: WsMessage[]; isActive: b
         onScroll={handleScroll}
         className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
       >
-        {messages.length === 0 && (
+        {!messages.some((m) => m.type === "output" || m.type === "error") && (
           <span className="text-slate-500 italic">Waiting for output…</span>
         )}
         {messages.map((msg, i) => {
@@ -249,7 +249,7 @@ function HistoryList({
 
   // Fallback label for the synthetic placeholder (before DB entry arrives)
   const syntheticStartedMsg = commandOutput.messages
-    .find((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
+    .findLast((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
   const syntheticLabel = (() => {
     if (activeOp) {
       if (activeOp.type === "check") return "Checking for updates";
