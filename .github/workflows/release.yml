@@ -71,6 +71,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            APP_BUILD_DATE=${{ steps.version.outputs.date }}
+            APP_COMMIT_HASH=${{ steps.version.outputs.sha8 }}
+            APP_BRANCH=main
 
       - name: Create git tag
         run: |

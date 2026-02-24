@@ -3,6 +3,17 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import http from "http";
+import { execSync } from "child_process";
+
+function git(cmd: string): string {
+  try {
+    return execSync(`git ${cmd}`, { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+const REPO_URL = "https://github.com/TheDuffman85/linux-update-dashboard";
 
 export default defineConfig({
   plugins: [
@@ -55,6 +66,19 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "dist/client"),
     emptyOutDir: true,
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || ""),
+    __APP_BUILD_DATE__: JSON.stringify(
+      process.env.VITE_APP_BUILD_DATE || new Date().toISOString().slice(0, 10)
+    ),
+    __APP_COMMIT_HASH__: JSON.stringify(
+      process.env.VITE_APP_COMMIT_HASH || git("rev-parse --short=8 HEAD")
+    ),
+    __APP_BRANCH__: JSON.stringify(
+      process.env.VITE_APP_BRANCH || git("rev-parse --abbrev-ref HEAD")
+    ),
+    __APP_REPO_URL__: JSON.stringify(REPO_URL),
   },
   server: {
     host: true,

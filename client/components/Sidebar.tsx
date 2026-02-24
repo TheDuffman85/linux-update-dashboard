@@ -74,6 +74,42 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
             </div>
           </div>
         </div>
+
+        <div className="px-3 pb-2 text-[10px] font-mono text-slate-400 dark:text-slate-500 text-center">
+          {__APP_VERSION__ ? (
+            <>
+              <a
+                href={
+                  __APP_BRANCH__ === "dev"
+                    ? `${__APP_REPO_URL__}/commit/${__APP_COMMIT_HASH__}`
+                    : `${__APP_REPO_URL__}/releases/tag/${__APP_VERSION__.replace(/^dev-/, "")}`
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-blue-500 transition-colors"
+              >
+                {__APP_BRANCH__ === "dev" ? __APP_VERSION__ : `v${__APP_VERSION__}`}
+              </a>
+              <div>{__APP_BUILD_DATE__}</div>
+            </>
+          ) : (
+            <>
+              <span>Development</span>
+              {__APP_COMMIT_HASH__ && (
+                <div>
+                  <a
+                    href={`${__APP_REPO_URL__}/commit/${__APP_COMMIT_HASH__}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-blue-500 transition-colors"
+                  >
+                    {__APP_COMMIT_HASH__}
+                  </a>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </aside>
     </>
   );
