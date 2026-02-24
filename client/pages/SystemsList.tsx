@@ -237,6 +237,7 @@ export default function SystemsList() {
             username: duplicateSource.username,
             detectedPkgManagers: duplicateSource.detectedPkgManagers ?? undefined,
             disabledPkgManagers: duplicateSource.disabledPkgManagers ?? undefined,
+            excludeFromUpgradeAll: duplicateSource.excludeFromUpgradeAll,
           } : undefined}
           sourceSystemId={duplicateSource?.id}
           onSubmit={handleCreate}
@@ -257,6 +258,7 @@ export default function SystemsList() {
               username: editSystem.username,
               detectedPkgManagers: editSystem.detectedPkgManagers ?? undefined,
               disabledPkgManagers: editSystem.disabledPkgManagers ?? undefined,
+              excludeFromUpgradeAll: editSystem.excludeFromUpgradeAll,
             }}
             systemId={editSystem.id}
             onSubmit={handleUpdate}

@@ -55,6 +55,9 @@ export const systems = sqliteTable(
     cpuCores: text("cpu_cores"),
     memory: text("memory"),
     disk: text("disk"),
+    excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
+      .notNull()
+      .default(0),
     needsReboot: integer("needs_reboot").notNull().default(0),
     systemInfoUpdatedAt: text("system_info_updated_at"),
     isReachable: integer("is_reachable").notNull().default(0),

@@ -60,7 +60,42 @@ MODE="${1:-normal}"
 
 cd "$PROJECT_ROOT" || exit 1
 
-if [ "$MODE" == "dev" ]; then
+if [ "$MODE" == "test" ]; then
+    log "Starting in TEST mode..."
+
+    # Force-recreate test containers
+    COMPOSE_DIR="$PROJECT_ROOT/docker/test-systems"
+    if [ ! -f "$COMPOSE_DIR/docker-compose.yml" ]; then
+        log "Error: docker-compose.yml not found at $COMPOSE_DIR"
+        exit 1
+    fi
+
+    log "Force-recreating test containers..."
+    docker compose -f "$COMPOSE_DIR/docker-compose.yml" up -d --force-recreate --build
+    if [ $? -ne 0 ]; then
+        log "Failed to recreate test containers. Aborting."
+        exit 1
+    fi
+    log "Test containers are up."
+
+    # Continue with production mode
+    export NODE_ENV=production
+
+    log "Building application..."
+    bun run build
+
+    if [ $? -eq 0 ]; then
+        log "Build successful."
+        log "Running database migrations..."
+        bun run db:migrate 2>/dev/null || log "Migrations skipped (tables may already exist)"
+        log "Starting server..."
+        bun run start
+    else
+        log "Build failed. Aborting."
+        exit 1
+    fi
+
+elif [ "$MODE" == "dev" ]; then
     log "Starting in DEVELOPMENT mode..."
 
     # Start both server and client via bun run dev

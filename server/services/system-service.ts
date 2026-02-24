@@ -32,6 +32,7 @@ export function createSystem(data: {
   keyPassphrase?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  excludeFromUpgradeAll?: boolean;
   sourceSystemId?: number;
 }): number {
   const encryptor = getEncryptor();
@@ -79,6 +80,9 @@ export function createSystem(data: {
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
+  if (data.excludeFromUpgradeAll !== undefined) {
+    values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
+  }
 
   const result = db.insert(systems).values(values as typeof systems.$inferInsert).returning({ id: systems.id }).get();
   return result.id;
@@ -97,6 +101,7 @@ export function updateSystem(
     keyPassphrase?: string;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
+    excludeFromUpgradeAll?: boolean;
   }
 ): void {
   const encryptor = getEncryptor();
@@ -124,6 +129,9 @@ export function updateSystem(
   }
   if (data.disabledPkgManagers !== undefined) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
+  }
+  if (data.excludeFromUpgradeAll !== undefined) {
+    values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
   }
 
   db.update(systems)

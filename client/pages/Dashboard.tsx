@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Modal } from "../components/Modal";
 import { useDashboardStats, useDashboardSystems } from "../lib/dashboard";
 import { useRefreshCache } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
@@ -17,10 +17,12 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system, upgrading }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean }) {
+function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean; checking: boolean }) {
   const borderColor = upgrading
     ? "border-l-blue-500"
-    : system.isReachable === -1
+    : checking
+      ? "border-l-sky-400"
+      : system.isReachable === -1
       ? "border-l-red-500"
       : system.updateCount > 0
         ? "border-l-amber-500"
@@ -35,8 +37,8 @@ function SystemCard({ system, upgrading }: { system: { id: number; name: string;
     >
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-medium text-sm truncate">{system.name}</h3>
-        {upgrading ? (
-          <span className="spinner spinner-sm !w-2.5 !h-2.5 !border-blue-500 !border-t-transparent" />
+        {upgrading || checking ? (
+          <span className={`spinner spinner-sm !w-2.5 !h-2.5 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
         ) : (
           <span
             className={`w-2 h-2 rounded-full ${
@@ -60,6 +62,8 @@ function SystemCard({ system, upgrading }: { system: { id: number; name: string;
         <div className="flex items-center gap-1.5 flex-wrap">
           {upgrading ? (
             <Badge variant="info" small>Upgrading...</Badge>
+          ) : checking ? (
+            <Badge variant="muted" small>Checking...</Badge>
           ) : system.isReachable === -1 ? (
             <Badge variant="danger" small>Unreachable</Badge>
           ) : system.updateCount > 0 ? (
@@ -88,12 +92,30 @@ function SystemCard({ system, upgrading }: { system: { id: number; name: string;
 }
 
 export default function Dashboard() {
-  const { data: stats } = useDashboardStats();
-  const { data: systems } = useDashboardSystems();
+  const { upgradeAll, isUpgrading, removeUpgrading, upgradingSystems, upgradingCount } = useUpgrade();
+  const { data: systems, dataUpdatedAt } = useDashboardSystems(upgradingCount > 0);
+  const hasActiveOps = systems?.some((s) => s.activeOperation) ?? false;
+  const { data: stats } = useDashboardStats(hasActiveOps);
   const refreshCache = useRefreshCache();
   const { addToast } = useToast();
-  const { upgradeAll, isUpgrading, upgradingCount } = useUpgrade();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
+
+  // Sync client-side upgrading state with server's activeOperation.
+  // React Query only fires inline mutation callbacks for the last .mutate() call,
+  // so when upgrading multiple systems concurrently, earlier callbacks are lost.
+  // This effect clears stale entries when the server confirms no active upgrade.
+  // We compare dataUpdatedAt with each entry's addedAt to avoid clearing entries
+  // based on stale server data that was fetched before the upgrade started.
+  useEffect(() => {
+    if (!systems || upgradingSystems.size === 0) return;
+    for (const [systemId, entry] of upgradingSystems) {
+      if (dataUpdatedAt < entry.addedAt) continue;
+      const serverSystem = systems.find((s) => s.id === systemId);
+      if (serverSystem && !serverSystem.activeOperation) {
+        removeUpgrading(systemId);
+      }
+    }
+  }, [systems, dataUpdatedAt, upgradingSystems, removeUpgrading]);
 
   const handleRefresh = () => {
     refreshCache.mutate(undefined, {
@@ -103,10 +125,13 @@ export default function Dashboard() {
   };
 
   const systemsWithUpdates = systems?.filter((s) => s.updateCount > 0 && !isUpgrading(s.id)) ?? [];
+  const eligibleSystems = systemsWithUpdates.filter((s) => s.excludeFromUpgradeAll !== 1);
+  const excludedSystems = systemsWithUpdates.filter((s) => s.excludeFromUpgradeAll === 1);
+  const eligibleUpdateCount = eligibleSystems.reduce((sum, s) => sum + s.updateCount, 0);
 
   const handleUpgradeAll = () => {
     setShowUpgradeConfirm(false);
-    for (const s of systemsWithUpdates) {
+    for (const s of eligibleSystems) {
       upgradeAll(s.id, {
         onSuccess: (d: any) =>
           addToast(
@@ -132,7 +157,7 @@ export default function Dashboard() {
           >
             {refreshCache.isPending ? <span className="spinner spinner-sm" /> : "Refresh All"}
           </button>
-          {((stats?.needsUpdates ?? 0) > 0 || upgradingCount > 0) && (
+          {(eligibleSystems.length > 0 || upgradingCount > 0) && (
             <button
               onClick={() => setShowUpgradeConfirm(true)}
               disabled={upgradingCount > 0}
@@ -144,7 +169,7 @@ export default function Dashboard() {
                   Upgrading...
                 </span>
               ) : (
-                `Upgrade All (${stats?.totalUpdates ?? 0})`
+                `Upgrade All (${eligibleUpdateCount})`
               )}
             </button>
           )}
@@ -169,7 +194,7 @@ export default function Dashboard() {
       {systems && systems.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {systems.map((s) => (
-            <SystemCard key={s.id} system={s} upgrading={isUpgrading(s.id)} />
+            <SystemCard key={s.id} system={s} upgrading={isUpgrading(s.id) || !!s.activeOperation?.type?.includes("upgrade")} checking={!!s.activeOperation && !s.activeOperation.type.includes("upgrade")} />
           ))}
         </div>
       ) : (
@@ -184,14 +209,51 @@ export default function Dashboard() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={showUpgradeConfirm}
-        onClose={() => setShowUpgradeConfirm(false)}
-        onConfirm={handleUpgradeAll}
-        title="Upgrade All Systems"
-        message={`Apply all ${stats?.totalUpdates ?? 0} updates across ${stats?.needsUpdates ?? 0} system${(stats?.needsUpdates ?? 0) !== 1 ? "s" : ""}?`}
-        confirmLabel="Upgrade All"
-      />
+      <Modal open={showUpgradeConfirm} onClose={() => setShowUpgradeConfirm(false)} title="Upgrade All Systems">
+        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
+          Apply {eligibleUpdateCount} update{eligibleUpdateCount !== 1 ? "s" : ""} across {eligibleSystems.length} system{eligibleSystems.length !== 1 ? "s" : ""}?
+        </p>
+        {eligibleSystems.length > 0 && (
+          <ul className="mb-4 space-y-1">
+            {eligibleSystems.map((s) => (
+              <li key={s.id} className="flex items-center justify-between text-sm">
+                <span>{s.name}</span>
+                <Badge variant="warning" small>{s.updateCount} updates</Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+        {excludedSystems.length > 0 && (
+          <div className="mb-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-border">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+              Excluded from Upgrade All
+            </p>
+            <ul className="space-y-1">
+              {excludedSystems.map((s) => (
+                <li key={s.id} className="flex items-center justify-between text-sm text-slate-400">
+                  <span>{s.name}</span>
+                  <Badge variant="muted" small>{s.updateCount} updates</Badge>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={() => setShowUpgradeConfirm(false)}
+            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleUpgradeAll}
+            disabled={eligibleSystems.length === 0}
+            className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+          >
+            Upgrade All
+          </button>
+        </div>
+      </Modal>
     </Layout>
   );
 }

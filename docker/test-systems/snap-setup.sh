@@ -10,8 +10,11 @@ for pkg in hello-world jq yq micro btop tree httpie certbot lolcat go; do
   esac
 done
 
-# Hold auto-refresh so snaps stay at the installed version
-snap refresh --hold
+# Disable the automatic refresh timer so snaps stay at whatever revision we
+# install.  Using "snap refresh --hold" would also hide them from
+# "snap refresh --list", so we stop the timer instead.
+systemctl stop snapd.refresh.timer 2>/dev/null || true
+systemctl disable snapd.refresh.timer 2>/dev/null || true
 
 # Downgrade non-classic snaps to their previous store revision so that
 # "snap refresh --list" always reports available updates for testing.

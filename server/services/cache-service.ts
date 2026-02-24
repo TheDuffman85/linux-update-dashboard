@@ -86,6 +86,15 @@ export function invalidateCache(systemId?: number): void {
   }
 }
 
+export function getAllSystemIds(): number[] {
+  const db = getDb();
+  return db
+    .select({ id: systems.id })
+    .from(systems)
+    .all()
+    .map((r) => r.id);
+}
+
 export function getStaleSystemIds(): number[] {
   const cacheHours = getCacheDurationHours();
   const threshold = new Date(
@@ -93,12 +102,7 @@ export function getStaleSystemIds(): number[] {
   ).toISOString().replace("T", " ").slice(0, 19);
 
   const db = getDb();
-
-  const allIds = db
-    .select({ id: systems.id })
-    .from(systems)
-    .all()
-    .map((r) => r.id);
+  const allIds = getAllSystemIds();
 
   const freshRows = db
     .select({ systemId: updateCache.systemId })

@@ -215,6 +215,13 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     // Column already exists
   }
 
+  // Migration: add exclude from upgrade-all flag
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
   // Migration: strip ntfyPriority from ntfy notification configs (priority is now automatic)
   _db.run(sql`UPDATE notifications SET config = json_remove(config, '$.ntfyPriority')
     WHERE type = 'ntfy' AND json_extract(config, '$.ntfyPriority') IS NOT NULL`);

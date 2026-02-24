@@ -13,7 +13,7 @@ export const SYSTEM_INFO_CMD =
   'if [ -f /var/run/reboot-required ]; then echo "REBOOT_REQUIRED"; ' +
   'elif command -v needs-restarting >/dev/null 2>&1; then needs-restarting -r >/dev/null 2>&1; [ $? -eq 1 ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; ' +
   'else RUNNING=$(uname -r); LATEST=$(ls -1v /lib/modules/ 2>/dev/null | tail -1); ' +
-  '[ -n "$LATEST" ] && [ "$RUNNING" != "$LATEST" ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; fi';
+  '[ -n "$LATEST" ] && [ -d "/lib/modules/$RUNNING" ] && [ "$RUNNING" != "$LATEST" ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; fi';
 
 export interface SystemInfo {
   osName: string;
