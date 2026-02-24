@@ -53,15 +53,16 @@ export function getAuthorizationUrl(state: string, nonce: string, redirectUri: s
 
 export async function handleCallback(
   currentUrl: URL,
-  expectedNonce?: string
+  expectedNonce?: string,
+  expectedState?: string,
 ): Promise<{ username: string; email?: string } | null> {
   if (!_config) throw new Error("OIDC not configured");
 
   try {
     const tokens = await client.authorizationCodeGrant(_config, currentUrl, {
       expectedNonce,
-      expectedState: client.skipStateCheck,
-    } as Parameters<typeof client.authorizationCodeGrant>[2]);
+      expectedState,
+    });
 
     const claims = tokens.claims();
     if (!claims) return null;

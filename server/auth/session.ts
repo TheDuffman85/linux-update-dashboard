@@ -1,9 +1,12 @@
 import { SignJWT, jwtVerify } from "jose";
 import type { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { config } from "../config";
 
 const SESSION_COOKIE = "ludash_session";
-const SESSION_MAX_AGE = 86400 * 7; // 7 days
+const SESSION_LIFETIME = 3600; // 1 hour — JWT expiration
+const COOKIE_MAX_AGE = 86400 * 7; // 7 days — browser keeps cookie for seamless refresh
+const REFRESH_AFTER = SESSION_LIFETIME / 2; // Refresh when token is >50% through its lifetime
 
 let _secret: Uint8Array | null = null;
 
@@ -16,6 +19,14 @@ export interface SessionData {
   username: string;
 }
 
+function isSecureContext(): boolean {
+  try {
+    return new URL(config.baseUrl).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export async function createSession(
   c: Context,
   userId: number,
@@ -25,14 +36,15 @@ export async function createSession(
 
   const token = await new SignJWT({ userId, username })
     .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime(`${SESSION_MAX_AGE}s`)
+    .setExpirationTime(`${SESSION_LIFETIME}s`)
     .setIssuedAt()
     .sign(_secret);
 
   setCookie(c, SESSION_COOKIE, token, {
-    maxAge: SESSION_MAX_AGE,
+    maxAge: COOKIE_MAX_AGE,
     httpOnly: true,
     sameSite: "Lax",
+    secure: isSecureContext(),
     path: "/",
   });
 }
@@ -51,6 +63,36 @@ export async function getSession(c: Context): Promise<SessionData | null> {
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Check if the current session token needs refreshing (rolling session).
+ * Returns true if a new token was issued.
+ */
+export async function refreshSessionIfNeeded(c: Context): Promise<boolean> {
+  if (!_secret) return false;
+
+  const token = getCookie(c, SESSION_COOKIE);
+  if (!token) return false;
+
+  try {
+    const { payload } = await jwtVerify(token, _secret);
+    const iat = payload.iat;
+    if (!iat) return false;
+
+    const age = Math.floor(Date.now() / 1000) - iat;
+    if (age > REFRESH_AFTER) {
+      await createSession(
+        c,
+        payload.userId as number,
+        payload.username as string,
+      );
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 

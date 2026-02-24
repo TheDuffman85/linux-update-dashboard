@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo } from "./types";
+import { sudo, validatePackageName } from "./types";
 
 // Example: linux 6.7.4.arch1-1 -> 6.7.5.arch1-1
 const PATTERN = /^(\S+)\s+(\S+)\s+->\s+(\S+)/;
@@ -44,6 +44,7 @@ export const pacmanParser: PackageParser = {
   },
 
   getUpgradePackageCommand(pkg) {
-    return sudo(`pacman -S --noconfirm ${pkg}`) + " 2>&1";
+    const safePkg = validatePackageName(pkg);
+    return sudo(`pacman -S --noconfirm ${safePkg}`) + " 2>&1";
   },
 };

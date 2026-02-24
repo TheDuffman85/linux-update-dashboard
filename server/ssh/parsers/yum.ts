@@ -1,5 +1,5 @@
 import type { PackageParser } from "./types";
-import { sudo } from "./types";
+import { sudo, validatePackageName } from "./types";
 import { buildCheckCommand, dnfParser } from "./dnf";
 
 export const yumParser: PackageParser = {
@@ -24,6 +24,7 @@ export const yumParser: PackageParser = {
   },
 
   getUpgradePackageCommand(pkg) {
-    return sudo(`yum update -y ${pkg}`) + " 2>&1";
+    const safePkg = validatePackageName(pkg);
+    return sudo(`yum update -y ${safePkg}`) + " 2>&1";
   },
 };

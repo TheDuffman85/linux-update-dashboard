@@ -9,6 +9,33 @@ import * as outputStream from "../services/output-stream";
 
 const systems = new Hono();
 
+function parseId(raw: string): number | null {
+  const id = parseInt(raw, 10);
+  if (isNaN(id) || id <= 0) return null;
+  return id;
+}
+
+const VALID_HOSTNAME = /^[a-zA-Z0-9]([a-zA-Z0-9._:-]*[a-zA-Z0-9])?$/;
+const VALID_USERNAME = /^[a-zA-Z0-9._@-]+$/;
+const VALID_AUTH_TYPES = ["password", "key"];
+
+function validateSystemInput(body: Record<string, unknown>): string | null {
+  if (!body.name || typeof body.name !== "string" || body.name.length > 255)
+    return "name is required (max 255 chars)";
+  if (!body.hostname || typeof body.hostname !== "string" || body.hostname.length > 255 || !VALID_HOSTNAME.test(body.hostname))
+    return "hostname is required and must be a valid hostname or IP";
+  if (body.port !== undefined && body.port !== null) {
+    const port = Number(body.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      return "port must be an integer between 1 and 65535";
+  }
+  if (!body.username || typeof body.username !== "string" || body.username.length > 128 || !VALID_USERNAME.test(body.username))
+    return "username is required (max 128 chars, alphanumeric/._@-)";
+  if (body.authType && !VALID_AUTH_TYPES.includes(body.authType as string))
+    return "authType must be 'password' or 'key'";
+  return null;
+}
+
 function parseJsonArrayField(value: string | null): string[] | null {
   if (!value) return null;
   try { return JSON.parse(value); } catch { return null; }
@@ -35,7 +62,8 @@ systems.get("/", (c) => {
 
 // Get single system detail
 systems.get("/:id", (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const system = systemService.getSystemWithUpdateCount(id);
   if (!system) return c.json({ error: "System not found" }, 404);
 
@@ -61,6 +89,8 @@ systems.get("/:id", (c) => {
 // Create system
 systems.post("/", async (c) => {
   const body = await c.req.json();
+  const validationError = validateSystemInput(body);
+  if (validationError) return c.json({ error: validationError }, 400);
 
   const systemId = systemService.createSystem({
     name: body.name,
@@ -85,8 +115,11 @@ systems.post("/", async (c) => {
 
 // Update system
 systems.put("/:id", async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const body = await c.req.json();
+  const validationError = validateSystemInput(body);
+  if (validationError) return c.json({ error: validationError }, 400);
 
   systemService.updateSystem(id, {
     name: body.name,
@@ -107,14 +140,16 @@ systems.put("/:id", async (c) => {
 
 // Reboot system
 systems.post("/:id/reboot", async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const result = await updateService.rebootSystem(id);
   return c.json(result, result.success ? 200 : 500);
 });
 
 // Delete system
 systems.delete("/:id", (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   outputStream.removeStream(id);
   systemService.deleteSystem(id);
   return c.json({ status: "ok" });
@@ -175,14 +210,16 @@ systems.post("/test-connection", async (c) => {
 
 // Get cached updates for system
 systems.get("/:id/updates", (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const updates = cacheService.getCachedUpdates(id);
   return c.json({ updates });
 });
 
 // Get history for system
 systems.get("/:id/history", (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const history = updateService.getHistory(id).map((h) => ({
     ...h,
     packagesList: h.packages ? JSON.parse(h.packages) : [],

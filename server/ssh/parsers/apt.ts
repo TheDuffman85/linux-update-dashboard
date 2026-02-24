@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo } from "./types";
+import { sudo, validatePackageName } from "./types";
 
 // Example: curl/jammy-updates 7.81.0-1ubuntu1.18 amd64 [upgradable from: 7.81.0-1ubuntu1.16]
 const PATTERN =
@@ -62,9 +62,10 @@ export const aptParser: PackageParser = {
   },
 
   getUpgradePackageCommand(pkg) {
+    const safePkg = validatePackageName(pkg);
     return (
       "export DEBIAN_FRONTEND=noninteractive; " +
-      sudo(`apt-get ${LOCK_WAIT} install --only-upgrade -y ${pkg}`) +
+      sudo(`apt-get ${LOCK_WAIT} install --only-upgrade -y ${safePkg}`) +
       " 2>&1"
     );
   },

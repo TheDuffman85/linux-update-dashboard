@@ -15,6 +15,15 @@ export { websocket };
 export function createApp() {
   const app = new Hono();
 
+  // Security headers
+  app.use("*", async (c, next) => {
+    await next();
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("X-Frame-Options", "DENY");
+    c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    c.header("X-Permitted-Cross-Domain-Policies", "none");
+  });
+
   // CORS for development (Vite dev server on different port)
   if (process.env.NODE_ENV !== "production") {
     app.use(

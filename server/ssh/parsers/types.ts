@@ -24,6 +24,20 @@ export interface PackageParser {
 }
 
 /**
+ * Validate a package name to prevent shell injection.
+ * Allows alphanumeric, dots, hyphens, underscores, plus, colon, tilde.
+ * Throws if the name contains shell metacharacters or is empty.
+ */
+const VALID_PKG_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._+:~-]*$/;
+
+export function validatePackageName(pkg: string): string {
+  if (!pkg || !VALID_PKG_NAME.test(pkg)) {
+    throw new Error(`Invalid package name: ${pkg.slice(0, 80)}`);
+  }
+  return pkg;
+}
+
+/**
  * Wrap a command to use sudo if available, otherwise run directly.
  * Handles: root user, sudo available, no root/no sudo.
  */

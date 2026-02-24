@@ -1,6 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import { eq, count } from "drizzle-orm";
-import { getSession, type SessionData } from "../auth/session";
+import { getSession, refreshSessionIfNeeded, type SessionData } from "../auth/session";
 import { getDb } from "../db";
 import { users } from "../db/schema";
 
@@ -43,6 +43,10 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     }
 
     c.set("user", session);
+
+    // Rolling session: refresh token if it's past the halfway point
+    await refreshSessionIfNeeded(c);
+
     return next();
   }
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "fs";
 import { dirname, join } from "path";
 import { randomBytes } from "crypto";
 
@@ -27,7 +27,40 @@ function getSecretKey(dbPath: string, envKey?: string): string {
   const key = randomBytes(32).toString("hex");
   mkdirSync(dirname(keyFile), { recursive: true });
   writeFileSync(keyFile, key);
+  try { chmodSync(keyFile, 0o600); } catch { /* Windows doesn't support chmod */ }
   return key;
+}
+
+function getEncryptionKey(): string {
+  const key = process.env.LUDASH_ENCRYPTION_KEY;
+  if (!key) {
+    throw new Error(
+      "LUDASH_ENCRYPTION_KEY environment variable is required.\n" +
+      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"'
+    );
+  }
+  return key;
+}
+
+/**
+ * Get or generate a per-instance encryption salt for PBKDF2 key derivation.
+ * Returns null if the encryption key is a raw base64 key (salt not needed).
+ */
+export function getEncryptionSalt(dbPath: string, rawKey: string): Buffer | null {
+  // Base64 keys are used directly — no PBKDF2, no salt needed
+  if (rawKey.length === 44 && rawKey.endsWith("=")) return null;
+
+  const saltFile = join(dirname(dbPath), ".encryption_salt");
+  if (existsSync(saltFile)) {
+    return Buffer.from(readFileSync(saltFile, "utf-8").trim(), "hex");
+  }
+
+  // First run — generate a random salt
+  const salt = randomBytes(16);
+  mkdirSync(dirname(saltFile), { recursive: true });
+  writeFileSync(saltFile, salt.toString("hex"));
+  try { chmodSync(saltFile, 0o600); } catch { /* Windows */ }
+  return salt;
 }
 
 function loadConfig(): Config {
@@ -35,7 +68,7 @@ function loadConfig(): Config {
 
   return {
     dbPath,
-    encryptionKey: process.env.LUDASH_ENCRYPTION_KEY || "",
+    encryptionKey: getEncryptionKey(),
     secretKey: getSecretKey(dbPath, process.env.LUDASH_SECRET_KEY),
     logLevel: process.env.LUDASH_LOG_LEVEL || "info",
     host: process.env.LUDASH_HOST || "0.0.0.0",

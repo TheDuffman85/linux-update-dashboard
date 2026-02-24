@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo } from "./types";
+import { sudo, validatePackageName } from "./types";
 
 // Example: curl.x86_64    7.76.1-26.el9_3.3    baseos
 const PATTERN = /^(\S+?)\.(\S+)\s+(\S+)\s+(\S+)/;
@@ -103,6 +103,7 @@ export const dnfParser: PackageParser = {
   },
 
   getUpgradePackageCommand(pkg) {
-    return sudo(`dnf upgrade -y ${pkg}`) + " 2>&1";
+    const safePkg = validatePackageName(pkg);
+    return sudo(`dnf upgrade -y ${safePkg}`) + " 2>&1";
   },
 };

@@ -37,9 +37,15 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Three auth methods:** password, Passkeys (WebAuthn), and SSO (OpenID Connect)
 - **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
+- **Full upgrade:** run `apt full-upgrade` or `dnf distro-sync` from the dashboard for dist-level upgrades
+- **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
+- **System duplication:** clone an existing system entry (including encrypted credentials) to quickly add similar servers
+- **Exclude from Upgrade All:** flag individual systems to skip them during batch upgrades
+- **Notification digests:** schedule notification delivery on a cron expression for batched digest summaries instead of immediate alerts
 - **Dark mode:** dark/light theme with OS preference detection
 - **Update history:** logs every check and upgrade operation per system
 - **Real-time status:** see which systems are online, up to date, or need attention at a glance
+- **Version info:** build version, commit hash, and branch displayed in the sidebar
 - **Docker ready:** multi-stage Dockerfile with a persistent volume for production
 
 ## Screenshots
@@ -192,7 +198,7 @@ Three auth methods are supported and can be used at the same time:
 
 ### Password
 
-Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use JWT cookies with a 7-day expiry.
+Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use short-lived JWTs (1-hour expiry) in a 7-day HTTP-only cookie, with silent rolling refresh after 30 minutes of activity.
 
 ### Passkeys (WebAuthn)
 
@@ -238,7 +244,7 @@ Package managers are auto-detected on each system over SSH when you test the con
 ├── server/                   # Hono backend
 │   ├── auth/                 # Password, WebAuthn, OIDC, session handling
 │   ├── db/                   # SQLite + Drizzle schema (7 tables)
-│   ├── middleware/            # Auth middleware
+│   ├── middleware/            # Auth and rate-limit middleware
 │   ├── routes/               # API route handlers
 │   ├── services/             # Business logic, caching, scheduling
 │   └── ssh/                  # SSH connection manager + parsers
@@ -360,7 +366,10 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/systems` | Add a new system |
 | PUT | `/api/systems/:id` | Update system configuration |
 | DELETE | `/api/systems/:id` | Remove a system |
-| POST | `/api/systems/:id/test-connection` | Test SSH connectivity |
+| POST | `/api/systems/test-connection` | Test SSH connectivity |
+| POST | `/api/systems/:id/reboot` | Reboot a system |
+| GET | `/api/systems/:id/updates` | Cached updates for a system |
+| GET | `/api/systems/:id/history` | Upgrade history for a system |
 
 ### Updates
 
@@ -369,8 +378,10 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/systems/:id/check` | Check one system for updates |
 | POST | `/api/systems/check-all` | Check all systems (background) |
 | POST | `/api/systems/:id/upgrade` | Upgrade all packages on a system |
+| POST | `/api/systems/:id/full-upgrade` | Full/dist upgrade on a system |
 | POST | `/api/systems/:id/upgrade/:packageName` | Upgrade a single package |
 | POST | `/api/cache/refresh` | Invalidate cache and re-check all systems |
+| GET | `/api/jobs/:id` | Poll background job status |
 
 ### Notifications (`/api/notifications/*`)
 
@@ -381,6 +392,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/notifications` | Create a notification channel |
 | PUT | `/api/notifications/:id` | Update a notification channel |
 | DELETE | `/api/notifications/:id` | Delete a notification channel |
+| POST | `/api/notifications/test` | Test a notification config inline (before saving) |
 | POST | `/api/notifications/:id/test` | Send a test notification |
 
 ### Dashboard & Settings
@@ -400,6 +412,10 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **Session security:** HTTP-only, SameSite=Lax cookies with JWT (HS256)
 - **Input validation:** strict type, format, and range validation on all API inputs
 - **SSRF protection:** outbound notification URLs are validated against private/internal IP ranges
+- **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify)
+- **Timing-safe login:** a pre-computed dummy hash is always compared on failed lookups to prevent username enumeration
+- **Encrypted OIDC secrets:** OIDC client secrets are encrypted at rest alongside SSH credentials
+- **Passphrase key derivation:** encryption keys can be raw base64 or passphrases derived via PBKDF2-SHA256 (480k iterations)
 - **Concurrent access control:** per-system mutex prevents conflicting SSH operations
 - **Connection pooling:** semaphore-based concurrency limiting to prevent SSH connection exhaustion
 
@@ -428,6 +444,7 @@ The upgrade itself continues on the remote host unaffected. Temporary files are 
 | Operation | SSH-safe |
 |-----------|----------|
 | Upgrade all packages | Yes |
+| Full upgrade (dist upgrade) | Yes |
 | Upgrade single package | Yes |
 | Check for updates | No (read-only, safe to retry) |
 | Reboot | No (fire-and-forget) |
