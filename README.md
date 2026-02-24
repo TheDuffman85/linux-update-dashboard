@@ -36,6 +36,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, ntfy.sh), scope them to specific systems, and pick which events trigger each channel
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Three auth methods:** password, Passkeys (WebAuthn), and SSO (OpenID Connect)
+- **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
 - **Dark mode:** dark/light theme with OS preference detection
 - **Update history:** logs every check and upgrade operation per system
 - **Real-time status:** see which systems are online, up to date, or need attention at a glance
@@ -243,6 +244,7 @@ Package managers are auto-detected on each system over SSH when you test the con
 │   └── ssh/                  # SSH connection manager + parsers
 ├── tests/server/             # Bun test suites
 ├── docker/                   # Dockerfile, compose, entrypoint
+│   └── test-systems/         # Docker test containers (6 distros)
 ├── run.sh                    # Local dev/production runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
 ├── drizzle.config.ts         # Drizzle Kit configuration
@@ -285,6 +287,42 @@ bun run db:generate          # Generate migrations from schema changes
 bun run db:migrate           # Apply pending migrations
 bun run db:studio            # Open Drizzle Studio GUI
 ```
+
+### Test Systems
+
+The project includes Docker-based test systems that simulate real Linux servers with pending updates. This lets you develop and test the dashboard without needing actual remote machines.
+
+**Start the dashboard with test systems:**
+```bash
+./run.sh test
+```
+
+This will:
+1. Stop any running dev/production services
+2. Build and start 6 Docker containers (one per package manager)
+3. Build the frontend in production mode
+4. Run database migrations
+5. Start the production server on `:3001`
+
+**SSH credentials for all test systems:**
+- User: `testuser`
+- Password: `testpass`
+- Passwordless `sudo` is pre-configured
+
+| Container | SSH Port | Package Manager | Base Image |
+|-----------|----------|-----------------|------------|
+| `ludash-test-ubuntu` | 2001 | APT | Ubuntu 24.04 |
+| `ludash-test-fedora` | 2002 | DNF | Fedora 41 |
+| `ludash-test-centos7` | 2003 | YUM | CentOS 7 |
+| `ludash-test-archlinux` | 2004 | Pacman | Arch Linux |
+| `ludash-test-flatpak` | 2005 | Flatpak | Ubuntu 24.04 |
+| `ludash-test-snap` | 2006 | Snap | Ubuntu 24.04 |
+
+To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
+
+Each container is built with **older package versions** pinned from archived repositories, while current repos remain active. This means `apt list --upgradable`, `dnf check-update`, `pacman -Qu`, etc. will always report pending updates — giving you realistic data to work with in the dashboard.
+
+The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 
 ### Branch Management
 
@@ -364,3 +402,38 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **SSRF protection:** outbound notification URLs are validated against private/internal IP ranges
 - **Concurrent access control:** per-system mutex prevents conflicting SSH operations
 - **Connection pooling:** semaphore-based concurrency limiting to prevent SSH connection exhaustion
+
+## SSH-Safe Upgrades
+
+All upgrade operations (upgrade all, full upgrade, single package) run via **nohup** on the remote system, so they survive SSH connection drops. If your network blips or the dashboard restarts mid-upgrade, the process keeps running on the server.
+
+### How it works
+
+1. **Sudo pre-caching** — sudo credentials are cached on the remote host before the upgrade starts, so the background process can elevate without a password prompt.
+2. **Temp script** — the upgrade command is base64-encoded, written to a temporary script on the remote host, and launched with `nohup` in the background.
+3. **Live streaming** — output is streamed back to the dashboard in real time using `tail --pid`, which automatically stops when the process finishes.
+4. **Exit code capture** — the script writes its exit code to a companion file, which the dashboard reads after the process completes.
+5. **Graceful degradation** — if the nohup setup fails (e.g. `mktemp` unavailable), the command falls back to direct SSH execution automatically.
+
+### Connection loss during upgrade
+
+If the SSH connection drops while monitoring, the dashboard shows a warning:
+
+> *SSH connection lost during upgrade. The process may still be running on the remote system.*
+
+The upgrade itself continues on the remote host unaffected. Temporary files are cleaned up once the exit code is read.
+
+### What uses SSH-safe mode
+
+| Operation | SSH-safe |
+|-----------|----------|
+| Upgrade all packages | Yes |
+| Upgrade single package | Yes |
+| Check for updates | No (read-only, safe to retry) |
+| Reboot | No (fire-and-forget) |
+
+The UI marks SSH-safe operations with an **SSH-safe** badge in the activity history.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=TheDuffman85/linux-update-dashboard&type=Date)](https://star-history.com/#TheDuffman85/linux-update-dashboard&Date)
