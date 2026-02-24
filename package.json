@@ -18,7 +18,7 @@
   "dependencies": {
     "@simplewebauthn/server": "^11.0.0",
     "croner": "^10.0.1",
-    "drizzle-orm": "^0.39.0",
+    "drizzle-orm": "^0.45.1",
     "hono": "^4.12.2",
     "jose": "^6.0.0",
     "nodemailer": "^8.0.1",
