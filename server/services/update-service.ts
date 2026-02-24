@@ -3,13 +3,14 @@ import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
 import { getSSHManager, EXIT_MONITORING_LOST } from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
+import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
 
 // Active operation tracking (visible to the API)
 export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package";
+  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
   startedAt: string;
   packageName?: string;
   remotePid?: number;
@@ -614,6 +615,59 @@ export async function applyUpgradePackage(
     } finally {
       if (conn) sshManager.disconnect(conn);
     }
+    } finally {
+      activeOperations.delete(systemId);
+    }
+  });
+}
+
+export async function rebootSystem(
+  systemId: number
+): Promise<{ success: boolean; message: string }> {
+  return withLock(systemId, async () => {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    activeOperations.set(systemId, { type: "reboot", startedAt: now });
+    outputStream.resetStream(systemId);
+    try {
+      const system = systemService.getSystem(systemId);
+      if (!system) return { success: false, message: "System not found" };
+
+      const sshManager = getSSHManager();
+      const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
+      const cmd = sudo("reboot");
+      const histId = insertStartedEntry(systemId, "reboot", "system", cmd);
+      outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: "system" });
+
+      let conn;
+      try {
+        conn = await sshManager.connect(system as Record<string, unknown>);
+        const result = await sshManager.runCommand(conn, cmd, 30, sudoPassword, (chunk, stream) => {
+          outputStream.publish(systemId, { type: "output", data: chunk, stream });
+        });
+
+        // Reboot succeeded or the connection was dropped (expected)
+        systemService.markUnreachable(systemId);
+        finishEntry(histId, "success", { output: result.stdout || "Reboot command sent" });
+        outputStream.publish(systemId, { type: "done", success: true });
+        return { success: true, message: "Reboot command sent" };
+      } catch (e) {
+        const errMsg = String(e);
+        // A closed connection after reboot is expected
+        if (errMsg.includes("ECONNRESET") || errMsg.includes("closed") || errMsg.includes("end")) {
+          systemService.markUnreachable(systemId);
+          finishEntry(histId, "success", { output: "Reboot command sent (connection closed)" });
+          outputStream.publish(systemId, { type: "done", success: true });
+          return { success: true, message: "Reboot command sent" };
+        }
+        finishEntry(histId, "failed", { error: errMsg });
+        outputStream.publish(systemId, { type: "error", message: errMsg });
+        outputStream.publish(systemId, { type: "done", success: false });
+        return { success: false, message: `Reboot failed: ${errMsg}` };
+      } finally {
+        if (conn) {
+          try { sshManager.disconnect(conn); } catch {}
+        }
+      }
     } finally {
       activeOperations.delete(systemId);
     }

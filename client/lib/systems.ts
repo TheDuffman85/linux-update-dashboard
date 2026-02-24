@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
 export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package";
+  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
   startedAt: string;
   packageName?: string;
 }
@@ -26,6 +26,7 @@ export interface System {
   cpuCores: string | null;
   memory: string | null;
   disk: string | null;
+  excludeFromUpgradeAll: number;
   needsReboot: number;
   isReachable: number;
   lastSeenAt: string | null;
@@ -74,7 +75,7 @@ export function useSystems() {
       apiFetch<{ systems: System[] }>("/systems").then((r) => r.systems),
     refetchInterval: (query) => {
       const hasActiveOps = query.state.data?.some((s) => s.activeOperation);
-      return hasActiveOps ? 3000 : false;
+      return hasActiveOps ? 3000 : 30_000;
     },
   });
 }
@@ -88,7 +89,7 @@ export function useSystem(id: number) {
       ),
     refetchInterval: (query) => {
       const op = query.state.data?.system?.activeOperation;
-      return op ? 3000 : false;
+      return op ? 3000 : 30_000;
     },
   });
   return query;
@@ -108,6 +109,7 @@ export function useCreateSystem() {
       keyPassphrase?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      excludeFromUpgradeAll?: boolean;
       sourceSystemId?: number;
     }) => apiFetch<{ id: number }>("/systems", { method: "POST", body: JSON.stringify(data) }),
     onSuccess: async () => {
@@ -132,6 +134,7 @@ export function useUpdateSystem() {
       keyPassphrase?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      excludeFromUpgradeAll?: boolean;
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["systems"] });
@@ -148,6 +151,18 @@ export function useDeleteSystem() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["systems"] });
       await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useRebootSystem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ success: boolean; message: string }>(`/systems/${id}/reboot`, { method: "POST" }),
+    onSuccess: async (_data, id) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
     },
   });
 }

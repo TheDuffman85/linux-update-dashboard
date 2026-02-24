@@ -15,12 +15,16 @@ function getCheckIntervalMs(): number {
   return cacheService.getCheckIntervalMinutes() * 60_000;
 }
 
-async function runCheck(): Promise<void> {
+async function runCheck(forceAll = false): Promise<void> {
   try {
-    const staleIds = cacheService.getStaleSystemIds();
+    const staleIds = forceAll
+      ? cacheService.getAllSystemIds()
+      : cacheService.getStaleSystemIds();
     if (staleIds.length === 0) return;
 
-    console.log(`Scheduler: refreshing ${staleIds.length} stale systems`);
+    console.log(
+      `Scheduler: refreshing ${staleIds.length} ${forceAll ? "all" : "stale"} systems`
+    );
 
     const db = getDb();
 
@@ -96,9 +100,9 @@ async function runDigestCheck(): Promise<void> {
 export function start(): void {
   const intervalMs = getCheckIntervalMs();
   console.log(`Scheduler: check interval set to ${intervalMs / 60_000} minutes`);
-  // Wait 30s before first check to let the app fully start
+  // Wait 30s before first check to let the app fully start, then refresh all systems
   initialTimeout = setTimeout(() => {
-    runCheck();
+    runCheck(true);
     timer = setInterval(runCheck, intervalMs);
   }, 30_000);
 

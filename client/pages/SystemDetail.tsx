@@ -4,7 +4,7 @@ import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSystem } from "../lib/systems";
+import { useSystem, useRebootSystem } from "../lib/systems";
 import { useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
@@ -255,6 +255,7 @@ function HistoryList({
       if (activeOp.type === "check") return "Checking for updates";
       if (activeOp.type === "upgrade_all") return "Upgrading all packages";
       if (activeOp.type === "full_upgrade_all") return "Full upgrading all packages";
+      if (activeOp.type === "reboot") return "Rebooting system";
       return `Upgrading ${activeOp.packageName || "package"}`;
     }
     if (syntheticStartedMsg) return `Running ${syntheticStartedMsg.pkgManager} command`;
@@ -287,7 +288,7 @@ function HistoryList({
             <div className="flex-1 min-w-0">
               <p className="font-medium">
                 {syntheticLabel}
-                {activeOp?.type !== "check" && (
+                {activeOp?.type !== "check" && activeOp?.type !== "reboot" && (
                   <span className="relative group ml-2 inline-flex">
                     <Badge variant="info" small>SSH-safe</Badge>
                     <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-xs rounded bg-slate-900 dark:bg-slate-700 px-2 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -357,8 +358,10 @@ function HistoryList({
                       ? "Upgraded all packages"
                       : h.action === "full_upgrade_all"
                         ? "Full upgraded all packages"
-                        : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
-                  {h.action !== "check" && (
+                        : h.action === "reboot"
+                          ? "Rebooted system"
+                          : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
+                  {h.action !== "check" && h.action !== "reboot" && (
                     <span className="relative group ml-2 inline-flex align-middle">
                       <Badge variant="info" small>SSH-safe</Badge>
                       <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-xs rounded bg-slate-900 dark:bg-slate-700 px-2 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -428,8 +431,10 @@ export default function SystemDetail() {
   const checkUpdates = useCheckUpdates();
   const { upgradeAll, fullUpgradeAll, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
+  const rebootSystem = useRebootSystem();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const commandOutput = useCommandOutput(systemId);
@@ -459,6 +464,7 @@ export default function SystemDetail() {
   const activeOp = data?.system?.activeOperation;
   const checking = checkUpdates.isPending || activeOp?.type === "check";
   const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "full_upgrade_all" || activeOp?.type === "upgrade_package";
+  const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
 
   if (isLoading || !data) {
     return (
@@ -505,6 +511,15 @@ export default function SystemDetail() {
           d.status === "success" ? "success" : "danger"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleReboot = () => {
+    setShowRebootConfirm(false);
+    rebootSystem.mutate(systemId, {
+      onSuccess: (d) =>
+        addToast(d.success ? "Reboot command sent" : d.message, d.success ? "success" : "danger"),
+      onError: (err) => addToast(err.message, "danger"),
     });
   };
 
@@ -642,7 +657,19 @@ export default function SystemDetail() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
           <span className="font-medium">Reboot required</span>
-          <span className="text-amber-600 dark:text-amber-500">A kernel update has been installed. Reboot this system to apply it.</span>
+          <span className="text-amber-600 dark:text-amber-500 flex-1">A kernel update has been installed. Reboot this system to apply it.</span>
+          <button
+            onClick={() => setShowRebootConfirm(true)}
+            disabled={rebooting || upgrading || checking}
+            className="ml-auto px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            {rebooting ? (
+              <span className="flex items-center gap-1.5">
+                <span className="spinner spinner-sm" />
+                Rebooting...
+              </span>
+            ) : "Reboot"}
+          </button>
         </div>
       )}
 
@@ -697,6 +724,16 @@ export default function SystemDetail() {
         confirmLabel="Full Upgrade"
         danger
         loading={upgrading}
+      />
+      <ConfirmDialog
+        open={showRebootConfirm}
+        onClose={() => setShowRebootConfirm(false)}
+        onConfirm={handleReboot}
+        title="Reboot System"
+        message={`Reboot ${system.name}? The system will be temporarily unavailable while it restarts.`}
+        confirmLabel="Reboot"
+        danger
+        loading={rebooting}
       />
     </Layout>
   );

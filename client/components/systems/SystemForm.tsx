@@ -12,6 +12,7 @@ interface SystemFormData {
   keyPassphrase?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  excludeFromUpgradeAll?: boolean;
   sourceSystemId?: number;
 }
 
@@ -23,9 +24,10 @@ export function SystemForm({
   onCancel,
   loading = false,
 }: {
-  initial?: Partial<SystemFormData> & {
+  initial?: Omit<Partial<SystemFormData>, 'excludeFromUpgradeAll'> & {
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
+    excludeFromUpgradeAll?: number;
   };
   systemId?: number;
   sourceSystemId?: number;
@@ -49,6 +51,9 @@ export function SystemForm({
   );
   const [disabledManagers, setDisabledManagers] = useState<Set<string>>(
     new Set(initial?.disabledPkgManagers ?? [])
+  );
+  const [excludeFromUpgradeAll, setExcludeFromUpgradeAll] = useState(
+    initial?.excludeFromUpgradeAll === 1
   );
 
   const toggleManager = (manager: string) => {
@@ -82,6 +87,7 @@ export function SystemForm({
       keyPassphrase: keyPassphrase || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: disabledManagers.size > 0 ? [...disabledManagers] : undefined,
+      excludeFromUpgradeAll,
       sourceSystemId,
     });
   };
@@ -158,6 +164,17 @@ export function SystemForm({
         <input type="password" value={sudoPassword} onChange={(e) => setSudoPassword(e.target.value)} className={inputClass} placeholder={sourceSystemId ? "(from source system)" : initial ? "(unchanged — defaults to SSH password)" : "Defaults to SSH password"} />
         <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH password</p>
       </div>
+
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={excludeFromUpgradeAll}
+          onChange={(e) => setExcludeFromUpgradeAll(e.target.checked)}
+          className="rounded"
+        />
+        <span>Exclude from Upgrade All</span>
+        <span className="text-xs text-slate-400">(skip this system during bulk upgrades)</span>
+      </label>
 
       {testResult && (
         <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>

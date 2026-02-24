@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
+import * as updateService from "../services/update-service";
 
 const dashboard = new Hono();
 
@@ -11,6 +12,7 @@ dashboard.get("/stats", (c) => {
     ...s,
     cacheAge: cacheService.getCacheAge(s.id),
     isStale: cacheService.isCacheStale(s.id),
+    activeOperation: updateService.getActiveOperation(s.id),
   }));
 
   const total = systemsWithMeta.length;
@@ -43,6 +45,7 @@ dashboard.get("/systems", (c) => {
     ...s,
     cacheAge: cacheService.getCacheAge(s.id),
     isStale: cacheService.isCacheStale(s.id),
+    activeOperation: updateService.getActiveOperation(s.id),
   }));
 
   return c.json({ systems: systemsWithMeta });

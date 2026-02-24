@@ -10,6 +10,7 @@ import { useUpgradeAll, useFullUpgradeAll, useUpgradePackage } from "../lib/upda
 interface UpgradeEntry {
   type: "all" | "full_all" | "package";
   packageName?: string;
+  addedAt: number;
 }
 
 interface UpgradeCallbacks {
@@ -27,6 +28,7 @@ interface UpgradeContextType {
     callbacks?: UpgradeCallbacks
   ) => void;
   isUpgrading: (systemId: number) => boolean;
+  removeUpgrading: (systemId: number) => void;
   upgradingCount: number;
 }
 
@@ -58,7 +60,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
 
   const upgradeAll = useCallback(
     (systemId: number, callbacks?: UpgradeCallbacks) => {
-      addUpgrading(systemId, { type: "all" });
+      addUpgrading(systemId, { type: "all", addedAt: Date.now() });
       upgradeAllMutation.mutate(systemId, {
         onSuccess: (data) => {
           removeUpgrading(systemId);
@@ -75,7 +77,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
 
   const fullUpgradeAll = useCallback(
     (systemId: number, callbacks?: UpgradeCallbacks) => {
-      addUpgrading(systemId, { type: "full_all" });
+      addUpgrading(systemId, { type: "full_all", addedAt: Date.now() });
       fullUpgradeAllMutation.mutate(systemId, {
         onSuccess: (data) => {
           removeUpgrading(systemId);
@@ -92,7 +94,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
 
   const upgradePackage = useCallback(
     (systemId: number, packageName: string, callbacks?: UpgradeCallbacks) => {
-      addUpgrading(systemId, { type: "package", packageName });
+      addUpgrading(systemId, { type: "package", packageName, addedAt: Date.now() });
       upgradePackageMutation.mutate(
         { systemId, packageName },
         {
@@ -123,6 +125,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
         fullUpgradeAll,
         upgradePackage,
         isUpgrading,
+        removeUpgrading,
         upgradingCount: upgradingSystems.size,
       }}
     >

@@ -73,6 +73,7 @@ systems.post("/", async (c) => {
     keyPassphrase: body.keyPassphrase || undefined,
     sudoPassword: body.sudoPassword || undefined,
     disabledPkgManagers: body.disabledPkgManagers || undefined,
+    excludeFromUpgradeAll: body.excludeFromUpgradeAll,
     sourceSystemId: body.sourceSystemId || undefined,
   });
 
@@ -98,9 +99,17 @@ systems.put("/:id", async (c) => {
     keyPassphrase: body.keyPassphrase || undefined,
     sudoPassword: body.sudoPassword || undefined,
     disabledPkgManagers: body.disabledPkgManagers || undefined,
+    excludeFromUpgradeAll: body.excludeFromUpgradeAll,
   });
 
   return c.json({ status: "ok" });
+});
+
+// Reboot system
+systems.post("/:id/reboot", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const result = await updateService.rebootSystem(id);
+  return c.json(result, result.success ? 200 : 500);
 });
 
 // Delete system

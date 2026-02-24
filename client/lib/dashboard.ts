@@ -11,24 +11,27 @@ export interface DashboardStats {
   needsReboot: number;
 }
 
-export function useDashboardStats() {
+export function useDashboardStats(hasActiveOps?: boolean) {
   return useQuery({
     queryKey: ["dashboard", "stats"],
     queryFn: () =>
       apiFetch<{ stats: DashboardStats }>("/dashboard/stats").then(
         (r) => r.stats
       ),
-    refetchInterval: 30_000,
+    refetchInterval: hasActiveOps ? 3000 : 30_000,
   });
 }
 
-export function useDashboardSystems() {
+export function useDashboardSystems(hasClientActiveOps?: boolean) {
   return useQuery({
     queryKey: ["dashboard", "systems"],
     queryFn: () =>
       apiFetch<{ systems: System[] }>("/dashboard/systems").then(
         (r) => r.systems
       ),
-    refetchInterval: 30_000,
+    refetchInterval: (query) => {
+      const hasServerActiveOps = query.state.data?.some((s) => s.activeOperation);
+      return (hasServerActiveOps || hasClientActiveOps) ? 3000 : 30_000;
+    },
   });
 }
