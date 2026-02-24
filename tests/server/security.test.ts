@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { CredentialEncryptor } from "../../server/security";
+import { CredentialEncryptor, isPassphraseKey } from "../../server/security";
 import { randomBytes } from "crypto";
 
 describe("CredentialEncryptor", () => {
@@ -42,5 +42,49 @@ describe("CredentialEncryptor", () => {
     const enc = new CredentialEncryptor(key);
     const ciphertext = enc.encrypt("data");
     expect(enc.decrypt(ciphertext)).toBe("data");
+  });
+
+  test("per-instance salt produces different keys than legacy salt", () => {
+    const passphrase = "my-test-passphrase";
+    const customSalt = randomBytes(16);
+    const legacyEnc = new CredentialEncryptor(passphrase); // uses legacy salt
+    const saltedEnc = new CredentialEncryptor(passphrase, customSalt);
+
+    const plaintext = "sensitive-data";
+    const legacyCipher = legacyEnc.encrypt(plaintext);
+    const saltedCipher = saltedEnc.encrypt(plaintext);
+
+    // Both should decrypt with their respective encryptors
+    expect(legacyEnc.decrypt(legacyCipher)).toBe(plaintext);
+    expect(saltedEnc.decrypt(saltedCipher)).toBe(plaintext);
+
+    // Cross-decryption should fail (different derived keys)
+    expect(() => saltedEnc.decrypt(legacyCipher)).toThrow();
+    expect(() => legacyEnc.decrypt(saltedCipher)).toThrow();
+  });
+
+  test("base64 key ignores salt parameter", () => {
+    const key = randomBytes(32).toString("base64");
+    const salt = randomBytes(16);
+    const enc1 = new CredentialEncryptor(key);
+    const enc2 = new CredentialEncryptor(key, salt);
+
+    const plaintext = "test-data";
+    const cipher = enc1.encrypt(plaintext);
+    // Both should decrypt because base64 keys bypass PBKDF2
+    expect(enc2.decrypt(cipher)).toBe(plaintext);
+  });
+});
+
+describe("isPassphraseKey", () => {
+  test("detects base64 keys", () => {
+    const key = randomBytes(32).toString("base64");
+    expect(isPassphraseKey(key)).toBe(false);
+  });
+
+  test("detects passphrases", () => {
+    expect(isPassphraseKey("my-passphrase")).toBe(true);
+    expect(isPassphraseKey("short")).toBe(true);
+    expect(isPassphraseKey("a-longer-passphrase-that-is-not-base64")).toBe(true);
   });
 });

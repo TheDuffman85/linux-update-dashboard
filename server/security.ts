@@ -3,13 +3,13 @@ import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync } from "crypt
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const TAG_LENGTH = 16;
-const SALT = Buffer.from("linux-update-dashboard-salt");
+const LEGACY_SALT = Buffer.from("linux-update-dashboard-salt");
 const PBKDF2_ITERATIONS = 480_000;
 
 export class CredentialEncryptor {
   private key: Buffer;
 
-  constructor(rawKey: string) {
+  constructor(rawKey: string, salt?: Buffer | null) {
     if (!rawKey) {
       throw new Error(
         "Encryption key is required. " +
@@ -22,7 +22,8 @@ export class CredentialEncryptor {
     if (rawKey.length === 44 && rawKey.endsWith("=")) {
       this.key = Buffer.from(rawKey, "base64");
     } else {
-      this.key = pbkdf2Sync(rawKey, SALT, PBKDF2_ITERATIONS, 32, "sha256");
+      const deriveSalt = salt ?? LEGACY_SALT;
+      this.key = pbkdf2Sync(rawKey, deriveSalt, PBKDF2_ITERATIONS, 32, "sha256");
     }
   }
 
@@ -49,10 +50,17 @@ export class CredentialEncryptor {
   }
 }
 
+/**
+ * Returns true if the raw key is a passphrase (needs PBKDF2 derivation).
+ */
+export function isPassphraseKey(rawKey: string): boolean {
+  return !(rawKey.length === 44 && rawKey.endsWith("="));
+}
+
 let _encryptor: CredentialEncryptor | null = null;
 
-export function initEncryptor(key: string): void {
-  _encryptor = new CredentialEncryptor(key);
+export function initEncryptor(key: string, salt?: Buffer | null): void {
+  _encryptor = new CredentialEncryptor(key, salt);
 }
 
 export function getEncryptor(): CredentialEncryptor {

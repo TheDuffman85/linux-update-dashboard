@@ -14,6 +14,18 @@ import {
 import * as wa from "../auth/webauthn";
 import * as oidc from "../auth/oidc";
 import { config } from "../config";
+import { rateLimit } from "../middleware/rate-limit";
+
+// Pre-computed dummy hash for timing-safe login (L1)
+const DUMMY_HASH = await hashPassword("timing-safe-dummy-password-pad");
+
+function validatePassword(password: string): string | null {
+  if (password.length < 8) return "Password must be at least 8 characters";
+  if (!/[a-z]/.test(password)) return "Password must contain a lowercase letter";
+  if (!/[A-Z]/.test(password)) return "Password must contain an uppercase letter";
+  if (!/\d/.test(password)) return "Password must contain a digit";
+  return null;
+}
 
 /** Derive the public-facing origin from the incoming request headers. */
 function getPublicOrigin(c: Context): string {
@@ -71,7 +83,7 @@ auth.get("/status", async (c) => {
 });
 
 // --- Setup ---
-auth.post("/setup", async (c) => {
+auth.post("/setup", rateLimit(3, 60_000), async (c) => {
   const db = getDb();
   const result = db.select({ count: countFn() }).from(users).get();
   if ((result?.count ?? 0) > 0) {
@@ -82,8 +94,9 @@ auth.post("/setup", async (c) => {
   if (!username || !password) {
     return c.json({ error: "Username and password required" }, 400);
   }
-  if (password.length < 8) {
-    return c.json({ error: "Password must be at least 8 characters" }, 400);
+  const pwError = validatePassword(password);
+  if (pwError) {
+    return c.json({ error: pwError }, 400);
   }
 
   const pwHash = await hashPassword(password);
@@ -98,7 +111,7 @@ auth.post("/setup", async (c) => {
 });
 
 // --- Login ---
-auth.post("/login", async (c) => {
+auth.post("/login", rateLimit(5, 60_000), async (c) => {
   const { username, password } = await c.req.json();
   if (!username || !password) {
     return c.json({ error: "Username and password required" }, 400);
@@ -111,17 +124,17 @@ auth.post("/login", async (c) => {
     .where(eq(users.username, username))
     .get();
 
-  if (!user?.passwordHash) {
-    return c.json({ error: "Invalid credentials" }, 401);
-  }
+  // Always run password verification to prevent timing-based user enumeration
+  const valid = user?.passwordHash
+    ? await verifyPassword(password, user.passwordHash)
+    : await verifyPassword(password, DUMMY_HASH).then(() => false);
 
-  const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) {
     return c.json({ error: "Invalid credentials" }, 401);
   }
 
-  await createSession(c, user.id, user.username);
-  return c.json({ status: "ok", user: { id: user.id, username: user.username } });
+  await createSession(c, user!.id, user!.username);
+  return c.json({ status: "ok", user: { id: user!.id, username: user!.username } });
 });
 
 // --- Logout ---
@@ -207,7 +220,8 @@ auth.post("/webauthn/register/verify", async (c) => {
     deleteCookie(c, "webauthn_challenge", { path: "/" });
     return c.json({ status: "ok" });
   } catch (e) {
-    return c.json({ error: String(e) }, 400);
+    console.error("WebAuthn registration error:", e);
+    return c.json({ error: "Verification failed" }, 400);
   }
 });
 
@@ -245,7 +259,7 @@ auth.post("/webauthn/login/options", async (c) => {
   return c.json(options);
 });
 
-auth.post("/webauthn/login/verify", async (c) => {
+auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
   const body = await c.req.json();
   const challenge = getCookie(c, "webauthn_challenge");
   if (!challenge) {
@@ -310,7 +324,8 @@ auth.post("/webauthn/login/verify", async (c) => {
       user: { id: user.id, username: user.username },
     });
   } catch (e) {
-    return c.json({ error: String(e) }, 400);
+    console.error("WebAuthn authentication error:", e);
+    return c.json({ error: "Verification failed" }, 400);
   }
 });
 
@@ -363,6 +378,7 @@ auth.get("/oidc/callback", async (c) => {
   }
 
   const nonce = getCookie(c, "oidc_nonce");
+  const state = getCookie(c, "oidc_state");
 
   try {
     // Reconstruct callback URL with the public-facing origin so it matches
@@ -371,7 +387,7 @@ auth.get("/oidc/callback", async (c) => {
     const internalUrl = new URL(c.req.url);
     const callbackUrl = new URL(`${publicOrigin}${internalUrl.pathname}${internalUrl.search}`);
 
-    const result = await oidc.handleCallback(callbackUrl, nonce);
+    const result = await oidc.handleCallback(callbackUrl, nonce, state);
     if (!result) {
       return c.json({ error: "OIDC authentication failed" }, 400);
     }

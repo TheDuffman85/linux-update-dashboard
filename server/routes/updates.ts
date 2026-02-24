@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import * as updateService from "../services/update-service";
 import * as cacheService from "../services/cache-service";
+import { validatePackageName } from "../ssh/parsers/types";
 
 const updates = new Hono();
 
@@ -11,10 +12,9 @@ interface Job {
 }
 
 const jobs = new Map<string, Job>();
-let jobCounter = 0;
 
 function startJob(fn: () => Promise<unknown>): string {
-  const id = `job_${++jobCounter}_${Date.now()}`;
+  const id = crypto.randomUUID();
   jobs.set(id, { status: "running" });
   fn()
     .then((result) => {
@@ -85,6 +85,11 @@ updates.post("/systems/:id/full-upgrade", async (c) => {
 updates.post("/systems/:id/upgrade/:packageName", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const packageName = c.req.param("packageName");
+  try {
+    validatePackageName(packageName);
+  } catch {
+    return c.json({ error: "Invalid package name" }, 400);
+  }
   const jobId = startJob(async () => {
     const result = await updateService.applyUpgradePackage(id, packageName);
     return {
