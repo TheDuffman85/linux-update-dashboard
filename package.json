@@ -19,7 +19,7 @@
     "@simplewebauthn/server": "^11.0.0",
     "croner": "^10.0.1",
     "drizzle-orm": "^0.39.0",
-    "hono": "^4.7.0",
+    "hono": "^4.12.2",
     "jose": "^6.0.0",
     "nodemailer": "^8.0.1",
     "openid-client": "^6.3.0",
