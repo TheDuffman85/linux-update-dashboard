@@ -198,7 +198,7 @@ Three auth methods are supported and can be used at the same time:
 
 ### Password
 
-Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use short-lived JWTs (1-hour expiry) in a 7-day HTTP-only cookie, with silent rolling refresh after 30 minutes of activity.
+Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use long-lived JWTs (30-day expiry) in an HTTP-only cookie, with silent daily rolling refresh.
 
 ### Passkeys (WebAuthn)
 
