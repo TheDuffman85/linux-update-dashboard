@@ -4,9 +4,9 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { config } from "../config";
 
 const SESSION_COOKIE = "ludash_session";
-const SESSION_LIFETIME = 3600; // 1 hour — JWT expiration
-const COOKIE_MAX_AGE = 86400 * 7; // 7 days — browser keeps cookie for seamless refresh
-const REFRESH_AFTER = SESSION_LIFETIME / 2; // Refresh when token is >50% through its lifetime
+const SESSION_LIFETIME = 86400 * 30; // 30 days — JWT expiration
+const COOKIE_MAX_AGE = SESSION_LIFETIME; // match JWT lifetime
+const REFRESH_AFTER = 86400; // refresh daily to keep session rolling
 
 let _secret: Uint8Array | null = null;
 

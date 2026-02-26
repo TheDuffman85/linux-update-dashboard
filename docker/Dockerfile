@@ -23,9 +23,12 @@ RUN bun run build
 
 # Production image
 FROM base AS production
-RUN apt-get update && apt-get install -y openssh-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y openssh-client && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
+RUN rm -rf node_modules/esbuild node_modules/@esbuild node_modules/@esbuild-kit \
+    node_modules/vite node_modules/@vitejs node_modules/drizzle-kit \
+    node_modules/esbuild-register node_modules/@drizzle-team
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/package.json ./
@@ -35,6 +38,9 @@ RUN chmod +x entrypoint.sh && mkdir -p /data
 ENV NODE_ENV=production
 ENV LUDASH_DB_PATH=/data/dashboard.db
 EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD bun -e "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["./entrypoint.sh"]
 CMD ["bun", "run", "server/index.ts"]

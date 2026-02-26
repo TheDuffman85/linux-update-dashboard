@@ -38,6 +38,10 @@ export function createApp() {
   // Auth middleware for API routes
   app.use("/api/*", authMiddleware);
 
+  // Health check endpoint for Docker/orchestrator liveness probes.
+  // Auth is bypassed for localhost requests (see auth middleware).
+  app.get("/api/health", (c) => c.json({ status: "ok" }));
+
   // API routes
   app.route("/api/auth", authRoutes);
   app.route("/api/dashboard", dashboardRoutes);

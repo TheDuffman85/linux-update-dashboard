@@ -1,9 +1,10 @@
 import { Client } from "ssh2";
 import type { CredentialEncryptor } from "../security";
 
-// Non-interactive SSH sessions often have a minimal PATH
+// Non-interactive SSH sessions often have a minimal PATH; force C locale so
+// package-manager output is always in English for reliable parsing.
 const PATH_PREFIX =
-  "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ";
+  "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ";
 
 /** Sentinel exit code: SSH monitoring was lost but the nohup process likely continues on the remote. */
 export const EXIT_MONITORING_LOST = -2;

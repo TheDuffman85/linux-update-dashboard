@@ -24,15 +24,31 @@ export default function Settings() {
   const { addToast } = useToast();
 
   const [form, setForm] = useState<Record<string, string>>({});
+  const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    if (settings) setForm(settings);
+    if (settings) {
+      const cleanedForm = { ...settings };
+      const secrets: Record<string, boolean> = {};
+      for (const key of ["oidc_client_secret"]) {
+        if (cleanedForm[key] === "(stored)") {
+          secrets[key] = true;
+          cleanedForm[key] = "";
+        }
+      }
+      setStoredSecrets(secrets);
+      setForm(cleanedForm);
+    }
   }, [settings]);
 
   const handleSave = (keys: string[]) => {
     const data: Record<string, string> = {};
     for (const k of keys) {
-      data[k] = form[k] ?? "";
+      if (storedSecrets[k] && !form[k]) {
+        data[k] = "(stored)";
+      } else {
+        data[k] = form[k] ?? "";
+      }
     }
     updateSettings.mutate(data, {
       onSuccess: (res) => {
@@ -195,7 +211,7 @@ export default function Settings() {
                 setForm({ ...form, oidc_client_secret: e.target.value })
               }
               className={inputClass}
-              placeholder={form.oidc_client_secret ? "(stored)" : ""}
+              placeholder={storedSecrets.oidc_client_secret && !form.oidc_client_secret ? "(unchanged)" : ""}
             />
           </div>
         </div>

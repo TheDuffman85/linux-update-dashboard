@@ -46,7 +46,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Update history:** logs every check and upgrade operation per system
 - **Real-time status:** see which systems are online, up to date, or need attention at a glance
 - **Version info:** build version, commit hash, and branch displayed in the sidebar
-- **Docker ready:** multi-stage Dockerfile with a persistent volume for production
+- **Docker ready:** multi-stage Dockerfile with health check and a persistent volume for production
 
 ## Screenshots
 
@@ -175,6 +175,23 @@ export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
 docker compose up -d
 ```
 
+### Health Check
+
+The Docker image includes a built-in `HEALTHCHECK` that verifies the web server is responding. Docker will automatically mark the container as `healthy` or `unhealthy`.
+
+**Endpoint:** `GET /api/health` (localhost: no auth, external: requires authentication)
+
+```bash
+curl http://localhost:3001/api/health
+# {"status":"ok"}
+```
+
+The health check runs every 30 seconds with a 10-second start period to allow for initialization. You can check the container's health status with:
+
+```bash
+docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
+```
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -198,7 +215,7 @@ Three auth methods are supported and can be used at the same time:
 
 ### Password
 
-Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use short-lived JWTs (1-hour expiry) in a 7-day HTTP-only cookie, with silent rolling refresh after 30 minutes of activity.
+Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use long-lived JWTs (30-day expiry) in an HTTP-only cookie, with silent daily rolling refresh.
 
 ### Passkeys (WebAuthn)
 
@@ -340,6 +357,12 @@ To reset the `dev` branch to match `main` (force push):
 ## API Overview
 
 All endpoints require authentication unless noted. Responses are JSON.
+
+### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check (localhost: no auth, external: requires auth) |
 
 ### Auth (`/api/auth/*`)
 

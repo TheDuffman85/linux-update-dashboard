@@ -72,24 +72,24 @@ function NotificationForm({
   );
 
   // Email config
+  const hasStoredSmtpPassword = initial?.config.smtpPassword === "(stored)";
   const [smtpHost, setSmtpHost] = useState(initial?.config.smtpHost || "");
   const [smtpPort, setSmtpPort] = useState(initial?.config.smtpPort || "587");
   const [smtpSecure, setSmtpSecure] = useState(
     initial?.config.smtpSecure !== "false"
   );
   const [smtpUser, setSmtpUser] = useState(initial?.config.smtpUser || "");
-  const [smtpPassword, setSmtpPassword] = useState(
-    initial?.config.smtpPassword || ""
-  );
+  const [smtpPassword, setSmtpPassword] = useState("");
   const [smtpFrom, setSmtpFrom] = useState(initial?.config.smtpFrom || "");
   const [emailTo, setEmailTo] = useState(initial?.config.emailTo || "");
 
   // ntfy config
+  const hasStoredNtfyToken = initial?.config.ntfyToken === "(stored)";
   const [ntfyUrl, setNtfyUrl] = useState(
     initial?.config.ntfyUrl || "https://ntfy.sh"
   );
   const [ntfyTopic, setNtfyTopic] = useState(initial?.config.ntfyTopic || "");
-  const [ntfyToken, setNtfyToken] = useState(initial?.config.ntfyToken || "");
+  const [ntfyToken, setNtfyToken] = useState("");
 
   // Schedule
   const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
@@ -129,14 +129,14 @@ function NotificationForm({
           smtpPort,
           smtpSecure: smtpSecure ? "true" : "false",
           smtpUser,
-          smtpPassword,
+          smtpPassword: smtpPassword || (hasStoredSmtpPassword ? "(stored)" : ""),
           smtpFrom,
           emailTo,
         }
       : {
           ntfyUrl,
           ntfyTopic,
-          ntfyToken,
+          ntfyToken: ntfyToken || (hasStoredNtfyToken ? "(stored)" : ""),
         };
 
   const getScheduleValue = (): string | null => {
@@ -381,9 +381,7 @@ function NotificationForm({
                 value={smtpPassword}
                 onChange={(e) => setSmtpPassword(e.target.value)}
                 className={inputClass}
-                placeholder={
-                  smtpPassword === "(stored)" ? "(stored)" : ""
-                }
+                placeholder={hasStoredSmtpPassword ? "(unchanged)" : ""}
               />
             </div>
             <div>
@@ -451,9 +449,7 @@ function NotificationForm({
                 value={ntfyToken}
                 onChange={(e) => setNtfyToken(e.target.value)}
                 className={inputClass}
-                placeholder={
-                  ntfyToken === "(stored)" ? "(stored)" : ""
-                }
+                placeholder={hasStoredNtfyToken ? "(unchanged)" : ""}
               />
             </div>
           </div>

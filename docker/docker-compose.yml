@@ -5,6 +5,12 @@ services:
       dockerfile: docker/Dockerfile
     container_name: linux-update-dashboard
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     ports:
       - "3001:3001"
     volumes:

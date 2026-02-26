@@ -88,6 +88,7 @@ export function createNotification(data: {
   const db = getDb();
   const encConfig = encryptConfig(data.type, data.config);
   const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
+  const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
   const result = db.insert(notifications).values({
     name: data.name,
     type: data.type,
@@ -96,6 +97,7 @@ export function createNotification(data: {
     systemIds: data.systemIds ? JSON.stringify(data.systemIds) : null,
     config: JSON.stringify(encConfig),
     schedule,
+    lastSentAt: schedule ? now : null,
   }).returning({ id: notifications.id }).get();
   return result.id;
 }
@@ -130,25 +132,31 @@ export function updateNotification(
     const newSchedule = data.schedule === "immediate" ? null : (data.schedule || null);
     const oldSchedule = existing.schedule;
     updates.schedule = newSchedule;
-    // Clear pending events when schedule changes
+    // Clear pending events when schedule changes; anchor lastSentAt to now
+    // so the first digest waits for the next cron occurrence instead of firing immediately
     if (newSchedule !== oldSchedule) {
       updates.pendingEvents = null;
-      updates.lastSentAt = null;
+      updates.lastSentAt = newSchedule
+        ? new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
+        : null;
     }
   }
 
   if (data.config) {
     const type = data.type || existing.type;
-    // Merge with existing config: if a sensitive field is "(stored)", keep the existing encrypted value
     const existingConfig = parseConfig(existing.config);
-    const merged = { ...data.config };
     const sensitive = SENSITIVE_KEYS[type] || [];
+
+    // Encrypt new config values first (skips "(stored)" sentinel)
+    const encConfig = encryptConfig(type, data.config);
+
+    // Restore existing encrypted values for unchanged sensitive fields
     for (const key of sensitive) {
-      if (merged[key] === "(stored)") {
-        merged[key] = existingConfig[key] || "";
+      if (data.config[key] === "(stored)") {
+        encConfig[key] = existingConfig[key] || "";
       }
     }
-    const encConfig = encryptConfig(type, merged);
+
     updates.config = JSON.stringify(encConfig);
   }
 
