@@ -39,5 +39,8 @@ ENV NODE_ENV=production
 ENV LUDASH_DB_PATH=/data/dashboard.db
 EXPOSE 3001
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD bun -e "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+
 ENTRYPOINT ["./entrypoint.sh"]
 CMD ["bun", "run", "server/index.ts"]

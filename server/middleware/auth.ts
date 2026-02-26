@@ -19,6 +19,14 @@ async function hasUsers(): Promise<boolean> {
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const path = c.req.path;
 
+  // Allow health check without auth when called from localhost (Docker HEALTHCHECK)
+  if (path === "/api/health") {
+    const host = new URL(c.req.url).hostname;
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+      return next();
+    }
+  }
+
   // Allow auth routes and static files without auth
   if (
     path.startsWith("/api/auth") ||
