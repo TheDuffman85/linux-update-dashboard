@@ -23,9 +23,12 @@ RUN bun run build
 
 # Production image
 FROM base AS production
-RUN apt-get update && apt-get install -y openssh-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y openssh-client && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
+RUN rm -rf node_modules/esbuild node_modules/@esbuild node_modules/@esbuild-kit \
+    node_modules/vite node_modules/@vitejs node_modules/drizzle-kit \
+    node_modules/esbuild-register node_modules/@drizzle-team
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/package.json ./
