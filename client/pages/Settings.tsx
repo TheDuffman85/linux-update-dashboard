@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { Layout } from "../components/Layout";
 import { useSettings, useUpdateSettings } from "../lib/settings";
+import { usePasskeys, useDeletePasskey, useRegisterPasskey } from "../lib/passkeys";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../context/ToastContext";
 
 function SettingSection({
@@ -22,6 +24,11 @@ export default function Settings() {
   const { data: settings, isLoading } = useSettings();
   const updateSettings = useUpdateSettings();
   const { addToast } = useToast();
+
+  const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
+  const deletePasskey = useDeletePasskey();
+  const registerPasskey = useRegisterPasskey();
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
@@ -225,6 +232,94 @@ export default function Settings() {
           Save
         </button>
       </SettingSection>
+
+      {/* Passkeys — only in secure contexts where WebAuthn is available */}
+      {window.isSecureContext && (
+        <SettingSection title="Passkeys">
+          {passkeysLoading ? (
+            <div className="flex justify-center py-4">
+              <span className="spinner !w-5 !h-5 text-blue-500" />
+            </div>
+          ) : passkeys && passkeys.length > 0 ? (
+            <div className="space-y-2 mb-4">
+              {passkeys.map((pk) => (
+                <div
+                  key={pk.id}
+                  className="flex items-center justify-between p-3 rounded-lg border border-border"
+                >
+                  <div className="min-w-0">
+                    <span className="text-sm font-mono truncate">
+                      {pk.credentialId.slice(0, 16)}…
+                    </span>
+                    <span className="ml-3 text-xs text-slate-500">
+                      Added{" "}
+                      {new Date(pk.createdAt + "Z").toLocaleDateString()}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setDeleteTarget(pk.id)}
+                    className="ml-4 shrink-0 text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500 mb-4">
+              No passkeys registered. Add one to enable passwordless login.
+            </p>
+          )}
+          <button
+            onClick={() => {
+              registerPasskey.mutate(undefined, {
+                onSuccess: () =>
+                  addToast("Passkey registered successfully", "success"),
+                onError: (err) =>
+                  addToast(
+                    err.message || "Failed to register passkey",
+                    "danger"
+                  ),
+              });
+            }}
+            disabled={registerPasskey.isPending}
+            className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+          >
+            {registerPasskey.isPending ? (
+              <span className="spinner spinner-sm" />
+            ) : (
+              "Register New Passkey"
+            )}
+          </button>
+
+          <ConfirmDialog
+            open={deleteTarget !== null}
+            onClose={() => setDeleteTarget(null)}
+            onConfirm={() => {
+              if (deleteTarget !== null) {
+                deletePasskey.mutate(deleteTarget, {
+                  onSuccess: () => {
+                    addToast("Passkey removed", "success");
+                    setDeleteTarget(null);
+                  },
+                  onError: (err) => {
+                    addToast(
+                      err.message || "Failed to remove passkey",
+                      "danger"
+                    );
+                    setDeleteTarget(null);
+                  },
+                });
+              }
+            }}
+            title="Remove Passkey"
+            message="Are you sure you want to remove this passkey? You will no longer be able to use it to sign in."
+            confirmLabel="Remove"
+            danger
+            loading={deletePasskey.isPending}
+          />
+        </SettingSection>
+      )}
     </Layout>
   );
 }
