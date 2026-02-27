@@ -42,8 +42,18 @@ function parseJsonArrayField(value: string | null): string[] | null {
 }
 
 function serializeSystem(s: Record<string, unknown>) {
+  const {
+    encryptedPassword,
+    encryptedPrivateKey,
+    encryptedKeyPassphrase,
+    encryptedSudoPassword,
+    ...safe
+  } = s;
   return {
-    ...s,
+    ...safe,
+    hasPassword: !!encryptedPassword,
+    hasPrivateKey: !!encryptedPrivateKey,
+    hasSudoPassword: !!encryptedSudoPassword,
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
   };

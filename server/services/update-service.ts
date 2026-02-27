@@ -7,6 +7,7 @@ import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
+import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
 
 // Active operation tracking (visible to the API)
 export interface ActiveOperation {
@@ -117,9 +118,9 @@ function logHistory(
       status,
       packageCount: opts?.packageCount ?? null,
       packages: opts?.packages ?? null,
-      command: opts?.command ?? null,
-      output: opts?.output ?? null,
-      error: opts?.error ?? null,
+      command: opts?.command ? sanitizeCommand(opts.command) : null,
+      output: opts?.output ? sanitizeOutput(opts.output) : null,
+      error: opts?.error ? sanitizeOutput(opts.error) : null,
       completedAt,
     })
     .run();
@@ -140,7 +141,7 @@ function insertStartedEntry(
       action,
       pkgManager,
       status: "started",
-      command,
+      command: sanitizeCommand(command),
       completedAt: null,
     })
     .returning({ id: updateHistory.id })
@@ -166,8 +167,8 @@ function finishEntry(
       status,
       packageCount: opts?.packageCount ?? null,
       packages: opts?.packages ?? null,
-      output: opts?.output ?? null,
-      error: opts?.error ?? null,
+      output: opts?.output ? sanitizeOutput(opts.output) : null,
+      error: opts?.error ? sanitizeOutput(opts.error) : null,
       completedAt: now,
     })
     .where(eq(updateHistory.id, id))
@@ -255,12 +256,12 @@ async function checkUpdatesUnlocked(
         allUpdates.push(...updates);
         pub({ type: "done", success: true });
       } catch (e) {
-        console.error(`System ${systemId} [${pmName}]: check failed:`, e);
+        console.error(`System ${systemId} [${pmName}]: check failed:`, sanitizeOutput(String(e)));
         pub({ type: "done", success: false });
       }
     }
   } catch (e) {
-    console.error(`System ${systemId}: connection failed:`, e);
+    console.error(`System ${systemId}: connection failed:`, sanitizeOutput(String(e)));
     systemService.markUnreachable(systemId);
     pub({ type: "done", success: false });
     logHistory(systemId, "check", system.pkgManager || "unknown", "failed", {

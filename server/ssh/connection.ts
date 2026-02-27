@@ -1,5 +1,6 @@
 import { Client } from "ssh2";
 import type { CredentialEncryptor } from "../security";
+import { sanitizeOutput } from "../utils/sanitize";
 
 // Non-interactive SSH sessions often have a minimal PATH; force C locale so
 // package-manager output is always in English for reliable parsing.
@@ -223,7 +224,7 @@ export class SSHConnectionManager {
     if (!info || setupResult.exitCode !== 0) {
       console.warn(
         "[SSH] nohup setup failed:",
-        setupResult.stderr || setupResult.stdout
+        sanitizeOutput(setupResult.stderr || setupResult.stdout)
       );
       return {
         stdout: setupResult.stdout,
