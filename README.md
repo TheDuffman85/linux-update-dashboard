@@ -89,6 +89,9 @@ Configure update schedules, SSH timeouts, and OIDC single sign-on.
 
 ## Quick Start
 
+> [!CAUTION]
+> **This application is designed for use on trusted local networks only.** It is **not** intended to be exposed directly to the internet. If you need remote access, place it behind a reverse proxy with proper TLS termination, authentication, and network-level access controls (e.g. VPN, firewall rules).
+
 ### Prerequisites
 
 - [Bun](https://bun.sh) 1.x installed
