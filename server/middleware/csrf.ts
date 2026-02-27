@@ -38,6 +38,11 @@ export const csrfMiddleware = createMiddleware(async (c, next) => {
     return next();
   }
 
+  // Bearer token requests are stateless — no CSRF risk.
+  if (c.req.header("authorization")?.startsWith("Bearer ")) {
+    return next();
+  }
+
   let token = ensureToken(c);
   if (!token) {
     token = crypto.randomUUID();

@@ -11,6 +11,7 @@ import updatesRoutes from "./routes/updates";
 import settingsRoutes from "./routes/settings";
 import notificationsRoutes from "./routes/notifications";
 import passkeysRoutes from "./routes/passkeys";
+import apiTokensRoutes from "./routes/api-tokens";
 
 export { websocket };
 
@@ -56,6 +57,7 @@ export function createApp() {
   app.route("/api/settings", settingsRoutes);
   app.route("/api/notifications", notificationsRoutes);
   app.route("/api/passkeys", passkeysRoutes);
+  app.route("/api/tokens", apiTokensRoutes);
 
   // WebSocket route for live command output streaming
   // Auth is enforced by authMiddleware on the HTTP GET before upgrade.

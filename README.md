@@ -35,7 +35,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, ntfy.sh), scope them to specific systems, and pick which events trigger each channel
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
-- **Three auth methods:** password, Passkeys (WebAuthn), and SSO (OpenID Connect)
+- **Four auth methods:** password, Passkeys (WebAuthn), SSO (OpenID Connect), and API tokens for external integrations
 - **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
 - **Full upgrade:** run `apt full-upgrade` or `dnf distro-sync` from the dashboard for dist-level upgrades
 - **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
@@ -83,7 +83,7 @@ Configure notification channels (Email/SMTP, ntfy.sh) with per-event and per-sys
 ![Add Notification](screenshots/screenshot-5.png)
 
 ### Settings
-Configure update schedules, SSH timeouts, and OIDC single sign-on.
+Configure update schedules, SSH timeouts, OIDC single sign-on, and API tokens.
 
 ![Settings](screenshots/screenshot-6.png)
 
@@ -218,11 +218,13 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 
 ## Authentication
 
-Three auth methods are supported and can be used at the same time:
+Four auth methods are supported and can be used at the same time:
 
 ### Password
 
-Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use long-lived JWTs (30-day expiry) in an HTTP-only cookie, with silent daily rolling refresh. Can be disabled from the OIDC settings section when using Passkey or SSO exclusively. Users can change their password from the Settings page.
+Standard username/password login. Passwords are hashed with bcrypt (cost factor 12). Sessions use long-lived JWTs (30-day expiry) in an HTTP-only cookie, with silent daily rolling refresh. Can be disabled from the Settings page, but only when at least one passkey or SSO provider is configured (enforced server-side to prevent lockout). Users can change their password from the Settings page.
+
+> **Note:** Password login cannot be disabled unless at least one passkey or SSO provider is configured, preventing account lockout.
 
 ### Passkeys (WebAuthn)
 
@@ -234,6 +236,21 @@ Hook up any OIDC-compatible identity provider (Authentik, Keycloak, Okta, Auth0,
 
 ```
 {LUDASH_BASE_URL}/api/auth/oidc/callback
+```
+
+### API Tokens
+
+Bearer tokens for external API consumers (e.g. [gethomepage](https://gethomepage.dev/) widgets, scripts, monitoring). Create and manage tokens from the Settings page.
+
+- **Permission levels:** read-only (GET/HEAD only) or read/write
+- **Configurable expiry:** 30, 60, 90, 365 days, or never
+- **Secure storage:** only the SHA-256 hash is stored; the plain token is shown once on creation
+- **Scoped access:** tokens cannot access management endpoints (auth, settings, tokens, passkeys, notifications)
+- **Rate-limited:** failed bearer attempts are rate-limited (20/min per IP), max 25 tokens per user
+
+Usage:
+```bash
+curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/stats
 ```
 
 ## Supported Package Managers
@@ -267,7 +284,7 @@ Package managers are auto-detected on each system over SSH when you test the con
 │   └── styles/               # Tailwind CSS
 ├── server/                   # Hono backend
 │   ├── auth/                 # Password, WebAuthn, OIDC, session handling
-│   ├── db/                   # SQLite + Drizzle schema (7 tables)
+│   ├── db/                   # SQLite + Drizzle schema (8 tables)
 │   ├── middleware/            # Auth and rate-limit middleware
 │   ├── routes/               # API route handlers
 │   ├── services/             # Business logic, caching, scheduling
@@ -435,6 +452,15 @@ All endpoints require authentication unless noted. Responses are JSON.
 | PATCH | `/api/passkeys/:id` | Rename a passkey |
 | DELETE | `/api/passkeys/:id` | Remove a passkey |
 
+### API Tokens (`/api/tokens/*`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tokens` | List tokens for the authenticated user |
+| POST | `/api/tokens` | Create a new token (name, expiresInDays, readOnly) |
+| PATCH | `/api/tokens/:id` | Rename a token |
+| DELETE | `/api/tokens/:id` | Revoke a token |
+
 ### Dashboard & Settings
 
 | Method | Endpoint | Description |
@@ -453,7 +479,9 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **CSRF protection:** state-changing API requests require a per-session CSRF token header
 - **Input validation:** strict type, format, and range validation on all API inputs
 - **SSRF protection:** outbound notification URLs are validated against private/internal IP ranges
-- **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify)
+- **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify, 20 failed bearer attempts/min per IP)
+- **API token security:** only SHA-256 hashes stored, tokens blocked from management endpoints, CSRF skipped for stateless bearer requests
+- **Password-disable safeguard:** password login cannot be disabled unless a passkey or SSO is configured (enforced server-side)
 - **Timing-safe login:** a pre-computed dummy hash is always compared on failed lookups to prevent username enumeration
 - **Encrypted OIDC secrets:** OIDC client secrets are encrypted at rest alongside SSH credentials
 - **Passphrase key derivation:** encryption keys can be raw base64 or passphrases derived via PBKDF2-SHA256 (480k iterations)
