@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Layout } from "../components/Layout";
 import { useSettings, useUpdateSettings } from "../lib/settings";
-import { usePasskeys, useDeletePasskey, useRegisterPasskey } from "../lib/passkeys";
+import { usePasskeys, useDeletePasskey, useRegisterPasskey, useRenamePasskey } from "../lib/passkeys";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../context/ToastContext";
 
@@ -28,7 +28,12 @@ export default function Settings() {
   const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
   const deletePasskey = useDeletePasskey();
   const registerPasskey = useRegisterPasskey();
+  const renamePasskey = useRenamePasskey();
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [newPasskeyName, setNewPasskeyName] = useState("");
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
@@ -247,11 +252,49 @@ export default function Settings() {
                   key={pk.id}
                   className="flex items-center justify-between p-3 rounded-lg border border-border"
                 >
-                  <div className="min-w-0">
-                    <span className="text-sm font-mono truncate">
-                      {pk.credentialId.slice(0, 16)}…
-                    </span>
-                    <span className="ml-3 text-xs text-slate-500">
+                  <div className="min-w-0 flex items-center">
+                    {editingId === pk.id ? (
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onBlur={() => {
+                          const trimmed = editingName.trim();
+                          if (trimmed && trimmed !== (pk.name ?? "")) {
+                            renamePasskey.mutate(
+                              { id: pk.id, name: trimmed },
+                              {
+                                onSuccess: () => addToast("Passkey renamed", "success"),
+                                onError: (err) => addToast(err.message || "Failed to rename", "danger"),
+                              }
+                            );
+                          }
+                          setEditingId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                        maxLength={50}
+                        className="text-sm px-1.5 py-0.5 rounded border border-blue-500 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 w-48"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setEditingId(pk.id);
+                          setEditingName(pk.name ?? "");
+                        }}
+                        className="text-sm truncate hover:underline cursor-pointer text-left"
+                        title="Click to rename"
+                      >
+                        {pk.name || (
+                          <span className="font-mono text-slate-400">
+                            {pk.credentialId.slice(0, 16)}…
+                          </span>
+                        )}
+                      </button>
+                    )}
+                    <span className="ml-3 text-xs text-slate-500 shrink-0">
                       Added{" "}
                       {new Date(pk.createdAt + "Z").toLocaleDateString()}
                     </span>
@@ -270,27 +313,74 @@ export default function Settings() {
               No passkeys registered. Add one to enable passwordless login.
             </p>
           )}
-          <button
-            onClick={() => {
-              registerPasskey.mutate(undefined, {
-                onSuccess: () =>
-                  addToast("Passkey registered successfully", "success"),
-                onError: (err) =>
-                  addToast(
-                    err.message || "Failed to register passkey",
-                    "danger"
-                  ),
-              });
-            }}
-            disabled={registerPasskey.isPending}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-          >
-            {registerPasskey.isPending ? (
-              <span className="spinner spinner-sm" />
-            ) : (
-              "Register New Passkey"
-            )}
-          </button>
+
+          {showNamePrompt ? (
+            <div className="flex items-center gap-2">
+              <input
+                autoFocus
+                value={newPasskeyName}
+                onChange={(e) => setNewPasskeyName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    registerPasskey.mutate(newPasskeyName.trim() || undefined, {
+                      onSuccess: () => {
+                        addToast("Passkey registered successfully", "success");
+                        setShowNamePrompt(false);
+                        setNewPasskeyName("");
+                      },
+                      onError: (err) =>
+                        addToast(err.message || "Failed to register passkey", "danger"),
+                    });
+                  }
+                  if (e.key === "Escape") {
+                    setShowNamePrompt(false);
+                    setNewPasskeyName("");
+                  }
+                }}
+                maxLength={50}
+                placeholder="Passkey name (e.g. YubiKey, MacBook)"
+                className="px-3 py-2 text-sm rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
+              />
+              <button
+                onClick={() => {
+                  registerPasskey.mutate(newPasskeyName.trim() || undefined, {
+                    onSuccess: () => {
+                      addToast("Passkey registered successfully", "success");
+                      setShowNamePrompt(false);
+                      setNewPasskeyName("");
+                    },
+                    onError: (err) =>
+                      addToast(err.message || "Failed to register passkey", "danger"),
+                  });
+                }}
+                disabled={registerPasskey.isPending}
+                className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+              >
+                {registerPasskey.isPending ? (
+                  <span className="spinner spinner-sm" />
+                ) : (
+                  "Register"
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowNamePrompt(false);
+                  setNewPasskeyName("");
+                }}
+                className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowNamePrompt(true)}
+              disabled={registerPasskey.isPending}
+              className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+            >
+              Register New Passkey
+            </button>
+          )}
 
           <ConfirmDialog
             open={deleteTarget !== null}

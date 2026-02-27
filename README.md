@@ -156,6 +156,9 @@ services:
       - LUDASH_ENCRYPTION_KEY=${LUDASH_ENCRYPTION_KEY}
       - LUDASH_DB_PATH=/data/dashboard.db
       - NODE_ENV=production
+      # Optional: set your public URL for stricter origin validation
+      # - LUDASH_BASE_URL=https://dashboard.example.com
+      # - LUDASH_TRUST_PROXY=true
 
 volumes:
   dashboard_data:
@@ -201,8 +204,8 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_SECRET_KEY` | No | Auto-generated | JWT session signing secret (auto-persisted to `.secret_key`) |
 | `LUDASH_PORT` | No | `3001` | HTTP server port |
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
-| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL (needed for WebAuthn and OIDC) |
-| `LUDASH_TRUST_PROXY` | No | `false` | Trust `x-forwarded-*` headers from your reverse proxy |
+| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL for WebAuthn/OIDC. When set, Origin headers are validated against it. When unset, browser Origin/Referer headers are trusted directly (works behind reverse proxies without extra config) |
+| `LUDASH_TRUST_PROXY` | No | `false` | Trust `X-Forwarded-*` headers from your reverse proxy (needed for forwarded host/proto detection when `LUDASH_BASE_URL` is set) |
 | `LUDASH_LOG_LEVEL` | No | `info` | Log level |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
@@ -220,7 +223,7 @@ Standard username/password login. Passwords are hashed with bcrypt (cost factor 
 
 ### Passkeys (WebAuthn)
 
-Register hardware keys or platform authenticators (Touch ID, Windows Hello) for passwordless login. You need to set `LUDASH_BASE_URL` correctly for this to work.
+Register hardware keys or platform authenticators (Touch ID, Windows Hello) for passwordless login. Each passkey can be given a custom name (e.g. "YubiKey", "MacBook") during registration and renamed later from the Settings page. Works behind reverse proxies without extra configuration; set `LUDASH_BASE_URL` for stricter origin validation.
 
 ### SSO (OpenID Connect)
 
@@ -420,6 +423,14 @@ All endpoints require authentication unless noted. Responses are JSON.
 | DELETE | `/api/notifications/:id` | Delete a notification channel |
 | POST | `/api/notifications/test` | Test a notification config inline (before saving) |
 | POST | `/api/notifications/:id/test` | Send a test notification |
+
+### Passkeys (`/api/passkeys/*`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/passkeys` | List passkeys for the authenticated user |
+| PATCH | `/api/passkeys/:id` | Rename a passkey |
+| DELETE | `/api/passkeys/:id` | Remove a passkey |
 
 ### Dashboard & Settings
 

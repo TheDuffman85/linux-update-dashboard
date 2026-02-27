@@ -11,8 +11,25 @@ describe("request security helpers", () => {
     expect(isTrustedReturnOrigin("http://127.0.0.1:4173")).toBe(true);
   });
 
-  test("trusted return origin rejects unrelated origins", () => {
-    expect(isTrustedReturnOrigin("https://evil.example.com")).toBe(false);
+  test("trusted return origin rejects unrelated origins when base URL is set", () => {
+    const prev = process.env.LUDASH_BASE_URL;
+    process.env.LUDASH_BASE_URL = "https://my-app.example.com";
+    try {
+      expect(isTrustedReturnOrigin("https://evil.example.com")).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.LUDASH_BASE_URL;
+      else process.env.LUDASH_BASE_URL = prev;
+    }
+  });
+
+  test("trusted return origin accepts any valid origin without explicit base URL", () => {
+    const prev = process.env.LUDASH_BASE_URL;
+    delete process.env.LUDASH_BASE_URL;
+    try {
+      expect(isTrustedReturnOrigin("https://any-app.example.com")).toBe(true);
+    } finally {
+      if (prev !== undefined) process.env.LUDASH_BASE_URL = prev;
+    }
   });
 
   test("private/reserved IP detection", () => {

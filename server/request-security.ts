@@ -104,12 +104,29 @@ function pickHost(c: Context): string | null {
   return c.req.header("host") ?? null;
 }
 
+// When LUDASH_BASE_URL is explicitly set, we validate browser headers against
+// it (strict mode). Otherwise we trust the browser Origin/Referer directly
+// since they are browser-controlled and cannot be spoofed by client JS.
+function hasExplicitBaseUrl(): boolean {
+  return !!process.env.LUDASH_BASE_URL;
+}
+
 export function getTrustedPublicOrigin(c: Context): string {
   const headerOrigin = getHeaderOrigin(c);
-  if (headerOrigin && isTrustedOriginUrl(headerOrigin)) {
-    return headerOrigin.origin;
+
+  if (headerOrigin) {
+    if (hasExplicitBaseUrl()) {
+      // Strict: only accept if it matches the configured base URL
+      if (isTrustedOriginUrl(headerOrigin)) {
+        return headerOrigin.origin;
+      }
+    } else {
+      // No explicit base URL: trust browser Origin/Referer directly
+      return headerOrigin.origin;
+    }
   }
 
+  // Forwarded headers require trustProxy since they are set by proxies.
   const host = pickHost(c);
   if (host) {
     const parsed = parseOrigin(`${pickProto(c)}//${host}`);
@@ -124,6 +141,9 @@ export function getTrustedPublicOrigin(c: Context): string {
 export function isTrustedReturnOrigin(value: string): boolean {
   const parsed = parseOrigin(value);
   if (!parsed) return false;
+  // When no explicit base URL is set, accept any valid origin for the
+  // return redirect (the OIDC callback sets an httpOnly cookie with it).
+  if (!hasExplicitBaseUrl()) return true;
   return isTrustedOriginUrl(parsed);
 }
 

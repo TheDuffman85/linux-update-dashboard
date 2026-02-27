@@ -179,6 +179,10 @@ auth.post("/webauthn/register/verify", async (c) => {
     }
 
     const { credential } = verification.registrationInfo;
+    const passkeyName =
+      typeof body.name === "string" && body.name.trim()
+        ? body.name.trim().slice(0, 50)
+        : null;
     const db = getDb();
     db.insert(webauthnCredentials)
       .values({
@@ -187,6 +191,7 @@ auth.post("/webauthn/register/verify", async (c) => {
         publicKey: Buffer.from(credential.publicKey).toString("base64url"),
         signCount: credential.counter,
         transports: JSON.stringify(body.response?.transports || []),
+        name: passkeyName,
       })
       .run();
 
