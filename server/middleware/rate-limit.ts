@@ -1,4 +1,5 @@
 import { createMiddleware } from "hono/factory";
+import { getClientIp } from "../request-security";
 
 interface RateLimitEntry {
   timestamps: number[];
@@ -22,10 +23,7 @@ setInterval(() => {
  */
 export function rateLimit(maxRequests: number, windowMs: number) {
   return createMiddleware(async (c, next) => {
-    const ip =
-      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-      c.req.header("x-real-ip") ||
-      "unknown";
+    const ip = getClientIp(c) || "unknown";
     const key = `${ip}:${c.req.path}`;
     const now = Date.now();
 

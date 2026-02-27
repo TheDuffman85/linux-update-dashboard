@@ -1,4 +1,21 @@
 const BASE_URL = "/api";
+const CSRF_COOKIE = "ludash_csrf";
+const CSRF_HEADER = "X-CSRF-Token";
+
+function getCookie(name: string): string | null {
+  const entries = document.cookie ? document.cookie.split(";") : [];
+  for (const entry of entries) {
+    const [rawKey, ...rest] = entry.split("=");
+    if (rawKey.trim() !== name) continue;
+    return decodeURIComponent(rest.join("="));
+  }
+  return null;
+}
+
+function methodIsUnsafe(method?: string): boolean {
+  const normalized = (method || "GET").toUpperCase();
+  return normalized !== "GET" && normalized !== "HEAD" && normalized !== "OPTIONS";
+}
 
 export class ApiError extends Error {
   constructor(
@@ -13,13 +30,21 @@ export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const headers = new Headers(options.headers || {});
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (methodIsUnsafe(options.method)) {
+    const csrf = getCookie(CSRF_COOKIE);
+    if (csrf && !headers.has(CSRF_HEADER)) {
+      headers.set(CSRF_HEADER, csrf);
+    }
+  }
+
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
+    headers,
   });
 
   if (!res.ok) {

@@ -91,6 +91,14 @@ systems.post("/", async (c) => {
   const body = await c.req.json();
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
+  const sourceIdCandidate =
+    body.sourceSystemId === undefined || body.sourceSystemId === null
+      ? undefined
+      : parseId(String(body.sourceSystemId));
+  const sourceSystemId = sourceIdCandidate ?? undefined;
+  if (body.sourceSystemId !== undefined && body.sourceSystemId !== null && !sourceIdCandidate) {
+    return c.json({ error: "sourceSystemId must be a positive integer" }, 400);
+  }
 
   const systemId = systemService.createSystem({
     name: body.name,
@@ -104,7 +112,7 @@ systems.post("/", async (c) => {
     sudoPassword: body.sudoPassword || undefined,
     disabledPkgManagers: body.disabledPkgManagers || undefined,
     excludeFromUpgradeAll: body.excludeFromUpgradeAll,
-    sourceSystemId: body.sourceSystemId || undefined,
+    sourceSystemId,
   });
 
   // Trigger initial check in background
@@ -158,6 +166,13 @@ systems.delete("/:id", (c) => {
 // Test connection with provided credentials
 systems.post("/test-connection", async (c) => {
   const body = await c.req.json();
+  const sourceSystemId =
+    body.systemId === undefined || body.systemId === null
+      ? null
+      : parseId(String(body.systemId));
+  if (body.systemId !== undefined && body.systemId !== null && !sourceSystemId) {
+    return c.json({ error: "systemId must be a positive integer" }, 400);
+  }
 
   const system: Record<string, unknown> = {
     hostname: body.hostname,
@@ -175,9 +190,9 @@ systems.post("/test-connection", async (c) => {
     if (body.keyPassphrase) {
       system.encryptedKeyPassphrase = encryptor.encrypt(body.keyPassphrase);
     }
-  } else if (body.systemId) {
+  } else if (sourceSystemId) {
     // No new credentials entered — fall back to saved (encrypted) ones
-    const saved = systemService.getSystem(body.systemId);
+    const saved = systemService.getSystem(sourceSystemId);
     if (saved) {
       const s = saved as Record<string, unknown>;
       system.encryptedPassword = s.encryptedPassword;

@@ -202,6 +202,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_PORT` | No | `3001` | HTTP server port |
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL (needed for WebAuthn and OIDC) |
+| `LUDASH_TRUST_PROXY` | No | `false` | Trust `x-forwarded-*` headers from your reverse proxy |
 | `LUDASH_LOG_LEVEL` | No | `info` | Log level |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
@@ -435,6 +436,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **Notification secrets:** SMTP passwords and ntfy tokens are also encrypted at rest within notification channel configs
 - **Key derivation:** supports both raw base64 keys and passphrase-derived keys (PBKDF2-SHA256, 480k iterations)
 - **Session security:** HTTP-only, SameSite=Lax cookies with JWT (HS256)
+- **CSRF protection:** state-changing API requests require a per-session CSRF token header
 - **Input validation:** strict type, format, and range validation on all API inputs
 - **SSRF protection:** outbound notification URLs are validated against private/internal IP ranges
 - **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify)
