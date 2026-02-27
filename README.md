@@ -322,7 +322,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 
 This will:
 1. Stop any running dev/production services
-2. Build and start 6 Docker containers (one per package manager)
+2. Build and start 7 Docker containers (includes a dedicated Ubuntu sudo-password test system)
 3. Build the frontend in production mode
 4. Run database migrations
 5. Start the production server on `:3001`
@@ -330,7 +330,8 @@ This will:
 **SSH credentials for all test systems:**
 - User: `testuser`
 - Password: `testpass`
-- Passwordless `sudo` is pre-configured
+- `Sudo password`: `testpass` (for `ludash-test-ubuntu-sudo`, optional for others)
+- Passwordless `sudo` is pre-configured on all test systems except `ludash-test-ubuntu-sudo`
 
 | Container | SSH Port | Package Manager | Base Image |
 |-----------|----------|-----------------|------------|
@@ -340,6 +341,7 @@ This will:
 | `ludash-test-archlinux` | 2004 | Pacman | Arch Linux |
 | `ludash-test-flatpak` | 2005 | Flatpak | Ubuntu 24.04 |
 | `ludash-test-snap` | 2006 | Snap | Ubuntu 24.04 |
+| `ludash-test-ubuntu-sudo` | 2007 | APT (sudo password) | Ubuntu 24.04 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -448,11 +450,11 @@ All upgrade operations (upgrade all, full upgrade, single package) run via **noh
 
 ### How it works
 
-1. **Sudo pre-caching** — sudo credentials are cached on the remote host before the upgrade starts, so the background process can elevate without a password prompt.
+1. **Sudo handling** — if a sudo password is configured, it is sent only over the live SSH stdin stream to a one-time `sudo` launch of the background process. The password is never written to files or environment variables. For non-password sudo, detached commands use `sudo -n`.
 2. **Temp script** — the upgrade command is base64-encoded, written to a temporary script on the remote host, and launched with `nohup` in the background.
 3. **Live streaming** — output is streamed back to the dashboard in real time using `tail --pid`, which automatically stops when the process finishes.
 4. **Exit code capture** — the script writes its exit code to a companion file, which the dashboard reads after the process completes.
-5. **Graceful degradation** — if the nohup setup fails (e.g. `mktemp` unavailable), the command falls back to direct SSH execution automatically.
+5. **Fail-safe behavior** — if SSH-safe `nohup` setup fails (e.g. `mktemp` unavailable), the upgrade is marked failed instead of falling back to unsafe direct execution.
 
 ### Connection loss during upgrade
 
