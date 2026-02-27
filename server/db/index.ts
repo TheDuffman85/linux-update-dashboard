@@ -49,6 +49,11 @@ const DEFAULT_SETTINGS = [
     value: "",
     description: "OIDC client secret (encrypted)",
   },
+  {
+    key: "disable_password_login",
+    value: "false",
+    description: "Disable password-based login",
+  },
 ];
 
 export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {

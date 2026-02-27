@@ -4,6 +4,8 @@ import { useSettings, useUpdateSettings } from "../lib/settings";
 import { usePasskeys, useDeletePasskey, useRegisterPasskey, useRenamePasskey } from "../lib/passkeys";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
+import { apiFetch } from "../lib/client";
 
 function SettingSection({
   title,
@@ -24,6 +26,7 @@ export default function Settings() {
   const { data: settings, isLoading } = useSettings();
   const updateSettings = useUpdateSettings();
   const { addToast } = useToast();
+  const { hasPassword, refresh: refreshAuth } = useAuth();
 
   const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
   const deletePasskey = useDeletePasskey();
@@ -34,6 +37,12 @@ export default function Settings() {
   const [editingName, setEditingName] = useState("");
   const [newPasskeyName, setNewPasskeyName] = useState("");
   const [showNamePrompt, setShowNamePrompt] = useState(false);
+
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwError, setPwError] = useState("");
+  const [pwLoading, setPwLoading] = useState(false);
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
@@ -72,6 +81,34 @@ export default function Settings() {
       },
       onError: (err) => addToast(err.message, "danger"),
     });
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwError("");
+    if (newPassword !== confirmPassword) {
+      setPwError("Passwords do not match");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPwError("Password must be at least 8 characters");
+      return;
+    }
+    setPwLoading(true);
+    try {
+      await apiFetch("/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      addToast("Password changed successfully", "success");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err: unknown) {
+      setPwError((err as Error).message || "Failed to change password");
+    } finally {
+      setPwLoading(false);
+    }
   };
 
   const inputClass =
@@ -236,6 +273,89 @@ export default function Settings() {
         >
           Save
         </button>
+      </SettingSection>
+
+      {/* Password */}
+      <SettingSection title="Password">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={form.disable_password_login === "true"}
+            onChange={(e) =>
+              setForm({ ...form, disable_password_login: e.target.checked ? "true" : "false" })
+            }
+            className="rounded border-border"
+          />
+          <span className="text-sm">Disable password login</span>
+        </label>
+        <p className="mt-1 text-xs text-slate-400">
+          When enabled, only Passkey and SSO login methods are available.
+        </p>
+        <button
+          onClick={() => {
+            handleSave(["disable_password_login"]);
+            refreshAuth();
+          }}
+          disabled={updateSettings.isPending}
+          className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+        >
+          Save
+        </button>
+
+        {hasPassword && (
+          <>
+            <hr className="my-6 border-border" />
+            <h3 className="text-sm font-semibold mb-4">Change Password</h3>
+            <form onSubmit={handleChangePassword} className="space-y-4 max-w-sm">
+              {pwError && (
+                <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
+                  {pwError}
+                </div>
+              )}
+              <div>
+                <label className={labelClass}>Current Password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  required
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  Minimum 8 characters, must include uppercase, lowercase, and a digit
+                </p>
+              </div>
+              <div>
+                <label className={labelClass}>Confirm New Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  className={inputClass}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={pwLoading}
+                className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+              >
+                {pwLoading ? <span className="spinner spinner-sm" /> : "Change Password"}
+              </button>
+            </form>
+          </>
+        )}
       </SettingSection>
 
       {/* Passkeys — only in secure contexts where WebAuthn is available */}
@@ -410,6 +530,7 @@ export default function Settings() {
           />
         </SettingSection>
       )}
+
     </Layout>
   );
 }

@@ -18,7 +18,7 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
 }
 
 export default function Login() {
-  const { login, oidcEnabled, refresh } = useAuth();
+  const { login, oidcEnabled, passwordLoginDisabled, passkeysEnabled, refresh } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
@@ -113,57 +113,63 @@ export default function Login() {
           </div>
         )}
 
-        <form onSubmit={handlePasswordLogin} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-              Username
-            </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            {loading ? <span className="spinner spinner-sm" /> : "Sign In"}
-          </button>
-        </form>
-
-        <div className="mt-4 space-y-2">
-          <button
-            onClick={handlePasskeyLogin}
-            disabled={loading}
-            className="w-full py-2 border border-border rounded-lg text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50"
-          >
-            Sign In with Passkey
-          </button>
-          {oidcEnabled && (
-            <a
-              href="/api/auth/oidc/login"
-              className="block w-full py-2 text-center border border-border rounded-lg text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
+        {!passwordLoginDisabled && (
+          <form onSubmit={handlePasswordLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
+                Username
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
-              Continue with SSO
-            </a>
-          )}
-        </div>
+              {loading ? <span className="spinner spinner-sm" /> : "Sign In"}
+            </button>
+          </form>
+        )}
+
+        {(passkeysEnabled || oidcEnabled) && (
+          <div className={`${passwordLoginDisabled ? "" : "mt-4"} space-y-2`}>
+            {passkeysEnabled && (
+              <button
+                onClick={handlePasskeyLogin}
+                disabled={loading}
+                className="w-full py-2 border border-border rounded-lg text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50"
+              >
+                Sign In with Passkey
+              </button>
+            )}
+            {oidcEnabled && (
+              <a
+                href="/api/auth/oidc/login"
+                className="block w-full py-2 text-center border border-border rounded-lg text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
+              >
+                Continue with SSO
+              </a>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
