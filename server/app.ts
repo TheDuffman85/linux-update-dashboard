@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import { authMiddleware } from "./middleware/auth";
+import { csrfMiddleware } from "./middleware/csrf";
 import * as outputStream from "./services/output-stream";
 import authRoutes from "./routes/auth";
 import dashboardRoutes from "./routes/dashboard";
@@ -32,15 +33,19 @@ export function createApp() {
       cors({
         origin: "http://localhost:5173",
         credentials: true,
+        allowHeaders: ["Content-Type", "X-CSRF-Token"],
       })
     );
   }
+
+  // CSRF protection for all API routes (safe methods are exempt)
+  app.use("/api/*", csrfMiddleware);
 
   // Auth middleware for API routes
   app.use("/api/*", authMiddleware);
 
   // Health check endpoint for Docker/orchestrator liveness probes.
-  // Auth is bypassed for localhost requests (see auth middleware).
+  // Auth is bypassed only for loopback requests (see auth middleware).
   app.get("/api/health", (c) => c.json({ status: "ok" }));
 
   // API routes

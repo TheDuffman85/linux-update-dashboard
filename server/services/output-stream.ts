@@ -1,4 +1,5 @@
 import type { WSContext } from "hono/ws";
+import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
 
 export type WsMessage =
   | { type: "reset" }
@@ -48,15 +49,29 @@ export function unsubscribe(systemId: number, ws: WSContext): void {
 
 /** Push a message to all subscribers and append to buffer. */
 export function publish(systemId: number, msg: WsMessage): void {
+  const sanitized = sanitizeMessage(msg);
   const stream = getOrCreate(systemId);
-  stream.buffer.push(msg);
-  const json = JSON.stringify(msg);
+  stream.buffer.push(sanitized);
+  const json = JSON.stringify(sanitized);
   for (const ws of stream.subscribers) {
     try {
       ws.send(json);
     } catch {
       stream.subscribers.delete(ws);
     }
+  }
+}
+
+function sanitizeMessage(msg: WsMessage): WsMessage {
+  switch (msg.type) {
+    case "started":
+      return { ...msg, command: sanitizeCommand(msg.command) };
+    case "output":
+      return { ...msg, data: sanitizeOutput(msg.data) };
+    case "error":
+      return { ...msg, message: sanitizeOutput(msg.message) };
+    default:
+      return msg;
   }
 }
 

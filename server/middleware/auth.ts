@@ -3,6 +3,7 @@ import { eq, count } from "drizzle-orm";
 import { getSession, refreshSessionIfNeeded, type SessionData } from "../auth/session";
 import { getDb } from "../db";
 import { users } from "../db/schema";
+import { isLoopbackRequest } from "../request-security";
 
 type AuthEnv = {
   Variables: {
@@ -18,11 +19,11 @@ async function hasUsers(): Promise<boolean> {
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const path = c.req.path;
+  const isWebSocketUpgrade = c.req.header("upgrade")?.toLowerCase() === "websocket";
 
   // Allow health check without auth when called from localhost (Docker HEALTHCHECK)
   if (path === "/api/health") {
-    const host = new URL(c.req.url).hostname;
-    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+    if (isLoopbackRequest(c)) {
       return next();
     }
   }
@@ -52,8 +53,11 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 
     c.set("user", session);
 
-    // Rolling session: refresh token if it's past the halfway point
-    await refreshSessionIfNeeded(c);
+    // Avoid mutating cookies during WebSocket upgrade handshakes.
+    if (!isWebSocketUpgrade) {
+      // Rolling session: refresh token if it's past the halfway point
+      await refreshSessionIfNeeded(c);
+    }
 
     return next();
   }

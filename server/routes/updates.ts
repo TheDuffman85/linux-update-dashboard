@@ -5,6 +5,12 @@ import { validatePackageName } from "../ssh/parsers/types";
 
 const updates = new Hono();
 
+function parseId(raw: string): number | null {
+  const id = parseInt(raw, 10);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return id;
+}
+
 // --------------- background job tracking ---------------
 interface Job {
   status: "running" | "done" | "failed";
@@ -40,7 +46,8 @@ updates.get("/jobs/:id", (c) => {
 
 // Check single system (async)
 updates.post("/systems/:id/check", async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const jobId = startJob(async () => {
     const result = await updateService.checkUpdates(id);
     return { updateCount: result.length };
@@ -57,7 +64,8 @@ updates.post("/systems/check-all", async (c) => {
 
 // Upgrade all packages on a system (async)
 updates.post("/systems/:id/upgrade", async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const jobId = startJob(async () => {
     const result = await updateService.applyUpgradeAll(id);
     return {
@@ -70,7 +78,8 @@ updates.post("/systems/:id/upgrade", async (c) => {
 
 // Full upgrade all packages on a system (async)
 updates.post("/systems/:id/full-upgrade", async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const jobId = startJob(async () => {
     const result = await updateService.applyFullUpgradeAll(id);
     return {
@@ -83,7 +92,8 @@ updates.post("/systems/:id/full-upgrade", async (c) => {
 
 // Upgrade single package (async)
 updates.post("/systems/:id/upgrade/:packageName", async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const packageName = c.req.param("packageName");
   try {
     validatePackageName(packageName);

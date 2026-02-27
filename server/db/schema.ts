@@ -25,6 +25,7 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   publicKey: text("public_key").notNull(),
   signCount: integer("sign_count").notNull().default(0),
   transports: text("transports"),
+  name: text("name"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

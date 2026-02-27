@@ -215,6 +215,13 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     // Column already exists
   }
 
+  // Migration: add passkey name column
+  try {
+    _db.run(sql`ALTER TABLE webauthn_credentials ADD COLUMN name TEXT`);
+  } catch {
+    // Column already exists
+  }
+
   // Migration: add exclude from upgrade-all flag
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0`);

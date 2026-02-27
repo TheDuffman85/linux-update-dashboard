@@ -14,6 +14,7 @@ export interface Config {
   defaultCmdTimeout: number;
   maxConcurrentConnections: number;
   baseUrl: string;
+  trustProxy: boolean;
 }
 
 function getSecretKey(dbPath: string, envKey?: string): string {
@@ -90,6 +91,7 @@ function loadConfig(): Config {
       10
     ),
     baseUrl: process.env.LUDASH_BASE_URL || "http://localhost:3001",
+    trustProxy: process.env.LUDASH_TRUST_PROXY === "true",
   };
 }
 

@@ -4,6 +4,7 @@ import { apiFetch } from "./client";
 export interface Passkey {
   id: number;
   credentialId: string;
+  name: string | null;
   createdAt: string;
 }
 
@@ -26,10 +27,24 @@ export function useDeletePasskey() {
   });
 }
 
+export function useRenamePasskey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) =>
+      apiFetch(`/passkeys/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["passkeys"] });
+    },
+  });
+}
+
 export function useRegisterPasskey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
+    mutationFn: async (name?: string) => {
       // Step 1: Get registration options from server
       const options = await apiFetch<Record<string, unknown>>(
         "/auth/webauthn/register/options",
@@ -81,7 +96,7 @@ export function useRegisterPasskey() {
 
       return apiFetch("/auth/webauthn/register/verify", {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, name }),
       });
     },
     onSuccess: () => {

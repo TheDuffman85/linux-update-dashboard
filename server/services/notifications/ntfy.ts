@@ -1,52 +1,17 @@
 import type { NotificationProvider, NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
-
-const BLOCKED_HOSTS = [
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "0.0.0.0",
-  "[::1]",
-  "metadata.google.internal",
-];
-
-const BLOCKED_IP_PREFIXES = [
-  "10.",
-  "172.16.", "172.17.", "172.18.", "172.19.",
-  "172.20.", "172.21.", "172.22.", "172.23.",
-  "172.24.", "172.25.", "172.26.", "172.27.",
-  "172.28.", "172.29.", "172.30.", "172.31.",
-  "192.168.",
-  "169.254.",
-  "fd",
-  "fe80:",
-];
+import { isSafeOutboundUrl } from "../../request-security";
 
 function validateUrl(raw: string): string | null {
-  let parsed: URL;
   try {
-    parsed = new URL(raw);
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return "URL must use http or https";
+    }
+    return null;
   } catch {
     return "Invalid URL format";
   }
-
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    return "URL must use http or https";
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-
-  if (BLOCKED_HOSTS.includes(hostname)) {
-    return "URL must not point to localhost or internal addresses";
-  }
-
-  for (const prefix of BLOCKED_IP_PREFIXES) {
-    if (hostname.startsWith(prefix)) {
-      return "URL must not point to private/internal IP addresses";
-    }
-  }
-
-  return null;
 }
 
 export const ntfyProvider: NotificationProvider = {
@@ -68,9 +33,9 @@ export const ntfyProvider: NotificationProvider = {
   },
 
   async send(payload: NotificationPayload, config: Record<string, string>): Promise<NotificationResult> {
-    // Re-validate URL at send time as defense-in-depth
-    const urlError = validateUrl(config.ntfyUrl);
-    if (urlError) return { success: false, error: urlError };
+    // Re-validate URL at send time as defense-in-depth, including DNS/IP checks.
+    const outbound = await isSafeOutboundUrl(config.ntfyUrl);
+    if (!outbound.safe) return { success: false, error: outbound.reason };
 
     const baseUrl = config.ntfyUrl.replace(/\/+$/, "");
     const url = `${baseUrl}/${encodeURIComponent(config.ntfyTopic)}`;
@@ -95,6 +60,7 @@ export const ntfyProvider: NotificationProvider = {
 
     const res = await fetch(url, {
       method: "POST",
+      redirect: "error",
       headers,
       body: payload.body,
     });

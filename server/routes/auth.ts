@@ -13,8 +13,8 @@ import {
 } from "../auth/session";
 import * as wa from "../auth/webauthn";
 import * as oidc from "../auth/oidc";
-import { config } from "../config";
 import { rateLimit } from "../middleware/rate-limit";
+import { getTrustedPublicOrigin, isTrustedReturnOrigin } from "../request-security";
 
 // Pre-computed dummy hash for timing-safe login (L1)
 const DUMMY_HASH = await hashPassword("timing-safe-dummy-password-pad");
@@ -27,36 +27,9 @@ function validatePassword(password: string): string | null {
   return null;
 }
 
-/** Derive the public-facing origin from the incoming request headers. */
-function getPublicOrigin(c: Context): string {
-  // Prefer the Origin header (present on POST requests)
-  const originHeader = c.req.header("origin");
-  if (originHeader) {
-    try {
-      return new URL(originHeader).origin;
-    } catch { /* fall through */ }
-  }
-
-  // Construct from forwarded / host headers (reverse-proxy setups)
-  const host = c.req.header("x-forwarded-host") || c.req.header("host");
-  const proto = c.req.header("x-forwarded-proto") || "https";
-  if (host) {
-    try {
-      return new URL(`${proto}://${host}`).origin;
-    } catch { /* fall through */ }
-  }
-
-  // Fall back to configured base URL
-  try {
-    return new URL(config.baseUrl).origin;
-  } catch {
-    return "http://localhost:3001";
-  }
-}
-
 /** Derive WebAuthn origin and rpId from the incoming request headers. */
 function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
-  const origin = getPublicOrigin(c);
+  const origin = getTrustedPublicOrigin(c);
   return { origin, rpId: new URL(origin).hostname };
 }
 
@@ -206,6 +179,10 @@ auth.post("/webauthn/register/verify", async (c) => {
     }
 
     const { credential } = verification.registrationInfo;
+    const passkeyName =
+      typeof body.name === "string" && body.name.trim()
+        ? body.name.trim().slice(0, 50)
+        : null;
     const db = getDb();
     db.insert(webauthnCredentials)
       .values({
@@ -214,6 +191,7 @@ auth.post("/webauthn/register/verify", async (c) => {
         publicKey: Buffer.from(credential.publicKey).toString("base64url"),
         signCount: credential.counter,
         transports: JSON.stringify(body.response?.transports || []),
+        name: passkeyName,
       })
       .run();
 
@@ -335,7 +313,7 @@ auth.get("/oidc/login", async (c) => {
     return c.json({ error: "OIDC not configured" }, 400);
   }
 
-  const publicOrigin = getPublicOrigin(c);
+  const publicOrigin = getTrustedPublicOrigin(c);
   const redirectUri = `${publicOrigin}/api/auth/oidc/callback`;
 
   const state = crypto.randomUUID();
@@ -346,7 +324,14 @@ auth.get("/oidc/login", async (c) => {
   // In dev, the login request comes through Vite's proxy (port 5173),
   // but the callback hits the backend (port 3001) directly from the IdP.
   const referer = c.req.header("referer");
-  const returnOrigin = referer ? new URL(referer).origin : "";
+  let returnOrigin = "";
+  if (referer) {
+    try {
+      returnOrigin = new URL(referer).origin;
+    } catch {
+      returnOrigin = "";
+    }
+  }
 
   setCookie(c, "oidc_state", state, {
     httpOnly: true,
@@ -360,7 +345,7 @@ auth.get("/oidc/login", async (c) => {
     maxAge: 300,
     path: "/",
   });
-  if (returnOrigin) {
+  if (returnOrigin && isTrustedReturnOrigin(returnOrigin)) {
     setCookie(c, "oidc_return_origin", returnOrigin, {
       httpOnly: true,
       sameSite: "Lax",
@@ -383,7 +368,7 @@ auth.get("/oidc/callback", async (c) => {
   try {
     // Reconstruct callback URL with the public-facing origin so it matches
     // the redirect_uri that was sent to the IdP during authorization.
-    const publicOrigin = getPublicOrigin(c);
+    const publicOrigin = getTrustedPublicOrigin(c);
     const internalUrl = new URL(c.req.url);
     const callbackUrl = new URL(`${publicOrigin}${internalUrl.pathname}${internalUrl.search}`);
 

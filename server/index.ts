@@ -10,6 +10,7 @@ import { initSession } from "./auth/session";
 import { configureOidc } from "./auth/oidc";
 import * as scheduler from "./services/scheduler";
 import { createApp, websocket } from "./app";
+import { setRequestIp } from "./request-ip-store";
 
 // Ensure data directory exists with restrictive permissions
 mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -66,7 +67,11 @@ const app = createApp();
 console.log(`Server starting on http://${config.host}:${config.port}`);
 
 const server = Bun.serve({
-  fetch: app.fetch,
+  fetch(req, server) {
+    const ip = server.requestIP(req);
+    if (ip) setRequestIp(req, ip.address);
+    return app.fetch(req, server);
+  },
   hostname: config.host,
   port: config.port,
   websocket,
