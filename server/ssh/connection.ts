@@ -6,6 +6,22 @@ import type { CredentialEncryptor } from "../security";
 const PATH_PREFIX =
   "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ";
 
+const SUDO_STDIN_PATTERN = /\bsudo -S(?=\s)/g;
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+/**
+ * For nohup/background execution, there is no interactive stdin channel.
+ * Convert `sudo -S` calls to `sudo -n` for systems where elevation is already
+ * available non-interactively (root or passwordless sudo).
+ */
+export function preparePersistentSudoCommand(command: string): string {
+  if (!command.includes("sudo -S")) return command;
+  return command.replace(SUDO_STDIN_PATTERN, "sudo -n");
+}
+
 /** Sentinel exit code: SSH monitoring was lost but the nohup process likely continues on the remote. */
 export const EXIT_MONITORING_LOST = -2;
 
@@ -158,7 +174,7 @@ export class SSHConnectionManager {
   /**
    * Run a command via nohup so it survives SSH disconnection.
    * Output is streamed via `tail --pid` on a remote log file.
-   * Falls back to direct `runCommand` if the nohup setup fails.
+   * Fails fast if nohup setup cannot be started.
    */
   async runPersistentCommand(
     conn: Client,
@@ -168,36 +184,57 @@ export class SSHConnectionManager {
     onData?: (chunk: string, stream: "stdout" | "stderr") => void
   ): Promise<CommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
+    const needsSudoStdin = command.includes("sudo -S");
+    const useSudoLaunch = needsSudoStdin && !!sudoPassword;
+    const persistentCommand = useSudoLaunch
+      ? command
+      : needsSudoStdin
+      ? preparePersistentSudoCommand(command)
+      : command;
 
-    // Phase 1: Cache sudo credentials so the nohup'd process can use them
-    if (sudoPassword) {
-      await this.cacheSudoCredentials(conn, sudoPassword);
-    }
-
-    // Phase 2: Start the command in background via nohup
-    const base64Cmd = Buffer.from(command).toString("base64");
+    // Phase 1: Start the command in background via nohup.
+    const base64Cmd = Buffer.from(persistentCommand).toString("base64");
     // The nohup line ends with & which is already a command separator,
     // so we use { ...; } grouping to keep it in the && chain.
-    const setupCmd = [
+    const setupCmdParts = [
       'SCRIPT=$(mktemp /tmp/ludash_XXXXXX.sh)',
       `printf '%s' '${base64Cmd}' | base64 -d > "$SCRIPT"`,
       'LOGFILE="${SCRIPT%.sh}.log"',
       'EXITFILE="${SCRIPT%.sh}.exit"',
-    ].join(" && ") +
-      ` && { nohup sh -c 'sh "$0"; echo $? > "$1"; rm -f "$0"' "$SCRIPT" "$EXITFILE" > "$LOGFILE" 2>&1 & echo "LUDASH_BG PID=$! LOG=$LOGFILE EXIT=$EXITFILE"; }`;
+    ];
+    const launchInnerCmd =
+      `nohup sh -c 'sh "$0"; echo $? > "$1"; rm -f "$0"' "$1" "$2" > "$3" 2>&1 & ` +
+      `echo "LUDASH_BG PID=$! LOG=$3 EXIT=$2"`;
+    const launchCmd =
+      `sh -c ${shellSingleQuote(launchInnerCmd)} -- "$SCRIPT" "$EXITFILE" "$LOGFILE"`;
+    const rootLaunchCmd = useSudoLaunch
+      ? `if [ "$(id -u)" = "0" ]; then ${launchCmd}; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' ${launchCmd}; else ${launchCmd}; fi`
+      : launchCmd;
+    const setupCmd = setupCmdParts.join(" && ") + ` && ${rootLaunchCmd}`;
 
-    const setupResult = await this.runCommand(conn, setupCmd, 30);
+    const setupResult = await this.runCommand(
+      conn,
+      setupCmd,
+      30,
+      useSudoLaunch ? sudoPassword : undefined
+    );
     const info = this.parseNohupOutput(setupResult.stdout);
 
     if (!info || setupResult.exitCode !== 0) {
       console.warn(
-        "[SSH] nohup setup failed, falling back to direct execution:",
+        "[SSH] nohup setup failed:",
         setupResult.stderr || setupResult.stdout
       );
-      return this.runCommand(conn, command, timeout, sudoPassword, onData);
+      return {
+        stdout: setupResult.stdout,
+        stderr:
+          setupResult.stderr ||
+          "Failed to start SSH-safe background command",
+        exitCode: setupResult.exitCode || -1,
+      };
     }
 
-    // Phase 3: Monitor via tail --pid
+    // Phase 2: Monitor via tail --pid
     const tailCmd =
       PATH_PREFIX + `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
     const tailResult = await this.runTailMonitor(
@@ -216,7 +253,7 @@ export class SSHConnectionManager {
       };
     }
 
-    // Phase 4: Read exit code from the exit file
+    // Phase 3: Read exit code from the exit file
     const exitResult = await this.runCommand(
       conn,
       `cat "${info.exitFile}" 2>/dev/null`,
@@ -224,7 +261,7 @@ export class SSHConnectionManager {
     );
     const exitCode = parseInt(exitResult.stdout.trim(), 10);
 
-    // Phase 5: Cleanup temp files
+    // Phase 4: Cleanup temp files
     this.runCommand(
       conn,
       `rm -f "${info.logFile}" "${info.exitFile}"`,
@@ -236,28 +273,6 @@ export class SSHConnectionManager {
       stderr: "",
       exitCode: isNaN(exitCode) ? -1 : exitCode,
     };
-  }
-
-  private async cacheSudoCredentials(
-    conn: Client,
-    sudoPassword: string
-  ): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const timer = setTimeout(() => resolve(), 10_000);
-      conn.exec(PATH_PREFIX + "sudo -S -v 2>/dev/null", (err, stream) => {
-        if (err) {
-          clearTimeout(timer);
-          resolve();
-          return;
-        }
-        stream.write(sudoPassword + "\n");
-        stream.end();
-        stream.on("close", () => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
-    });
   }
 
   private parseNohupOutput(stdout: string): PersistentCommandInfo | null {

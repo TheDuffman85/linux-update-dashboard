@@ -26,18 +26,16 @@ RUN mv /etc/apt/sources.list.d/ubuntu.sources /tmp/ubuntu.sources.bak && \
 # Configure SSH
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    # Override any drop-in configs that might disable password auth
     mkdir -p /etc/ssh/sshd_config.d && \
     echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
 
-# Create test user with sudo
+# Create test user with password-based sudo (no NOPASSWD override)
 RUN useradd -m -s /bin/bash testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
-    chmod 440 /etc/sudoers.d/testuser
+    usermod -aG sudo testuser
 
-# Fail the build early if sudo is not usable for the test user.
-RUN su - testuser -c "sudo -n true"
+# Verify sudo is present and requires password auth.
+RUN su - testuser -c "echo testpass | sudo -S -p '' true"
 
 # Generate host keys
 RUN ssh-keygen -A

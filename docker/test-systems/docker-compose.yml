@@ -14,6 +14,7 @@
 #   Arch    (Pacman)  → localhost:2004
 #   Ubuntu  (Flatpak) → localhost:2005
 #   Ubuntu  (Snap)    → localhost:2006
+#   Ubuntu  (APT+sudo password) → localhost:2007
 #
 # SSH examples:
 #   ssh testuser@localhost -p 2001   # Ubuntu  (APT)
@@ -22,6 +23,7 @@
 #   ssh testuser@localhost -p 2004   # Arch    (Pacman)
 #   ssh testuser@localhost -p 2005   # Ubuntu  (Flatpak)
 #   ssh testuser@localhost -p 2006   # Ubuntu  (Snap)
+#   ssh testuser@localhost -p 2007   # Ubuntu  (APT + sudo password)
 #
 # Note: Flatpak needs --privileged for bubblewrap (used during install/update).
 # Snap needs systemd as PID 1 + --privileged for snapd to function.
@@ -93,4 +95,14 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     ports:
       - "2006:22"
+    restart: unless-stopped
+
+  ubuntu-sudo:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu-sudo
+    container_name: ludash-test-ubuntu-sudo
+    hostname: ubuntu-sudo-test
+    ports:
+      - "2007:22"
     restart: unless-stopped
