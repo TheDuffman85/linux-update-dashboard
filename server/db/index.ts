@@ -49,6 +49,11 @@ const DEFAULT_SETTINGS = [
     value: "",
     description: "OIDC client secret (encrypted)",
   },
+  {
+    key: "disable_password_login",
+    value: "false",
+    description: "Disable password-based login",
+  },
 ];
 
 export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
@@ -156,6 +161,17 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     config TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT,
+    token_hash TEXT NOT NULL UNIQUE,
+    read_only INTEGER NOT NULL DEFAULT 1,
+    expires_at TEXT,
+    last_used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
   // Migration: add command column to existing databases

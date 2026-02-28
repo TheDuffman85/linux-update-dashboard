@@ -11,6 +11,9 @@ interface AuthState {
   loading: boolean;
   setupRequired: boolean;
   oidcEnabled: boolean;
+  passwordLoginDisabled: boolean;
+  passkeysEnabled: boolean;
+  hasPassword: boolean;
 }
 
 interface AuthContextType extends AuthState {
@@ -28,6 +31,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading: true,
     setupRequired: false,
     oidcEnabled: false,
+    passwordLoginDisabled: false,
+    passkeysEnabled: false,
+    hasPassword: false,
   });
 
   const refresh = async () => {
@@ -37,6 +43,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authenticated: boolean;
         user: User | null;
         oidcEnabled: boolean;
+        passwordLoginDisabled: boolean;
+        passkeysEnabled: boolean;
+        hasPassword: boolean;
       }>("/auth/status");
 
       setState({
@@ -44,6 +53,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading: false,
         setupRequired: data.setupRequired,
         oidcEnabled: data.oidcEnabled,
+        passwordLoginDisabled: data.passwordLoginDisabled,
+        passkeysEnabled: data.passkeysEnabled,
+        hasPassword: data.hasPassword,
       });
     } catch {
       setState((s) => ({ ...s, loading: false }));

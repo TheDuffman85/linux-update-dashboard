@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { eq, count as countFn } from "drizzle-orm";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { getDb } from "../db";
-import { users, webauthnCredentials } from "../db/schema";
+import { users, webauthnCredentials, settings } from "../db/schema";
 import { hashPassword, verifyPassword } from "../auth/password";
 import {
   createSession,
@@ -47,11 +47,37 @@ auth.get("/status", async (c) => {
   const session = await getSession(c);
   const oidcEnabled = oidc.isConfigured();
 
+  const pwSetting = db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, "disable_password_login"))
+    .get();
+  const passwordLoginDisabled = pwSetting?.value === "true";
+
+  const passkeyCount = db
+    .select({ count: countFn() })
+    .from(webauthnCredentials)
+    .get();
+  const passkeysEnabled = (passkeyCount?.count ?? 0) > 0;
+
+  let hasPassword = false;
+  if (session) {
+    const user = db
+      .select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .get();
+    hasPassword = !!user?.passwordHash;
+  }
+
   return c.json({
     setupRequired: !hasUsers,
     authenticated: !!session,
     user: session || null,
     oidcEnabled,
+    passwordLoginDisabled,
+    passkeysEnabled,
+    hasPassword,
   });
 });
 
@@ -85,12 +111,21 @@ auth.post("/setup", rateLimit(3, 60_000), async (c) => {
 
 // --- Login ---
 auth.post("/login", rateLimit(5, 60_000), async (c) => {
+  const db = getDb();
+  const pwSetting = db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, "disable_password_login"))
+    .get();
+  if (pwSetting?.value === "true") {
+    return c.json({ error: "Password login is disabled" }, 403);
+  }
+
   const { username, password } = await c.req.json();
   if (!username || !password) {
     return c.json({ error: "Username and password required" }, 400);
   }
 
-  const db = getDb();
   const user = db
     .select()
     .from(users)
@@ -123,6 +158,48 @@ auth.get("/me", async (c) => {
     return c.json({ error: "Not authenticated" }, 401);
   }
   return c.json({ user: session });
+});
+
+// --- Change Password ---
+auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
+  const session = await getSession(c);
+  if (!session) {
+    return c.json({ error: "Not authenticated" }, 401);
+  }
+
+  const { currentPassword, newPassword } = await c.req.json();
+  if (!currentPassword || !newPassword) {
+    return c.json({ error: "Current and new password required" }, 400);
+  }
+
+  const db = getDb();
+  const user = db
+    .select()
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .get();
+
+  if (!user?.passwordHash) {
+    return c.json({ error: "No password set for this account" }, 400);
+  }
+
+  const valid = await verifyPassword(currentPassword, user.passwordHash);
+  if (!valid) {
+    return c.json({ error: "Current password is incorrect" }, 401);
+  }
+
+  const pwError = validatePassword(newPassword);
+  if (pwError) {
+    return c.json({ error: pwError }, 400);
+  }
+
+  const newHash = await hashPassword(newPassword);
+  db.update(users)
+    .set({ passwordHash: newHash })
+    .where(eq(users.id, session.userId))
+    .run();
+
+  return c.json({ status: "ok" });
 });
 
 // --- WebAuthn Registration ---

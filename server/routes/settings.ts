@@ -1,14 +1,21 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { eq, count } from "drizzle-orm";
 import { getDb } from "../db";
-import { settings } from "../db/schema";
+import { settings, webauthnCredentials } from "../db/schema";
 import { configureOidc } from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as scheduler from "../services/scheduler";
+import type { SessionData } from "../auth/session";
+
+type AuthEnv = {
+  Variables: {
+    user: SessionData;
+  };
+};
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
 
-const settingsRouter = new Hono();
+const settingsRouter = new Hono<AuthEnv>();
 
 // Get all settings
 settingsRouter.get("/", (c) => {
@@ -29,6 +36,30 @@ settingsRouter.get("/", (c) => {
 settingsRouter.put("/", async (c) => {
   const body = await c.req.json();
   const db = getDb();
+
+  // Prevent disabling password login without an alternative auth method
+  if (body.disable_password_login === "true") {
+    const user = c.get("user");
+
+    // Check if user has at least one passkey
+    const passkeyCnt = db
+      .select({ count: count() })
+      .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.userId, user.userId))
+      .get();
+    const hasPasskeys = (passkeyCnt?.count ?? 0) > 0;
+
+    // Check if OIDC is configured
+    const oidcIssuer = db.select({ value: settings.value }).from(settings).where(eq(settings.key, "oidc_issuer")).get();
+    const oidcClientId = db.select({ value: settings.value }).from(settings).where(eq(settings.key, "oidc_client_id")).get();
+    const hasOidc = !!(oidcIssuer?.value && oidcClientId?.value);
+
+    if (!hasPasskeys && !hasOidc) {
+      return c.json({
+        error: "Cannot disable password login without a passkey or SSO configured",
+      }, 400);
+    }
+  }
 
   const encryptor = getEncryptor();
   for (const [key, value] of Object.entries(body)) {

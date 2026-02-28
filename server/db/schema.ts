@@ -125,6 +125,21 @@ export const settings = sqliteTable("settings", {
     .default(sql`(datetime('now'))`),
 });
 
+export const apiTokens = sqliteTable("api_tokens", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: text("name"),
+  tokenHash: text("token_hash").notNull().unique(),
+  readOnly: integer("read_only").notNull().default(1),
+  expiresAt: text("expires_at"),
+  lastUsedAt: text("last_used_at"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
 export const notifications = sqliteTable("notifications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
