@@ -38,23 +38,25 @@ initSSHManager(
 );
 
 // Initialize OIDC from database settings
-console.log("Initializing OIDC...");
 {
   const dbInstance = getDb();
   const oidcIssuer = dbInstance.select().from(settings).where(eq(settings.key, "oidc_issuer")).get();
   const oidcClientId = dbInstance.select().from(settings).where(eq(settings.key, "oidc_client_id")).get();
   const oidcClientSecret = dbInstance.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();
 
-  const encryptor = getEncryptor();
-  const decryptedSecret = oidcClientSecret?.value
-    ? encryptor.decrypt(oidcClientSecret.value)
-    : "";
+  if (oidcIssuer?.value && oidcClientId?.value) {
+    console.log("Initializing OIDC...");
+    const encryptor = getEncryptor();
+    const decryptedSecret = oidcClientSecret?.value
+      ? encryptor.decrypt(oidcClientSecret.value)
+      : "";
 
-  configureOidc(
-    oidcIssuer?.value || "",
-    oidcClientId?.value || "",
-    decryptedSecret,
-  ).catch((e) => console.log("OIDC not configured:", (e as Error).message));
+    configureOidc(
+      oidcIssuer.value,
+      oidcClientId.value,
+      decryptedSecret,
+    );
+  }
 }
 
 // Start background scheduler

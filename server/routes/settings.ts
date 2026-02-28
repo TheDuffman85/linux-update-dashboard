@@ -99,16 +99,13 @@ settingsRouter.put("/", async (c) => {
       ? encryptor.decrypt(clientSecret.value)
       : "";
 
-    try {
-      await configureOidc(
-        issuer?.value || "",
-        clientId?.value || "",
-        decryptedSecret,
-      );
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      console.error("Failed to reconfigure OIDC:", e);
-      return c.json({ status: "ok", oidcError: message });
+    const oidcError = await configureOidc(
+      issuer?.value || "",
+      clientId?.value || "",
+      decryptedSecret,
+    );
+    if (oidcError) {
+      return c.json({ status: "ok", oidcError });
     }
   }
 
