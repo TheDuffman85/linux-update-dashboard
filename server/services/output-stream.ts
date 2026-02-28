@@ -7,7 +7,8 @@ export type WsMessage =
   | { type: "output"; data: string; stream: "stdout" | "stderr" }
   | { type: "phase"; phase: string }
   | { type: "done"; success: boolean }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "warning"; message: string };
 
 interface SystemStream {
   buffer: WsMessage[];
@@ -69,6 +70,8 @@ function sanitizeMessage(msg: WsMessage): WsMessage {
     case "output":
       return { ...msg, data: sanitizeOutput(msg.data) };
     case "error":
+      return { ...msg, message: sanitizeOutput(msg.message) };
+    case "warning":
       return { ...msg, message: sanitizeOutput(msg.message) };
     default:
       return msg;

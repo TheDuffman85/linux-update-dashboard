@@ -69,7 +69,7 @@ updates.post("/systems/:id/upgrade", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.applyUpgradeAll(id);
     return {
-      status: result.success ? "success" : "failed",
+      status: result.warning ? "warning" : result.success ? "success" : "failed",
       output: result.output,
     };
   });
@@ -83,7 +83,7 @@ updates.post("/systems/:id/full-upgrade", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.applyFullUpgradeAll(id);
     return {
-      status: result.success ? "success" : "failed",
+      status: result.warning ? "warning" : result.success ? "success" : "failed",
       output: result.output,
     };
   });
@@ -103,7 +103,7 @@ updates.post("/systems/:id/upgrade/:packageName", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.applyUpgradePackage(id, packageName);
     return {
-      status: result.success ? "success" : "failed",
+      status: result.warning ? "warning" : result.success ? "success" : "failed",
       package: packageName,
       output: result.output,
     };

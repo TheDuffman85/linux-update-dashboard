@@ -4,15 +4,24 @@ let _config: client.Configuration | null = null;
 let _configured = false;
 let _clientId = "";
 
+/** Readable error messages for openid-client error codes */
+const OIDC_ERROR_HINTS: Record<string, string> = {
+  OAUTH_RESPONSE_IS_NOT_CONFORM: "The issuer returned an unexpected HTTP response. Check that the issuer URL points to a valid OIDC provider.",
+  OAUTH_INVALID_RESPONSE: "The issuer returned an invalid discovery document.",
+  ERR_JWT_CLAIM_VALIDATION_FAILED: "JWT claim validation failed — check client ID and issuer configuration.",
+};
+
 export async function configureOidc(
   issuer: string,
   clientId: string,
   clientSecret: string,
-): Promise<void> {
+): Promise<string | null> {
   if (!issuer || !clientId) {
     _configured = false;
-    return;
+    return null;
   }
+
+  const discoveryUrl = `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`;
 
   try {
     _config = await client.discovery(
@@ -22,9 +31,16 @@ export async function configureOidc(
     );
     _clientId = clientId;
     _configured = true;
-  } catch (e) {
-    console.error("Failed to configure OIDC:", e);
+    console.log(`OIDC configured successfully (issuer: ${issuer})`);
+    return null;
+  } catch (e: any) {
     _configured = false;
+    const code: string = e?.code || "UNKNOWN";
+    const msg: string = e?.message || String(e);
+    const hint = OIDC_ERROR_HINTS[code] || "Verify the issuer URL is correct and the provider is reachable.";
+    const detail = `Failed to configure OIDC: ${msg}\n  Code: ${code}\n  Issuer URL: ${issuer}\n  Discovery endpoint: ${discoveryUrl}\n  ${hint}`;
+    console.error(detail);
+    return `${msg} — ${hint}`;
   }
 }
 
@@ -76,8 +92,10 @@ export async function handleCallback(
       username,
       email: claims.email as string | undefined,
     };
-  } catch (e) {
-    console.error("OIDC callback error:", e);
+  } catch (e: any) {
+    const code = e?.code || "UNKNOWN";
+    const msg = e?.message || String(e);
+    console.error(`OIDC callback error (${code}): ${msg}`);
     return null;
   }
 }
