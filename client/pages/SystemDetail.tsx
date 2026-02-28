@@ -179,6 +179,12 @@ function LiveOutput({ messages, isActive }: { messages: WsMessage[]; isActive: b
                   Error: {msg.message}
                 </span>
               );
+            case "warning":
+              return (
+                <span key={i} className="text-amber-400 font-semibold">
+                  {"\n"}Warning: {msg.message}{"\n"}
+                </span>
+              );
             default:
               return null;
           }
@@ -342,9 +348,11 @@ function HistoryList({
                 variant={
                   h.status === "success"
                     ? "success"
-                    : h.status === "failed"
-                      ? "danger"
-                      : "muted"
+                    : h.status === "warning"
+                      ? "warning"
+                      : h.status === "failed"
+                        ? "danger"
+                        : "muted"
                 }
                 small
               >
@@ -495,8 +503,10 @@ export default function SystemDetail() {
     upgradeAll(systemId, {
       onSuccess: (d: any) =>
         addToast(
-          d.status === "success" ? "Upgrade complete" : "Upgrade failed",
-          d.status === "success" ? "success" : "danger"
+          d.status === "success" ? "Upgrade complete"
+            : d.status === "warning" ? "Upgrade likely complete (inferred after reboot)"
+            : "Upgrade failed",
+          d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
     });
@@ -507,8 +517,10 @@ export default function SystemDetail() {
     fullUpgradeAll(systemId, {
       onSuccess: (d: any) =>
         addToast(
-          d.status === "success" ? "Full upgrade complete" : "Full upgrade failed",
-          d.status === "success" ? "success" : "danger"
+          d.status === "success" ? "Full upgrade complete"
+            : d.status === "warning" ? "Full upgrade likely complete (inferred after reboot)"
+            : "Full upgrade failed",
+          d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
     });

@@ -6,7 +6,8 @@ export type WsMessage =
   | { type: "output"; data: string; stream: "stdout" | "stderr" }
   | { type: "phase"; phase: string }
   | { type: "done"; success: boolean }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "warning"; message: string };
 
 export function useCommandOutput(systemId: number) {
   const [messages, setMessages] = useState<WsMessage[]>([]);

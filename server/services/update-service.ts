@@ -1,7 +1,7 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
-import { getSSHManager, EXIT_MONITORING_LOST } from "../ssh/connection";
+import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCommandInfo } from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
@@ -53,6 +53,175 @@ async function withLock<T>(
     systemLocks.delete(systemId);
     resolve!();
   }
+}
+
+// Reconnection settings for when SSH drops during an upgrade
+const RECONNECT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const RECONNECT_INTERVAL_MS = 15 * 1000;     // retry every 15 seconds
+
+interface ReconnectionResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  serverRebooted: boolean;
+}
+
+/**
+ * When SSH monitoring is lost during an upgrade (e.g. server rebooted),
+ * attempt to reconnect and determine the actual result.
+ */
+async function attemptReconnection(
+  systemId: number,
+  persistentInfo: PersistentCommandInfo,
+  preUpgradeUpdateCount: number,
+  onData: (chunk: string, stream: "stdout" | "stderr") => void,
+): Promise<ReconnectionResult> {
+  const system = systemService.getSystem(systemId);
+  if (!system) {
+    return { exitCode: -1, stdout: "", stderr: "System not found during reconnection", serverRebooted: false };
+  }
+
+  const sshManager = getSSHManager();
+
+  outputStream.publish(systemId, {
+    type: "warning",
+    message: "SSH connection lost. Attempting to reconnect...",
+  });
+  outputStream.publish(systemId, { type: "phase", phase: "reconnecting" });
+
+  const startTime = Date.now();
+  let attempt = 0;
+  const maxAttempts = Math.ceil(RECONNECT_TIMEOUT_MS / RECONNECT_INTERVAL_MS);
+
+  while (Date.now() - startTime < RECONNECT_TIMEOUT_MS) {
+    attempt++;
+    await new Promise((r) => setTimeout(r, RECONNECT_INTERVAL_MS));
+
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    outputStream.publish(systemId, {
+      type: "output",
+      data: `Reconnection attempt ${attempt}/${maxAttempts}... (${elapsed}s elapsed)\n`,
+      stream: "stderr",
+    });
+
+    let conn;
+    try {
+      conn = await sshManager.connect(system as Record<string, unknown>);
+    } catch {
+      // Connection failed — server still down, keep retrying
+      continue;
+    }
+
+    try {
+      const result = await sshManager.resumePersistentCommand(
+        conn,
+        persistentInfo,
+        3600,
+        onData,
+      );
+
+      if (result.exitCode === EXIT_FILES_GONE) {
+        // Server rebooted — /tmp was cleared. Infer result from update count.
+        outputStream.publish(systemId, {
+          type: "warning",
+          message: "Server appears to have rebooted (temp files cleared). Checking upgrade result...",
+        });
+
+        sshManager.disconnect(conn);
+        conn = null;
+
+        // Run a fresh update check to see what's still pending.
+        // The server may not be fully ready yet (SSH accepts connections
+        // before all services are up), so retry a few times.
+        const CHECK_RETRIES = 3;
+        const CHECK_RETRY_DELAY_MS = 10_000;
+        let checkSucceeded = false;
+
+        for (let i = 0; i < CHECK_RETRIES; i++) {
+          if (i > 0) {
+            outputStream.publish(systemId, {
+              type: "output",
+              data: `Update check failed, retrying in ${CHECK_RETRY_DELAY_MS / 1000}s...\n`,
+              stream: "stderr",
+            });
+            await new Promise((r) => setTimeout(r, CHECK_RETRY_DELAY_MS));
+          }
+          await checkUpdatesUnlocked(systemId, true);
+          // checkUpdatesUnlocked sets isReachable=1 on success, -1 on failure
+          const updated = systemService.getSystem(systemId);
+          if (updated?.isReachable === 1) {
+            checkSucceeded = true;
+            break;
+          }
+        }
+
+        if (!checkSucceeded) {
+          outputStream.publish(systemId, {
+            type: "warning",
+            message: "Could not verify upgrade result — update check failed after reconnection.",
+          });
+          return {
+            exitCode: -1,
+            stdout: "",
+            stderr: "Could not verify upgrade result after reconnection",
+            serverRebooted: true,
+          };
+        }
+
+        const db = getDb();
+        const newCount = db
+          .select()
+          .from(updateCache)
+          .where(eq(updateCache.systemId, systemId))
+          .all().length;
+
+        const success = newCount < preUpgradeUpdateCount;
+        const message = success
+          ? `Server rebooted during upgrade. Post-reboot check: ${preUpgradeUpdateCount} updates before, ${newCount} after. Upgrade appears successful.`
+          : `Server rebooted during upgrade. Post-reboot check: ${preUpgradeUpdateCount} updates before, ${newCount} after. Upgrade may not have completed.`;
+
+        outputStream.publish(systemId, {
+          type: "warning",
+          message,
+        });
+
+        return {
+          exitCode: success ? 0 : -1,
+          stdout: message,
+          stderr: success ? "" : message,
+          serverRebooted: true,
+        };
+      }
+
+      // Files existed — we got an actual result
+      sshManager.disconnect(conn);
+      return {
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        serverRebooted: false,
+      };
+    } catch (e) {
+      if (conn) {
+        try { sshManager.disconnect(conn); } catch {}
+      }
+      // Reconnected but something failed — keep retrying
+      continue;
+    }
+  }
+
+  // Timeout — could not reconnect
+  outputStream.publish(systemId, {
+    type: "warning",
+    message: `Reconnection timed out after ${Math.round(RECONNECT_TIMEOUT_MS / 1000)}s. The upgrade process may still be running on the remote system.`,
+  });
+
+  return {
+    exitCode: -1,
+    stdout: "",
+    stderr: `Reconnection timed out after ${Math.round(RECONNECT_TIMEOUT_MS / 1000)}s`,
+    serverRebooted: false,
+  };
 }
 
 function storeUpdates(systemId: number, updates: ParsedUpdate[]): void {
@@ -108,7 +277,7 @@ function logHistory(
   const db = getDb();
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const completedAt =
-    status === "success" || status === "failed" ? now : null;
+    status === "success" || status === "failed" || status === "warning" ? now : null;
 
   db.insert(updateHistory)
     .values({
@@ -152,7 +321,7 @@ function insertStartedEntry(
 /** Update an existing history row to its final status. */
 function finishEntry(
   id: number,
-  status: "success" | "failed",
+  status: "success" | "failed" | "warning",
   opts?: {
     packageCount?: number;
     packages?: string;
@@ -264,9 +433,11 @@ async function checkUpdatesUnlocked(
     console.error(`System ${systemId}: connection failed:`, sanitizeOutput(String(e)));
     systemService.markUnreachable(systemId);
     pub({ type: "done", success: false });
-    logHistory(systemId, "check", system.pkgManager || "unknown", "failed", {
-      error: String(e),
-    });
+    if (!silent) {
+      logHistory(systemId, "check", system.pkgManager || "unknown", "failed", {
+        error: String(e),
+      });
+    }
     return [];
   } finally {
     if (conn) sshManager.disconnect(conn);
@@ -276,20 +447,22 @@ async function checkUpdatesUnlocked(
   cacheService.invalidateCache(systemId);
   storeUpdates(systemId, allUpdates);
 
-  // Log history
-  logHistory(
-    systemId,
-    "check",
-    allUpdates.length > 0
-      ? [...new Set(allUpdates.map((u) => u.pkgManager))].join(",")
-      : pkgManagers.join(","),
-    "success",
-    {
-      packageCount: allUpdates.length,
-      command: allCommands.join(" && "),
-      output: checkOutput.slice(0, 5000) || undefined,
-    }
-  );
+  // Log history (skip when silent — e.g. called from reconnection context)
+  if (!silent) {
+    logHistory(
+      systemId,
+      "check",
+      allUpdates.length > 0
+        ? [...new Set(allUpdates.map((u) => u.pkgManager))].join(",")
+        : pkgManagers.join(","),
+      "success",
+      {
+        packageCount: allUpdates.length,
+        command: allCommands.join(" && "),
+        output: checkOutput.slice(0, 5000) || undefined,
+      }
+    );
+  }
 
   return allUpdates;
 }
@@ -311,7 +484,7 @@ export async function checkUpdates(
 
 export async function applyUpgradeAll(
   systemId: number
-): Promise<{ success: boolean; output: string }> {
+): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
     activeOperations.set(systemId, { type: "upgrade_all", startedAt: now });
@@ -346,6 +519,7 @@ export async function applyUpgradeAll(
     const allCommands: string[] = [];
     const allOutputs: string[] = [];
     let overallSuccess = true;
+    let reconnectionUsed = false;
 
     const sshManager = getSSHManager();
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
@@ -362,38 +536,71 @@ export async function applyUpgradeAll(
         const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
 
-        const { stdout, stderr, exitCode } = await sshManager.runPersistentCommand(
-          conn,
+        const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
+          outputStream.publish(systemId, { type: "output", data: chunk, stream });
+        };
+
+        const result = await sshManager.runPersistentCommand(
+          conn!,
           cmd,
           3600,
           sudoPassword,
-          (chunk, stream) => {
-            outputStream.publish(systemId, { type: "output", data: chunk, stream });
-          }
+          onDataCb,
         );
 
+        let { stdout, stderr, exitCode } = result;
+
+        if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+          // Connection lost — attempt reconnection
+          try { sshManager.disconnect(conn!); } catch {}
+          conn = undefined;
+
+          const preCount = db
+            .select()
+            .from(updateCache)
+            .where(eq(updateCache.systemId, systemId))
+            .all().length;
+
+          const reconResult = await attemptReconnection(
+            systemId,
+            result.persistentInfo,
+            preCount,
+            onDataCb,
+          );
+
+          stdout = reconResult.stdout || stdout;
+          stderr = reconResult.stderr;
+          exitCode = reconResult.exitCode;
+          reconnectionUsed = true;
+        }
+
         const success = exitCode === 0;
-        const monitoringLost = exitCode === EXIT_MONITORING_LOST;
         if (!success) overallSuccess = false;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
-        finishEntry(histId, success ? "success" : "failed", {
+        const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
+        finishEntry(histId, histStatus, {
           output: stdout.slice(0, 5000),
-          error: monitoringLost
-            ? "SSH connection lost during upgrade. The process may still be running on the remote system."
-            : success ? undefined : (stderr || stdout).slice(0, 2000),
+          error: success ? undefined : (stderr || stdout).slice(0, 2000),
         });
+
+        // If connection was lost, can't continue with remaining package managers
+        if (reconnectionUsed) break;
       }
 
-      // Re-check after upgrade
-      sshManager.disconnect(conn);
-      conn = null;
-      outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-      await checkUpdatesUnlocked(systemId, true);
+      // Re-check after upgrade (skip if reconnection already ran one)
+      if (conn) {
+        sshManager.disconnect(conn);
+        conn = undefined;
+      }
+      if (!reconnectionUsed) {
+        outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
+        await checkUpdatesUnlocked(systemId, true);
+      }
 
       const combinedOutput = allOutputs.join("\n\n");
       outputStream.publish(systemId, { type: "done", success: overallSuccess });
-      return { success: overallSuccess, output: combinedOutput };
+      return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
     } catch (e) {
       logHistory(
         systemId,
@@ -429,7 +636,7 @@ export function supportsFullUpgrade(systemId: number): boolean {
 
 export async function applyFullUpgradeAll(
   systemId: number
-): Promise<{ success: boolean; output: string }> {
+): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
     activeOperations.set(systemId, { type: "full_upgrade_all", startedAt: now });
@@ -462,6 +669,7 @@ export async function applyFullUpgradeAll(
     const allCommands: string[] = [];
     const allOutputs: string[] = [];
     let overallSuccess = true;
+    let reconnectionUsed = false;
 
     const sshManager = getSSHManager();
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
@@ -478,37 +686,69 @@ export async function applyFullUpgradeAll(
         const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
 
-        const { stdout, stderr, exitCode } = await sshManager.runPersistentCommand(
-          conn,
+        const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
+          outputStream.publish(systemId, { type: "output", data: chunk, stream });
+        };
+
+        const result = await sshManager.runPersistentCommand(
+          conn!,
           cmd,
           3600,
           sudoPassword,
-          (chunk, stream) => {
-            outputStream.publish(systemId, { type: "output", data: chunk, stream });
-          }
+          onDataCb,
         );
 
+        let { stdout, stderr, exitCode } = result;
+
+        if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+          try { sshManager.disconnect(conn!); } catch {}
+          conn = undefined;
+
+          const preCount = db
+            .select()
+            .from(updateCache)
+            .where(eq(updateCache.systemId, systemId))
+            .all().length;
+
+          const reconResult = await attemptReconnection(
+            systemId,
+            result.persistentInfo,
+            preCount,
+            onDataCb,
+          );
+
+          stdout = reconResult.stdout || stdout;
+          stderr = reconResult.stderr;
+          exitCode = reconResult.exitCode;
+          reconnectionUsed = true;
+        }
+
         const success = exitCode === 0;
-        const monitoringLost = exitCode === EXIT_MONITORING_LOST;
         if (!success) overallSuccess = false;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
-        finishEntry(histId, success ? "success" : "failed", {
+        const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
+        finishEntry(histId, histStatus, {
           output: stdout.slice(0, 5000),
-          error: monitoringLost
-            ? "SSH connection lost during upgrade. The process may still be running on the remote system."
-            : success ? undefined : (stderr || stdout).slice(0, 2000),
+          error: success ? undefined : (stderr || stdout).slice(0, 2000),
         });
+
+        // If connection was lost, can't continue with remaining package managers
+        if (reconnectionUsed) break;
       }
 
-      sshManager.disconnect(conn);
-      conn = null;
-      outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-      await checkUpdatesUnlocked(systemId, true);
+      if (conn) {
+        sshManager.disconnect(conn);
+        conn = undefined;
+      }
+      if (!reconnectionUsed) {
+        outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
+        await checkUpdatesUnlocked(systemId, true);
+      }
 
       const combinedOutput = allOutputs.join("\n\n");
       outputStream.publish(systemId, { type: "done", success: overallSuccess });
-      return { success: overallSuccess, output: combinedOutput };
+      return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
     } catch (e) {
       logHistory(
         systemId,
@@ -535,7 +775,7 @@ export async function applyFullUpgradeAll(
 export async function applyUpgradePackage(
   systemId: number,
   packageName: string
-): Promise<{ success: boolean; output: string }> {
+): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
     activeOperations.set(systemId, { type: "upgrade_package", startedAt: now, packageName });
@@ -568,44 +808,69 @@ export async function applyUpgradePackage(
     const sshManager = getSSHManager();
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
+    let reconnectionUsed = false;
 
     const histId = insertStartedEntry(systemId, "upgrade_package", pmName, cmd);
     outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
 
     try {
       conn = await sshManager.connect(system as Record<string, unknown>);
-      const { stdout, stderr, exitCode } = await sshManager.runPersistentCommand(
+      const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
+        outputStream.publish(systemId, { type: "output", data: chunk, stream });
+      };
+
+      const result = await sshManager.runPersistentCommand(
         conn,
         cmd,
         300,
         sudoPassword,
-        (chunk, stream) => {
-          outputStream.publish(systemId, { type: "output", data: chunk, stream });
-        }
+        onDataCb,
       );
 
+      let { stdout, stderr, exitCode } = result;
+
+      if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+        try { sshManager.disconnect(conn); } catch {}
+        conn = null;
+
+        // For single package, pre-upgrade count is 1
+        const reconResult = await attemptReconnection(
+          systemId,
+          result.persistentInfo,
+          1,
+          onDataCb,
+        );
+
+        stdout = reconResult.stdout || stdout;
+        stderr = reconResult.stderr;
+        exitCode = reconResult.exitCode;
+        reconnectionUsed = true;
+      }
+
       const success = exitCode === 0;
-      const monitoringLost = exitCode === EXIT_MONITORING_LOST;
-      finishEntry(histId, success ? "success" : "failed", {
+      const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
+      finishEntry(histId, histStatus, {
         packageCount: 1,
         packages: JSON.stringify([packageName]),
         output: stdout.slice(0, 5000),
-        error: monitoringLost
-          ? "SSH connection lost during upgrade. The process may still be running on the remote system."
-          : success ? undefined : (stderr || stdout).slice(0, 2000),
+        error: success ? undefined : (stderr || stdout).slice(0, 2000),
       });
 
       // Always re-check after upgrade to reflect the actual package state,
       // even if the upgrade reported a non-zero exit code (e.g. flatpak in
       // Docker reports exit 1 due to cross-device hardlink errors despite the
       // update succeeding).
-      sshManager.disconnect(conn);
-      conn = null;
-      outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-      await checkUpdatesUnlocked(systemId, true);
+      if (conn) {
+        sshManager.disconnect(conn);
+        conn = null;
+      }
+      if (!reconnectionUsed) {
+        outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
+        await checkUpdatesUnlocked(systemId, true);
+      }
 
       outputStream.publish(systemId, { type: "done", success });
-      return { success, output: success ? stdout : stderr || stdout };
+      return { success, output: success ? stdout : stderr || stdout, warning: reconnectionUsed && success };
     } catch (e) {
       finishEntry(histId, "failed", {
         error: String(e),

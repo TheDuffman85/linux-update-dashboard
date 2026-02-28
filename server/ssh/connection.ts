@@ -26,10 +26,18 @@ export function preparePersistentSudoCommand(command: string): string {
 /** Sentinel exit code: SSH monitoring was lost but the nohup process likely continues on the remote. */
 export const EXIT_MONITORING_LOST = -2;
 
+/** Sentinel exit code: remote temp files are gone (e.g. server rebooted and /tmp was cleared). */
+export const EXIT_FILES_GONE = -3;
+
 export interface CommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+}
+
+export interface PersistentCommandResult extends CommandResult {
+  /** Set when exitCode === EXIT_MONITORING_LOST; contains remote process info for reconnection. */
+  persistentInfo?: PersistentCommandInfo;
 }
 
 export interface PersistentCommandInfo {
@@ -183,7 +191,7 @@ export class SSHConnectionManager {
     timeout?: number,
     sudoPassword?: string,
     onData?: (chunk: string, stream: "stdout" | "stderr") => void
-  ): Promise<CommandResult> {
+  ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const needsSudoStdin = command.includes("sudo -S");
     const useSudoLaunch = needsSudoStdin && !!sudoPassword;
@@ -251,6 +259,7 @@ export class SSHConnectionManager {
         stderr:
           "SSH connection lost during monitoring. The upgrade process continues on the remote system under nohup.",
         exitCode: EXIT_MONITORING_LOST,
+        persistentInfo: info,
       };
     }
 
@@ -344,6 +353,136 @@ export class SSHConnectionManager {
         });
       });
     });
+  }
+
+  /**
+   * Resume monitoring a previously-launched persistent command after reconnection.
+   * Checks if the remote temp files still exist and either reads the result
+   * or re-attaches the tail monitor if the process is still running.
+   */
+  async resumePersistentCommand(
+    conn: Client,
+    info: PersistentCommandInfo,
+    timeout?: number,
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void
+  ): Promise<PersistentCommandResult> {
+    const cmdTimeout = timeout || this.defaultCmdTimeout;
+
+    // Check if the log file still exists (it won't if the server rebooted and /tmp was cleared)
+    const checkLog = await this.runCommand(
+      conn,
+      `test -f "${info.logFile}" && echo "exists" || echo "gone"`,
+      10
+    );
+    if (checkLog.stdout.trim() === "gone") {
+      return {
+        stdout: "",
+        stderr: "Remote temp files no longer exist (server likely rebooted).",
+        exitCode: EXIT_FILES_GONE,
+      };
+    }
+
+    // Check if the exit file exists (process finished)
+    const checkExit = await this.runCommand(
+      conn,
+      `test -f "${info.exitFile}" && echo "exists" || echo "gone"`,
+      10
+    );
+
+    if (checkExit.stdout.trim() === "exists") {
+      // Process finished — read exit code and remaining output
+      const exitResult = await this.runCommand(
+        conn,
+        `cat "${info.exitFile}" 2>/dev/null`,
+        10
+      );
+      const exitCode = parseInt(exitResult.stdout.trim(), 10);
+
+      const logResult = await this.runCommand(
+        conn,
+        `cat "${info.logFile}" 2>/dev/null`,
+        30
+      );
+
+      // Cleanup temp files
+      this.runCommand(
+        conn,
+        `rm -f "${info.logFile}" "${info.exitFile}"`,
+        10
+      ).catch(() => {});
+
+      return {
+        stdout: logResult.stdout,
+        stderr: "",
+        exitCode: isNaN(exitCode) ? -1 : exitCode,
+      };
+    }
+
+    // Process may still be running — check if PID is alive
+    const pidCheck = await this.runCommand(
+      conn,
+      `kill -0 ${info.pid} 2>/dev/null && echo "alive" || echo "dead"`,
+      10
+    );
+
+    if (pidCheck.stdout.trim() === "alive") {
+      // Re-attach tail monitor
+      const tailCmd =
+        PATH_PREFIX + `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
+      const tailResult = await this.runTailMonitor(
+        conn,
+        tailCmd,
+        cmdTimeout,
+        onData
+      );
+
+      if (tailResult.monitoringLost) {
+        return {
+          stdout: tailResult.stdout,
+          stderr: "SSH connection lost again during monitoring.",
+          exitCode: EXIT_MONITORING_LOST,
+          persistentInfo: info,
+        };
+      }
+
+      // Process finished — read exit code
+      const exitResult = await this.runCommand(
+        conn,
+        `cat "${info.exitFile}" 2>/dev/null`,
+        10
+      );
+      const exitCode = parseInt(exitResult.stdout.trim(), 10);
+
+      // Cleanup
+      this.runCommand(
+        conn,
+        `rm -f "${info.logFile}" "${info.exitFile}"`,
+        10
+      ).catch(() => {});
+
+      return {
+        stdout: tailResult.stdout,
+        stderr: "",
+        exitCode: isNaN(exitCode) ? -1 : exitCode,
+      };
+    }
+
+    // PID is dead but no exit file — the process was likely killed during
+    // a system shutdown/reboot before it could write the exit code.
+    // Treat the same as EXIT_FILES_GONE so the caller infers from update count.
+
+    // Cleanup
+    this.runCommand(
+      conn,
+      `rm -f "${info.logFile}" "${info.exitFile}"`,
+      10
+    ).catch(() => {});
+
+    return {
+      stdout: "",
+      stderr: "Process was terminated without writing exit code (likely killed during reboot).",
+      exitCode: EXIT_FILES_GONE,
+    };
   }
 
   async testConnection(

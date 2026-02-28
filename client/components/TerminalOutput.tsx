@@ -34,7 +34,9 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
     .find((m): m is Extract<WsMessage, { type: "done" }> => m.type === "done");
 
   let headerText = "Command Output";
-  if (phase === "rechecking") {
+  if (phase === "reconnecting") {
+    headerText = "Reconnecting to remote server...";
+  } else if (phase === "rechecking") {
     headerText = "Rechecking for updates...";
   } else if (isActive && lastStarted) {
     headerText = `Running: ${lastStarted.command}`;
@@ -53,9 +55,9 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
         </div>
         <div className="flex items-center gap-2">
           {isActive && (
-            <span className="flex items-center gap-1.5 text-xs text-green-400">
+            <span className={`flex items-center gap-1.5 text-xs ${phase === "reconnecting" ? "text-amber-400" : "text-green-400"}`}>
               <span className="spinner spinner-sm !w-3 !h-3" />
-              Running
+              {phase === "reconnecting" ? "Reconnecting" : "Running"}
             </span>
           )}
           {!connected && (
@@ -115,6 +117,12 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
               return (
                 <div key={i} className="text-red-400">
                   Error: {msg.message}
+                </div>
+              );
+            case "warning":
+              return (
+                <div key={i} className="text-amber-400 mt-2 mb-1">
+                  Warning: {msg.message}
                 </div>
               );
             default:
