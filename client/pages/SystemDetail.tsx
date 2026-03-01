@@ -244,14 +244,23 @@ function HistoryList({
     }
   }, [commandOutput.isActive]);
 
-  // When the top history entry changes (new result landed), clear the pending flag.
+  // When the top history entry changes (new result landed) or its status transitions
+  // from "started" to a finalized status (upgrade-type ops update in-place), clear the
+  // pending flag. Without the status check, upgrade ops would keep the synthetic
+  // "running" placeholder visible indefinitely since the row ID stays the same.
   const topHistoryId = history[0]?.id;
+  const topHistoryStatus = history[0]?.status;
   useEffect(() => {
     if (!pendingExpand) return;
-    if (topHistoryId === prevTopHistoryIdRef.current) return;
+    const idChanged = topHistoryId !== prevTopHistoryIdRef.current;
+    const statusFinalized =
+      topHistoryId === prevTopHistoryIdRef.current &&
+      topHistoryStatus !== "started" &&
+      topHistoryStatus !== undefined;
+    if (!idChanged && !statusFinalized) return;
     prevTopHistoryIdRef.current = topHistoryId;
     setPendingExpand(false);
-  }, [topHistoryId, pendingExpand]);
+  }, [topHistoryId, topHistoryStatus, pendingExpand]);
 
   // Fallback label for the synthetic placeholder (before DB entry arrives)
   const syntheticStartedMsg = commandOutput.messages
@@ -327,11 +336,10 @@ function HistoryList({
             <button
               type="button"
               onClick={() => hasDetails && toggle(h.id)}
-              className={`w-full flex items-start gap-3 text-sm px-2 py-2 rounded-lg transition-colors text-left ${
-                hasDetails
+              className={`w-full flex items-start gap-3 text-sm px-2 py-2 rounded-lg transition-colors text-left ${hasDetails
                   ? "hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer"
                   : "cursor-default"
-              }`}
+                }`}
             >
               {hasDetails && (
                 <svg
@@ -505,7 +513,7 @@ export default function SystemDetail() {
         addToast(
           d.status === "success" ? "Upgrade complete"
             : d.status === "warning" ? "Upgrade likely complete (inferred after reboot)"
-            : "Upgrade failed",
+              : "Upgrade failed",
           d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
@@ -519,7 +527,7 @@ export default function SystemDetail() {
         addToast(
           d.status === "success" ? "Full upgrade complete"
             : d.status === "warning" ? "Full upgrade likely complete (inferred after reboot)"
-            : "Full upgrade failed",
+              : "Full upgrade failed",
           d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
@@ -641,12 +649,14 @@ export default function SystemDetail() {
             { label: "Version", value: system.osVersion },
             { label: "Kernel", value: system.kernel },
             { label: "Architecture", value: system.arch },
-            { label: "Pkg Managers", value: (() => {
-              const detected: string[] = system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []);
-              const disabled: string[] = system.disabledPkgManagers ?? [];
-              const active = detected.filter((m) => !disabled.includes(m));
-              return active.length > 0 ? active.join(", ") : null;
-            })() },
+            {
+              label: "Pkg Managers", value: (() => {
+                const detected: string[] = system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []);
+                const disabled: string[] = system.disabledPkgManagers ?? [];
+                const active = detected.filter((m) => !disabled.includes(m));
+                return active.length > 0 ? active.join(", ") : null;
+              })()
+            },
             ...(system.needsReboot === 1 ? [{ label: "Reboot", value: "Required" }] : []),
           ]}
         />
