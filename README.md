@@ -478,7 +478,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **Session security:** HTTP-only, SameSite=Lax cookies with JWT (HS256)
 - **CSRF protection:** state-changing API requests require a per-session CSRF token header
 - **Input validation:** strict type, format, and range validation on all API inputs
-- **SSRF protection:** outbound notification URLs are validated against private/internal IP ranges
+- **Notification URL validation:** outbound notification URLs are validated for correct format (http/https); private/local targets are allowed since they are admin-configured
 - **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify, 20 failed bearer attempts/min per IP)
 - **API token security:** only SHA-256 hashes stored, tokens blocked from management endpoints, CSRF skipped for stateless bearer requests
 - **Password-disable safeguard:** password login cannot be disabled unless a passkey or SSO is configured (enforced server-side)

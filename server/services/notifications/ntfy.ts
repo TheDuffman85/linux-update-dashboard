@@ -1,6 +1,5 @@
 import type { NotificationProvider, NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
-import { isSafeOutboundUrl } from "../../request-security";
 
 function validateUrl(raw: string): string | null {
   try {
@@ -33,9 +32,6 @@ export const ntfyProvider: NotificationProvider = {
   },
 
   async send(payload: NotificationPayload, config: Record<string, string>): Promise<NotificationResult> {
-    // Re-validate URL at send time as defense-in-depth, including DNS/IP checks.
-    const outbound = await isSafeOutboundUrl(config.ntfyUrl);
-    if (!outbound.safe) return { success: false, error: outbound.reason };
 
     const baseUrl = config.ntfyUrl.replace(/\/+$/, "");
     const url = `${baseUrl}/${encodeURIComponent(config.ntfyTopic)}`;
