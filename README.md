@@ -263,7 +263,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_SECRET_KEY_FILE` | No | Auto-generated | Read `LUDASH_SECRET_KEY` value from file (Docker secrets) |
 | `LUDASH_PORT` | No | `3001` | HTTP server port |
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
-| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL for WebAuthn/OIDC. When set, Origin headers are validated against it. When unset, browser Origin/Referer headers are trusted directly (works behind reverse proxies without extra config) |
+| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL for WebAuthn/OIDC. When set, detected origin must match it. When unset, origin is inferred from request headers (Host/proto plus Origin/Referer heuristics), which works behind reverse proxies without extra config |
 | `LUDASH_TRUST_PROXY` | No | `false` | Trust `X-Forwarded-*` headers from your reverse proxy (needed for forwarded host/proto detection when `LUDASH_BASE_URL` is set) |
 | `LUDASH_LOG_LEVEL` | No | `info` | Log level |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |

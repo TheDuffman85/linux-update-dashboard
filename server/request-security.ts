@@ -85,7 +85,7 @@ function getHeaderOrigin(c: Context): URL | null {
 
 function pickProto(c: Context): string {
   if (config.trustProxy) {
-    const proto = c.req.header("x-forwarded-proto");
+    const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
     if (proto === "https" || proto === "http") return `${proto}:`;
   }
 
@@ -104,37 +104,40 @@ function pickHost(c: Context): string | null {
   return c.req.header("host") ?? null;
 }
 
-// When LUDASH_BASE_URL is explicitly set, we validate browser headers against
-// it (strict mode). Otherwise we trust the browser Origin/Referer directly
-// since they are browser-controlled and cannot be spoofed by client JS.
+// When LUDASH_BASE_URL is explicitly set, we validate discovered origins
+// against it (strict mode). Otherwise we infer the public origin from request
+// headers with pragmatic fallback rules for reverse proxies.
 function hasExplicitBaseUrl(): boolean {
   return !!process.env.LUDASH_BASE_URL;
 }
 
 export function getTrustedPublicOrigin(c: Context): string {
+  // Prefer host/proto derived from the current request.
+  // This is resilient for OIDC callback requests where Referer can be absent
+  // or point to the IdP.
+  const host = pickHost(c);
+  const requestOrigin = host ? parseOrigin(`${pickProto(c)}//${host}`) : null;
   const headerOrigin = getHeaderOrigin(c);
 
+  if (hasExplicitBaseUrl()) {
+    // Strict: only accept if it matches the configured base URL.
+    if (requestOrigin && isTrustedOriginUrl(requestOrigin)) return requestOrigin.origin;
+    if (headerOrigin && isTrustedOriginUrl(headerOrigin)) return headerOrigin.origin;
+    return getCanonicalOrigin().origin;
+  }
+
+  // No explicit base URL:
+  // - Prefer browser Origin/Referer only when it targets the same host.
+  // - This preserves https offload scenarios while avoiding OIDC callback
+  //   referers that point to the IdP host.
   if (headerOrigin) {
-    if (hasExplicitBaseUrl()) {
-      // Strict: only accept if it matches the configured base URL
-      if (isTrustedOriginUrl(headerOrigin)) {
-        return headerOrigin.origin;
-      }
-    } else {
-      // No explicit base URL: trust browser Origin/Referer directly
+    if (!requestOrigin) return headerOrigin.origin;
+    if (normalizeHost(headerOrigin.hostname) === normalizeHost(requestOrigin.hostname)) {
       return headerOrigin.origin;
     }
   }
-
-  // Forwarded headers require trustProxy since they are set by proxies.
-  const host = pickHost(c);
-  if (host) {
-    const parsed = parseOrigin(`${pickProto(c)}//${host}`);
-    if (parsed && isTrustedOriginUrl(parsed)) {
-      return parsed.origin;
-    }
-  }
-
+  if (requestOrigin) return requestOrigin.origin;
+  if (headerOrigin) return headerOrigin.origin;
   return getCanonicalOrigin().origin;
 }
 

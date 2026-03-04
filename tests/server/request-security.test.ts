@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { Hono } from "hono";
 import {
+  getTrustedPublicOrigin,
   isPrivateOrReservedIp,
   isSafeOutboundUrl,
   isTrustedReturnOrigin,
@@ -27,6 +29,48 @@ describe("request security helpers", () => {
     delete process.env.LUDASH_BASE_URL;
     try {
       expect(isTrustedReturnOrigin("https://any-app.example.com")).toBe(true);
+    } finally {
+      if (prev !== undefined) process.env.LUDASH_BASE_URL = prev;
+    }
+  });
+
+  test("trusted public origin prefers request host when base URL is unset", async () => {
+    const prev = process.env.LUDASH_BASE_URL;
+    delete process.env.LUDASH_BASE_URL;
+    try {
+      const app = new Hono();
+      app.get("/origin", (c) => c.text(getTrustedPublicOrigin(c)));
+
+      const res = await app.request("https://dashboard.example.com/origin", {
+        headers: {
+          host: "dashboard.example.com",
+          referer: "https://idp.example.com/auth",
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("https://dashboard.example.com");
+    } finally {
+      if (prev !== undefined) process.env.LUDASH_BASE_URL = prev;
+    }
+  });
+
+  test("trusted public origin keeps same-host referer scheme when base URL is unset", async () => {
+    const prev = process.env.LUDASH_BASE_URL;
+    delete process.env.LUDASH_BASE_URL;
+    try {
+      const app = new Hono();
+      app.get("/origin", (c) => c.text(getTrustedPublicOrigin(c)));
+
+      const res = await app.request("http://dashboard.example.com/origin", {
+        headers: {
+          host: "dashboard.example.com",
+          referer: "https://dashboard.example.com/login",
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("https://dashboard.example.com");
     } finally {
       if (prev !== undefined) process.env.LUDASH_BASE_URL = prev;
     }
