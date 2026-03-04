@@ -188,6 +188,41 @@ The dashboard will be available at `http://localhost:3001`. Data is persisted in
 
 If you prefer Docker secrets with Compose, add a `secrets:` block and set `LUDASH_ENCRYPTION_KEY_FILE` instead of `LUDASH_ENCRYPTION_KEY`.
 
+Example:
+
+```yaml
+services:
+  dashboard:
+    image: ghcr.io/theduffman85/linux-update-dashboard:latest
+    container_name: linux-update-dashboard
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - dashboard_data:/data
+    environment:
+      - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
+      - LUDASH_DB_PATH=/data/dashboard.db
+      - NODE_ENV=production
+    secrets:
+      - ludash_encryption_key
+
+secrets:
+  ludash_encryption_key:
+    file: ./secrets/ludash_encryption_key.txt
+
+volumes:
+  dashboard_data:
+```
+
+Create the secret file before starting:
+
+```bash
+mkdir -p ./secrets
+openssl rand -base64 32 > ./secrets/ludash_encryption_key.txt
+docker compose up -d
+```
+
 ### Building locally
 
 ```bash
