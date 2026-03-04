@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "fs";
 import { dirname, join } from "path";
 import { randomBytes } from "crypto";
+import { resolveRequiredSecretEnv, resolveSecretEnv } from "./env-secrets";
 
 export interface Config {
   dbPath: string;
@@ -33,14 +34,10 @@ function getSecretKey(dbPath: string, envKey?: string): string {
 }
 
 function getEncryptionKey(): string {
-  const key = process.env.LUDASH_ENCRYPTION_KEY;
-  if (!key) {
-    throw new Error(
-      "LUDASH_ENCRYPTION_KEY environment variable is required.\n" +
-      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"'
-    );
-  }
-  return key;
+  return resolveRequiredSecretEnv(
+    "LUDASH_ENCRYPTION_KEY",
+    'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"'
+  );
 }
 
 /**
@@ -66,11 +63,12 @@ export function getEncryptionSalt(dbPath: string, rawKey: string): Buffer | null
 
 function loadConfig(): Config {
   const dbPath = process.env.LUDASH_DB_PATH || "./data/dashboard.db";
+  const sessionKey = resolveSecretEnv("LUDASH_SECRET_KEY");
 
   return {
     dbPath,
     encryptionKey: getEncryptionKey(),
-    secretKey: getSecretKey(dbPath, process.env.LUDASH_SECRET_KEY),
+    secretKey: getSecretKey(dbPath, sessionKey),
     logLevel: process.env.LUDASH_LOG_LEVEL || "info",
     host: process.env.LUDASH_HOST || "0.0.0.0",
     port: parseInt(process.env.LUDASH_PORT || "3001", 10),
