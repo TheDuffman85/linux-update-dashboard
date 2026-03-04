@@ -1,15 +1,15 @@
 name: Trivy Container Scan
 
 on:
-  push:
-    branches:
-      - main
-      - dev
-  pull_request:
-    branches:
-      - main
+  workflow_run:
+    workflows:
+      - Dev Build
+      - Release
+    types:
+      - completed
   schedule:
     - cron: '0 0 * * 0' # Every Sunday at 00:00 UTC
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -18,6 +18,7 @@ jobs:
   scan:
     name: Trivy Vulnerability Scan
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: read
       packages: read
@@ -31,10 +32,16 @@ jobs:
         id: image
         run: |
           echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "tag=latest" >> $GITHUB_OUTPUT
-          else
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            if [ "${{ github.event.workflow_run.name }}" = "Dev Build" ]; then
+              echo "tag=dev" >> $GITHUB_OUTPUT
+            else
+              echo "tag=latest" >> $GITHUB_OUTPUT
+            fi
+          elif [ "${{ github.ref_name }}" = "dev" ]; then
             echo "tag=dev" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
           fi
 
       - name: Log in to the Container registry
