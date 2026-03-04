@@ -235,6 +235,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
 | `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Max simultaneous SSH connections |
+| `NODE_EXTRA_CA_CERTS` | No | - | Path to a PEM CA bundle to trust additional/self-signed certificates for outbound TLS (OIDC, SMTP, ntfy, etc.) |
 | `NODE_ENV` | No | - | Set to `production` for static file serving |
 
 If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
@@ -260,6 +261,22 @@ Hook up any OIDC-compatible identity provider (Authentik, Keycloak, Okta, Auth0,
 ```
 {LUDASH_BASE_URL}/api/auth/oidc/callback
 ```
+
+#### Self-signed CA support
+
+If your IdP (or other outbound HTTPS target) uses a private/self-signed CA, mount the CA cert into the container and set `NODE_EXTRA_CA_CERTS`:
+
+```yaml
+services:
+  dashboard:
+    image: ghcr.io/theduffman85/linux-update-dashboard:latest
+    volumes:
+      - ./certs/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    environment:
+      - NODE_EXTRA_CA_CERTS=/etc/ssl/certs/homelab-ca.crt
+```
+
+For non-Docker runs, set `NODE_EXTRA_CA_CERTS` to a local PEM file path before starting the app.
 
 ### API Tokens
 
