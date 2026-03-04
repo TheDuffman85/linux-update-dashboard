@@ -132,13 +132,27 @@ The production server serves both the API and the built frontend on port 3001.
 ### Using pre-built image (recommended)
 
 ```bash
-# Generate your encryption key
+# Generate your encryption key (required)
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
 
 # Pull and run
 docker run -d \
   -p 3001:3001 \
   -e LUDASH_ENCRYPTION_KEY=$LUDASH_ENCRYPTION_KEY \
+  -v ludash_data:/data \
+  ghcr.io/theduffman85/linux-update-dashboard:latest
+```
+
+Optional Docker Secrets variant:
+
+```bash
+mkdir -p ./secrets
+openssl rand -base64 32 > ./secrets/ludash_encryption_key.txt
+
+docker run -d \
+  -p 3001:3001 \
+  -e LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key \
+  -v "$(pwd)/secrets/ludash_encryption_key.txt:/run/secrets/ludash_encryption_key:ro" \
   -v ludash_data:/data \
   ghcr.io/theduffman85/linux-update-dashboard:latest
 ```
@@ -157,6 +171,9 @@ services:
       - dashboard_data:/data
     environment:
       - LUDASH_ENCRYPTION_KEY=${LUDASH_ENCRYPTION_KEY}
+      # Optional: use Docker secrets instead of direct env vars
+      # - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
+      # - LUDASH_SECRET_KEY_FILE=/run/secrets/ludash_secret_key
       - LUDASH_DB_PATH=/data/dashboard.db
       - NODE_ENV=production
       # Optional: set your public URL for stricter origin validation
@@ -169,12 +186,49 @@ volumes:
 
 The dashboard will be available at `http://localhost:3001`. Data is persisted in a Docker volume.
 
+If you prefer Docker secrets with Compose, add a `secrets:` block and set `LUDASH_ENCRYPTION_KEY_FILE` instead of `LUDASH_ENCRYPTION_KEY`.
+
+Example:
+
+```yaml
+services:
+  dashboard:
+    image: ghcr.io/theduffman85/linux-update-dashboard:latest
+    container_name: linux-update-dashboard
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - dashboard_data:/data
+    environment:
+      - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
+      - LUDASH_DB_PATH=/data/dashboard.db
+      - NODE_ENV=production
+    secrets:
+      - ludash_encryption_key
+
+secrets:
+  ludash_encryption_key:
+    file: ./secrets/ludash_encryption_key.txt
+
+volumes:
+  dashboard_data:
+```
+
+Create the secret file before starting:
+
+```bash
+mkdir -p ./secrets
+openssl rand -base64 32 > ./secrets/ludash_encryption_key.txt
+docker compose up -d
+```
+
 ### Building locally
 
 ```bash
 cd docker
 
-# Generate your encryption key
+# Generate your encryption key (required)
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
 
 # Start the container
@@ -203,8 +257,10 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LUDASH_ENCRYPTION_KEY` | **Yes** | - | AES-256 key for encrypting stored SSH credentials |
+| `LUDASH_ENCRYPTION_KEY_FILE` | No | - | Optional alternative: read `LUDASH_ENCRYPTION_KEY` value from file (Docker secrets) |
 | `LUDASH_DB_PATH` | No | `./data/dashboard.db` | SQLite database file path |
 | `LUDASH_SECRET_KEY` | No | Auto-generated | JWT session signing secret (auto-persisted to `.secret_key`) |
+| `LUDASH_SECRET_KEY_FILE` | No | Auto-generated | Read `LUDASH_SECRET_KEY` value from file (Docker secrets) |
 | `LUDASH_PORT` | No | `3001` | HTTP server port |
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL for WebAuthn/OIDC. When set, Origin headers are validated against it. When unset, browser Origin/Referer headers are trusted directly (works behind reverse proxies without extra config) |
@@ -214,7 +270,10 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
 | `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Max simultaneous SSH connections |
+| `NODE_EXTRA_CA_CERTS` | No | - | Path to a PEM CA bundle to trust additional/self-signed certificates for outbound TLS (OIDC, SMTP, ntfy, etc.) |
 | `NODE_ENV` | No | - | Set to `production` for static file serving |
+
+If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
 
 ## Authentication
 
@@ -237,6 +296,22 @@ Hook up any OIDC-compatible identity provider (Authentik, Keycloak, Okta, Auth0,
 ```
 {LUDASH_BASE_URL}/api/auth/oidc/callback
 ```
+
+#### Self-signed CA support
+
+If your IdP (or other outbound HTTPS target) uses a private/self-signed CA, mount the CA cert into the container and set `NODE_EXTRA_CA_CERTS`:
+
+```yaml
+services:
+  dashboard:
+    image: ghcr.io/theduffman85/linux-update-dashboard:latest
+    volumes:
+      - ./certs/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    environment:
+      - NODE_EXTRA_CA_CERTS=/etc/ssl/certs/homelab-ca.crt
+```
+
+For non-Docker runs, set `NODE_EXTRA_CA_CERTS` to a local PEM file path before starting the app.
 
 ### API Tokens
 

@@ -16,11 +16,22 @@ services:
     volumes:
       - dashboard_data:/data
     environment:
-      - LUDASH_ENCRYPTION_KEY=${LUDASH_ENCRYPTION_KEY}
+      - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
+      # Optional: set fixed session key via Docker secret (otherwise auto-generated in /data)
+      # - LUDASH_SECRET_KEY_FILE=/run/secrets/ludash_secret_key
       - LUDASH_DB_PATH=/data/dashboard.db
       - LUDASH_LOG_LEVEL=info
       - LUDASH_PORT=3001
       - NODE_ENV=production
+    secrets:
+      - ludash_encryption_key
+      # - ludash_secret_key
 
 volumes:
   dashboard_data:
+
+secrets:
+  ludash_encryption_key:
+    file: ./secrets/ludash_encryption_key.txt
+  # ludash_secret_key:
+  #   file: ./secrets/ludash_secret_key.txt
