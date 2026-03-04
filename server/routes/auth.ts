@@ -422,6 +422,12 @@ auth.get("/oidc/login", async (c) => {
     maxAge: 300,
     path: "/",
   });
+  setCookie(c, "oidc_redirect_uri", redirectUri, {
+    httpOnly: true,
+    sameSite: "Lax",
+    maxAge: 300,
+    path: "/",
+  });
   if (returnOrigin && isTrustedReturnOrigin(returnOrigin)) {
     setCookie(c, "oidc_return_origin", returnOrigin, {
       httpOnly: true,
@@ -441,13 +447,31 @@ auth.get("/oidc/callback", async (c) => {
 
   const nonce = getCookie(c, "oidc_nonce");
   const state = getCookie(c, "oidc_state");
+  const storedRedirectUri = getCookie(c, "oidc_redirect_uri");
 
   try {
-    // Reconstruct callback URL with the public-facing origin so it matches
-    // the redirect_uri that was sent to the IdP during authorization.
-    const publicOrigin = getTrustedPublicOrigin(c);
     const internalUrl = new URL(c.req.url);
-    const callbackUrl = new URL(`${publicOrigin}${internalUrl.pathname}${internalUrl.search}`);
+    let callbackUrl: URL | null = null;
+
+    // Prefer the exact redirect_uri we used during login so callback handling
+    // is resilient across proxies that rewrite or omit referer/origin headers.
+    if (storedRedirectUri) {
+      try {
+        const stored = new URL(storedRedirectUri);
+        if (stored.pathname === internalUrl.pathname) {
+          callbackUrl = new URL(stored.toString());
+          callbackUrl.search = internalUrl.search;
+        }
+      } catch {
+        callbackUrl = null;
+      }
+    }
+
+    if (!callbackUrl) {
+      // Fallback: derive from current request headers.
+      const publicOrigin = getTrustedPublicOrigin(c);
+      callbackUrl = new URL(`${publicOrigin}${internalUrl.pathname}${internalUrl.search}`);
+    }
 
     const result = await oidc.handleCallback(callbackUrl, nonce, state);
     if (!result) {
@@ -473,6 +497,7 @@ auth.get("/oidc/callback", async (c) => {
     await createSession(c, user.id, user.username);
     deleteCookie(c, "oidc_state", { path: "/" });
     deleteCookie(c, "oidc_nonce", { path: "/" });
+    deleteCookie(c, "oidc_redirect_uri", { path: "/" });
 
     const returnOrigin = getCookie(c, "oidc_return_origin");
     deleteCookie(c, "oidc_return_origin", { path: "/" });
