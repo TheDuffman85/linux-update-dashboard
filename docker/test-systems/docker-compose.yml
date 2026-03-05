@@ -15,6 +15,8 @@
 #   Ubuntu  (Flatpak) → localhost:2005
 #   Ubuntu  (Snap)    → localhost:2006
 #   Ubuntu  (APT+sudo password) → localhost:2007
+#   Debian  (APT+fish shell) → localhost:2008
+#   Debian  (APT+fish shell+sudo password) → localhost:2009
 #
 # SSH examples:
 #   ssh testuser@localhost -p 2001   # Ubuntu  (APT)
@@ -24,6 +26,8 @@
 #   ssh testuser@localhost -p 2005   # Ubuntu  (Flatpak)
 #   ssh testuser@localhost -p 2006   # Ubuntu  (Snap)
 #   ssh testuser@localhost -p 2007   # Ubuntu  (APT + sudo password)
+#   ssh testuser@localhost -p 2008   # Debian  (APT + fish shell)
+#   ssh testuser@localhost -p 2009   # Debian  (APT + fish shell + sudo password)
 #
 # Note: Flatpak needs --privileged for bubblewrap (used during install/update).
 # Snap needs systemd as PID 1 + --privileged for snapd to function.
@@ -105,4 +109,24 @@ services:
     hostname: ubuntu-sudo-test
     ports:
       - "2007:22"
+    restart: unless-stopped
+
+  debian-fish:
+    build:
+      context: .
+      dockerfile: Dockerfile.debian-fish
+    container_name: ludash-test-debian-fish
+    hostname: debian-fish-test
+    ports:
+      - "2008:22"
+    restart: unless-stopped
+
+  debian-fish-sudo:
+    build:
+      context: .
+      dockerfile: Dockerfile.debian-fish-sudo
+    container_name: ludash-test-debian-fish-sudo
+    hostname: debian-fish-sudo-test
+    ports:
+      - "2009:22"
     restart: unless-stopped

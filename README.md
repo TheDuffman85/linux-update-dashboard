@@ -366,7 +366,7 @@ Package managers are auto-detected on each system over SSH when you test the con
 │   └── ssh/                  # SSH connection manager + parsers
 ├── tests/server/             # Bun test suites
 ├── docker/                   # Dockerfile, compose, entrypoint
-│   └── test-systems/         # Docker test containers (6 distros)
+│   └── test-systems/         # Docker test containers
 ├── run.sh                    # Local dev/production runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
 ├── drizzle.config.ts         # Drizzle Kit configuration
@@ -421,7 +421,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 
 This will:
 1. Stop any running dev/production services
-2. Build and start 7 Docker containers (includes a dedicated Ubuntu sudo-password test system)
+2. Build and start 9 Docker containers (including fish-shell and sudo-password APT fixtures)
 3. Build the frontend in production mode
 4. Run database migrations
 5. Start the production server on `:3001`
@@ -429,18 +429,20 @@ This will:
 **SSH credentials for all test systems:**
 - User: `testuser`
 - Password: `testpass`
-- `Sudo password`: `testpass` (for `ludash-test-ubuntu-sudo`, optional for others)
-- Passwordless `sudo` is pre-configured on all test systems except `ludash-test-ubuntu-sudo`
+- `Sudo password`: `testpass` (required for `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`, optional for others)
+- Passwordless `sudo` is pre-configured on all test systems except `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`
 
-| Container | SSH Port | Package Manager | Base Image |
-|-----------|----------|-----------------|------------|
-| `ludash-test-ubuntu` | 2001 | APT | Ubuntu 24.04 |
-| `ludash-test-fedora` | 2002 | DNF | Fedora 41 |
-| `ludash-test-centos7` | 2003 | YUM | CentOS 7 |
-| `ludash-test-archlinux` | 2004 | Pacman | Arch Linux |
-| `ludash-test-flatpak` | 2005 | Flatpak | Ubuntu 24.04 |
-| `ludash-test-snap` | 2006 | Snap | Ubuntu 24.04 |
-| `ludash-test-ubuntu-sudo` | 2007 | APT (sudo password) | Ubuntu 24.04 |
+| Container | SSH Port | Package Manager | Login Shell | Base Image |
+|-----------|----------|-----------------|-------------|------------|
+| `ludash-test-ubuntu` | 2001 | APT | `bash` | Ubuntu 24.04 |
+| `ludash-test-fedora` | 2002 | DNF | `bash` | Fedora 41 |
+| `ludash-test-centos7` | 2003 | YUM | `bash` | CentOS 7 |
+| `ludash-test-archlinux` | 2004 | Pacman | `bash` | Arch Linux |
+| `ludash-test-flatpak` | 2005 | Flatpak | `bash` | Ubuntu 24.04 |
+| `ludash-test-snap` | 2006 | Snap | `bash` | Ubuntu 24.04 |
+| `ludash-test-ubuntu-sudo` | 2007 | APT (sudo password) | `bash` | Ubuntu 24.04 |
+| `ludash-test-debian-fish` | 2008 | APT | `fish` | Debian 12 |
+| `ludash-test-debian-fish-sudo` | 2009 | APT (sudo password) | `fish` | Debian 12 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 

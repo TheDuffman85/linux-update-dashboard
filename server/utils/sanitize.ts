@@ -47,11 +47,19 @@ export function sanitizeOutput(text: string): string {
 //   if [ "$(id -u)" = "0" ]; then CMD; elif command -v sudo >/dev/null 2>&1; then sudo -S CMD; else CMD; fi
 const SUDO_WRAPPER_RE =
   /if \[ "\$\(id -u\)" = "0" \]; then (.+?); elif command -v sudo >\/dev\/null 2>&1; then sudo -S \1; else \1; fi/g;
+const POSIX_SHELL_WRAPPER_RE = /^sh -lc '([\s\S]*)'$/;
+const SHELL_SINGLE_QUOTE_ESCAPE_RE = /'\"'\"'/g;
+
+function unwrapShellCommand(command: string): string {
+  const match = POSIX_SHELL_WRAPPER_RE.exec(command.trim());
+  if (!match) return command;
+  return match[1].replace(SHELL_SINGLE_QUOTE_ESCAPE_RE, "'");
+}
 
 /**
  * Simplify the verbose sudo() shell wrapper into a readable "sudo CMD" form.
  * Non-sudo commands are returned unchanged.
  */
 export function sanitizeCommand(command: string): string {
-  return command.replace(SUDO_WRAPPER_RE, "sudo $1");
+  return unwrapShellCommand(command).replace(SUDO_WRAPPER_RE, "sudo $1");
 }

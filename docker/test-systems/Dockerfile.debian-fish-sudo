@@ -1,0 +1,56 @@
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install the base system and fish from the current Debian repos, then
+# temporarily switch to an older Debian snapshot and downgrade a small set of
+# APT-managed packages so the dashboard still reports pending updates.
+RUN apt-get update && \
+    apt-get install -y \
+      ca-certificates openssh-server sudo fish \
+        curl wget vim-tiny openssl nano \
+        htop tree zip unzip jq && \
+    cp /etc/apt/sources.list.d/debian.sources /tmp/debian.sources.bak && \
+    printf '%s\n' \
+      'deb [trusted=yes] http://snapshot.debian.org/archive/debian/20240115T000000Z/ bookworm main' \
+      'deb [trusted=yes] http://snapshot.debian.org/archive/debian/20240115T000000Z/ bookworm-updates main' \
+      'deb [trusted=yes] http://snapshot.debian.org/archive/debian-security/20240115T000000Z/ bookworm-security main' \
+      > /etc/apt/sources.list && \
+    rm -f /etc/apt/sources.list.d/debian.sources && \
+    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update && \
+    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 install -y --allow-downgrades \
+        openssh-server=1:9.2p1-2+deb12u2 \
+        openssh-client=1:9.2p1-2+deb12u2 \
+        openssh-sftp-server=1:9.2p1-2+deb12u2 \
+        sudo=1.9.13p3-1+deb12u1 \
+        libssl3=3.0.11-1~deb12u2 \
+        openssl=3.0.11-1~deb12u2 \
+        libcurl4=7.88.1-10+deb12u5 \
+        curl=7.88.1-10+deb12u5 \
+        wget=1.21.3-1+b2 && \
+    rm /etc/apt/sources.list && \
+    mv /tmp/debian.sources.bak /etc/apt/sources.list.d/debian.sources && \
+    apt-get -o Acquire::Retries=3 update && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Create test user with fish login shell and password-based sudo
+RUN useradd -m -s /usr/bin/fish testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    usermod -aG sudo testuser
+
+# Verify fish is the login shell and sudo requires password auth.
+RUN getent passwd testuser | grep -q '/usr/bin/fish$' && \
+    su - testuser -c "echo testpass | sudo -S -p '' true"
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

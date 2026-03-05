@@ -13,6 +13,10 @@ function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
+export function wrapRemoteCommand(command: string): string {
+  return `sh -lc ${shellSingleQuote(PATH_PREFIX + command)}`;
+}
+
 /**
  * For nohup/background execution, there is no interactive stdin channel.
  * Convert `sudo -S` calls to `sudo -n` for systems where elevation is already
@@ -135,7 +139,7 @@ export class SSHConnectionManager {
     onData?: (chunk: string, stream: "stdout" | "stderr") => void
   ): Promise<CommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
-    const fullCommand = PATH_PREFIX + command;
+    const wrappedCommand = wrapRemoteCommand(command);
 
     return new Promise<CommandResult>((resolve) => {
       const timer = setTimeout(() => {
@@ -146,7 +150,7 @@ export class SSHConnectionManager {
         });
       }, cmdTimeout * 1000);
 
-      conn.exec(fullCommand, (err, stream) => {
+      conn.exec(wrappedCommand, (err, stream) => {
         if (err) {
           clearTimeout(timer);
           resolve({ stdout: "", stderr: String(err), exitCode: -1 });
@@ -244,8 +248,7 @@ export class SSHConnectionManager {
     }
 
     // Phase 2: Monitor via tail --pid
-    const tailCmd =
-      PATH_PREFIX + `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
+    const tailCmd = `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
     const tailResult = await this.runTailMonitor(
       conn,
       tailCmd,
@@ -324,7 +327,7 @@ export class SSHConnectionManager {
 
       let stdout = "";
 
-      conn.exec(tailCommand, (err, stream) => {
+      conn.exec(wrapRemoteCommand(tailCommand), (err, stream) => {
         if (err) {
           conn.removeListener("error", onConnError);
           conn.removeListener("close", onConnClose);
@@ -427,8 +430,7 @@ export class SSHConnectionManager {
 
     if (pidCheck.stdout.trim() === "alive") {
       // Re-attach tail monitor
-      const tailCmd =
-        PATH_PREFIX + `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
+      const tailCmd = `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
       const tailResult = await this.runTailMonitor(
         conn,
         tailCmd,
