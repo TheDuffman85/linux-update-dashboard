@@ -9,11 +9,15 @@ export const SYSTEM_INFO_CMD =
   'echo "===CPU==="; nproc 2>/dev/null; ' +
   'echo "===MEM==="; free -h 2>/dev/null | grep Mem; ' +
   'echo "===DISK==="; df -h / 2>/dev/null | tail -1; ' +
-  'echo "===REBOOT==="; ' +
-  'if [ -f /var/run/reboot-required ]; then echo "REBOOT_REQUIRED"; ' +
-  'elif command -v needs-restarting >/dev/null 2>&1; then needs-restarting -r >/dev/null 2>&1; [ $? -eq 1 ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; ' +
-  'else RUNNING=$(uname -r); LATEST=$(ls -1v /lib/modules/ 2>/dev/null | tail -1); ' +
-  '[ -n "$LATEST" ] && [ -d "/lib/modules/$RUNNING" ] && [ "$RUNNING" != "$LATEST" ] && echo "REBOOT_REQUIRED" || echo "NO_REBOOT"; fi';
+  'echo "===BOOT_ID==="; cat /proc/sys/kernel/random/boot_id 2>/dev/null; ' +
+  'echo "===REBOOT_FILE==="; if [ -f /run/reboot-required ] || [ -f /var/run/reboot-required ]; then echo "PRESENT"; else echo "ABSENT"; fi; ' +
+  'echo "===NEEDS_RESTARTING==="; if command -v needs-restarting >/dev/null 2>&1; then needs-restarting -r >/dev/null 2>&1; echo $?; else echo "UNAVAILABLE"; fi; ' +
+  'echo "===INSTALLED_KERNELS==="; ls -1 /lib/modules 2>/dev/null';
+
+export type NeedsRestartingStatus =
+  | "required"
+  | "not_required"
+  | "unsupported";
 
 export interface SystemInfo {
   osName: string;
@@ -25,7 +29,80 @@ export interface SystemInfo {
   cpuCores: string;
   memory: string;
   disk: string;
+  bootId: string;
+  rebootRequiredFilePresent: boolean;
+  needsRestartingStatus: NeedsRestartingStatus;
+  installedKernels: string[];
   needsReboot: boolean;
+}
+
+export interface PreviousRebootState {
+  bootId?: string | null;
+}
+
+const KERNEL_VERSION_COLLATOR = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function normalizeKernelFamily(kernel: string): string {
+  const trimmed = kernel.trim();
+  if (!trimmed) return "";
+
+  const match = trimmed.match(/(?:[-+.][A-Za-z][A-Za-z0-9_+-]*)+$/);
+  if (!match) return "";
+
+  return match[0].toLowerCase().replace(/\d+/g, "#");
+}
+
+export function hasPendingKernelUpdate(
+  runningKernel: string,
+  installedKernels: string[]
+): boolean {
+  const running = runningKernel.trim();
+  if (!running) return false;
+
+  const runningFamily = normalizeKernelFamily(running);
+  if (!runningFamily) return false;
+
+  const familyKernels = [...new Set(installedKernels
+    .map((kernel) => kernel.trim())
+    .filter((kernel) => kernel && normalizeKernelFamily(kernel) === runningFamily))];
+
+  if (!familyKernels.includes(running)) {
+    familyKernels.push(running);
+  }
+
+  if (familyKernels.length <= 1) return false;
+
+  familyKernels.sort((a, b) => KERNEL_VERSION_COLLATOR.compare(a, b));
+  return familyKernels[familyKernels.length - 1] !== running;
+}
+
+export function resolveRebootRequired(
+  previous: PreviousRebootState | null | undefined,
+  info: SystemInfo
+): boolean {
+  if (info.needsRestartingStatus === "required") {
+    return true;
+  }
+
+  if (hasPendingKernelUpdate(info.kernel, info.installedKernels)) {
+    return true;
+  }
+
+  if (!info.rebootRequiredFilePresent) {
+    return false;
+  }
+
+  const previousBootId = previous?.bootId?.trim() || "";
+  const currentBootId = info.bootId.trim();
+
+  if (previousBootId && currentBootId && previousBootId !== currentBootId) {
+    return false;
+  }
+
+  return true;
 }
 
 export function parseSystemInfo(stdout: string): SystemInfo {
@@ -39,6 +116,10 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     cpuCores: "",
     memory: "",
     disk: "",
+    bootId: "",
+    rebootRequiredFilePresent: false,
+    needsRestartingStatus: "unsupported",
+    installedKernels: [],
     needsReboot: false,
   };
 
@@ -101,8 +182,20 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     }
   }
 
-  const rebootLine = (sections["REBOOT"] || "").trim();
-  info.needsReboot = rebootLine === "REBOOT_REQUIRED";
+  info.bootId = (sections["BOOT_ID"] || "").trim();
+  info.rebootRequiredFilePresent = (sections["REBOOT_FILE"] || "").trim() === "PRESENT";
+
+  const needsRestartingLine = (sections["NEEDS_RESTARTING"] || "").trim();
+  if (needsRestartingLine === "1") {
+    info.needsRestartingStatus = "required";
+  } else if (needsRestartingLine === "0") {
+    info.needsRestartingStatus = "not_required";
+  }
+
+  info.installedKernels = (sections["INSTALLED_KERNELS"] || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 
   return info;
 }

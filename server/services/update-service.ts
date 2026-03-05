@@ -911,6 +911,14 @@ export async function rebootSystem(
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
         });
 
+        if (result.exitCode !== 0) {
+          const errorText = result.stderr || result.stdout || `reboot exited with code ${result.exitCode}`;
+          finishEntry(histId, "failed", { error: errorText });
+          outputStream.publish(systemId, { type: "error", message: errorText });
+          outputStream.publish(systemId, { type: "done", success: false });
+          return { success: false, message: `Reboot failed: ${errorText}` };
+        }
+
         // Reboot succeeded or the connection was dropped (expected)
         systemService.markUnreachable(systemId);
         finishEntry(histId, "success", { output: result.stdout || "Reboot command sent" });

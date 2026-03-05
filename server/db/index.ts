@@ -213,6 +213,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN boot_id TEXT`);
+  } catch {
+    // Column already exists
+  }
 
   // Migration: add notification schedule columns
   try {
