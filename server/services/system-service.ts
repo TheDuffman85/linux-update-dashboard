@@ -2,7 +2,11 @@ import { eq, sql, count } from "drizzle-orm";
 import { getDb } from "../db";
 import { systems, updateCache } from "../db/schema";
 import { getEncryptor } from "../security";
-import { SYSTEM_INFO_CMD, parseSystemInfo } from "../ssh/system-info";
+import {
+  SYSTEM_INFO_CMD,
+  parseSystemInfo,
+  resolveRebootRequired,
+} from "../ssh/system-info";
 import { detectPackageManagers } from "../ssh/detector";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
@@ -150,6 +154,7 @@ export async function updateSystemInfo(
   sshManager: SSHConnectionManager,
   conn: Client
 ): Promise<void> {
+  const previous = getSystem(systemId);
   const { stdout } = await sshManager.runCommand(
     conn,
     SYSTEM_INFO_CMD
@@ -159,6 +164,7 @@ export async function updateSystemInfo(
   if (!stdout.includes("===OS===")) return;
 
   const info = parseSystemInfo(stdout);
+  const needsReboot = resolveRebootRequired(previous, info);
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const db = getDb();
 
@@ -173,7 +179,8 @@ export async function updateSystemInfo(
       cpuCores: info.cpuCores,
       memory: info.memory,
       disk: info.disk,
-      needsReboot: info.needsReboot ? 1 : 0,
+      bootId: info.bootId || previous?.bootId || null,
+      needsReboot: needsReboot ? 1 : 0,
       systemInfoUpdatedAt: now,
       isReachable: 1,
       lastSeenAt: now,
