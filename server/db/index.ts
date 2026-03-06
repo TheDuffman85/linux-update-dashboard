@@ -86,6 +86,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   _db.run(sql`CREATE TABLE IF NOT EXISTS systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     hostname TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 22,
@@ -249,6 +250,34 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+
+  // Migration: add persisted system ordering
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    WITH ordered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
+      FROM systems
+    )
+    UPDATE systems
+    SET sort_order = (
+      SELECT row_num
+      FROM ordered
+      WHERE ordered.id = systems.id
+    )
+    WHERE sort_order = 0
+      AND (SELECT coalesce(max(sort_order), 0) FROM systems) = 0
+      AND (SELECT count(*) FROM systems) > 1
+      AND EXISTS (
+        SELECT 1
+        FROM ordered
+        WHERE ordered.id = systems.id
+          AND ordered.row_num <> 0
+      )
+  `);
 
   // Migration: strip ntfyPriority from ntfy notification configs (priority is now automatic)
   _db.run(sql`UPDATE notifications SET config = json_remove(config, '$.ntfyPriority')

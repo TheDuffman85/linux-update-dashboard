@@ -41,6 +41,15 @@ function parseJsonArrayField(value: string | null): string[] | null {
   try { return JSON.parse(value); } catch { return null; }
 }
 
+function parseSystemIdList(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const ids = value.map((entry) => parseId(String(entry)));
+  if (ids.some((id) => id === null)) return null;
+
+  return ids as number[];
+}
+
 function serializeSystem(s: Record<string, unknown>) {
   const {
     encryptedPassword,
@@ -129,6 +138,25 @@ systems.post("/", async (c) => {
   updateService.checkUpdates(systemId).catch(console.error);
 
   return c.json({ id: systemId }, 201);
+});
+
+// Reorder systems
+systems.put("/reorder", async (c) => {
+  const body = await c.req.json();
+  const systemIds = parseSystemIdList(body.systemIds);
+
+  if (!systemIds) {
+    return c.json({ error: "systemIds must be an array of positive integers" }, 400);
+  }
+
+  try {
+    systemService.reorderSystems(systemIds);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reorder systems";
+    return c.json({ error: message }, 400);
+  }
+
+  return c.json({ status: "ok" });
 });
 
 // Update system

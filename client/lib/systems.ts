@@ -9,6 +9,7 @@ export interface ActiveOperation {
 
 export interface System {
   id: number;
+  sortOrder: number;
   name: string;
   hostname: string;
   port: number;
@@ -138,7 +139,23 @@ export function useUpdateSystem() {
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
       await qc.invalidateQueries({ queryKey: ["system", vars.id] });
+    },
+  });
+}
+
+export function useReorderSystems() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (systemIds: number[]) =>
+      apiFetch("/systems/reorder", {
+        method: "PUT",
+        body: JSON.stringify({ systemIds }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

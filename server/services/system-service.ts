@@ -1,4 +1,4 @@
-import { eq, sql, count } from "drizzle-orm";
+import { asc, count, eq, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { systems, updateCache } from "../db/schema";
 import { getEncryptor } from "../security";
@@ -13,7 +13,11 @@ import type { Client } from "ssh2";
 
 export function listSystems() {
   const db = getDb();
-  return db.select().from(systems).orderBy(systems.name).all();
+  return db
+    .select()
+    .from(systems)
+    .orderBy(asc(systems.sortOrder), asc(systems.name), asc(systems.id))
+    .all();
 }
 
 export function getSystem(systemId: number) {
@@ -41,8 +45,10 @@ export function createSystem(data: {
 }): number {
   const encryptor = getEncryptor();
   const db = getDb();
+  const nextSortOrder = getNextSortOrder();
 
   const values: Record<string, unknown> = {
+    sortOrder: nextSortOrder,
     name: data.name,
     hostname: data.hostname,
     port: data.port,
@@ -147,6 +153,33 @@ export function updateSystem(
 export function deleteSystem(systemId: number): void {
   const db = getDb();
   db.delete(systems).where(eq(systems.id, systemId)).run();
+}
+
+export function reorderSystems(systemIds: number[]): void {
+  const db = getDb();
+  const existingSystems = db
+    .select({ id: systems.id })
+    .from(systems)
+    .orderBy(asc(systems.sortOrder), asc(systems.name), asc(systems.id))
+    .all();
+  const existingIds = existingSystems.map((system) => system.id);
+
+  if (systemIds.length !== existingIds.length) {
+    throw new Error("System order must include every system exactly once");
+  }
+  if (new Set(systemIds).size !== systemIds.length) {
+    throw new Error("System order contains duplicate IDs");
+  }
+  if (!existingIds.every((id) => systemIds.includes(id))) {
+    throw new Error("System order contains unknown IDs");
+  }
+
+  for (const [sortOrder, id] of systemIds.entries()) {
+    db.update(systems)
+      .set({ sortOrder })
+      .where(eq(systems.id, id))
+      .run();
+  }
 }
 
 export async function updateSystemInfo(
@@ -275,4 +308,16 @@ export function listSystemsWithUpdateCounts() {
       .get();
     return { ...s, updateCount: result?.count ?? 0 };
   });
+}
+
+function getNextSortOrder(): number {
+  const db = getDb();
+  const result = db
+    .select({
+      maxSortOrder: sql<number>`coalesce(max(${systems.sortOrder}), -1)`,
+    })
+    .from(systems)
+    .get();
+
+  return (result?.maxSortOrder ?? -1) + 1;
 }

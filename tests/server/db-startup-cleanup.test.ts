@@ -5,6 +5,7 @@ import { join } from "path";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateHistory } from "../../server/db/schema";
+import { listSystems } from "../../server/services/system-service";
 
 describe("database startup cleanup", () => {
   let tempDir: string;
@@ -87,5 +88,80 @@ describe("database startup cleanup", () => {
     expect(row?.output).toBeNull();
     expect(row?.error).toBe("Server restarted while operation was in progress");
     expect(row?.completedAt).not.toBeNull();
+  });
+
+  test("assigns alphabetical sort order when existing systems all use the default order", () => {
+    const db = getDb();
+    db.insert(systems).values([
+      {
+        name: "Zulu",
+        hostname: "zulu.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        name: "Alpha",
+        hostname: "alpha.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        name: "Mike",
+        hostname: "mike.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+    ]).run();
+
+    closeDatabase();
+    initDatabase(dbPath);
+
+    expect(listSystems().map((system) => system.name)).toEqual([
+      "Alpha",
+      "Mike",
+      "Zulu",
+    ]);
+  });
+
+  test("preserves a custom sort order on restart", () => {
+    const db = getDb();
+    db.insert(systems).values([
+      {
+        sortOrder: 2,
+        name: "Alpha",
+        hostname: "alpha.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        sortOrder: 0,
+        name: "Zulu",
+        hostname: "zulu.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        sortOrder: 1,
+        name: "Mike",
+        hostname: "mike.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+    ]).run();
+
+    closeDatabase();
+    initDatabase(dbPath);
+
+    expect(listSystems().map((system) => system.name)).toEqual([
+      "Zulu",
+      "Mike",
+      "Alpha",
+    ]);
   });
 });

@@ -1,21 +1,38 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
+import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { useSystems, useCreateSystem, useUpdateSystem, useDeleteSystem } from "../lib/systems";
+import {
+  useSystems,
+  useCreateSystem,
+  useUpdateSystem,
+  useDeleteSystem,
+  useReorderSystems,
+} from "../lib/systems";
 import type { System } from "../lib/systems";
 import { useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
 
+function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return items;
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
 export default function SystemsList() {
   const { data: systems, isLoading, refetch } = useSystems();
   const createSystem = useCreateSystem();
   const updateSystem = useUpdateSystem();
   const deleteSystem = useDeleteSystem();
+  const reorderSystems = useReorderSystems();
   const checkUpdates = useCheckUpdates();
   const { addToast } = useToast();
   const { isUpgrading } = useUpgrade();
@@ -23,6 +40,66 @@ export default function SystemsList() {
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
   const [editSystem, setEditSystem] = useState<System | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [orderedSystems, setOrderedSystems] = useState<System[]>([]);
+  const systemsRef = useRef<System[]>([]);
+  const orderedSystemsRef = useRef<System[]>([]);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const sortableRef = useRef<Sortable | null>(null);
+
+  useEffect(() => {
+    systemsRef.current = systems ?? [];
+    setOrderedSystems(systems ?? []);
+  }, [systems]);
+
+  useEffect(() => {
+    orderedSystemsRef.current = orderedSystems;
+  }, [orderedSystems]);
+
+  useEffect(() => {
+    const tbody = tbodyRef.current;
+    if (!tbody || orderedSystems.length <= 1) {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+      return;
+    }
+
+    sortableRef.current?.destroy();
+    sortableRef.current = new Sortable(tbody, {
+      animation: 150,
+      handle: ".drag-handle",
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      onEnd: (evt) => {
+        if (
+          evt.oldIndex === undefined ||
+          evt.newIndex === undefined ||
+          evt.oldIndex === evt.newIndex
+        ) {
+          return;
+        }
+
+        const previousSystems = orderedSystemsRef.current;
+        const nextSystems = moveSystem(previousSystems, evt.oldIndex, evt.newIndex);
+
+        setOrderedSystems(nextSystems);
+        reorderSystems.mutate(nextSystems.map((system) => system.id), {
+          onError: (err) => {
+            setOrderedSystems(previousSystems);
+            addToast(err.message, "danger");
+          },
+        });
+      },
+    });
+
+    return () => {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+    };
+  }, [orderedSystems.length, reorderSystems, addToast]);
+
+  useEffect(() => {
+    sortableRef.current?.option("disabled", reorderSystems.isPending);
+  }, [reorderSystems.isPending]);
 
   const handleCreate = (data: Parameters<typeof createSystem.mutate>[0]) => {
     createSystem.mutate(data, {
@@ -110,13 +187,31 @@ export default function SystemsList() {
                 <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {systems.map((s) => (
-                <tr key={s.id} className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+            <tbody ref={tbodyRef}>
+              {orderedSystems.map((s) => (
+                <tr
+                  key={s.id}
+                  className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                >
                   <td className="px-2 sm:px-4 py-3">
-                    <Link to={`/systems/${s.id}`} className="font-medium text-blue-600 dark:text-blue-400 hover:underline">
-                      {s.name}
-                    </Link>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
+                          reorderSystems.isPending || orderedSystems.length < 2
+                            ? "cursor-not-allowed opacity-40"
+                            : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                        }`}
+                        title="Drag to reorder"
+                        aria-label={`Drag to reorder ${s.name}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+                        </svg>
+                      </span>
+                      <Link to={`/systems/${s.id}`} className="min-w-0 font-medium text-blue-600 dark:text-blue-400 hover:underline truncate">
+                        {s.name}
+                      </Link>
+                    </div>
                   </td>
                   <td className="px-2 sm:px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
                     {s.hostname}{s.port !== 22 && `:${s.port}`}
@@ -225,7 +320,6 @@ export default function SystemsList() {
         </div>
       )}
 
-      {/* Add system modal */}
       <Modal open={showForm} onClose={() => { setShowForm(false); setDuplicateSource(null); }} title={duplicateSource ? "Duplicate System" : "Add System"} dismissible={false}>
         <SystemForm
           key={duplicateSource?.id ?? "new"}
@@ -246,7 +340,6 @@ export default function SystemsList() {
         />
       </Modal>
 
-      {/* Edit system modal */}
       <Modal open={editSystem !== null} onClose={() => setEditSystem(null)} title="Edit System" dismissible={false}>
         {editSystem && (
           <SystemForm
@@ -268,7 +361,6 @@ export default function SystemsList() {
         )}
       </Modal>
 
-      {/* Delete confirmation */}
       <ConfirmDialog
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
