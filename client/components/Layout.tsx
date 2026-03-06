@@ -43,7 +43,7 @@ export function Layout({ children, title, actions }: {
             {actions && <div className="flex items-center gap-2 flex-wrap ml-auto shrink-0">{actions}</div>}
           </div>
         </header>
-        <div className="p-4 md:p-6 max-w-[1200px] overflow-x-hidden">{children}</div>
+        <div className="p-4 md:p-6 max-w-[1200px]">{children}</div>
       </main>
 
       {/* Toast container */}
