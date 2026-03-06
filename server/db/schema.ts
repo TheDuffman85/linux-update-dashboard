@@ -35,6 +35,7 @@ export const systems = sqliteTable(
   "systems",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    sortOrder: integer("sort_order").notNull().default(0),
     name: text("name").notNull(),
     hostname: text("hostname").notNull(),
     port: integer("port").notNull().default(22),

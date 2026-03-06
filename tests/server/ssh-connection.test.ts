@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildPersistentSetupCommand,
+  buildTailMonitorCommand,
   preparePersistentSudoCommand,
   wrapRemoteCommand,
 } from "../../server/ssh/connection";
@@ -48,5 +50,48 @@ describe("preparePersistentSudoCommand", () => {
     expect(wrapped).toContain("sh -lc");
     expect(wrapped).toContain("sudo -n apt-get update && sudo -n apt-get upgrade");
     expect(wrapped).not.toContain("sudo -S");
+  });
+});
+
+describe("buildPersistentSetupCommand", () => {
+  test("uses a portable mktemp basename instead of a suffixed template", () => {
+    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+      "apk upgrade 2>&1",
+      false
+    );
+
+    expect(useSudoLaunch).toBe(false);
+    expect(setupCmd).toContain('BASE=$(mktemp /tmp/ludash_XXXXXX)');
+    expect(setupCmd).toContain('SCRIPT="${BASE}.sh"');
+    expect(setupCmd).toContain('LOGFILE="${BASE}.log"');
+    expect(setupCmd).toContain('EXITFILE="${BASE}.exit"');
+    expect(setupCmd).toContain('rm -f "$BASE"');
+    expect(setupCmd).toContain('chmod 700 "$SCRIPT"');
+    expect(setupCmd).toContain('nohup sh "$1" "$2" > "$3" 2>&1 < /dev/null &');
+    expect(setupCmd).not.toContain('mktemp /tmp/ludash_XXXXXX.sh');
+  });
+
+  test("keeps sudo-stdin launch path when a password is provided", () => {
+    const command =
+      'if [ "$(id -u)" = "0" ]; then apk upgrade; elif command -v sudo >/dev/null 2>&1; then sudo -S apk upgrade; else apk upgrade; fi 2>&1';
+    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+      command,
+      true
+    );
+
+    expect(useSudoLaunch).toBe(true);
+    expect(setupCmd).toContain("sudo -S -p ''");
+  });
+});
+
+describe("buildTailMonitorCommand", () => {
+  test("uses a BusyBox-compatible tail monitor", () => {
+    const cmd = buildTailMonitorCommand("/tmp/ludash_abc.log", 1234);
+
+    expect(cmd).toContain('tail -F "$LOGFILE" 2>/dev/null &');
+    expect(cmd).toContain('while [ -d "/proc/$PID" ]; do sleep 1; done');
+    expect(cmd).toContain('kill "$TAILPID" 2>/dev/null || true');
+    expect(cmd).not.toContain("tail --pid=");
+    expect(cmd).not.toContain("&;");
   });
 });

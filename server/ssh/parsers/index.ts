@@ -3,6 +3,7 @@ import { aptParser } from "./apt";
 import { dnfParser } from "./dnf";
 import { yumParser } from "./yum";
 import { pacmanParser } from "./pacman";
+import { apkParser } from "./apk";
 import { flatpakParser } from "./flatpak";
 import { snapParser } from "./snap";
 
@@ -13,6 +14,7 @@ const parsers: Record<string, PackageParser> = {
   dnf: dnfParser,
   yum: yumParser,
   pacman: pacmanParser,
+  apk: apkParser,
   flatpak: flatpakParser,
   snap: snapParser,
 };
@@ -21,4 +23,4 @@ export function getParser(name: string): PackageParser | undefined {
   return parsers[name];
 }
 
-export { aptParser, dnfParser, yumParser, pacmanParser, flatpakParser, snapParser };
+export { aptParser, dnfParser, yumParser, pacmanParser, apkParser, flatpakParser, snapParser };

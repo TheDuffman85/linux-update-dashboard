@@ -165,15 +165,21 @@ export function SystemForm({
         <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH password</p>
       </div>
 
-      <label className="flex items-center gap-2 text-sm cursor-pointer">
+      <label className="flex items-start gap-3 text-sm cursor-pointer">
         <input
           type="checkbox"
           checked={excludeFromUpgradeAll}
           onChange={(e) => setExcludeFromUpgradeAll(e.target.checked)}
-          className="rounded"
+          className="rounded mt-0.5"
         />
-        <span>Exclude from Upgrade All</span>
-        <span className="text-xs text-slate-400">(skip this system during bulk upgrades)</span>
+        <span className="min-w-0">
+          <span className="block text-slate-700 dark:text-slate-200">
+            Exclude from Upgrade All
+          </span>
+          <span className="block text-xs text-slate-400 mt-0.5">
+            Start unchecked in the Upgrade All Systems dialog
+          </span>
+        </span>
       </label>
 
       {testResult && (
@@ -208,10 +214,7 @@ export function SystemForm({
         </div>
       )}
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-          Cancel
-        </button>
+      <div className="flex items-center justify-between gap-3 pt-2">
         <button
           type="button"
           disabled={testConnection.isPending || !hostname || !username}
@@ -251,9 +254,14 @@ export function SystemForm({
         >
           {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Test Connection"}
         </button>
-        <button type="submit" disabled={loading} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50">
-          {loading ? <span className="spinner spinner-sm" /> : initial ? "Save Changes" : "Add System"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+            Cancel
+          </button>
+          <button type="submit" disabled={loading} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50">
+            {loading ? <span className="spinner spinner-sm" /> : initial ? "Save Changes" : "Add System"}
+          </button>
+        </div>
       </div>
     </form>
   );

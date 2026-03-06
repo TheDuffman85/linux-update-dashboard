@@ -3,6 +3,7 @@ import { aptParser } from "../../server/ssh/parsers/apt";
 import { dnfParser } from "../../server/ssh/parsers/dnf";
 import { yumParser } from "../../server/ssh/parsers/yum";
 import { pacmanParser } from "../../server/ssh/parsers/pacman";
+import { apkParser } from "../../server/ssh/parsers/apk";
 import { flatpakParser } from "../../server/ssh/parsers/flatpak";
 import { snapParser } from "../../server/ssh/parsers/snap";
 import { validatePackageName } from "../../server/ssh/parsers/types";
@@ -158,6 +159,59 @@ describe("PacmanParser", () => {
   });
 });
 
+describe("ApkParser", () => {
+  test("parse normal output", () => {
+    const stdout =
+      "musl-1.2.3-r4 x86_64 {musl} (MIT) [upgradable from: musl-1.2.3-r3]\n" +
+      "busybox-1.35.0-r18 x86_64 {busybox} (GPL-2.0-only) [upgradable from: busybox-1.35.0-r17]\n";
+    const updates = apkParser.parseCheckOutput(stdout, "", 0);
+    expect(updates).toHaveLength(2);
+    expect(updates[0].packageName).toBe("musl");
+    expect(updates[0].currentVersion).toBe("1.2.3-r3");
+    expect(updates[0].newVersion).toBe("1.2.3-r4");
+    expect(updates[0].architecture).toBe("x86_64");
+    expect(updates[0].repository).toBe("musl");
+    expect(updates[0].pkgManager).toBe("apk");
+  });
+
+  test("handles hyphenated package names", () => {
+    const stdout =
+      "ca-certificates-bundle-20240226-r0 x86_64 {ca-certificates} (MPL-2.0 AND MIT) [upgradable from: ca-certificates-bundle-20211220-r0]\n";
+    const updates = apkParser.parseCheckOutput(stdout, "", 0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].packageName).toBe("ca-certificates-bundle");
+    expect(updates[0].currentVersion).toBe("20211220-r0");
+    expect(updates[0].newVersion).toBe("20240226-r0");
+  });
+
+  test("parse empty output", () => {
+    const updates = apkParser.parseCheckOutput("", "", 0);
+    expect(updates).toHaveLength(0);
+  });
+
+  test("ignores malformed lines", () => {
+    const stdout =
+      "this is not valid\n" +
+      "musl-1.2.3-r4 x86_64 {musl} (MIT) [upgradable from: musl-1.2.3-r3]\n";
+    const updates = apkParser.parseCheckOutput(stdout, "", 0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].packageName).toBe("musl");
+  });
+
+  test("commands", () => {
+    const cmds = apkParser.getCheckCommands();
+    expect(cmds).toHaveLength(2);
+    expect(cmds[0]).toContain("apk update");
+    expect(cmds[1]).toContain("apk list -u");
+    expect(apkParser.getUpgradeAllCommand()).toContain("apk upgrade");
+    expect(apkParser.getUpgradePackageCommand("busybox")).toContain("apk upgrade busybox");
+  });
+
+  test("no full upgrade command", () => {
+    expect(apkParser.getFullUpgradeAllCommand()).toBeNull();
+  });
+});
+
 describe("FlatpakParser", () => {
   test("parse combined output with installed versions", () => {
     const stdout =
@@ -284,6 +338,7 @@ describe("Package Name Validation", () => {
     expect(() => dnfParser.getUpgradePackageCommand(malicious)).toThrow();
     expect(() => yumParser.getUpgradePackageCommand(malicious)).toThrow();
     expect(() => pacmanParser.getUpgradePackageCommand(malicious)).toThrow();
+    expect(() => apkParser.getUpgradePackageCommand(malicious)).toThrow();
     expect(() => flatpakParser.getUpgradePackageCommand(malicious)).toThrow();
     expect(() => snapParser.getUpgradePackageCommand(malicious)).toThrow();
   });

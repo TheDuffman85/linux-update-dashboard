@@ -6,6 +6,7 @@ const DETECTION_COMMANDS: [string, string][] = [
   ["dnf", "command -v dnf >/dev/null 2>&1 && echo 'found'"],
   ["yum", "command -v yum >/dev/null 2>&1 && echo 'found'"],
   ["pacman", "command -v pacman >/dev/null 2>&1 && echo 'found'"],
+  ["apk", "command -v apk >/dev/null 2>&1 && echo 'found'"],
   ["flatpak", "command -v flatpak >/dev/null 2>&1 && echo 'found'"],
   ["snap", "command -v snap >/dev/null 2>&1 && echo 'found'"],
 ];

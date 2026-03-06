@@ -12,6 +12,32 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
 
+cleanup_test_containers() {
+    local compose_file=$1
+    local stale_containers=()
+
+    log "Stopping and removing existing test containers..."
+    if ! docker compose -f "$compose_file" down --remove-orphans; then
+        log "docker compose down reported issues. Continuing with stale container cleanup..."
+    fi
+
+    while IFS= read -r container_name; do
+        [ -n "$container_name" ] && stale_containers+=("$container_name")
+    done < <(docker ps -a --format '{{.Names}}' | grep -E '^[0-9a-f]{12}_ludash-test-' || true)
+
+    if [ ${#stale_containers[@]} -eq 0 ]; then
+        return 0
+    fi
+
+    log "Removing stale Docker Compose recreate containers: ${stale_containers[*]}"
+    if ! docker rm -f "${stale_containers[@]}"; then
+        log "Failed to remove stale test containers."
+        return 1
+    fi
+
+    return 0
+}
+
 shutdown_service() {
     local port=$1
     local name=$2
@@ -63,15 +89,25 @@ cd "$PROJECT_ROOT" || exit 1
 if [ "$MODE" == "test" ]; then
     log "Starting in TEST mode..."
 
-    # Force-recreate test containers
+    if ! command -v docker &> /dev/null; then
+        log "Error: 'docker' is not installed."
+        exit 1
+    fi
+
+    # Recreate test containers from a clean state to avoid Compose name conflicts.
     COMPOSE_DIR="$PROJECT_ROOT/docker/test-systems"
     if [ ! -f "$COMPOSE_DIR/docker-compose.yml" ]; then
         log "Error: docker-compose.yml not found at $COMPOSE_DIR"
         exit 1
     fi
 
-    log "Force-recreating test containers..."
-    docker compose -f "$COMPOSE_DIR/docker-compose.yml" up -d --force-recreate --build
+    if ! cleanup_test_containers "$COMPOSE_DIR/docker-compose.yml"; then
+        log "Failed to clean up previous test containers. Aborting."
+        exit 1
+    fi
+
+    log "Recreating test containers..."
+    docker compose -f "$COMPOSE_DIR/docker-compose.yml" up -d --build
     if [ $? -ne 0 ]; then
         log "Failed to recreate test containers. Aborting."
         exit 1

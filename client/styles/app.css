@@ -82,3 +82,15 @@ body {
 .pulse-upgrade {
   animation: pulse-blue 1.5s ease-in-out infinite;
 }
+
+.sortable-ghost {
+  @apply opacity-40;
+}
+
+.sortable-chosen {
+  @apply bg-blue-50;
+}
+
+[data-theme="dark"] .sortable-chosen {
+  @apply bg-blue-900/20;
+}
