@@ -99,6 +99,7 @@ export default function Dashboard() {
   const refreshCache = useRefreshCache();
   const { addToast } = useToast();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
+  const [selectedExcludedSystemIds, setSelectedExcludedSystemIds] = useState<number[]>([]);
 
   // Sync client-side upgrading state with server's activeOperation.
   // React Query only fires inline mutation callbacks for the last .mutate() call,
@@ -128,10 +129,31 @@ export default function Dashboard() {
   const eligibleSystems = systemsWithUpdates.filter((s) => s.excludeFromUpgradeAll !== 1);
   const excludedSystems = systemsWithUpdates.filter((s) => s.excludeFromUpgradeAll === 1);
   const eligibleUpdateCount = eligibleSystems.reduce((sum, s) => sum + s.updateCount, 0);
+  const selectedExcludedSystems = excludedSystems.filter((s) => selectedExcludedSystemIds.includes(s.id));
+  const selectedSystems = [...eligibleSystems, ...selectedExcludedSystems];
+  const selectedUpdateCount = selectedSystems.reduce((sum, s) => sum + s.updateCount, 0);
+
+  const openUpgradeConfirm = () => {
+    setSelectedExcludedSystemIds([]);
+    setShowUpgradeConfirm(true);
+  };
+
+  const closeUpgradeConfirm = () => {
+    setShowUpgradeConfirm(false);
+    setSelectedExcludedSystemIds([]);
+  };
+
+  const toggleExcludedSystem = (systemId: number) => {
+    setSelectedExcludedSystemIds((current) =>
+      current.includes(systemId)
+        ? current.filter((id) => id !== systemId)
+        : [...current, systemId]
+    );
+  };
 
   const handleUpgradeAll = () => {
-    setShowUpgradeConfirm(false);
-    for (const s of eligibleSystems) {
+    closeUpgradeConfirm();
+    for (const s of selectedSystems) {
       upgradeAll(s.id, {
         onSuccess: (d: any) =>
           addToast(
@@ -157,9 +179,9 @@ export default function Dashboard() {
           >
             {refreshCache.isPending ? <span className="spinner spinner-sm" /> : "Refresh All"}
           </button>
-          {(eligibleSystems.length > 0 || upgradingCount > 0) && (
+          {(systemsWithUpdates.length > 0 || upgradingCount > 0) && (
             <button
-              onClick={() => setShowUpgradeConfirm(true)}
+              onClick={openUpgradeConfirm}
               disabled={upgradingCount > 0}
               className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
             >
@@ -169,7 +191,7 @@ export default function Dashboard() {
                   Upgrading...
                 </span>
               ) : (
-                `Upgrade All (${eligibleUpdateCount})`
+                `Upgrade All (${excludedSystems.length > 0 ? `${eligibleUpdateCount} selected` : eligibleUpdateCount})`
               )}
             </button>
           )}
@@ -209,9 +231,9 @@ export default function Dashboard() {
         </div>
       )}
 
-      <Modal open={showUpgradeConfirm} onClose={() => setShowUpgradeConfirm(false)} title="Upgrade All Systems">
+      <Modal open={showUpgradeConfirm} onClose={closeUpgradeConfirm} title="Upgrade All Systems">
         <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
-          Apply {eligibleUpdateCount} update{eligibleUpdateCount !== 1 ? "s" : ""} across {eligibleSystems.length} system{eligibleSystems.length !== 1 ? "s" : ""}?
+          Apply {selectedUpdateCount} update{selectedUpdateCount !== 1 ? "s" : ""} across {selectedSystems.length} system{selectedSystems.length !== 1 ? "s" : ""}?
         </p>
         {eligibleSystems.length > 0 && (
           <ul className="mb-4 space-y-1">
@@ -230,24 +252,35 @@ export default function Dashboard() {
             </p>
             <ul className="space-y-1">
               {excludedSystems.map((s) => (
-                <li key={s.id} className="flex items-center justify-between text-sm text-slate-400">
-                  <span>{s.name}</span>
+                <li key={s.id} className="flex items-center justify-between gap-3 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={selectedExcludedSystemIds.includes(s.id)}
+                      onChange={() => toggleExcludedSystem(s.id)}
+                      className="rounded"
+                    />
+                    <span className="text-slate-700 dark:text-slate-200 truncate">{s.name}</span>
+                  </label>
                   <Badge variant="muted" small>{s.updateCount} updates</Badge>
                 </li>
               ))}
             </ul>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
+              Check a system to include it in this run without changing its saved exclusion setting.
+            </p>
           </div>
         )}
         <div className="flex justify-end gap-3">
           <button
-            onClick={() => setShowUpgradeConfirm(false)}
+            onClick={closeUpgradeConfirm}
             className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleUpgradeAll}
-            disabled={eligibleSystems.length === 0}
+            disabled={selectedSystems.length === 0}
             className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
           >
             Upgrade All
