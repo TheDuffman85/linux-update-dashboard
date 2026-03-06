@@ -254,9 +254,24 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   _db.run(sql`UPDATE notifications SET config = json_remove(config, '$.ntfyPriority')
     WHERE type = 'ntfy' AND json_extract(config, '$.ntfyPriority') IS NOT NULL`);
 
-  // Cleanup: mark any orphaned "started" history rows as failed (from previous crashes/restarts)
-  _db.run(sql`UPDATE update_history SET status = 'failed', completed_at = datetime('now'),
-    error = 'Server restarted while operation was in progress'
+  // Cleanup: if the dashboard restarted mid-operation, SSH-safe upgrades are
+  // expected to continue remotely and should show a warning instead of failure.
+  _db.run(sql`UPDATE update_history
+    SET status = CASE
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package') THEN 'warning'
+      ELSE 'failed'
+    END,
+    completed_at = datetime('now'),
+    output = CASE
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package')
+        THEN 'Server restarted while operation was in progress'
+      ELSE output
+    END,
+    error = CASE
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package')
+        THEN NULL
+      ELSE 'Server restarted while operation was in progress'
+    END
     WHERE status = 'started'`);
 
   // Cleanup: remove obsolete settings
