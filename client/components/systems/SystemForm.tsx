@@ -208,10 +208,7 @@ export function SystemForm({
         </div>
       )}
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-          Cancel
-        </button>
+      <div className="flex items-center justify-between gap-3 pt-2">
         <button
           type="button"
           disabled={testConnection.isPending || !hostname || !username}
@@ -251,9 +248,14 @@ export function SystemForm({
         >
           {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Test Connection"}
         </button>
-        <button type="submit" disabled={loading} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50">
-          {loading ? <span className="spinner spinner-sm" /> : initial ? "Save Changes" : "Add System"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+            Cancel
+          </button>
+          <button type="submit" disabled={loading} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50">
+            {loading ? <span className="spinner spinner-sm" /> : initial ? "Save Changes" : "Add System"}
+          </button>
+        </div>
       </div>
     </form>
   );
