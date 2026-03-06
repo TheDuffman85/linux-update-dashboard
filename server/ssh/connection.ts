@@ -27,6 +27,67 @@ export function preparePersistentSudoCommand(command: string): string {
   return command.replace(SUDO_STDIN_PATTERN, "sudo -n");
 }
 
+export function buildPersistentSetupCommand(
+  command: string,
+  sudoPasswordProvided: boolean
+): { setupCmd: string; useSudoLaunch: boolean } {
+  const needsSudoStdin = command.includes("sudo -S");
+  const useSudoLaunch = needsSudoStdin && sudoPasswordProvided;
+  const persistentCommand = useSudoLaunch
+    ? command
+    : needsSudoStdin
+      ? preparePersistentSudoCommand(command)
+      : command;
+
+  const scriptBody = [
+    "#!/bin/sh",
+    persistentCommand,
+    "RC=$?",
+    'printf "%s" "$RC" > "$1"',
+    'rm -f "$0"',
+    'exit "$RC"',
+    "",
+  ].join("\n");
+  const base64Cmd = Buffer.from(scriptBody).toString("base64");
+  const setupCmdParts = [
+    'BASE=$(mktemp /tmp/ludash_XXXXXX)',
+    'SCRIPT="${BASE}.sh"',
+    'LOGFILE="${BASE}.log"',
+    'EXITFILE="${BASE}.exit"',
+    'rm -f "$BASE"',
+    `printf '%s' '${base64Cmd}' | base64 -d > "$SCRIPT"`,
+    'chmod 700 "$SCRIPT"',
+  ];
+  const launchInnerCmd = [
+    'nohup sh "$1" "$2" > "$3" 2>&1 < /dev/null &',
+    'echo "LUDASH_BG PID=$! LOG=$3 EXIT=$2"',
+  ].join("\n");
+  const launchCmd =
+    `sh -c ${shellSingleQuote(launchInnerCmd)} _ "$SCRIPT" "$EXITFILE" "$LOGFILE"`;
+  const rootLaunchCmd = useSudoLaunch
+    ? `if [ "$(id -u)" = "0" ]; then ${launchCmd}; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' ${launchCmd}; else ${launchCmd}; fi`
+    : launchCmd;
+
+  return {
+    setupCmd: setupCmdParts.join(" && ") + ` && ${rootLaunchCmd}`,
+    useSudoLaunch,
+  };
+}
+
+export function buildTailMonitorCommand(logFile: string, pid: number): string {
+  const monitorInner = [
+    'LOGFILE="$1"',
+    'PID="$2"',
+    'tail -F "$LOGFILE" 2>/dev/null &',
+    'TAILPID=$!',
+    'while [ -d "/proc/$PID" ]; do sleep 1; done',
+    'sleep 1',
+    'kill "$TAILPID" 2>/dev/null || true',
+    'wait "$TAILPID" 2>/dev/null || true',
+  ].join("\n");
+  return `sh -c ${shellSingleQuote(monitorInner)} -- ${shellSingleQuote(logFile)} ${shellSingleQuote(String(pid))}`;
+}
+
 /** Sentinel exit code: SSH monitoring was lost but the nohup process likely continues on the remote. */
 export const EXIT_MONITORING_LOST = -2;
 
@@ -186,7 +247,8 @@ export class SSHConnectionManager {
 
   /**
    * Run a command via nohup so it survives SSH disconnection.
-   * Output is streamed via `tail --pid` on a remote log file.
+   * Output is streamed from a remote log file using a BusyBox-compatible
+   * tail/kill loop, so it works on Alpine as well as GNU coreutils systems.
    * Fails fast if nohup setup cannot be started.
    */
   async runPersistentCommand(
@@ -197,33 +259,10 @@ export class SSHConnectionManager {
     onData?: (chunk: string, stream: "stdout" | "stderr") => void
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
-    const needsSudoStdin = command.includes("sudo -S");
-    const useSudoLaunch = needsSudoStdin && !!sudoPassword;
-    const persistentCommand = useSudoLaunch
-      ? command
-      : needsSudoStdin
-      ? preparePersistentSudoCommand(command)
-      : command;
-
-    // Phase 1: Start the command in background via nohup.
-    const base64Cmd = Buffer.from(persistentCommand).toString("base64");
-    // The nohup line ends with & which is already a command separator,
-    // so we use { ...; } grouping to keep it in the && chain.
-    const setupCmdParts = [
-      'SCRIPT=$(mktemp /tmp/ludash_XXXXXX.sh)',
-      `printf '%s' '${base64Cmd}' | base64 -d > "$SCRIPT"`,
-      'LOGFILE="${SCRIPT%.sh}.log"',
-      'EXITFILE="${SCRIPT%.sh}.exit"',
-    ];
-    const launchInnerCmd =
-      `nohup sh -c 'sh "$0"; echo $? > "$1"; rm -f "$0"' "$1" "$2" > "$3" 2>&1 & ` +
-      `echo "LUDASH_BG PID=$! LOG=$3 EXIT=$2"`;
-    const launchCmd =
-      `sh -c ${shellSingleQuote(launchInnerCmd)} -- "$SCRIPT" "$EXITFILE" "$LOGFILE"`;
-    const rootLaunchCmd = useSudoLaunch
-      ? `if [ "$(id -u)" = "0" ]; then ${launchCmd}; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' ${launchCmd}; else ${launchCmd}; fi`
-      : launchCmd;
-    const setupCmd = setupCmdParts.join(" && ") + ` && ${rootLaunchCmd}`;
+    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+      command,
+      !!sudoPassword
+    );
 
     const setupResult = await this.runCommand(
       conn,
@@ -247,11 +286,10 @@ export class SSHConnectionManager {
       };
     }
 
-    // Phase 2: Monitor via tail --pid
-    const tailCmd = `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
     const tailResult = await this.runTailMonitor(
       conn,
-      tailCmd,
+      info.logFile,
+      info.pid,
       cmdTimeout,
       onData
     );
@@ -302,7 +340,8 @@ export class SSHConnectionManager {
 
   private runTailMonitor(
     conn: Client,
-    tailCommand: string,
+    logFile: string,
+    pid: number,
     timeout: number,
     onData?: (chunk: string, stream: "stdout" | "stderr") => void
   ): Promise<{ stdout: string; monitoringLost: boolean }> {
@@ -327,6 +366,7 @@ export class SSHConnectionManager {
 
       let stdout = "";
 
+      const tailCommand = buildTailMonitorCommand(logFile, pid);
       conn.exec(wrapRemoteCommand(tailCommand), (err, stream) => {
         if (err) {
           conn.removeListener("error", onConnError);
@@ -424,16 +464,16 @@ export class SSHConnectionManager {
     // Process may still be running — check if PID is alive
     const pidCheck = await this.runCommand(
       conn,
-      `kill -0 ${info.pid} 2>/dev/null && echo "alive" || echo "dead"`,
+      `[ -d "/proc/${info.pid}" ] && echo "alive" || echo "dead"`,
       10
     );
 
     if (pidCheck.stdout.trim() === "alive") {
       // Re-attach tail monitor
-      const tailCmd = `tail --pid=${info.pid} -f "${info.logFile}" 2>/dev/null`;
       const tailResult = await this.runTailMonitor(
         conn,
-        tailCmd,
+        info.logFile,
+        info.pid,
         cmdTimeout,
         onData
       );
