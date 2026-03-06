@@ -1,0 +1,29 @@
+FROM alpine:3.16.0
+
+# Use an older Alpine base so core packages remain behind the current v3.16
+# repositories and `apk list -u` reports pending updates.
+RUN apk add --no-cache \
+        openssh-server sudo bash \
+        curl wget vim git nano \
+        htop tree zip unzip jq && \
+    mkdir -p /run/sshd
+
+# Configure SSH
+RUN sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+
+# Create test user with sudo
+RUN adduser -D -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Fail the build early if sudo is not usable for the test user.
+RUN su - testuser -c "sudo -n true"
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

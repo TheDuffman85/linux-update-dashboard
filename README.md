@@ -421,7 +421,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 
 This will:
 1. Stop any running dev/production services
-2. Build and start 9 Docker containers (including fish-shell and sudo-password APT fixtures)
+2. Build and start 10 Docker containers (including Alpine, fish-shell, and sudo-password APT fixtures)
 3. Build the frontend in production mode
 4. Run database migrations
 5. Start the production server on `:3001`
@@ -443,10 +443,11 @@ This will:
 | `ludash-test-ubuntu-sudo` | 2007 | APT (sudo password) | `bash` | Ubuntu 24.04 |
 | `ludash-test-debian-fish` | 2008 | APT | `fish` | Debian 12 |
 | `ludash-test-debian-fish-sudo` | 2009 | APT (sudo password) | `fish` | Debian 12 |
+| `ludash-test-alpine` | 2010 | APK | `bash` | Alpine 3.16 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
-Each container is built with **older package versions** pinned from archived repositories, while current repos remain active. This means `apt list --upgradable`, `dnf check-update`, `pacman -Qu`, etc. will always report pending updates — giving you realistic data to work with in the dashboard.
+Each container is built with **older package versions** pinned from archived repositories, while current repos remain active. This means `apt list --upgradable`, `dnf check-update`, `pacman -Qu`, `apk list -u`, etc. will always report pending updates — giving you realistic data to work with in the dashboard.
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 
