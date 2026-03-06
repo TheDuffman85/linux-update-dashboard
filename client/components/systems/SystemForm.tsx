@@ -165,15 +165,21 @@ export function SystemForm({
         <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH password</p>
       </div>
 
-      <label className="flex items-center gap-2 text-sm cursor-pointer">
+      <label className="flex items-start gap-3 text-sm cursor-pointer">
         <input
           type="checkbox"
           checked={excludeFromUpgradeAll}
           onChange={(e) => setExcludeFromUpgradeAll(e.target.checked)}
-          className="rounded"
+          className="rounded mt-0.5"
         />
-        <span>Exclude from Upgrade All</span>
-        <span className="text-xs text-slate-400">(skip this system during bulk upgrades)</span>
+        <span className="min-w-0">
+          <span className="block text-slate-700 dark:text-slate-200">
+            Exclude from Upgrade All
+          </span>
+          <span className="block text-xs text-slate-400 mt-0.5">
+            Start unchecked in the Upgrade All Systems dialog
+          </span>
+        </span>
       </label>
 
       {testResult && (

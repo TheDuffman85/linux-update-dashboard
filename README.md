@@ -40,7 +40,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Full upgrade:** run `apt full-upgrade` or `dnf distro-sync` from the dashboard for dist-level upgrades
 - **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
 - **System duplication:** clone an existing system entry (including encrypted credentials) to quickly add similar servers
-- **Exclude from Upgrade All:** flag individual systems to skip them during batch upgrades
+- **Exclude from Upgrade All:** make individual systems start unchecked in the Upgrade All Systems dialog
 - **Notification digests:** schedule notification delivery on a cron expression for batched digest summaries instead of immediate alerts
 - **Dark mode:** dark/light theme with OS preference detection
 - **Update history:** logs every check and upgrade operation per system
