@@ -3,9 +3,11 @@ import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
+import { initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
 
 describe("systems reorder route", () => {
@@ -13,6 +15,7 @@ describe("systems reorder route", () => {
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "ludash-systems-routes-test-"));
+    initEncryptor(randomBytes(32).toString("base64"));
     initDatabase(join(tempDir, "dashboard.db"));
   });
 
@@ -102,5 +105,74 @@ describe("systems reorder route", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain("include every system exactly once");
+  });
+
+  test("returns 409 when creating a system with a duplicate connection tuple", async () => {
+    const db = getDb();
+    db.insert(systems).values({
+      name: "Primary",
+      hostname: "alpha.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Primary Copy",
+        hostname: "alpha.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("already exists");
+  });
+
+  test("returns 409 when updating a system to match another connection tuple", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      {
+        name: "Alpha",
+        hostname: "alpha.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        name: "Bravo",
+        hostname: "bravo.local",
+        port: 2222,
+        authType: "password",
+        username: "admin",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${inserted[1].id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bravo",
+        hostname: "alpha.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("already exists");
   });
 });

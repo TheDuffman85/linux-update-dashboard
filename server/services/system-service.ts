@@ -11,6 +11,27 @@ import { detectPackageManagers } from "../ssh/detector";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
 
+const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
+  "systems.hostname, systems.port, systems.username";
+
+export class DuplicateSystemConnectionError extends Error {
+  constructor() {
+    super(
+      "A system with the same hostname, port, and username already exists. Change one of those fields before saving."
+    );
+    this.name = "DuplicateSystemConnectionError";
+  }
+}
+
+function isSystemConnectionUniqueConstraintError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  return (
+    error.message.includes("UNIQUE constraint failed") &&
+    error.message.includes(SYSTEM_CONNECTION_UNIQUE_CONSTRAINT)
+  );
+}
+
 export function listSystems() {
   const db = getDb();
   return db
@@ -94,8 +115,19 @@ export function createSystem(data: {
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
   }
 
-  const result = db.insert(systems).values(values as typeof systems.$inferInsert).returning({ id: systems.id }).get();
-  return result.id;
+  try {
+    const result = db
+      .insert(systems)
+      .values(values as typeof systems.$inferInsert)
+      .returning({ id: systems.id })
+      .get();
+    return result.id;
+  } catch (error) {
+    if (isSystemConnectionUniqueConstraintError(error)) {
+      throw new DuplicateSystemConnectionError();
+    }
+    throw error;
+  }
 }
 
 export function updateSystem(
@@ -144,10 +176,17 @@ export function updateSystem(
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
   }
 
-  db.update(systems)
-    .set(values as Partial<typeof systems.$inferInsert>)
-    .where(eq(systems.id, systemId))
-    .run();
+  try {
+    db.update(systems)
+      .set(values as Partial<typeof systems.$inferInsert>)
+      .where(eq(systems.id, systemId))
+      .run();
+  } catch (error) {
+    if (isSystemConnectionUniqueConstraintError(error)) {
+      throw new DuplicateSystemConnectionError();
+    }
+    throw error;
+  }
 }
 
 export function deleteSystem(systemId: number): void {
