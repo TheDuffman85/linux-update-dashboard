@@ -1,11 +1,15 @@
 import { Hono } from "hono";
 import { Cron } from "croner";
+import { eq } from "drizzle-orm";
 import * as notificationService from "../services/notification-service";
-import { getProviderNames } from "../services/notifications";
+import { getDb } from "../db";
+import { notifications } from "../db/schema";
+import { getProvider, getProviderNames } from "../services/notifications";
 
 const VALID_TYPES = getProviderNames();
 const VALID_EVENTS = ["updates", "unreachable"];
 const MAX_NAME_LENGTH = 100;
+const MAX_CONFIG_VALUE_LENGTH = 1000;
 
 function isValidSchedule(value: unknown): boolean {
   if (value === null || value === "immediate") return true;
@@ -23,6 +27,37 @@ function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id) || id <= 0) return null;
   return id;
+}
+
+function parseConfigJson(raw: string): Record<string, string> {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function validateConfigShape(config: unknown): string | null {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return "config must be an object";
+  }
+
+  for (const [key, val] of Object.entries(config)) {
+    if (typeof val !== "string" || val.length > MAX_CONFIG_VALUE_LENGTH) {
+      return `config.${key} must be a string (max ${MAX_CONFIG_VALUE_LENGTH} chars)`;
+    }
+  }
+
+  return null;
+}
+
+function validateProviderConfig(type: string, config: Record<string, string>): string | null {
+  const provider = getProvider(type);
+  if (!provider) {
+    return `type must be one of: ${VALID_TYPES.join(", ")}`;
+  }
+
+  return provider.validateConfig(config);
 }
 
 const notificationsRouter = new Hono();
@@ -63,8 +98,14 @@ notificationsRouter.post("/", async (c) => {
   }
 
   // Validate config
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return c.json({ error: "config must be an object" }, 400);
+  const configShapeError = validateConfigShape(config);
+  if (configShapeError) {
+    return c.json({ error: configShapeError }, 400);
+  }
+
+  const providerConfigError = validateProviderConfig(type, config);
+  if (providerConfigError) {
+    return c.json({ error: providerConfigError }, 400);
   }
 
   // Validate notifyOn
@@ -109,6 +150,10 @@ notificationsRouter.post("/", async (c) => {
 notificationsRouter.put("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid ID" }, 400);
+
+  const db = getDb();
+  const existing = db.select().from(notifications).where(eq(notifications.id, id)).get();
+  if (!existing) return c.json({ error: "Not found" }, 404);
 
   const body = await c.req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -156,8 +201,9 @@ notificationsRouter.put("/:id", async (c) => {
   }
 
   if (body.config !== undefined) {
-    if (!body.config || typeof body.config !== "object" || Array.isArray(body.config)) {
-      return c.json({ error: "config must be an object" }, 400);
+    const configShapeError = validateConfigShape(body.config);
+    if (configShapeError) {
+      return c.json({ error: configShapeError }, 400);
     }
     allowed.config = body.config;
   }
@@ -167,6 +213,21 @@ notificationsRouter.put("/:id", async (c) => {
       return c.json({ error: "schedule must be null, \"immediate\", or a valid cron expression" }, 400);
     }
     allowed.schedule = body.schedule;
+  }
+
+  if (body.type !== undefined || body.config !== undefined) {
+    const mergedConfig = {
+      ...notificationService.sanitizeNotificationConfig(existing.type, parseConfigJson(existing.config)),
+      ...(body.config ?? {}),
+    };
+    const mergedType = typeof body.type === "string" ? body.type : existing.type;
+    const providerConfigError = validateProviderConfig(
+      mergedType,
+      notificationService.sanitizeNotificationConfig(mergedType, mergedConfig)
+    );
+    if (providerConfigError) {
+      return c.json({ error: providerConfigError }, 400);
+    }
   }
 
   const ok = notificationService.updateNotification(id, allowed as any);
@@ -192,13 +253,15 @@ notificationsRouter.post("/test", async (c) => {
     return c.json({ error: "Invalid request body" }, 400);
   }
 
-  const { type, config, name } = body;
+  const { type, config, name, existingId } = body;
 
   if (!VALID_TYPES.includes(type)) {
     return c.json({ error: `type must be one of: ${VALID_TYPES.join(", ")}` }, 400);
   }
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return c.json({ error: "config must be an object" }, 400);
+
+  const configShapeError = validateConfigShape(config);
+  if (configShapeError) {
+    return c.json({ error: configShapeError }, 400);
   }
 
   // Validate name if provided
@@ -206,16 +269,40 @@ notificationsRouter.post("/test", async (c) => {
     return c.json({ error: "name must be a string of 1-100 characters" }, 400);
   }
 
-  // Ensure all config values are strings with bounded length
-  const MAX_CONFIG_VALUE_LENGTH = 1000;
-  for (const [key, val] of Object.entries(config)) {
-    if (typeof val !== "string" || val.length > MAX_CONFIG_VALUE_LENGTH) {
-      return c.json({ error: `config.${key} must be a string (max ${MAX_CONFIG_VALUE_LENGTH} chars)` }, 400);
+  let effectiveConfig = config as Record<string, string>;
+  if (existingId !== undefined) {
+    if (typeof existingId !== "number" || !Number.isInteger(existingId) || existingId <= 0) {
+      return c.json({ error: "existingId must be a positive integer" }, 400);
     }
+
+    const existing = getDb()
+      .select()
+      .from(notifications)
+      .where(eq(notifications.id, existingId))
+      .get();
+
+    if (!existing) {
+      return c.json({ error: "Existing notification not found" }, 404);
+    }
+
+    if (existing.type !== type) {
+      return c.json({ error: "existingId type does not match the test notification type" }, 400);
+    }
+
+    effectiveConfig = notificationService.mergeStoredSensitiveConfig(
+      type,
+      parseConfigJson(existing.config),
+      config as Record<string, string>
+    );
+  }
+
+  const providerConfigError = validateProviderConfig(type, effectiveConfig);
+  if (providerConfigError) {
+    return c.json({ error: providerConfigError }, 400);
   }
 
   try {
-    const result = await notificationService.testNotificationConfig(type, config, name);
+    const result = await notificationService.testNotificationConfig(type, effectiveConfig, name);
     return c.json(result);
   } catch {
     return c.json({ success: false, error: "Internal error while sending test notification" }, 500);

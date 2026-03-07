@@ -4,6 +4,7 @@ import { getEncryptor } from "../../security";
 
 // Basic email format check (RFC 5322 simplified)
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const VALID_IMPORTANCE_OVERRIDES = ["auto", "normal", "important"] as const;
 
 function validateEmails(raw: string): string | null {
   const addresses = raw.split(",").map((e) => e.trim()).filter(Boolean);
@@ -12,6 +13,33 @@ function validateEmails(raw: string): string | null {
     if (!EMAIL_RE.test(addr)) return `Invalid email address: ${addr}`;
   }
   return null;
+}
+
+function resolveEmailImportance(
+  payloadPriority: NotificationPayload["priority"],
+  override: string | undefined,
+): {
+  mailPriority: "high" | "normal";
+  importanceHeader: "high" | "normal";
+  xPriorityHeader: "1" | "3";
+} {
+  const effective = override && override !== "auto"
+    ? override
+    : (payloadPriority === "high" || payloadPriority === "urgent" ? "important" : "normal");
+
+  if (effective === "important") {
+    return {
+      mailPriority: "high",
+      importanceHeader: "high",
+      xPriorityHeader: "1",
+    };
+  }
+
+  return {
+    mailPriority: "normal",
+    importanceHeader: "normal",
+    xPriorityHeader: "3",
+  };
 }
 
 export const emailProvider: NotificationProvider = {
@@ -30,6 +58,11 @@ export const emailProvider: NotificationProvider = {
     // Validate port range
     const port = parseInt(config.smtpPort || "587", 10);
     if (isNaN(port) || port < 1 || port > 65535) return "SMTP port must be between 1 and 65535";
+
+    const importanceOverride = config.emailImportanceOverride || "auto";
+    if (!VALID_IMPORTANCE_OVERRIDES.includes(importanceOverride as (typeof VALID_IMPORTANCE_OVERRIDES)[number])) {
+      return `email importance override must be one of: ${VALID_IMPORTANCE_OVERRIDES.join(", ")}`;
+    }
 
     return null;
   },
@@ -64,14 +97,22 @@ export const emailProvider: NotificationProvider = {
       .map((e) => e.trim())
       .filter(Boolean)
       .join(", ");
+    const importance = resolveEmailImportance(payload.priority, config.emailImportanceOverride);
 
     await transport.sendMail({
       from: config.smtpFrom,
       to: recipients,
       subject: payload.title,
       text: payload.body,
+      priority: importance.mailPriority,
+      headers: {
+        Importance: importance.importanceHeader,
+        "X-Priority": importance.xPriorityHeader,
+      },
     });
 
     return { success: true };
   },
 };
+
+export { resolveEmailImportance };
