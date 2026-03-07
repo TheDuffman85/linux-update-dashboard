@@ -35,6 +35,21 @@ const SCHEDULE_PRESETS: { label: string; value: string }[] = [
   { label: "Custom", value: "custom" },
 ];
 
+const NTFY_PRIORITY_OPTIONS = [
+  { value: "auto", label: "Automatic" },
+  { value: "min", label: "Min" },
+  { value: "low", label: "Low" },
+  { value: "default", label: "Default" },
+  { value: "high", label: "High" },
+  { value: "urgent", label: "Urgent" },
+];
+
+const EMAIL_IMPORTANCE_OPTIONS = [
+  { value: "auto", label: "Automatic" },
+  { value: "normal", label: "Normal" },
+  { value: "important", label: "Important" },
+];
+
 function describeSchedule(cron: string | null): string {
   if (!cron) return "Immediate";
   const presetMatch = SCHEDULE_PRESETS.find((p) => p.value === cron);
@@ -47,15 +62,11 @@ function NotificationForm({
   onSubmit,
   onCancel,
   loading,
-  onTest,
-  testLoading,
 }: {
   initial?: NotificationChannel;
   onSubmit: (data: any) => void;
   onCancel: () => void;
   loading: boolean;
-  onTest?: () => void;
-  testLoading?: boolean;
 }) {
   const { data: systemsList } = useSystems();
   const testConfig = useTestNotificationConfig();
@@ -82,6 +93,9 @@ function NotificationForm({
   const [smtpPassword, setSmtpPassword] = useState("");
   const [smtpFrom, setSmtpFrom] = useState(initial?.config.smtpFrom || "");
   const [emailTo, setEmailTo] = useState(initial?.config.emailTo || "");
+  const [emailImportanceOverride, setEmailImportanceOverride] = useState(
+    initial?.config.emailImportanceOverride || "auto"
+  );
 
   // ntfy config
   const hasStoredNtfyToken = initial?.config.ntfyToken === "(stored)";
@@ -90,6 +104,9 @@ function NotificationForm({
   );
   const [ntfyTopic, setNtfyTopic] = useState(initial?.config.ntfyTopic || "");
   const [ntfyToken, setNtfyToken] = useState("");
+  const [ntfyPriorityOverride, setNtfyPriorityOverride] = useState(
+    initial?.config.ntfyPriorityOverride || "auto"
+  );
 
   // Schedule
   const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
@@ -132,11 +149,13 @@ function NotificationForm({
           smtpPassword: smtpPassword || (hasStoredSmtpPassword ? "(stored)" : ""),
           smtpFrom,
           emailTo,
+          emailImportanceOverride,
         }
       : {
           ntfyUrl,
           ntfyTopic,
           ntfyToken: ntfyToken || (hasStoredNtfyToken ? "(stored)" : ""),
+          ntfyPriorityOverride,
         };
 
   const getScheduleValue = (): string | null => {
@@ -160,7 +179,12 @@ function NotificationForm({
 
   const handleInlineTest = () => {
     testConfig.mutate(
-      { type, config: buildConfig(), name: name || undefined },
+      {
+        type,
+        config: buildConfig(),
+        name: name || undefined,
+        existingId: initial?.id,
+      },
       {
         onSuccess: (data) => {
           if (data.success) {
@@ -404,6 +428,20 @@ function NotificationForm({
                 placeholder="admin@example.com"
               />
             </div>
+            <div>
+              <label className={labelClass}>Importance</label>
+              <select
+                value={emailImportanceOverride}
+                onChange={(e) => setEmailImportanceOverride(e.target.value)}
+                className={inputClass}
+              >
+                {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <label className="flex items-center gap-2 mt-3">
             <input
@@ -452,6 +490,20 @@ function NotificationForm({
                 placeholder={hasStoredNtfyToken ? "(unchanged)" : ""}
               />
             </div>
+            <div>
+              <label className={labelClass}>Priority</label>
+              <select
+                value={ntfyPriorityOverride}
+                onChange={(e) => setNtfyPriorityOverride(e.target.value)}
+                className={inputClass}
+              >
+                {NTFY_PRIORITY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       )}
@@ -460,12 +512,12 @@ function NotificationForm({
       <div className="flex justify-end gap-3 pt-2">
         <button
           type="button"
-          onClick={onTest ?? handleInlineTest}
-          disabled={onTest ? testLoading : testConfig.isPending}
+          onClick={handleInlineTest}
+          disabled={testConfig.isPending}
           className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 mr-auto"
           title="Send test notification"
         >
-          {(onTest ? testLoading : testConfig.isPending) ? (
+          {testConfig.isPending ? (
             <span className="spinner spinner-sm" />
           ) : (
             "Send Test"
@@ -753,8 +805,6 @@ export default function Notifications() {
             onSubmit={handleUpdate}
             onCancel={() => setEditChannel(null)}
             loading={updateNotification.isPending}
-            onTest={() => handleTest(editChannel.id)}
-            testLoading={testNotification.isPending}
           />
         )}
       </Modal>

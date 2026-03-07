@@ -96,7 +96,7 @@ export function useTestNotification() {
 
 export function useTestNotificationConfig() {
   return useMutation({
-    mutationFn: (data: { type: string; config: Record<string, string>; name?: string }) =>
+    mutationFn: (data: { type: string; config: Record<string, string>; name?: string; existingId?: number }) =>
       apiFetch<{ success: boolean; error?: string }>(
         `/notifications/test`,
         { method: "POST", body: JSON.stringify(data) }

@@ -1,6 +1,14 @@
 import type { NotificationProvider, NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
 
+const VALID_PRIORITY_OVERRIDES = ["auto", "min", "low", "default", "high", "urgent"] as const;
+const ALLOWED_CONFIG_KEYS = new Set([
+  "ntfyUrl",
+  "ntfyTopic",
+  "ntfyToken",
+  "ntfyPriorityOverride",
+]);
+
 function validateUrl(raw: string): string | null {
   try {
     const parsed = new URL(raw);
@@ -13,10 +21,27 @@ function validateUrl(raw: string): string | null {
   }
 }
 
+function resolvePriority(
+  payloadPriority: NotificationPayload["priority"],
+  override: string | undefined,
+): string {
+  if (override && override !== "auto") {
+    return override;
+  }
+
+  return payloadPriority || "default";
+}
+
 export const ntfyProvider: NotificationProvider = {
   name: "ntfy",
 
   validateConfig(config) {
+    for (const key of Object.keys(config)) {
+      if (!ALLOWED_CONFIG_KEYS.has(key)) {
+        return `Unsupported ntfy config key: ${key}`;
+      }
+    }
+
     if (!config.ntfyUrl) return "ntfy URL is required";
     if (!config.ntfyTopic) return "ntfy topic is required";
 
@@ -26,6 +51,11 @@ export const ntfyProvider: NotificationProvider = {
     // Validate topic contains only safe characters
     if (!/^[a-zA-Z0-9_-]+$/.test(config.ntfyTopic)) {
       return "ntfy topic must only contain letters, numbers, hyphens, and underscores";
+    }
+
+    const priorityOverride = config.ntfyPriorityOverride || "auto";
+    if (!VALID_PRIORITY_OVERRIDES.includes(priorityOverride as (typeof VALID_PRIORITY_OVERRIDES)[number])) {
+      return `ntfy priority override must be one of: ${VALID_PRIORITY_OVERRIDES.join(", ")}`;
     }
 
     return null;
@@ -38,7 +68,7 @@ export const ntfyProvider: NotificationProvider = {
 
     const headers: Record<string, string> = {
       "Title": payload.title,
-      "Priority": payload.priority || "default",
+      "Priority": resolvePriority(payload.priority, config.ntfyPriorityOverride),
     };
 
     if (payload.tags?.length) {

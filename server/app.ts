@@ -64,7 +64,8 @@ export function createApp() {
   app.get(
     "/api/ws/systems/:id/output",
     upgradeWebSocket((c) => {
-      const systemId = parseInt(c.req.param("id"), 10);
+      const rawSystemId = c.req.param("id");
+      const systemId = rawSystemId ? parseInt(rawSystemId, 10) : NaN;
 
       return {
         onOpen(_evt, ws) {

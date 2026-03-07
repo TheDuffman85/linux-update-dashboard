@@ -11,6 +11,28 @@ const SENSITIVE_KEYS: Record<string, string[]> = {
   email: ["smtpPassword"],
   ntfy: ["ntfyToken"],
 };
+const ALLOWED_CONFIG_KEYS: Record<string, string[]> = {
+  email: [
+    "smtpHost",
+    "smtpPort",
+    "smtpSecure",
+    "smtpUser",
+    "smtpPassword",
+    "smtpFrom",
+    "emailTo",
+    "emailImportanceOverride",
+  ],
+  ntfy: [
+    "ntfyUrl",
+    "ntfyTopic",
+    "ntfyToken",
+    "ntfyPriorityOverride",
+  ],
+};
+
+function getSensitiveKeys(type: string): string[] {
+  return SENSITIVE_KEYS[type] || [];
+}
 
 function parseConfig(configJson: string): Record<string, string> {
   try {
@@ -18,6 +40,53 @@ function parseConfig(configJson: string): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+export function sanitizeNotificationConfig(
+  type: string,
+  config: Record<string, string>
+): Record<string, string> {
+  const allowedKeys = ALLOWED_CONFIG_KEYS[type];
+  if (!allowedKeys) return { ...config };
+
+  return Object.fromEntries(
+    Object.entries(config).filter(([key]) => allowedKeys.includes(key))
+  );
+}
+
+export function mergeStoredSensitiveConfig(
+  type: string,
+  storedConfig: Record<string, string>,
+  incomingConfig: Record<string, string>
+): Record<string, string> {
+  const sanitizedStored = sanitizeNotificationConfig(type, storedConfig);
+  const merged = sanitizeNotificationConfig(type, {
+    ...sanitizedStored,
+    ...incomingConfig,
+  });
+
+  for (const key of getSensitiveKeys(type)) {
+    if (merged[key] === "(stored)") {
+      merged[key] = sanitizedStored[key] || "";
+    }
+  }
+
+  return merged;
+}
+
+function loadSanitizedConfig(row: { id: number; type: string; config: string }): Record<string, string> {
+  const parsed = parseConfig(row.config);
+  const sanitized = sanitizeNotificationConfig(row.type, parsed);
+
+  if (JSON.stringify(parsed) !== JSON.stringify(sanitized)) {
+    getDb()
+      .update(notifications)
+      .set({ config: JSON.stringify(sanitized) })
+      .where(eq(notifications.id, row.id))
+      .run();
+  }
+
+  return sanitized;
 }
 
 function maskConfig(type: string, config: Record<string, string>): Record<string, string> {
@@ -46,6 +115,7 @@ function isScheduled(schedule: string | null): boolean {
 }
 
 function serializeNotification(row: any) {
+  const config = loadSanitizedConfig(row);
   return {
     id: row.id,
     name: row.name,
@@ -53,7 +123,7 @@ function serializeNotification(row: any) {
     enabled: row.enabled === 1,
     notifyOn: JSON.parse(row.notifyOn || '["updates"]'),
     systemIds: row.systemIds ? JSON.parse(row.systemIds) : null,
-    config: maskConfig(row.type, parseConfig(row.config)),
+    config: maskConfig(row.type, config),
     schedule: row.schedule || null,
     lastSentAt: row.lastSentAt || null,
     createdAt: row.createdAt,
@@ -86,7 +156,10 @@ export function createNotification(data: {
   schedule?: string | null;
 }) {
   const db = getDb();
-  const encConfig = encryptConfig(data.type, data.config);
+  const encConfig = encryptConfig(
+    data.type,
+    sanitizeNotificationConfig(data.type, data.config)
+  );
   const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
   const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
   const result = db.insert(notifications).values({
@@ -144,15 +217,16 @@ export function updateNotification(
 
   if (data.config) {
     const type = data.type || existing.type;
-    const existingConfig = parseConfig(existing.config);
+    const existingConfig = sanitizeNotificationConfig(existing.type, parseConfig(existing.config));
     const sensitive = SENSITIVE_KEYS[type] || [];
+    const mergedConfig = sanitizeNotificationConfig(type, { ...existingConfig, ...data.config });
 
     // Encrypt new config values first (skips "(stored)" sentinel)
-    const encConfig = encryptConfig(type, data.config);
+    const encConfig = encryptConfig(type, mergedConfig);
 
     // Restore existing encrypted values for unchanged sensitive fields
     for (const key of sensitive) {
-      if (data.config[key] === "(stored)") {
+      if (mergedConfig[key] === "(stored)") {
         encConfig[key] = existingConfig[key] || "";
       }
     }
@@ -179,7 +253,7 @@ export async function testNotification(id: number): Promise<{ success: boolean; 
   const row = db.select().from(notifications).where(eq(notifications.id, id)).get();
   if (!row) return { success: false, error: "Notification not found" };
 
-  const config = parseConfig(row.config);
+  const config = loadSanitizedConfig(row);
   return testNotificationConfig(row.type, config, row.name);
 }
 
@@ -325,7 +399,7 @@ async function sendChannelNotification(
   const provider = getProvider(channel.type);
   if (!provider) return;
 
-  const config = parseConfig(channel.config);
+  const config = loadSanitizedConfig(channel);
   const configError = provider.validateConfig(config);
   if (configError) {
     console.warn(`Notification [${channel.name}]: skipped - ${configError}`);
