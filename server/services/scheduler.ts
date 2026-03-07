@@ -23,7 +23,7 @@ async function runCheck(forceAll = false): Promise<void> {
       : cacheService.getStaleSystemIds();
     if (staleIds.length === 0) return;
 
-    logger.info("Scheduler refreshing systems", {
+    logger.debug("Scheduler refreshing systems", {
       count: staleIds.length,
       mode: forceAll ? "all" : "stale",
     });

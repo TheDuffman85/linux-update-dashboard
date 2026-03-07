@@ -186,7 +186,7 @@ export class SSHConnectionManager {
       readyTimeout: this.defaultTimeout * 1000,
     };
 
-    logger.info("SSH connect attempt started", {
+    logger.debug("SSH connect attempt started", {
       attemptId,
       ...meta,
     });
@@ -214,7 +214,7 @@ export class SSHConnectionManager {
     return new Promise<Client>((resolve, reject) => {
       const onReady = () => {
         conn.removeListener("error", onError);
-        logger.info("SSH connect attempt succeeded", {
+        logger.debug("SSH connect attempt succeeded", {
           attemptId,
           elapsedMs: Date.now() - startedAt,
           ...meta,
