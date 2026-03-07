@@ -9,9 +9,6 @@
     "dev:client": "bunx --bun vite",
     "build": "vite build && bun build server/index.ts --outdir dist/server --target bun",
     "start": "bun run dist/server/index.js",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio",
     "test": "bun test",
     "check": "tsc --noEmit"
   },
@@ -36,7 +33,6 @@
     "@types/react-dom": "^19.0.0",
     "@types/ssh2": "^1.15.0",
     "@vitejs/plugin-react": "^5.1.4",
-    "drizzle-kit": "^0.31.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router": "^7.13.1",

@@ -387,7 +387,6 @@ Package managers are auto-detected on each system over SSH when you test the con
 │   └── test-systems/         # Docker test containers
 ├── run.sh                    # Local dev/production runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
-├── drizzle.config.ts         # Drizzle Kit configuration
 ├── vite.config.ts            # Vite + Tailwind config
 └── package.json
 ```
@@ -421,12 +420,8 @@ bun test
 
 # Type check
 bun run check
-
-# Database management
-bun run db:generate          # Generate migrations from schema changes
-bun run db:migrate           # Apply pending migrations
-bun run db:studio            # Open Drizzle Studio GUI
 ```
+The app creates and upgrades the SQLite schema automatically on startup.
 
 ### Test Systems
 
@@ -441,8 +436,9 @@ This will:
 1. Stop any running dev/production services
 2. Build and start 10 Docker containers (including Alpine, fish-shell, and sudo-password APT fixtures)
 3. Build the frontend in production mode
-4. Run database migrations
-5. Start the production server on `:3001`
+4. Start the production server on `:3001`
+
+The server initializes or upgrades the SQLite schema automatically during startup.
 
 **SSH credentials for all test systems:**
 - User: `testuser`

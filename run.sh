@@ -122,8 +122,6 @@ if [ "$MODE" == "test" ]; then
 
     if [ $? -eq 0 ]; then
         log "Build successful."
-        log "Running database migrations..."
-        bun run db:migrate 2>/dev/null || log "Migrations skipped (tables may already exist)"
         log "Starting server..."
         bun run start
     else
@@ -169,8 +167,6 @@ else
 
     if [ $? -eq 0 ]; then
         log "Build successful."
-        log "Running database migrations..."
-        bun run db:migrate 2>/dev/null || log "Migrations skipped (tables may already exist)"
         log "Starting server..."
         bun run start
     else
