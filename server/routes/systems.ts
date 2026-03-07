@@ -6,6 +6,7 @@ import { getSSHManager } from "../ssh/connection";
 import { getEncryptor } from "../security";
 import { detectPackageManagers } from "../ssh/detector";
 import * as outputStream from "../services/output-stream";
+import { logger } from "../logger";
 
 const systems = new Hono();
 
@@ -135,7 +136,12 @@ systems.post("/", async (c) => {
   });
 
   // Trigger initial check in background
-  updateService.checkUpdates(systemId).catch(console.error);
+  updateService.checkUpdates(systemId).catch((error) => {
+    logger.error("Initial update check failed after system creation", {
+      systemId,
+      error: String(error),
+    });
+  });
 
   return c.json({ id: systemId }, 201);
 });
@@ -240,12 +246,16 @@ systems.post("/test-connection", async (c) => {
   }
 
   const sshManager = getSSHManager();
-  const result = await sshManager.testConnection(system);
+  const result = await sshManager.testConnection(system, {
+    systemId: sourceSystemId ?? undefined,
+  });
 
   // On successful connection, also detect available package managers
   if (result.success) {
     try {
-      const conn = await sshManager.connect(system);
+      const conn = await sshManager.connect(system, {
+        systemId: sourceSystemId ?? undefined,
+      });
       try {
         const detectedManagers = await detectPackageManagers(sshManager, conn);
         return c.json({ ...result, detectedManagers });

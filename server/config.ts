@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "f
 import { dirname, join } from "path";
 import { randomBytes } from "crypto";
 import { resolveRequiredSecretEnv, resolveSecretEnv } from "./env-secrets";
+import { parseLogLevel } from "./logger";
 
 export interface Config {
   dbPath: string;
@@ -69,7 +70,7 @@ function loadConfig(): Config {
     dbPath,
     encryptionKey: getEncryptionKey(),
     secretKey: getSecretKey(dbPath, sessionKey),
-    logLevel: process.env.LUDASH_LOG_LEVEL || "info",
+    logLevel: parseLogLevel(process.env.LUDASH_LOG_LEVEL),
     host: process.env.LUDASH_HOST || "0.0.0.0",
     port: parseInt(process.env.LUDASH_PORT || "3001", 10),
     defaultCacheHours: parseInt(

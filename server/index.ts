@@ -11,25 +11,26 @@ import { configureOidc } from "./auth/oidc";
 import * as scheduler from "./services/scheduler";
 import { createApp, websocket } from "./app";
 import { setRequestIp } from "./request-ip-store";
+import { logger } from "./logger";
 
 // Ensure data directory exists with restrictive permissions
 mkdirSync(dirname(config.dbPath), { recursive: true });
 try { chmodSync(dirname(config.dbPath), 0o700); } catch { /* Windows */ }
 
 // Initialize core systems
-console.log("Initializing database...");
+logger.info("Initializing database");
 const db = initDatabase(config.dbPath);
 try { chmodSync(config.dbPath, 0o600); } catch { /* Windows */ }
 
-console.log("Initializing encryption...");
+logger.info("Initializing encryption");
 const salt = getEncryptionSalt(config.dbPath, config.encryptionKey);
 migrateEncryptionSalt(config.encryptionKey, salt);
 initEncryptor(config.encryptionKey, salt);
 
-console.log("Initializing session management...");
+logger.info("Initializing session management");
 initSession(config.secretKey);
 
-console.log("Initializing SSH connection manager...");
+logger.info("Initializing SSH connection manager");
 initSSHManager(
   config.maxConcurrentConnections,
   config.defaultSshTimeout,
@@ -45,7 +46,7 @@ initSSHManager(
   const oidcClientSecret = dbInstance.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();
 
   if (oidcIssuer?.value && oidcClientId?.value) {
-    console.log("Initializing OIDC...");
+    logger.info("Initializing OIDC");
     const encryptor = getEncryptor();
     const decryptedSecret = oidcClientSecret?.value
       ? encryptor.decrypt(oidcClientSecret.value)
@@ -60,13 +61,17 @@ initSSHManager(
 }
 
 // Start background scheduler
-console.log("Starting update scheduler...");
+logger.info("Starting update scheduler");
 scheduler.start();
 
 // Create and start Hono app
 const app = createApp();
 
-console.log(`Server starting on http://${config.host}:${config.port}`);
+logger.info("Server starting", {
+  host: config.host,
+  port: config.port,
+  logLevel: config.logLevel,
+});
 
 const server = Bun.serve({
   fetch(req, server) {
@@ -81,7 +86,7 @@ const server = Bun.serve({
 
 // Graceful shutdown
 process.on("SIGINT", () => {
-  console.log("\nShutting down...");
+  logger.info("Shutting down");
   scheduler.stop();
   closeDatabase();
   server.stop();
@@ -121,7 +126,7 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
   const oldEncryptor = new CredentialEncryptor(rawKey); // uses LEGACY_SALT
   const newEncryptor = new CredentialEncryptor(rawKey, newSalt);
 
-  console.log("Migrating encrypted data to per-instance salt...");
+  logger.info("Migrating encrypted data to per-instance salt");
 
   // Helper: re-encrypt a single value
   function reEncrypt(value: string | null): string | null {
@@ -215,5 +220,5 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
     }
   }
 
-  console.log("Encryption migration complete.");
+  logger.info("Encryption migration complete");
 }

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import * as updateService from "../services/update-service";
 import * as cacheService from "../services/cache-service";
 import { validatePackageName } from "../ssh/parsers/types";
+import { logger } from "../logger";
 
 const updates = new Hono();
 
@@ -58,7 +59,9 @@ updates.post("/systems/:id/check", async (c) => {
 // Check all systems
 updates.post("/systems/check-all", async (c) => {
   // Run in background
-  updateService.checkAllSystems().catch(console.error);
+  updateService.checkAllSystems().catch((error) => {
+    logger.error("Check-all request failed", { error: String(error) });
+  });
   return c.json({ status: "checking_all" });
 });
 
@@ -114,7 +117,9 @@ updates.post("/systems/:id/upgrade/:packageName", async (c) => {
 // Refresh all cache
 updates.post("/cache/refresh", async (c) => {
   cacheService.invalidateCache();
-  updateService.checkAllSystems().catch(console.error);
+  updateService.checkAllSystems().catch((error) => {
+    logger.error("Cache refresh check-all failed", { error: String(error) });
+  });
   return c.json({ status: "refreshing" });
 });
 

@@ -1,6 +1,13 @@
+import { randomUUID } from "crypto";
 import { Client } from "ssh2";
 import type { CredentialEncryptor } from "../security";
+import { logger } from "../logger";
 import { sanitizeOutput } from "../utils/sanitize";
+import {
+  buildSSHAttemptLogMeta,
+  createSafeSshDebugHook,
+  type SSHConnectContext,
+} from "./diagnostics";
 
 // Non-interactive SSH sessions often have a minimal PATH; force C locale so
 // package-manager output is always in English for reliable parsing.
@@ -111,6 +118,18 @@ export interface PersistentCommandInfo {
   exitFile: string;
 }
 
+interface SSHConnectionError extends Error {
+  level?: string;
+  description?: string;
+  debugRef?: string;
+}
+
+export interface TestConnectionResult {
+  success: boolean;
+  message: string;
+  debugRef?: string;
+}
+
 export class SSHConnectionManager {
   private maxConcurrent: number;
   private currentConnections = 0;
@@ -150,23 +169,33 @@ export class SSHConnectionManager {
     if (next) next();
   }
 
-  async connect(system: Record<string, unknown>): Promise<Client> {
+  async connect(
+    system: Record<string, unknown>,
+    context: SSHConnectContext = {}
+  ): Promise<Client> {
     await this.acquireSemaphore();
 
+    const attemptId = randomUUID();
+    const startedAt = Date.now();
+    const meta = buildSSHAttemptLogMeta(system, context);
     const conn = new Client();
     const connectConfig: Record<string, unknown> = {
-      host: system.hostname as string,
-      port: (system.port as number) || 22,
-      username: system.username as string,
+      host: meta.host,
+      port: meta.port,
+      username: meta.username,
       readyTimeout: this.defaultTimeout * 1000,
     };
 
-    const authType = (system.authType as string) || "password";
-    if (authType === "password" && system.encryptedPassword) {
+    logger.info("SSH connect attempt started", {
+      attemptId,
+      ...meta,
+    });
+
+    if (meta.authType === "password" && system.encryptedPassword) {
       connectConfig.password = this.encryptor.decrypt(
         system.encryptedPassword as string
       );
-    } else if (authType === "key" && system.encryptedPrivateKey) {
+    } else if (meta.authType === "key" && system.encryptedPrivateKey) {
       connectConfig.privateKey = this.encryptor.decrypt(
         system.encryptedPrivateKey as string
       );
@@ -177,12 +206,41 @@ export class SSHConnectionManager {
       }
     }
 
+    const debugHook = createSafeSshDebugHook(logger, attemptId);
+    if (debugHook) {
+      connectConfig.debug = debugHook;
+    }
+
     return new Promise<Client>((resolve, reject) => {
-      conn.on("ready", () => resolve(conn));
-      conn.on("error", (err) => {
+      const onReady = () => {
+        conn.removeListener("error", onError);
+        logger.info("SSH connect attempt succeeded", {
+          attemptId,
+          elapsedMs: Date.now() - startedAt,
+          ...meta,
+        });
+        resolve(conn);
+      };
+
+      const onError = (err: SSHConnectionError) => {
+        conn.removeListener("ready", onReady);
         this.releaseSemaphore();
+        err.debugRef = attemptId;
+        logger.warn("SSH connect attempt failed", {
+          attemptId,
+          elapsedMs: Date.now() - startedAt,
+          ...meta,
+          errorLevel: err.level,
+          errorDescription: err.description
+            ? sanitizeOutput(err.description)
+            : undefined,
+          error: sanitizeOutput(err.message || String(err)),
+        });
         reject(err);
-      });
+      };
+
+      conn.once("ready", onReady);
+      conn.once("error", onError);
       conn.connect(connectConfig as Parameters<Client["connect"]>[0]);
     });
   }
@@ -273,10 +331,9 @@ export class SSHConnectionManager {
     const info = this.parseNohupOutput(setupResult.stdout);
 
     if (!info || setupResult.exitCode !== 0) {
-      console.warn(
-        "[SSH] nohup setup failed:",
-        sanitizeOutput(setupResult.stderr || setupResult.stdout)
-      );
+      logger.warn("SSH nohup setup failed", {
+        error: sanitizeOutput(setupResult.stderr || setupResult.stdout),
+      });
       return {
         stdout: setupResult.stdout,
         stderr:
@@ -528,11 +585,12 @@ export class SSHConnectionManager {
   }
 
   async testConnection(
-    system: Record<string, unknown>
-  ): Promise<{ success: boolean; message: string }> {
+    system: Record<string, unknown>,
+    context: SSHConnectContext = {}
+  ): Promise<TestConnectionResult> {
     let conn: Client | null = null;
     try {
-      conn = await this.connect(system);
+      conn = await this.connect(system, context);
       const result = await this.runCommand(conn, "echo ok", 10);
       if (result.exitCode === 0 && result.stdout.includes("ok")) {
         return { success: true, message: "Connection successful" };
@@ -542,14 +600,19 @@ export class SSHConnectionManager {
         message: `Unexpected response: ${result.stderr || result.stdout}`,
       };
     } catch (e: unknown) {
-      const err = e as Error & { level?: string };
+      const err = e as SSHConnectionError;
       if (err.level === "client-authentication") {
         return {
           success: false,
           message: "Permission denied (check credentials)",
+          debugRef: err.debugRef,
         };
       }
-      return { success: false, message: `Connection failed: ${err.message}` };
+      return {
+        success: false,
+        message: `Connection failed: ${sanitizeOutput(err.message || String(err))}`,
+        debugRef: err.debugRef,
+      };
     } finally {
       if (conn) this.disconnect(conn);
     }

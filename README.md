@@ -265,7 +265,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL for WebAuthn/OIDC. When set, detected origin must match it. When unset, origin is inferred from request headers (Host/proto plus Origin/Referer heuristics), which works behind reverse proxies without extra config |
 | `LUDASH_TRUST_PROXY` | No | `false` | Trust `X-Forwarded-*` headers from your reverse proxy (needed for forwarded host/proto detection when `LUDASH_BASE_URL` is set) |
-| `LUDASH_LOG_LEVEL` | No | `info` | Log level |
+| `LUDASH_LOG_LEVEL` | No | `info` | Server log level: `debug`, `info`, `warn`, or `error` |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
@@ -274,6 +274,24 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `NODE_ENV` | No | - | Set to `production` for static file serving |
 
 If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
+
+## Debugging SSH Connection Failures
+
+For container-based installs, set `LUDASH_LOG_LEVEL=debug` and inspect the container logs:
+
+```bash
+docker logs -f linux-update-dashboard
+```
+
+Debug mode adds attempt-scoped SSH diagnostics to stdout/stderr so they appear in `docker logs`. Failed test-connection requests include a debug reference ID that you can match against the log entries.
+
+Security constraints:
+
+- Logged SSH diagnostics are intentionally limited to safe metadata such as host, port, username, auth type, elapsed time, and filtered auth/debug events.
+- Passwords, sudo passwords, private keys, passphrases, tokens, and raw SSH payloads are never logged.
+- If a diagnostic cannot be emitted safely, it is omitted.
+
+These logs are intended for trusted operators on trusted hosts. Avoid enabling debug logging longer than needed.
 
 ## Authentication
 

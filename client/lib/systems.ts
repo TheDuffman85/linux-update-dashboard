@@ -196,7 +196,12 @@ export function useTestConnection() {
       keyPassphrase?: string;
       systemId?: number;
     }) =>
-      apiFetch<{ success: boolean; message: string; detectedManagers?: string[] }>(
+      apiFetch<{
+        success: boolean;
+        message: string;
+        debugRef?: string;
+        detectedManagers?: string[];
+      }>(
         "/systems/test-connection",
         { method: "POST", body: JSON.stringify(data) }
       ),
