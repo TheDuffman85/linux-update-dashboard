@@ -3,7 +3,7 @@ import { dirname } from "path";
 import { eq } from "drizzle-orm";
 import { config, getEncryptionSalt } from "./config";
 import { initDatabase, closeDatabase, getDb } from "./db";
-import { settings, systems, notifications } from "./db/schema";
+import { credentials, settings, systems, notifications } from "./db/schema";
 import { CredentialEncryptor, isPassphraseKey, initEncryptor, getEncryptor } from "./security";
 import { initSSHManager } from "./ssh/connection";
 import { initSession } from "./auth/session";
@@ -17,15 +17,15 @@ import { logger } from "./logger";
 mkdirSync(dirname(config.dbPath), { recursive: true });
 try { chmodSync(dirname(config.dbPath), 0o700); } catch { /* Windows */ }
 
+logger.info("Initializing encryption");
+const salt = getEncryptionSalt(config.dbPath, config.encryptionKey);
+initEncryptor(config.encryptionKey, salt);
+
 // Initialize core systems
 logger.info("Initializing database");
 const db = initDatabase(config.dbPath);
 try { chmodSync(config.dbPath, 0o600); } catch { /* Windows */ }
-
-logger.info("Initializing encryption");
-const salt = getEncryptionSalt(config.dbPath, config.encryptionKey);
 migrateEncryptionSalt(config.encryptionKey, salt);
-initEncryptor(config.encryptionKey, salt);
 
 logger.info("Initializing session management");
 initSession(config.secretKey);
@@ -115,9 +115,15 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
     .from(settings)
     .where(eq(settings.key, "oidc_client_secret"))
     .get();
+  const anyCredential = dbInstance
+    .select({ id: credentials.id })
+    .from(credentials)
+    .limit(1)
+    .get();
 
   const hasEncryptedData =
     anySystem ||
+    anyCredential ||
     (anyEncryptedSetting?.value && anyEncryptedSetting.value.length > 0);
 
   if (!hasEncryptedData) return;
@@ -180,6 +186,44 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
         .set({ value: reEncrypted! })
         .where(eq(settings.key, "oidc_client_secret"))
         .run();
+    }
+  }
+
+  const CREDENTIAL_SECRET_FIELDS: Record<string, string[]> = {
+    usernamePassword: ["password"],
+    sshKey: ["privateKey", "passphrase"],
+    emailSmtp: ["password"],
+    ntfyToken: ["token"],
+    token: ["token"],
+    certificate: ["certificatePem", "privateKeyPem", "privateKeyPassword"],
+  };
+
+  const allCredentials = dbInstance.select().from(credentials).all();
+  for (const credential of allCredentials) {
+    try {
+      const payload = JSON.parse(credential.payload);
+      const secretFields = CREDENTIAL_SECRET_FIELDS[credential.kind] || [];
+      let changed = false;
+
+      for (const field of secretFields) {
+        if (payload[field] && payload[field] !== "(stored)") {
+          const reEncrypted = reEncrypt(payload[field]);
+          if (reEncrypted !== payload[field]) {
+            payload[field] = reEncrypted;
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) {
+        dbInstance
+          .update(credentials)
+          .set({ payload: JSON.stringify(payload) })
+          .where(eq(credentials.id, credential.id))
+          .run();
+      }
+    } catch {
+      // Invalid JSON payload — skip
     }
   }
 

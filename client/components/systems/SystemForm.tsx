@@ -1,15 +1,12 @@
 import { useState } from "react";
+import { useCredentials } from "../../lib/credentials";
 import { useTestConnection } from "../../lib/systems";
 
 interface SystemFormData {
   name: string;
   hostname: string;
   port: number;
-  authType: string;
-  username: string;
-  password?: string;
-  privateKey?: string;
-  keyPassphrase?: string;
+  credentialId: number;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
   excludeFromUpgradeAll?: boolean;
@@ -24,7 +21,7 @@ export function SystemForm({
   onCancel,
   loading = false,
 }: {
-  initial?: Omit<Partial<SystemFormData>, 'excludeFromUpgradeAll'> & {
+  initial?: Omit<Partial<SystemFormData>, "excludeFromUpgradeAll"> & {
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
     excludeFromUpgradeAll?: number;
@@ -36,6 +33,13 @@ export function SystemForm({
   loading?: boolean;
 }) {
   const testConnection = useTestConnection();
+  const { data: allCredentials } = useCredentials();
+  const credentials =
+    allCredentials?.filter((credential) =>
+      credential.kind === "usernamePassword" ||
+      credential.kind === "sshKey" ||
+      credential.kind === "certificate"
+    ) || [];
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message: string;
@@ -44,11 +48,7 @@ export function SystemForm({
   const [name, setName] = useState(initial?.name || "");
   const [hostname, setHostname] = useState(initial?.hostname || "");
   const [port, setPort] = useState(initial?.port || 22);
-  const [authType, setAuthType] = useState(initial?.authType || "password");
-  const [username, setUsername] = useState(initial?.username || "");
-  const [password, setPassword] = useState("");
-  const [privateKey, setPrivateKey] = useState("");
-  const [keyPassphrase, setKeyPassphrase] = useState("");
+  const [credentialId, setCredentialId] = useState<number>(initial?.credentialId || 0);
   const [sudoPassword, setSudoPassword] = useState("");
   const [detectedManagers, setDetectedManagers] = useState<string[]>(
     initial?.detectedPkgManagers ?? []
@@ -72,23 +72,13 @@ export function SystemForm({
     });
   };
 
-  const credentialPlaceholder = sourceSystemId
-    ? "(from source system)"
-    : initial
-      ? "(unchanged)"
-      : "";
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
       name,
       hostname,
       port,
-      authType,
-      username,
-      password: password || undefined,
-      privateKey: privateKey || undefined,
-      keyPassphrase: keyPassphrase || undefined,
+      credentialId,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: disabledManagers.size > 0 ? [...disabledManagers] : undefined,
       excludeFromUpgradeAll,
@@ -120,53 +110,34 @@ export function SystemForm({
       </div>
 
       <div>
-        <label className={labelClass}>SSH Username</label>
-        <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required className={inputClass} placeholder="root" />
+        <label className={labelClass}>SSH Credential</label>
+        <select
+          value={credentialId || ""}
+          onChange={(e) => setCredentialId(Number(e.target.value))}
+          required
+          className={inputClass}
+        >
+          <option value="" disabled>
+            Select a credential
+          </option>
+          {credentials.map((credential) => (
+            <option key={credential.id} value={credential.id}>
+              {credential.name}
+            </option>
+          ))}
+        </select>
       </div>
-
-      <div>
-        <label className={labelClass}>Authentication Method</label>
-        <div className="flex gap-4 mt-1">
-          <label className="flex items-center gap-2 text-sm">
-            <input type="radio" name="authType" value="password" checked={authType === "password"} onChange={() => setAuthType("password")} />
-            Password
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="radio" name="authType" value="key" checked={authType === "key"} onChange={() => setAuthType("key")} />
-            SSH Key
-          </label>
-        </div>
-      </div>
-
-      {authType === "password" && (
-        <div>
-          <label className={labelClass}>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} placeholder={credentialPlaceholder} />
-        </div>
-      )}
-
-      {authType === "key" && (
-        <>
-          <div>
-            <label className={labelClass}>Private Key</label>
-            <textarea
-              value={privateKey}
-              onChange={(e) => setPrivateKey(e.target.value)}
-              className={`${inputClass} font-mono text-xs h-32 resize-y`}
-              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Key Passphrase (optional)</label>
-            <input type="password" value={keyPassphrase} onChange={(e) => setKeyPassphrase(e.target.value)} className={inputClass} />
-          </div>
-        </>
-      )}
 
       <div>
         <label className={labelClass}>Sudo Password (optional)</label>
-        <input type="password" value={sudoPassword} onChange={(e) => setSudoPassword(e.target.value)} className={inputClass} placeholder={sourceSystemId ? "(from source system)" : initial ? "(unchanged — defaults to SSH password)" : "Defaults to SSH password"} />
-        <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH password</p>
+        <input
+          type="password"
+          value={sudoPassword}
+          onChange={(e) => setSudoPassword(e.target.value)}
+          className={inputClass}
+          placeholder={sourceSystemId ? "(from source system)" : initial ? "(unchanged — defaults to SSH password)" : "Defaults to SSH password"}
+        />
+        <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH credential password</p>
       </div>
 
       <label className="flex items-start gap-3 text-sm cursor-pointer">
@@ -226,18 +197,14 @@ export function SystemForm({
       <div className="flex items-center justify-between gap-3 pt-2">
         <button
           type="button"
-          disabled={testConnection.isPending || !hostname || !username}
+          disabled={testConnection.isPending || !hostname || credentialId <= 0}
           onClick={() => {
             setTestResult(null);
             testConnection.mutate(
               {
                 hostname,
                 port,
-                username,
-                authType,
-                password: password || undefined,
-                privateKey: privateKey || undefined,
-                keyPassphrase: keyPassphrase || undefined,
+                credentialId,
                 systemId: systemId ?? sourceSystemId,
               },
               {
@@ -245,7 +212,6 @@ export function SystemForm({
                   setTestResult(data);
                   if (data.detectedManagers?.length) {
                     setDetectedManagers(data.detectedManagers);
-                    // Keep existing disabled state, but remove managers no longer detected
                     setDisabledManagers((prev) => {
                       const next = new Set<string>();
                       for (const m of prev) {
@@ -263,12 +229,21 @@ export function SystemForm({
         >
           {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Test Connection"}
         </button>
-        <div className="flex items-center gap-3">
-          <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          >
             Cancel
           </button>
-          <button type="submit" disabled={loading} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50">
-            {loading ? <span className="spinner spinner-sm" /> : initial ? "Save Changes" : "Add System"}
+          <button
+            type="submit"
+            disabled={loading || credentialId <= 0}
+            className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+          >
+            {loading ? <span className="spinner spinner-sm" /> : "Save"}
           </button>
         </div>
       </div>

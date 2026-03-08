@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
+import { getEncryptor } from "../security";
 import * as schema from "./schema";
 
 let _db: BunSQLiteDatabase<typeof schema> | null = null;
@@ -84,12 +85,23 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  migrateCredentialsTable();
+
   _db.run(sql`CREATE TABLE IF NOT EXISTS systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     hostname TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 22,
+    credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT,
     auth_type TEXT NOT NULL DEFAULT 'password',
     username TEXT NOT NULL,
     encrypted_password TEXT,
@@ -156,6 +168,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     type TEXT NOT NULL,
+    credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT,
     enabled INTEGER NOT NULL DEFAULT 1,
     notify_on TEXT NOT NULL DEFAULT '["updates"]',
     system_ids TEXT,
@@ -200,6 +213,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT`);
+  } catch {
+    // Column already exists
+  }
 
   // Migration: add notification tracking column
   try {
@@ -223,6 +241,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   // Migration: add notification schedule columns
   try {
     _db.run(sql`ALTER TABLE notifications ADD COLUMN schedule TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT`);
   } catch {
     // Column already exists
   }
@@ -308,6 +331,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
+  migrateLegacyCredentials(_db);
 
   // Seed default settings
   for (const s of DEFAULT_SETTINGS) {
@@ -382,6 +406,211 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
     });
     db.run(sql`INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config)
       VALUES ('ntfy', 'ntfy', ${enabled ? 1 : 0}, ${notifyOnJson}, NULL, ${config})`);
+  }
+}
+
+function migrateLegacyCredentials(db: BunSQLiteDatabase<typeof schema>): void {
+  const encryptor = schema ? null : null;
+  void encryptor;
+
+  const systemRows = db.select().from(schema.systems).all();
+  for (const system of systemRows) {
+    if (system.credentialId) continue;
+
+    let kind: "usernamePassword" | "sshKey" | null = null;
+    const payload: Record<string, string> = {
+      username: system.username,
+    };
+
+    if (system.authType === "password" && system.encryptedPassword) {
+      kind = "usernamePassword";
+      payload.password = normalizeSecretValue(system.encryptedPassword);
+    } else if (system.authType === "key" && system.encryptedPrivateKey) {
+      kind = "sshKey";
+      payload.privateKey = normalizeSecretValue(system.encryptedPrivateKey);
+      if (system.encryptedKeyPassphrase) {
+        payload.passphrase = normalizeSecretValue(system.encryptedKeyPassphrase);
+      }
+    }
+
+    if (!kind) continue;
+
+    const result = db.insert(schema.credentials).values({
+      name: `Migrated SSH credential: ${system.name}`,
+      kind,
+      payload: JSON.stringify(payload),
+    }).returning({ id: schema.credentials.id }).get();
+
+    db.update(schema.systems)
+      .set({
+        credentialId: result.id,
+        encryptedPassword: null,
+        encryptedPrivateKey: null,
+        encryptedKeyPassphrase: null,
+      })
+      .where(eq(schema.systems.id, system.id))
+      .run();
+  }
+
+  const notificationRows = db.select().from(schema.notifications).all();
+  for (const notification of notificationRows) {
+    const config = parseJsonObject(notification.config);
+    if (notification.type === "email" && !notification.credentialId) {
+      if (config.smtpUser || config.smtpPassword) {
+        const credentialPayload: Record<string, string> = {
+          username: config.smtpUser || "",
+          password: normalizeSecretValue(config.smtpPassword || ""),
+        };
+        const result = db.insert(schema.credentials).values({
+          name: `Migrated SMTP credential: ${notification.name}`,
+          kind: "emailSmtp",
+          payload: JSON.stringify(credentialPayload),
+        }).returning({ id: schema.credentials.id }).get();
+
+        delete config.smtpUser;
+        delete config.smtpPassword;
+
+        db.update(schema.notifications)
+          .set({
+            credentialId: result.id,
+            config: JSON.stringify(config),
+          })
+          .where(eq(schema.notifications.id, notification.id))
+          .run();
+      }
+      continue;
+    }
+
+    if (notification.type === "ntfy" && !notification.credentialId && config.ntfyToken) {
+      const result = db.insert(schema.credentials).values({
+        name: `Migrated ntfy credential: ${notification.name}`,
+        kind: "ntfyToken",
+        payload: JSON.stringify({
+          token: normalizeSecretValue(config.ntfyToken),
+        }),
+      }).returning({ id: schema.credentials.id }).get();
+
+      delete config.ntfyToken;
+
+      db.update(schema.notifications)
+        .set({
+          credentialId: result.id,
+          config: JSON.stringify(config),
+        })
+        .where(eq(schema.notifications.id, notification.id))
+        .run();
+    }
+  }
+
+  migrateNotificationCredentialKinds(db);
+}
+
+function parseJsonObject(raw: string): Record<string, string> {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function normalizeSecretValue(value: string): string {
+  if (!value) return "";
+  let encryptor;
+  try {
+    encryptor = getEncryptor();
+  } catch {
+    return value;
+  }
+  try {
+    encryptor.decrypt(value);
+    return value;
+  } catch {
+    return encryptor.encrypt(value);
+  }
+}
+
+function migrateCredentialsTable(): void {
+  if (!_sqlite) return;
+
+  const columns = _sqlite
+    .query("PRAGMA table_info(credentials)")
+    .all() as Array<{ name?: string }>;
+
+  if (!columns.some((column) => column.name === "usage_scopes")) return;
+
+  _sqlite.exec("PRAGMA foreign_keys=OFF");
+  _sqlite.exec(`
+    CREATE TABLE credentials_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  _sqlite.exec(`
+    INSERT INTO credentials_new (id, name, kind, payload, created_at, updated_at)
+    SELECT id, name, kind, payload, created_at, updated_at
+    FROM credentials
+  `);
+  _sqlite.exec("DROP TABLE credentials");
+  _sqlite.exec("ALTER TABLE credentials_new RENAME TO credentials");
+  _sqlite.exec("PRAGMA foreign_keys=ON");
+}
+
+function migrateNotificationCredentialKinds(db: BunSQLiteDatabase<typeof schema>): void {
+  const rows = db.select().from(schema.credentials).all();
+
+  for (const row of rows) {
+    if (row.kind === "token") {
+      db.update(schema.credentials)
+        .set({ kind: "ntfyToken" })
+        .where(eq(schema.credentials.id, row.id))
+        .run();
+      continue;
+    }
+
+    if (row.kind !== "usernamePassword") continue;
+
+    const systemRefs = db
+      .select({ id: schema.systems.id })
+      .from(schema.systems)
+      .where(eq(schema.systems.credentialId, row.id))
+      .all();
+    const notificationRefs = db
+      .select({ id: schema.notifications.id, type: schema.notifications.type })
+      .from(schema.notifications)
+      .where(eq(schema.notifications.credentialId, row.id))
+      .all();
+
+    if (notificationRefs.length === 0) continue;
+
+    const emailRefs = notificationRefs.filter((ref) => ref.type === "email");
+    const nonEmailRefs = notificationRefs.filter((ref) => ref.type !== "email");
+
+    if (emailRefs.length === 0) continue;
+
+    if (systemRefs.length === 0 && nonEmailRefs.length === 0) {
+      db.update(schema.credentials)
+        .set({ kind: "emailSmtp" })
+        .where(eq(schema.credentials.id, row.id))
+        .run();
+      continue;
+    }
+
+    const clone = db.insert(schema.credentials).values({
+      name: `${row.name} (SMTP)`,
+      kind: "emailSmtp",
+      payload: row.payload,
+    }).returning({ id: schema.credentials.id }).get();
+
+    for (const ref of emailRefs) {
+      db.update(schema.notifications)
+        .set({ credentialId: clone.id })
+        .where(eq(schema.notifications.id, ref.id))
+        .run();
+    }
   }
 }
 

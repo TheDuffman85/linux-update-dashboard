@@ -5,6 +5,10 @@ import * as notificationService from "../services/notification-service";
 import { getDb } from "../db";
 import { notifications } from "../db/schema";
 import { getProvider, getProviderNames } from "../services/notifications";
+import {
+  buildEffectiveNotificationConfig,
+  sanitizeNotificationConfig,
+} from "../services/notification-service";
 
 const VALID_TYPES = getProviderNames();
 const VALID_EVENTS = ["updates", "unreachable"];
@@ -86,6 +90,9 @@ notificationsRouter.post("/", async (c) => {
   }
 
   const { name, type, enabled, notifyOn, systemIds, config } = body;
+  const credentialId = body.credentialId === null || body.credentialId === undefined
+    ? null
+    : parseId(String(body.credentialId));
 
   // Validate name
   if (typeof name !== "string" || !name.trim() || name.length > MAX_NAME_LENGTH) {
@@ -103,7 +110,20 @@ notificationsRouter.post("/", async (c) => {
     return c.json({ error: configShapeError }, 400);
   }
 
-  const providerConfigError = validateProviderConfig(type, config);
+  if (body.credentialId !== undefined && body.credentialId !== null && !credentialId) {
+    return c.json({ error: "credentialId must be null or a positive integer" }, 400);
+  }
+
+  const effectiveConfig = buildEffectiveNotificationConfig(
+    type,
+    config,
+    credentialId
+  );
+  if (effectiveConfig === null) {
+    return c.json({ error: "Selected credential is not compatible with this notification type" }, 400);
+  }
+
+  const providerConfigError = validateProviderConfig(type, effectiveConfig);
   if (providerConfigError) {
     return c.json({ error: providerConfigError }, 400);
   }
@@ -140,6 +160,7 @@ notificationsRouter.post("/", async (c) => {
     notifyOn,
     systemIds,
     config,
+    credentialId,
     schedule: schedule ?? null,
   });
 
@@ -208,6 +229,18 @@ notificationsRouter.put("/:id", async (c) => {
     allowed.config = body.config;
   }
 
+  if (body.credentialId !== undefined) {
+    if (body.credentialId !== null) {
+      const parsedCredentialId = parseId(String(body.credentialId));
+      if (!parsedCredentialId) {
+        return c.json({ error: "credentialId must be null or a positive integer" }, 400);
+      }
+      allowed.credentialId = parsedCredentialId;
+    } else {
+      allowed.credentialId = null;
+    }
+  }
+
   if (body.schedule !== undefined) {
     if (!isValidSchedule(body.schedule)) {
       return c.json({ error: "schedule must be null, \"immediate\", or a valid cron expression" }, 400);
@@ -215,15 +248,30 @@ notificationsRouter.put("/:id", async (c) => {
     allowed.schedule = body.schedule;
   }
 
-  if (body.type !== undefined || body.config !== undefined) {
-    const mergedConfig = {
-      ...notificationService.sanitizeNotificationConfig(existing.type, parseConfigJson(existing.config)),
+  if (body.type !== undefined || body.config !== undefined || body.credentialId !== undefined) {
+    const mergedConfig = notificationService.sanitizeNotificationConfig(
+      existing.type,
+      parseConfigJson(existing.config)
+    );
+    const mergedType = typeof body.type === "string" ? body.type : existing.type;
+    const rawConfigForValidation = {
+      ...mergedConfig,
       ...(body.config ?? {}),
     };
-    const mergedType = typeof body.type === "string" ? body.type : existing.type;
+    const mergedCredentialId = Object.prototype.hasOwnProperty.call(allowed, "credentialId")
+      ? (allowed.credentialId as number | null)
+      : existing.credentialId;
+    const effectiveConfig = notificationService.buildEffectiveNotificationConfig(
+      mergedType,
+      rawConfigForValidation,
+      mergedCredentialId
+    );
+    if (effectiveConfig === null) {
+      return c.json({ error: "Selected credential is not compatible with this notification type" }, 400);
+    }
     const providerConfigError = validateProviderConfig(
       mergedType,
-      notificationService.sanitizeNotificationConfig(mergedType, mergedConfig)
+      effectiveConfig
     );
     if (providerConfigError) {
       return c.json({ error: providerConfigError }, 400);
@@ -296,13 +344,31 @@ notificationsRouter.post("/test", async (c) => {
     );
   }
 
-  const providerConfigError = validateProviderConfig(type, effectiveConfig);
+  const credentialId = body.credentialId === null || body.credentialId === undefined
+    ? existingId !== undefined
+      ? getDb().select({ credentialId: notifications.credentialId }).from(notifications).where(eq(notifications.id, existingId)).get()?.credentialId ?? null
+      : null
+    : parseId(String(body.credentialId));
+  if (body.credentialId !== undefined && body.credentialId !== null && !credentialId) {
+    return c.json({ error: "credentialId must be null or a positive integer" }, 400);
+  }
+
+  const effectiveWithCredential = notificationService.buildEffectiveNotificationConfig(
+    type,
+    notificationService.sanitizeNotificationConfig(type, effectiveConfig),
+    credentialId
+  );
+  if (effectiveWithCredential === null) {
+    return c.json({ error: "Selected credential is not compatible with this notification type" }, 400);
+  }
+
+  const providerConfigError = validateProviderConfig(type, effectiveWithCredential);
   if (providerConfigError) {
     return c.json({ error: providerConfigError }, 400);
   }
 
   try {
-    const result = await notificationService.testNotificationConfig(type, effectiveConfig, name);
+    const result = await notificationService.testNotificationConfig(type, effectiveWithCredential, name);
     return c.json(result);
   } catch {
     return c.json({ success: false, error: "Internal error while sending test notification" }, 500);

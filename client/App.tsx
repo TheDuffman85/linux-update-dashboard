@@ -7,6 +7,7 @@ import SystemsList from "./pages/SystemsList";
 import SystemDetail from "./pages/SystemDetail";
 import Settings from "./pages/Settings";
 import Notifications from "./pages/Notifications";
+import Credentials from "./pages/Credentials";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, setupRequired } = useAuth();
@@ -79,6 +80,14 @@ export default function App() {
         element={
           <AuthGuard>
             <Notifications />
+          </AuthGuard>
+        }
+      />
+      <Route
+        path="/credentials"
+        element={
+          <AuthGuard>
+            <Credentials />
           </AuthGuard>
         }
       />

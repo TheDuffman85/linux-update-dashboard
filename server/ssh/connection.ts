@@ -8,6 +8,11 @@ import {
   createSafeSshDebugHook,
   type SSHConnectContext,
 } from "./diagnostics";
+import type { PublicKeyAuthMethod } from "ssh2";
+import {
+  buildSshCertificateParsedKey,
+  resolveSystemCredential,
+} from "../services/credential-service";
 
 // Non-interactive SSH sessions often have a minimal PATH; force C locale so
 // package-manager output is always in English for reliable parsing.
@@ -195,6 +200,11 @@ export class SSHConnectionManager {
       connectConfig.password = this.encryptor.decrypt(
         system.encryptedPassword as string
       );
+    } else if (meta.authType === "password" && system.credentialId) {
+      const credential = resolveSystemCredential(Number(system.credentialId));
+      if (credential?.encryptedPassword) {
+        connectConfig.password = this.encryptor.decrypt(credential.encryptedPassword);
+      }
     } else if (meta.authType === "key" && system.encryptedPrivateKey) {
       connectConfig.privateKey = this.encryptor.decrypt(
         system.encryptedPrivateKey as string
@@ -202,6 +212,29 @@ export class SSHConnectionManager {
       if (system.encryptedKeyPassphrase) {
         connectConfig.passphrase = this.encryptor.decrypt(
           system.encryptedKeyPassphrase as string
+        );
+      }
+    } else if (meta.authType === "key" && system.credentialId) {
+      const credential = resolveSystemCredential(Number(system.credentialId));
+      if (credential?.kind === "certificate") {
+        const parsedKey = buildSshCertificateParsedKey(credential);
+        if (parsedKey) {
+          connectConfig.authHandler = [
+            {
+              type: "publickey",
+              username: credential.username,
+              key: parsedKey,
+            } satisfies PublicKeyAuthMethod,
+          ];
+        }
+      } else if (credential?.encryptedPrivateKey) {
+        connectConfig.privateKey = this.encryptor.decrypt(
+          credential.encryptedPrivateKey
+        );
+      }
+      if (credential?.encryptedKeyPassphrase) {
+        connectConfig.passphrase = this.encryptor.decrypt(
+          credential.encryptedKeyPassphrase
         );
       }
     }

@@ -12,6 +12,7 @@ import settingsRoutes from "./routes/settings";
 import notificationsRoutes from "./routes/notifications";
 import passkeysRoutes from "./routes/passkeys";
 import apiTokensRoutes from "./routes/api-tokens";
+import credentialsRoutes from "./routes/credentials";
 
 export { websocket };
 
@@ -56,6 +57,7 @@ export function createApp() {
   app.route("/api", updatesRoutes);
   app.route("/api/settings", settingsRoutes);
   app.route("/api/notifications", notificationsRoutes);
+  app.route("/api/credentials", credentialsRoutes);
   app.route("/api/passkeys", passkeysRoutes);
   app.route("/api/tokens", apiTokensRoutes);
 

@@ -1,14 +1,38 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { Hono } from "hono";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { closeDatabase, getDb, initDatabase } from "../../server/db";
+import { credentials } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import systemsRoutes from "../../server/routes/systems";
 
 describe("systems test-connection route", () => {
-  test("returns a debug reference on connection failure", async () => {
-    initEncryptor(randomBytes(32).toString("base64"));
+  let tempDir: string;
 
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-system-test-connection-"));
+    initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("returns a debug reference on connection failure", async () => {
+    const credentialId = getDb().insert(credentials).values({
+      name: "Ops password",
+      kind: "usernamePassword",
+      payload: JSON.stringify({
+        username: "ops",
+        password: "encrypted-password",
+      }),
+    }).returning({ id: credentials.id }).get().id;
     const sshManager = initSSHManager(1, 1, 1, getEncryptor());
     (sshManager as any).testConnection = async () => ({
       success: false,
@@ -25,8 +49,7 @@ describe("systems test-connection route", () => {
       body: JSON.stringify({
         hostname: "host.example",
         port: 22,
-        username: "ops",
-        authType: "password",
+        credentialId,
       }),
     });
 

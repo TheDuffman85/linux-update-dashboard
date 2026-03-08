@@ -5,6 +5,7 @@ import { getDb } from "../db";
 import { notifications, systems, updateCache } from "../db/schema";
 import { getProvider, type NotificationPayload } from "./notifications";
 import { getEncryptor } from "../security";
+import { resolveNotificationCredentialConfig } from "./credential-service";
 
 // Sensitive config keys that need encryption per provider type
 const SENSITIVE_KEYS: Record<string, string[]> = {
@@ -74,6 +75,19 @@ export function mergeStoredSensitiveConfig(
   return merged;
 }
 
+export function buildEffectiveNotificationConfig(
+  type: string,
+  config: Record<string, string>,
+  credentialId: number | null | undefined
+): Record<string, string> | null {
+  const credentialConfig = resolveNotificationCredentialConfig(type, credentialId);
+  if (credentialConfig === null) return null;
+  return {
+    ...config,
+    ...(credentialConfig || {}),
+  };
+}
+
 function loadSanitizedConfig(row: { id: number; type: string; config: string }): Record<string, string> {
   const parsed = parseConfig(row.config);
   const sanitized = sanitizeNotificationConfig(row.type, parsed);
@@ -120,6 +134,7 @@ function serializeNotification(row: any) {
     id: row.id,
     name: row.name,
     type: row.type,
+    credentialId: row.credentialId ?? null,
     enabled: row.enabled === 1,
     notifyOn: JSON.parse(row.notifyOn || '["updates"]'),
     systemIds: row.systemIds ? JSON.parse(row.systemIds) : null,
@@ -152,6 +167,7 @@ export function createNotification(data: {
   enabled?: boolean;
   notifyOn?: string[];
   systemIds?: number[] | null;
+  credentialId?: number | null;
   config: Record<string, string>;
   schedule?: string | null;
 }) {
@@ -165,6 +181,7 @@ export function createNotification(data: {
   const result = db.insert(notifications).values({
     name: data.name,
     type: data.type,
+    credentialId: data.credentialId ?? null,
     enabled: data.enabled !== false ? 1 : 0,
     notifyOn: JSON.stringify(data.notifyOn || ["updates"]),
     systemIds: data.systemIds ? JSON.stringify(data.systemIds) : null,
@@ -183,6 +200,7 @@ export function updateNotification(
     enabled?: boolean;
     notifyOn?: string[];
     systemIds?: number[] | null;
+    credentialId?: number | null;
     config?: Record<string, string>;
     schedule?: string | null;
   }
@@ -200,6 +218,7 @@ export function updateNotification(
   if (data.enabled !== undefined) updates.enabled = data.enabled ? 1 : 0;
   if (data.notifyOn !== undefined) updates.notifyOn = JSON.stringify(data.notifyOn);
   if (data.systemIds !== undefined) updates.systemIds = data.systemIds ? JSON.stringify(data.systemIds) : null;
+  if (data.credentialId !== undefined) updates.credentialId = data.credentialId;
 
   if (data.schedule !== undefined) {
     const newSchedule = data.schedule === "immediate" ? null : (data.schedule || null);
@@ -253,7 +272,14 @@ export async function testNotification(id: number): Promise<{ success: boolean; 
   const row = db.select().from(notifications).where(eq(notifications.id, id)).get();
   if (!row) return { success: false, error: "Notification not found" };
 
-  const config = loadSanitizedConfig(row);
+  const config = buildEffectiveNotificationConfig(
+    row.type,
+    loadSanitizedConfig(row),
+    row.credentialId
+  );
+  if (!config) {
+    return { success: false, error: "Notification credential is missing or incompatible" };
+  }
   return testNotificationConfig(row.type, config, row.name);
 }
 

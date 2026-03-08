@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -12,6 +12,7 @@ import {
   type NotificationChannel,
 } from "../lib/notifications";
 import { useSystems } from "../lib/systems";
+import { useCredentials } from "../lib/credentials";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -64,11 +65,22 @@ function NotificationForm({
   loading,
 }: {
   initial?: NotificationChannel;
-  onSubmit: (data: any) => void;
+  onSubmit: (data: {
+    name: string;
+    type: string;
+    enabled: boolean;
+    notifyOn: string[];
+    systemIds: number[] | null;
+    credentialId: number | null;
+    config: Record<string, string>;
+    schedule: string | null;
+  }) => void;
   onCancel: () => void;
   loading: boolean;
 }) {
   const { data: systemsList } = useSystems();
+  const { data: emailCredentials } = useCredentials({ kind: "emailSmtp" });
+  const { data: ntfyCredentials } = useCredentials({ kind: "ntfyToken" });
   const testConfig = useTestNotificationConfig();
   const { addToast } = useToast();
   const [name, setName] = useState(initial?.name || "");
@@ -82,33 +94,25 @@ function NotificationForm({
     initial?.systemIds || []
   );
 
-  // Email config
-  const hasStoredSmtpPassword = initial?.config.smtpPassword === "(stored)";
   const [smtpHost, setSmtpHost] = useState(initial?.config.smtpHost || "");
   const [smtpPort, setSmtpPort] = useState(initial?.config.smtpPort || "587");
   const [smtpSecure, setSmtpSecure] = useState(
     initial?.config.smtpSecure !== "false"
   );
-  const [smtpUser, setSmtpUser] = useState(initial?.config.smtpUser || "");
-  const [smtpPassword, setSmtpPassword] = useState("");
   const [smtpFrom, setSmtpFrom] = useState(initial?.config.smtpFrom || "");
   const [emailTo, setEmailTo] = useState(initial?.config.emailTo || "");
   const [emailImportanceOverride, setEmailImportanceOverride] = useState(
     initial?.config.emailImportanceOverride || "auto"
   );
 
-  // ntfy config
-  const hasStoredNtfyToken = initial?.config.ntfyToken === "(stored)";
   const [ntfyUrl, setNtfyUrl] = useState(
     initial?.config.ntfyUrl || "https://ntfy.sh"
   );
   const [ntfyTopic, setNtfyTopic] = useState(initial?.config.ntfyTopic || "");
-  const [ntfyToken, setNtfyToken] = useState("");
   const [ntfyPriorityOverride, setNtfyPriorityOverride] = useState(
     initial?.config.ntfyPriorityOverride || "auto"
   );
 
-  // Schedule
   const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
   const initialPreset = initial?.schedule
     ? SCHEDULE_PRESETS.find((p) => p.value === initial.schedule)
@@ -124,6 +128,19 @@ function NotificationForm({
       ? initial.schedule
       : ""
   );
+
+  const [credentialId, setCredentialId] = useState<number | null>(
+    initial?.credentialId ?? null
+  );
+
+  const availableCredentials =
+    type === "email" ? emailCredentials ?? [] : ntfyCredentials ?? [];
+  useEffect(() => {
+    if (credentialId === null) return;
+    if (!availableCredentials.some((credential) => credential.id === credentialId)) {
+      setCredentialId(null);
+    }
+  }, [availableCredentials, credentialId]);
 
   const toggleNotifyOn = (event: string) => {
     setNotifyOn((prev) =>
@@ -145,8 +162,6 @@ function NotificationForm({
           smtpHost,
           smtpPort,
           smtpSecure: smtpSecure ? "true" : "false",
-          smtpUser,
-          smtpPassword: smtpPassword || (hasStoredSmtpPassword ? "(stored)" : ""),
           smtpFrom,
           emailTo,
           emailImportanceOverride,
@@ -154,7 +169,6 @@ function NotificationForm({
       : {
           ntfyUrl,
           ntfyTopic,
-          ntfyToken: ntfyToken || (hasStoredNtfyToken ? "(stored)" : ""),
           ntfyPriorityOverride,
         };
 
@@ -172,6 +186,7 @@ function NotificationForm({
       enabled,
       notifyOn,
       systemIds: allSystems ? null : selectedSystemIds,
+      credentialId,
       config: buildConfig(),
       schedule: getScheduleValue(),
     });
@@ -181,6 +196,7 @@ function NotificationForm({
     testConfig.mutate(
       {
         type,
+        credentialId,
         config: buildConfig(),
         name: name || undefined,
         existingId: initial?.id,
@@ -200,7 +216,6 @@ function NotificationForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Name & Type */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Name</label>
@@ -227,7 +242,6 @@ function NotificationForm({
         </div>
       </div>
 
-      {/* Enabled */}
       <label className="flex items-center gap-2">
         <input
           type="checkbox"
@@ -238,7 +252,6 @@ function NotificationForm({
         <span className="text-sm font-medium">Enabled</span>
       </label>
 
-      {/* Events */}
       <div>
         <span className={labelClass}>Events</span>
         <div className="flex gap-4">
@@ -263,7 +276,6 @@ function NotificationForm({
         </div>
       </div>
 
-      {/* Systems */}
       <div>
         <span className={labelClass}>Systems</span>
         <label className="flex items-center gap-2 mb-2">
@@ -302,7 +314,6 @@ function NotificationForm({
         )}
       </div>
 
-      {/* Schedule */}
       <div>
         <span className={labelClass}>Schedule</span>
         <div className="flex gap-4 mb-2">
@@ -361,88 +372,144 @@ function NotificationForm({
         )}
       </div>
 
-      {/* Type-specific config */}
-      {type === "email" && (
-        <div className="border-t border-border pt-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-            Email (SMTP)
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>SMTP Host</label>
-              <input
-                type="text"
-                value={smtpHost}
-                onChange={(e) => setSmtpHost(e.target.value)}
-                className={inputClass}
-                placeholder="smtp.example.com"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>SMTP Port</label>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                value={smtpPort}
-                onChange={(e) => setSmtpPort(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Username</label>
-              <input
-                type="text"
-                value={smtpUser}
-                onChange={(e) => setSmtpUser(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Password</label>
-              <input
-                type="password"
-                value={smtpPassword}
-                onChange={(e) => setSmtpPassword(e.target.value)}
-                className={inputClass}
-                placeholder={hasStoredSmtpPassword ? "(unchanged)" : ""}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>From Address</label>
-              <input
-                type="email"
-                value={smtpFrom}
-                onChange={(e) => setSmtpFrom(e.target.value)}
-                className={inputClass}
-                placeholder="dashboard@example.com"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>To Address(es)</label>
-              <input
-                type="text"
-                value={emailTo}
-                onChange={(e) => setEmailTo(e.target.value)}
-                className={inputClass}
-                placeholder="admin@example.com"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Importance</label>
-              <select
-                value={emailImportanceOverride}
-                onChange={(e) => setEmailImportanceOverride(e.target.value)}
-                className={inputClass}
-              >
-                {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+      <div className="border-t border-border pt-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
+          {type === "email" ? "Email (SMTP)" : "ntfy.sh"}
+        </h3>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {type === "email" ? (
+            <>
+              <div>
+                <label className={labelClass}>SMTP Host</label>
+                <input
+                  type="text"
+                  value={smtpHost}
+                  onChange={(e) => setSmtpHost(e.target.value)}
+                  className={inputClass}
+                  placeholder="smtp.example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>SMTP Port</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={smtpPort}
+                  onChange={(e) => setSmtpPort(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>SMTP Credential</label>
+                <select
+                  value={credentialId ?? ""}
+                  onChange={(e) =>
+                    setCredentialId(e.target.value ? Number(e.target.value) : null)
+                  }
+                  className={inputClass}
+                >
+                  <option value="">No SMTP auth</option>
+                  {availableCredentials.map((credential) => (
+                    <option key={credential.id} value={credential.id}>
+                      {credential.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelClass}>From Address</label>
+                <input
+                  type="email"
+                  value={smtpFrom}
+                  onChange={(e) => setSmtpFrom(e.target.value)}
+                  className={inputClass}
+                  placeholder="dashboard@example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>To Address(es)</label>
+                <input
+                  type="text"
+                  value={emailTo}
+                  onChange={(e) => setEmailTo(e.target.value)}
+                  className={inputClass}
+                  placeholder="admin@example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Importance</label>
+                <select
+                  value={emailImportanceOverride}
+                  onChange={(e) => setEmailImportanceOverride(e.target.value)}
+                  className={inputClass}
+                >
+                  {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className={labelClass}>Server URL</label>
+                <input
+                  type="url"
+                  value={ntfyUrl}
+                  onChange={(e) => setNtfyUrl(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Topic</label>
+                <input
+                  type="text"
+                  value={ntfyTopic}
+                  onChange={(e) => setNtfyTopic(e.target.value)}
+                  className={inputClass}
+                  placeholder="my-updates"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Access Credential</label>
+                <select
+                  value={credentialId ?? ""}
+                  onChange={(e) =>
+                    setCredentialId(e.target.value ? Number(e.target.value) : null)
+                  }
+                  className={inputClass}
+                >
+                  <option value="">No token</option>
+                  {availableCredentials.map((credential) => (
+                    <option key={credential.id} value={credential.id}>
+                      {credential.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelClass}>Priority</label>
+                <select
+                  value={ntfyPriorityOverride}
+                  onChange={(e) => setNtfyPriorityOverride(e.target.value)}
+                  className={inputClass}
+                >
+                  {NTFY_PRIORITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+
+        {type === "email" && (
           <label className="flex items-center gap-2 mt-3">
             <input
               type="checkbox"
@@ -452,63 +519,9 @@ function NotificationForm({
             />
             <span className="text-sm">Use TLS</span>
           </label>
-        </div>
-      )}
+        )}
+      </div>
 
-      {type === "ntfy" && (
-        <div className="border-t border-border pt-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-            ntfy.sh
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>Server URL</label>
-              <input
-                type="url"
-                value={ntfyUrl}
-                onChange={(e) => setNtfyUrl(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Topic</label>
-              <input
-                type="text"
-                value={ntfyTopic}
-                onChange={(e) => setNtfyTopic(e.target.value)}
-                className={inputClass}
-                placeholder="my-updates"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Access Token (optional)</label>
-              <input
-                type="password"
-                value={ntfyToken}
-                onChange={(e) => setNtfyToken(e.target.value)}
-                className={inputClass}
-                placeholder={hasStoredNtfyToken ? "(unchanged)" : ""}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Priority</label>
-              <select
-                value={ntfyPriorityOverride}
-                onChange={(e) => setNtfyPriorityOverride(e.target.value)}
-                className={inputClass}
-              >
-                {NTFY_PRIORITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Actions */}
       <div className="flex justify-end gap-3 pt-2">
         <button
           type="button"
@@ -556,7 +569,16 @@ export default function Notifications() {
   );
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
-  const handleCreate = (data: any) => {
+  const handleCreate = (data: {
+    name: string;
+    type: string;
+    enabled: boolean;
+    notifyOn: string[];
+    systemIds: number[] | null;
+    credentialId: number | null;
+    config: Record<string, string>;
+    schedule: string | null;
+  }) => {
     createNotification.mutate(data, {
       onSuccess: () => {
         setShowForm(false);
@@ -566,7 +588,16 @@ export default function Notifications() {
     });
   };
 
-  const handleUpdate = (data: any) => {
+  const handleUpdate = (data: {
+    name: string;
+    type: string;
+    enabled: boolean;
+    notifyOn: string[];
+    systemIds: number[] | null;
+    credentialId: number | null;
+    config: Record<string, string>;
+    schedule: string | null;
+  }) => {
     if (!editChannel) return;
     updateNotification.mutate(
       { id: editChannel.id, ...data },
@@ -670,8 +701,8 @@ export default function Notifications() {
                         e === "updates"
                           ? "Updates"
                           : e === "unreachable"
-                          ? "Unreachable"
-                          : e
+                            ? "Unreachable"
+                            : e
                       )
                       .join(", ")}
                   </td>
@@ -778,7 +809,6 @@ export default function Notifications() {
         </div>
       )}
 
-      {/* Add notification modal */}
       <Modal
         open={showForm}
         onClose={() => setShowForm(false)}
@@ -792,7 +822,6 @@ export default function Notifications() {
         />
       </Modal>
 
-      {/* Edit notification modal */}
       <Modal
         open={editChannel !== null}
         onClose={() => setEditChannel(null)}
@@ -809,7 +838,6 @@ export default function Notifications() {
         )}
       </Modal>
 
-      {/* Delete confirmation */}
       <ConfirmDialog
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
