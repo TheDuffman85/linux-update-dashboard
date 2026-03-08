@@ -6,6 +6,9 @@ import { notifications, systems, updateCache } from "../db/schema";
 import { getProvider, type NotificationPayload } from "./notifications";
 import { getEncryptor } from "../security";
 import { resolveNotificationCredentialConfig } from "./credential-service";
+import {
+  getAppUpdateStatus,
+} from "./app-update-service";
 
 // Sensitive config keys that need encryption per provider type
 const SENSITIVE_KEYS: Record<string, string[]> = {
@@ -141,6 +144,7 @@ function serializeNotification(row: any) {
     config: maskConfig(row.type, config),
     schedule: row.schedule || null,
     lastSentAt: row.lastSentAt || null,
+    lastAppVersionNotified: row.lastAppVersionNotified || null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -338,6 +342,14 @@ export interface CheckResult {
   nowUnreachable: boolean;
 }
 
+export interface AppUpdateEvent {
+  currentVersion: string | null;
+  currentBranch: string;
+  remoteVersion: string;
+  releaseUrl: string | null;
+  repoUrl: string | null;
+}
+
 export async function processScheduledResults(
   results: CheckResult[]
 ): Promise<void> {
@@ -414,31 +426,114 @@ export async function processScheduledResults(
   }
 }
 
+export async function processAppUpdateNotifications(): Promise<void> {
+  const db = getDb();
+  const channels = db
+    .select()
+    .from(notifications)
+    .where(eq(notifications.enabled, 1))
+    .all();
+
+  if (channels.length === 0) return;
+
+  const subscribedChannels = channels.filter((channel) => {
+    try {
+      const notifyOn = JSON.parse(channel.notifyOn || '["updates"]');
+      return Array.isArray(notifyOn) && notifyOn.includes("appUpdates");
+    } catch {
+      return false;
+    }
+  });
+
+  if (subscribedChannels.length === 0) return;
+
+  const status = await getAppUpdateStatus();
+  if (!status.updateAvailable || !status.remoteVersion) return;
+
+  const event: AppUpdateEvent = {
+    currentVersion: status.currentVersion,
+    currentBranch: status.currentBranch,
+    remoteVersion: status.remoteVersion,
+    releaseUrl: status.releaseUrl,
+    repoUrl: status.repoUrl,
+  };
+
+  for (const channel of subscribedChannels) {
+    const notifyOn: string[] = (() => {
+      try {
+        return JSON.parse(channel.notifyOn || '["updates"]');
+      } catch {
+        return ["updates"];
+      }
+    })();
+
+    if (!notifyOn.includes("appUpdates")) continue;
+    if (channel.lastAppVersionNotified === event.remoteVersion) continue;
+
+    const pending = parsePendingEvents(channel.pendingEvents);
+    if (pending.appUpdate?.remoteVersion === event.remoteVersion) continue;
+
+    if (isScheduled(channel.schedule)) {
+      appendPendingAppUpdate(channel.id, event);
+      continue;
+    }
+
+    const sent = await sendChannelNotification(channel, [], [], event);
+    if (!sent) continue;
+
+    db.update(notifications)
+      .set({
+        lastAppVersionNotified: event.remoteVersion,
+        updatedAt: new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, ""),
+      })
+      .where(eq(notifications.id, channel.id))
+      .run();
+  }
+}
+
 // --- Send notification for a single channel ---
 
 async function sendChannelNotification(
-  channel: { id: number; name: string; type: string; config: string },
+  channel: {
+    id: number;
+    name: string;
+    type: string;
+    config: string;
+    credentialId?: number | null;
+  },
   updateResults: CheckResult[],
   unreachableResults: CheckResult[],
-): Promise<void> {
-  const payload = buildBatchPayload(updateResults, unreachableResults);
+  appUpdate: AppUpdateEvent | null = null,
+): Promise<boolean> {
+  const payload = buildBatchPayload(updateResults, unreachableResults, appUpdate);
   const provider = getProvider(channel.type);
-  if (!provider) return;
+  if (!provider) return false;
 
-  const config = loadSanitizedConfig(channel);
+  const config = buildEffectiveNotificationConfig(
+    channel.type,
+    loadSanitizedConfig(channel),
+    channel.credentialId
+  );
+  if (!config) {
+    console.warn(`Notification [${channel.name}]: skipped - credential is missing or incompatible`);
+    return false;
+  }
   const configError = provider.validateConfig(config);
   if (configError) {
     console.warn(`Notification [${channel.name}]: skipped - ${configError}`);
-    return;
+    return false;
   }
 
   try {
     const result = await provider.send(payload, config);
     if (!result.success) {
       console.error(`Notification [${channel.name}] failed:`, result.error);
+      return false;
     }
+    return true;
   } catch (e) {
     console.error(`Notification [${channel.name}] error:`, e);
+    return false;
   }
 }
 
@@ -447,18 +542,25 @@ async function sendChannelNotification(
 interface PendingEvents {
   updates: CheckResult[];
   unreachable: CheckResult[];
+  appUpdate: AppUpdateEvent | null;
 }
 
 function parsePendingEvents(json: string | null): PendingEvents {
-  if (!json) return { updates: [], unreachable: [] };
+  if (!json) return { updates: [], unreachable: [], appUpdate: null };
   try {
     const parsed = JSON.parse(json);
     return {
       updates: Array.isArray(parsed.updates) ? parsed.updates : [],
       unreachable: Array.isArray(parsed.unreachable) ? parsed.unreachable : [],
+      appUpdate:
+        parsed.appUpdate &&
+        typeof parsed.appUpdate === "object" &&
+        typeof parsed.appUpdate.remoteVersion === "string"
+          ? parsed.appUpdate
+          : null,
     };
   } catch {
-    return { updates: [], unreachable: [] };
+    return { updates: [], unreachable: [], appUpdate: null };
   }
 }
 
@@ -489,6 +591,26 @@ function appendPendingEvents(
   const pending = parsePendingEvents(row?.pendingEvents ?? null);
   pending.updates = mergeCheckResults(pending.updates, updateResults);
   pending.unreachable = mergeCheckResults(pending.unreachable, unreachableResults);
+
+  db.update(notifications)
+    .set({ pendingEvents: JSON.stringify(pending) })
+    .where(eq(notifications.id, channelId))
+    .run();
+}
+
+function appendPendingAppUpdate(
+  channelId: number,
+  appUpdate: AppUpdateEvent,
+): void {
+  const db = getDb();
+  const row = db
+    .select({ pendingEvents: notifications.pendingEvents })
+    .from(notifications)
+    .where(eq(notifications.id, channelId))
+    .get();
+
+  const pending = parsePendingEvents(row?.pendingEvents ?? null);
+  pending.appUpdate = appUpdate;
 
   db.update(notifications)
     .set({ pendingEvents: JSON.stringify(pending) })
@@ -528,16 +650,31 @@ export async function processScheduledDigests(): Promise<void> {
     if (!channel.schedule || channel.schedule === "immediate") continue;
 
     const pending = parsePendingEvents(channel.pendingEvents);
-    if (pending.updates.length === 0 && pending.unreachable.length === 0) continue;
+    if (
+      pending.updates.length === 0 &&
+      pending.unreachable.length === 0 &&
+      !pending.appUpdate
+    ) continue;
 
     if (!shouldSendNow(channel.schedule, channel.lastSentAt)) continue;
 
     console.log(`Notification [${channel.name}]: sending scheduled digest`);
-    await sendChannelNotification(channel, pending.updates, pending.unreachable);
+    const sent = await sendChannelNotification(
+      channel,
+      pending.updates,
+      pending.unreachable,
+      pending.appUpdate
+    );
+    if (!sent) continue;
 
     const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
     db.update(notifications)
-      .set({ pendingEvents: null, lastSentAt: now })
+      .set({
+        pendingEvents: null,
+        lastSentAt: now,
+        lastAppVersionNotified:
+          pending.appUpdate?.remoteVersion ?? channel.lastAppVersionNotified,
+      })
       .where(eq(notifications.id, channel.id))
       .run();
   }
@@ -547,7 +684,8 @@ export async function processScheduledDigests(): Promise<void> {
 
 function buildBatchPayload(
   updateResults: CheckResult[],
-  unreachableResults: CheckResult[]
+  unreachableResults: CheckResult[],
+  appUpdate: AppUpdateEvent | null = null,
 ): NotificationPayload {
   const totalUpdates = updateResults.reduce((s, r) => s + r.updateCount, 0);
   const totalSecurity = updateResults.reduce((s, r) => s + r.securityCount, 0);
@@ -582,6 +720,28 @@ function buildBatchPayload(
     if (body) body += "\n\n";
     body += lines;
     if (!title) title = "System(s) unreachable";
+  }
+
+  if (appUpdate) {
+    tags.push("arrow_up");
+    const prefix = appUpdate.currentBranch === "dev" ? "dev-" : "v";
+    const currentVersion = appUpdate.currentVersion
+      ? `${prefix}${appUpdate.currentVersion.replace(/^dev-/, "")}`
+      : "current build";
+    const remoteVersion = `${prefix}${appUpdate.remoteVersion.replace(/^dev-/, "")}`;
+    const lines = [
+      `Linux Update Dashboard: ${currentVersion} -> ${remoteVersion}`,
+    ];
+
+    if (appUpdate.releaseUrl) {
+      lines.push(appUpdate.releaseUrl);
+    } else if (appUpdate.repoUrl) {
+      lines.push(appUpdate.repoUrl);
+    }
+
+    if (body) body += "\n\n";
+    body += lines.join("\n");
+    if (!title) title = "Application update available";
   }
 
   return {

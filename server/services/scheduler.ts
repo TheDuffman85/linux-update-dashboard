@@ -21,72 +21,79 @@ async function runCheck(forceAll = false): Promise<void> {
     const staleIds = forceAll
       ? cacheService.getAllSystemIds()
       : cacheService.getStaleSystemIds();
-    if (staleIds.length === 0) return;
+    if (staleIds.length > 0) {
+      logger.debug("Scheduler refreshing systems", {
+        count: staleIds.length,
+        mode: forceAll ? "all" : "stale",
+      });
 
-    logger.debug("Scheduler refreshing systems", {
-      count: staleIds.length,
-      mode: forceAll ? "all" : "stale",
-    });
+      const db = getDb();
 
-    const db = getDb();
+      // Snapshot reachability BEFORE checks
+      const preCheckState = new Map<
+        number,
+        { name: string; wasReachable: boolean }
+      >();
+      for (const id of staleIds) {
+        const system = db
+          .select({ name: systems.name, isReachable: systems.isReachable })
+          .from(systems)
+          .where(eq(systems.id, id))
+          .get();
+        if (system) {
+          preCheckState.set(id, {
+            name: system.name,
+            wasReachable: system.isReachable === 1,
+          });
+        }
+      }
 
-    // Snapshot reachability BEFORE checks
-    const preCheckState = new Map<
-      number,
-      { name: string; wasReachable: boolean }
-    >();
-    for (const id of staleIds) {
-      const system = db
-        .select({ name: systems.name, isReachable: systems.isReachable })
-        .from(systems)
-        .where(eq(systems.id, id))
-        .get();
-      if (system) {
-        preCheckState.set(id, {
-          name: system.name,
-          wasReachable: system.isReachable === 1,
+      // Run checks (existing logic)
+      await Promise.allSettled(
+        staleIds.map((id) => updateService.checkUpdates(id))
+      );
+
+      // Build results for notification processing
+      const checkResults: notificationService.CheckResult[] = [];
+      for (const id of staleIds) {
+        const pre = preCheckState.get(id);
+        if (!pre) continue;
+
+        const system = db
+          .select({ isReachable: systems.isReachable })
+          .from(systems)
+          .where(eq(systems.id, id))
+          .get();
+
+        const updates = db
+          .select({ isSecurity: updateCache.isSecurity })
+          .from(updateCache)
+          .where(eq(updateCache.systemId, id))
+          .all();
+
+        checkResults.push({
+          systemId: id,
+          systemName: pre.name,
+          updateCount: updates.length,
+          securityCount: updates.filter((u) => u.isSecurity).length,
+          previouslyReachable: pre.wasReachable,
+          nowUnreachable: system?.isReachable === -1,
         });
       }
+
+      await notificationService
+        .processScheduledResults(checkResults)
+        .catch((e) =>
+          logger.error("Notification processing error", { error: String(e) })
+        );
     }
 
-    // Run checks (existing logic)
-    await Promise.allSettled(
-      staleIds.map((id) => updateService.checkUpdates(id))
-    );
-
-    // Build results for notification processing
-    const checkResults: notificationService.CheckResult[] = [];
-    for (const id of staleIds) {
-      const pre = preCheckState.get(id);
-      if (!pre) continue;
-
-      const system = db
-        .select({ isReachable: systems.isReachable })
-        .from(systems)
-        .where(eq(systems.id, id))
-        .get();
-
-      const updates = db
-        .select({ isSecurity: updateCache.isSecurity })
-        .from(updateCache)
-        .where(eq(updateCache.systemId, id))
-        .all();
-
-      checkResults.push({
-        systemId: id,
-        systemName: pre.name,
-        updateCount: updates.length,
-        securityCount: updates.filter((u) => u.isSecurity).length,
-        previouslyReachable: pre.wasReachable,
-        nowUnreachable: system?.isReachable === -1,
-      });
-    }
-
-    // Process notifications (non-blocking)
     await notificationService
-      .processScheduledResults(checkResults)
+      .processAppUpdateNotifications()
       .catch((e) =>
-        logger.error("Notification processing error", { error: String(e) })
+        logger.error("App update notification processing error", {
+          error: String(e),
+        })
       );
   } catch (e) {
     logger.error("Scheduler error", { error: String(e) });

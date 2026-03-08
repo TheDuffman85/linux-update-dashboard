@@ -173,6 +173,10 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     notify_on TEXT NOT NULL DEFAULT '["updates"]',
     system_ids TEXT,
     config TEXT NOT NULL,
+    schedule TEXT,
+    pending_events TEXT,
+    last_sent_at TEXT,
+    last_app_version_notified TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -256,6 +260,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   }
   try {
     _db.run(sql`ALTER TABLE notifications ADD COLUMN last_sent_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_app_version_notified TEXT`);
   } catch {
     // Column already exists
   }

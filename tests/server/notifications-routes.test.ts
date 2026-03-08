@@ -36,7 +36,7 @@ describe("notifications routes validation", () => {
         name: "Ops ntfy",
         type: "ntfy",
         enabled: true,
-        notifyOn: ["updates"],
+        notifyOn: ["updates", "appUpdates"],
         systemIds: null,
         config: {
           ntfyUrl: "https://ntfy.sh",
@@ -52,6 +52,7 @@ describe("notifications routes validation", () => {
 
     const stored = getDb().select().from(notifications).get();
     expect(stored?.config).toContain('"ntfyPriorityOverride":"urgent"');
+    expect(stored?.notifyOn).toBe('["updates","appUpdates"]');
   });
 
   test("rejects ntfy notifications with unsupported config keys", async () => {

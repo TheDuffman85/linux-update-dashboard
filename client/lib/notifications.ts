@@ -12,6 +12,7 @@ export interface NotificationChannel {
   config: Record<string, string>;
   schedule: string | null;
   lastSentAt: string | null;
+  lastAppVersionNotified?: string | null;
   createdAt: string;
   updatedAt: string;
 }

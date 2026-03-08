@@ -51,6 +51,12 @@ const EMAIL_IMPORTANCE_OPTIONS = [
   { value: "important", label: "Important" },
 ];
 
+const EVENT_LABELS: Record<string, string> = {
+  updates: "Updates",
+  unreachable: "Unreachable",
+  appUpdates: "Application updates",
+};
+
 function describeSchedule(cron: string | null): string {
   if (!cron) return "Immediate";
   const presetMatch = SCHEDULE_PRESETS.find((p) => p.value === cron);
@@ -254,7 +260,7 @@ function NotificationForm({
 
       <div>
         <span className={labelClass}>Events</span>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4">
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -272,6 +278,15 @@ function NotificationForm({
               className={checkboxClass}
             />
             <span className="text-sm">System unreachable</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={notifyOn.includes("appUpdates")}
+              onChange={() => toggleNotifyOn("appUpdates")}
+              className={checkboxClass}
+            />
+            <span className="text-sm">Application update available</span>
           </label>
         </div>
       </div>
@@ -697,13 +712,7 @@ export default function Notifications() {
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
                     {ch.notifyOn
-                      .map((e) =>
-                        e === "updates"
-                          ? "Updates"
-                          : e === "unreachable"
-                            ? "Unreachable"
-                            : e
-                      )
+                      .map((e) => EVENT_LABELS[e] || e)
                       .join(", ")}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400">

@@ -11,7 +11,7 @@ import {
 } from "../services/notification-service";
 
 const VALID_TYPES = getProviderNames();
-const VALID_EVENTS = ["updates", "unreachable"];
+const VALID_EVENTS = ["updates", "unreachable", "appUpdates"];
 const MAX_NAME_LENGTH = 100;
 const MAX_CONFIG_VALUE_LENGTH = 1000;
 
