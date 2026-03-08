@@ -1,4 +1,4 @@
-import { eq, and, isNotNull } from "drizzle-orm";
+import { eq, and, isNotNull, asc } from "drizzle-orm";
 import { createHash } from "crypto";
 import { Cron } from "croner";
 import { getDb } from "../db";
@@ -152,7 +152,11 @@ function serializeNotification(row: any) {
 
 export function listNotifications() {
   const db = getDb();
-  const rows = db.select().from(notifications).all();
+  const rows = db
+    .select()
+    .from(notifications)
+    .orderBy(asc(notifications.sortOrder), asc(notifications.name), asc(notifications.id))
+    .all();
   return rows.map(serializeNotification);
 }
 
@@ -173,6 +177,13 @@ export function createNotification(data: {
   schedule?: string | null;
 }) {
   const db = getDb();
+  const nextSortOrder =
+    db
+      .select({ sortOrder: notifications.sortOrder })
+      .from(notifications)
+      .orderBy(asc(notifications.sortOrder), asc(notifications.id))
+      .all()
+      .at(-1)?.sortOrder ?? -1;
   const encConfig = encryptConfig(
     data.type,
     sanitizeNotificationConfig(data.type, data.config)
@@ -180,6 +191,7 @@ export function createNotification(data: {
   const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
   const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
   const result = db.insert(notifications).values({
+    sortOrder: nextSortOrder + 1,
     name: data.name,
     type: data.type,
     enabled: data.enabled !== false ? 1 : 0,
@@ -261,6 +273,33 @@ export function deleteNotification(id: number) {
   if (!existing) return false;
   db.delete(notifications).where(eq(notifications.id, id)).run();
   return true;
+}
+
+export function reorderNotifications(notificationIds: number[]): void {
+  const db = getDb();
+  const existingNotifications = db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .orderBy(asc(notifications.sortOrder), asc(notifications.name), asc(notifications.id))
+    .all();
+  const existingIds = existingNotifications.map((notification) => notification.id);
+
+  if (notificationIds.length !== existingIds.length) {
+    throw new Error("Notification order must include every notification exactly once");
+  }
+  if (new Set(notificationIds).size !== notificationIds.length) {
+    throw new Error("Notification order contains duplicate IDs");
+  }
+  if (!existingIds.every((id) => notificationIds.includes(id))) {
+    throw new Error("Notification order contains unknown IDs");
+  }
+
+  for (const [sortOrder, id] of notificationIds.entries()) {
+    db.update(notifications)
+      .set({ sortOrder })
+      .where(eq(notifications.id, id))
+      .run();
+  }
 }
 
 // --- Test notification ---

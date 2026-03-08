@@ -33,6 +33,7 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
 
 export const credentials = sqliteTable("credentials", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  sortOrder: integer("sort_order").notNull().default(0),
   name: text("name").notNull(),
   kind: text("kind").notNull(),
   payload: text("payload").notNull(),
@@ -160,6 +161,7 @@ export const apiTokens = sqliteTable("api_tokens", {
 
 export const notifications = sqliteTable("notifications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  sortOrder: integer("sort_order").notNull().default(0),
   name: text("name").notNull(),
   type: text("type").notNull(),
   enabled: integer("enabled").notNull().default(1),

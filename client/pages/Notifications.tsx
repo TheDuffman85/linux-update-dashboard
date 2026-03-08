@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -7,6 +8,7 @@ import {
   useCreateNotification,
   useUpdateNotification,
   useDeleteNotification,
+  useReorderNotifications,
   useTestNotification,
   useTestNotificationConfig,
   type NotificationChannel,
@@ -68,6 +70,15 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];
+
+function moveNotification<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return items;
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
 
 function describeSchedule(cron: string | null): string {
   if (!cron) return "Immediate";
@@ -644,6 +655,7 @@ export default function Notifications() {
   const createNotification = useCreateNotification();
   const updateNotification = useUpdateNotification();
   const deleteNotification = useDeleteNotification();
+  const reorderNotifications = useReorderNotifications();
   const testNotification = useTestNotification();
   const { addToast } = useToast();
   const [showForm, setShowForm] = useState(false);
@@ -651,6 +663,64 @@ export default function Notifications() {
     null
   );
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [orderedChannels, setOrderedChannels] = useState<NotificationChannel[]>([]);
+  const orderedChannelsRef = useRef<NotificationChannel[]>([]);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const sortableRef = useRef<Sortable | null>(null);
+
+  useEffect(() => {
+    setOrderedChannels(channels ?? []);
+  }, [channels]);
+
+  useEffect(() => {
+    orderedChannelsRef.current = orderedChannels;
+  }, [orderedChannels]);
+
+  useEffect(() => {
+    const tbody = tbodyRef.current;
+    if (!tbody || orderedChannels.length <= 1) {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+      return;
+    }
+
+    sortableRef.current?.destroy();
+    sortableRef.current = new Sortable(tbody, {
+      animation: 150,
+      handle: ".drag-handle",
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      onEnd: (evt) => {
+        if (
+          evt.oldIndex === undefined ||
+          evt.newIndex === undefined ||
+          evt.oldIndex === evt.newIndex
+        ) {
+          return;
+        }
+
+        const previousChannels = orderedChannelsRef.current;
+        const nextChannels = moveNotification(previousChannels, evt.oldIndex, evt.newIndex);
+
+        setOrderedChannels(nextChannels);
+        reorderNotifications.mutate(nextChannels.map((channel) => channel.id), {
+          onError: (err) => {
+            setOrderedChannels(previousChannels);
+            addToast(err.message, "danger");
+          },
+        });
+      },
+    });
+
+    return () => {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+    };
+  }, [orderedChannels.length, reorderNotifications, addToast]);
+
+  useEffect(() => {
+    sortableRef.current?.option("disabled", reorderNotifications.isPending);
+  }, [reorderNotifications.isPending]);
 
   const handleCreate = (data: {
     name: string;
@@ -766,13 +836,30 @@ export default function Notifications() {
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {channels.map((ch) => (
+            <tbody ref={tbodyRef}>
+              {orderedChannels.map((ch) => (
                 <tr
                   key={ch.id}
                   className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
                 >
-                  <td className="px-4 py-3 font-medium">{ch.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
+                          reorderNotifications.isPending || orderedChannels.length < 2
+                            ? "cursor-not-allowed opacity-40"
+                            : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                        }`}
+                        title="Drag to reorder"
+                        aria-label={`Drag to reorder ${ch.name}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+                        </svg>
+                      </span>
+                      <span className="min-w-0 truncate font-medium">{ch.name}</span>
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                     {TYPE_LABELS[ch.type] || ch.type}
                   </td>

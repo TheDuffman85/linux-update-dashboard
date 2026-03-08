@@ -74,6 +74,20 @@ export function useUpdateNotification() {
   });
 }
 
+export function useReorderNotifications() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationIds: number[]) =>
+      apiFetch("/notifications/reorder", {
+        method: "PUT",
+        body: JSON.stringify({ notificationIds }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
 export function useDeleteNotification() {
   const qc = useQueryClient();
   return useMutation({

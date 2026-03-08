@@ -87,6 +87,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   _db.run(sql`CREATE TABLE IF NOT EXISTS credentials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     kind TEXT NOT NULL,
     payload TEXT NOT NULL,
@@ -166,6 +167,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   _db.run(sql`CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
@@ -270,6 +272,34 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     // Column already exists
   }
 
+  // Migration: add persisted credential ordering
+  try {
+    _db.run(sql`ALTER TABLE credentials ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    WITH ordered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
+      FROM credentials
+    )
+    UPDATE credentials
+    SET sort_order = (
+      SELECT row_num
+      FROM ordered
+      WHERE ordered.id = credentials.id
+    )
+    WHERE sort_order = 0
+      AND (SELECT coalesce(max(sort_order), 0) FROM credentials) = 0
+      AND (SELECT count(*) FROM credentials) > 1
+      AND EXISTS (
+        SELECT 1
+        FROM ordered
+        WHERE ordered.id = credentials.id
+          AND ordered.row_num <> 0
+      )
+  `);
+
   // Migration: add exclude from upgrade-all flag
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0`);
@@ -301,6 +331,34 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
         SELECT 1
         FROM ordered
         WHERE ordered.id = systems.id
+          AND ordered.row_num <> 0
+      )
+  `);
+
+  // Migration: add persisted notification ordering
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    WITH ordered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
+      FROM notifications
+    )
+    UPDATE notifications
+    SET sort_order = (
+      SELECT row_num
+      FROM ordered
+      WHERE ordered.id = notifications.id
+    )
+    WHERE sort_order = 0
+      AND (SELECT coalesce(max(sort_order), 0) FROM notifications) = 0
+      AND (SELECT count(*) FROM notifications) > 1
+      AND EXISTS (
+        SELECT 1
+        FROM ordered
+        WHERE ordered.id = notifications.id
           AND ordered.row_num <> 0
       )
   `);
@@ -483,6 +541,7 @@ function migrateCredentialsTable(): void {
   _sqlite.exec(`
     CREATE TABLE credentials_new (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       name TEXT NOT NULL,
       kind TEXT NOT NULL,
       payload TEXT NOT NULL,
@@ -491,8 +550,8 @@ function migrateCredentialsTable(): void {
     )
   `);
   _sqlite.exec(`
-    INSERT INTO credentials_new (id, name, kind, payload, created_at, updated_at)
-    SELECT id, name, kind, payload, created_at, updated_at
+    INSERT INTO credentials_new (id, sort_order, name, kind, payload, created_at, updated_at)
+    SELECT id, 0, name, kind, payload, created_at, updated_at
     FROM credentials
   `);
   _sqlite.exec("DROP TABLE credentials");

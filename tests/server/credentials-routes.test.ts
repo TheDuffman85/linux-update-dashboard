@@ -8,6 +8,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { credentials, systems } from "../../server/db/schema";
 import credentialsRoutes from "../../server/routes/credentials";
 import { initEncryptor } from "../../server/security";
+import { listCredentials } from "../../server/services/credential-service";
 
 describe("credentials routes", () => {
   let tempDir: string;
@@ -112,5 +113,70 @@ describe("credentials routes", () => {
     const body = await res.json();
     expect(body.error).toContain("in use");
     expect(body.references[0].name).toBe("Alpha");
+  });
+
+  test("reorders credentials when given a complete ordered ID list", async () => {
+    const inserted = getDb().insert(credentials).values([
+      {
+        sortOrder: 0,
+        name: "Alpha",
+        kind: "usernamePassword",
+        payload: JSON.stringify({ username: "alpha", password: "secret-a" }),
+      },
+      {
+        sortOrder: 1,
+        name: "Bravo",
+        kind: "usernamePassword",
+        payload: JSON.stringify({ username: "bravo", password: "secret-b" }),
+      },
+      {
+        sortOrder: 2,
+        name: "Charlie",
+        kind: "usernamePassword",
+        payload: JSON.stringify({ username: "charlie", password: "secret-c" }),
+      },
+    ]).returning({ id: credentials.id }).all();
+
+    const res = await app.request("/api/credentials/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        credentialIds: [inserted[2].id, inserted[0].id, inserted[1].id],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(listCredentials().map((credential) => credential.name)).toEqual([
+      "Charlie",
+      "Alpha",
+      "Bravo",
+    ]);
+  });
+
+  test("rejects credential reorder payloads that omit credentials", async () => {
+    const inserted = getDb().insert(credentials).values([
+      {
+        name: "Alpha",
+        kind: "usernamePassword",
+        payload: JSON.stringify({ username: "alpha", password: "secret-a" }),
+      },
+      {
+        name: "Bravo",
+        kind: "usernamePassword",
+        payload: JSON.stringify({ username: "bravo", password: "secret-b" }),
+      },
+    ]).returning({ id: credentials.id }).all();
+
+    const res = await app.request("/api/credentials/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        credentialIds: [inserted[0].id],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("include every credential exactly once");
   });
 });

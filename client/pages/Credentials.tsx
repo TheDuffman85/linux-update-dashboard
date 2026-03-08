@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -9,6 +10,7 @@ import {
   useCreateCredential,
   useUpdateCredential,
   useDeleteCredential,
+  useReorderCredentials,
   type CredentialDetail,
   type CredentialKind,
   type CredentialSummary,
@@ -24,6 +26,15 @@ const KIND_LABELS: Record<CredentialKind, string> = {
   sshKey: "SSH Key",
   certificate: "Certificate",
 };
+
+function moveCredential<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return items;
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
 
 function CredentialForm({
   initial,
@@ -230,11 +241,70 @@ export default function Credentials() {
   const createCredential = useCreateCredential();
   const updateCredential = useUpdateCredential();
   const deleteCredential = useDeleteCredential();
+  const reorderCredentials = useReorderCredentials();
   const { addToast } = useToast();
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteCredentialItem, setDeleteCredentialItem] = useState<CredentialSummary | null>(null);
+  const [orderedCredentials, setOrderedCredentials] = useState<CredentialSummary[]>([]);
+  const orderedCredentialsRef = useRef<CredentialSummary[]>([]);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const sortableRef = useRef<Sortable | null>(null);
   const { data: editCredential } = useCredential(editId);
+
+  useEffect(() => {
+    setOrderedCredentials(credentials ?? []);
+  }, [credentials]);
+
+  useEffect(() => {
+    orderedCredentialsRef.current = orderedCredentials;
+  }, [orderedCredentials]);
+
+  useEffect(() => {
+    const tbody = tbodyRef.current;
+    if (!tbody || orderedCredentials.length <= 1) {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+      return;
+    }
+
+    sortableRef.current?.destroy();
+    sortableRef.current = new Sortable(tbody, {
+      animation: 150,
+      handle: ".drag-handle",
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      onEnd: (evt) => {
+        if (
+          evt.oldIndex === undefined ||
+          evt.newIndex === undefined ||
+          evt.oldIndex === evt.newIndex
+        ) {
+          return;
+        }
+
+        const previousCredentials = orderedCredentialsRef.current;
+        const nextCredentials = moveCredential(previousCredentials, evt.oldIndex, evt.newIndex);
+
+        setOrderedCredentials(nextCredentials);
+        reorderCredentials.mutate(nextCredentials.map((credential) => credential.id), {
+          onError: (err) => {
+            setOrderedCredentials(previousCredentials);
+            addToast(err.message, "danger");
+          },
+        });
+      },
+    });
+
+    return () => {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+    };
+  }, [orderedCredentials.length, reorderCredentials, addToast]);
+
+  useEffect(() => {
+    sortableRef.current?.option("disabled", reorderCredentials.isPending);
+  }, [reorderCredentials.isPending]);
 
   const handleCreate = (data: {
     name: string;
@@ -310,13 +380,30 @@ export default function Credentials() {
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {credentials.map((credential) => (
+            <tbody ref={tbodyRef}>
+              {orderedCredentials.map((credential) => (
                 <tr
                   key={credential.id}
                   className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
                 >
-                  <td className="px-4 py-3 font-medium">{credential.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
+                          reorderCredentials.isPending || orderedCredentials.length < 2
+                            ? "cursor-not-allowed opacity-40"
+                            : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                        }`}
+                        title="Drag to reorder"
+                        aria-label={`Drag to reorder ${credential.name}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+                        </svg>
+                      </span>
+                      <span className="min-w-0 truncate font-medium">{credential.name}</span>
+                    </div>
+                  </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
                     {KIND_LABELS[credential.kind]}
                   </td>

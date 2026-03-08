@@ -447,4 +447,98 @@ describe("notifications routes validation", () => {
       .get();
     expect(stored?.config).not.toContain("staleField");
   });
+
+  test("reorders notifications when given a complete ordered ID list", async () => {
+    const inserted = getDb().insert(notifications).values([
+      {
+        sortOrder: 0,
+        name: "Alpha",
+        type: "ntfy",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify({
+          ntfyUrl: "https://ntfy.sh",
+          ntfyTopic: "alpha",
+        }),
+      },
+      {
+        sortOrder: 1,
+        name: "Bravo",
+        type: "ntfy",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify({
+          ntfyUrl: "https://ntfy.sh",
+          ntfyTopic: "bravo",
+        }),
+      },
+      {
+        sortOrder: 2,
+        name: "Charlie",
+        type: "ntfy",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify({
+          ntfyUrl: "https://ntfy.sh",
+          ntfyTopic: "charlie",
+        }),
+      },
+    ]).returning({ id: notifications.id }).all();
+
+    const res = await app.request("/api/notifications/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        notificationIds: [inserted[2].id, inserted[0].id, inserted[1].id],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const listRes = await app.request("/api/notifications");
+    expect(listRes.status).toBe(200);
+    const body = await listRes.json();
+    expect(body.notifications.map((notification: { name: string }) => notification.name)).toEqual([
+      "Charlie",
+      "Alpha",
+      "Bravo",
+    ]);
+  });
+
+  test("rejects notification reorder payloads that omit notifications", async () => {
+    const inserted = getDb().insert(notifications).values([
+      {
+        name: "Alpha",
+        type: "ntfy",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify({
+          ntfyUrl: "https://ntfy.sh",
+          ntfyTopic: "alpha",
+        }),
+      },
+      {
+        name: "Bravo",
+        type: "ntfy",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify({
+          ntfyUrl: "https://ntfy.sh",
+          ntfyTopic: "bravo",
+        }),
+      },
+    ]).returning({ id: notifications.id }).all();
+
+    const res = await app.request("/api/notifications/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        notificationIds: [inserted[0].id],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("include every notification exactly once");
+  });
 });

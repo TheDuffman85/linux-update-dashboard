@@ -94,6 +94,20 @@ export function useUpdateCredential() {
   });
 }
 
+export function useReorderCredentials() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (credentialIds: number[]) =>
+      apiFetch("/credentials/reorder", {
+        method: "PUT",
+        body: JSON.stringify({ credentialIds }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["credentials"] });
+    },
+  });
+}
+
 export function useDeleteCredential() {
   const qc = useQueryClient();
   return useMutation({

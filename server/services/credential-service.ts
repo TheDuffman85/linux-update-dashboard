@@ -217,7 +217,11 @@ export function listCredentials(filters?: {
   kind?: CredentialKind;
 }): CredentialSummary[] {
   const db = getDb();
-  const rows = db.select().from(credentials).orderBy(asc(credentials.name), asc(credentials.id)).all();
+  const rows = db
+    .select()
+    .from(credentials)
+    .orderBy(asc(credentials.sortOrder), asc(credentials.name), asc(credentials.id))
+    .all();
 
   return rows
     .filter((row): row is typeof row & { kind: CredentialKind } =>
@@ -250,10 +254,19 @@ export function createCredential(data: {
   kind: CredentialKind;
   payload: Record<string, string>;
 }): number {
+  const db = getDb();
   const persistedPayload = buildPersistedPayload(data.kind, data.payload);
-  const result = getDb()
+  const nextSortOrder =
+    db
+      .select({ sortOrder: credentials.sortOrder })
+      .from(credentials)
+      .orderBy(asc(credentials.sortOrder), asc(credentials.id))
+      .all()
+      .at(-1)?.sortOrder ?? -1;
+  const result = db
     .insert(credentials)
     .values({
+      sortOrder: nextSortOrder + 1,
       name: data.name.trim(),
       kind: data.kind,
       payload: JSON.stringify(persistedPayload),
@@ -303,6 +316,33 @@ export function deleteCredential(id: number): {
 
   getDb().delete(credentials).where(eq(credentials.id, id)).run();
   return { ok: true };
+}
+
+export function reorderCredentials(credentialIds: number[]): void {
+  const db = getDb();
+  const existingCredentials = db
+    .select({ id: credentials.id })
+    .from(credentials)
+    .orderBy(asc(credentials.sortOrder), asc(credentials.name), asc(credentials.id))
+    .all();
+  const existingIds = existingCredentials.map((credential) => credential.id);
+
+  if (credentialIds.length !== existingIds.length) {
+    throw new Error("Credential order must include every credential exactly once");
+  }
+  if (new Set(credentialIds).size !== credentialIds.length) {
+    throw new Error("Credential order contains duplicate IDs");
+  }
+  if (!existingIds.every((id) => credentialIds.includes(id))) {
+    throw new Error("Credential order contains unknown IDs");
+  }
+
+  for (const [sortOrder, id] of credentialIds.entries()) {
+    db.update(credentials)
+      .set({ sortOrder })
+      .where(eq(credentials.id, id))
+      .run();
+  }
 }
 
 export function isSystemCredentialKind(kind: CredentialKind): boolean {

@@ -8,12 +8,39 @@ function parseId(raw: string): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+function parseCredentialIdList(input: unknown): number[] | null {
+  if (!Array.isArray(input)) return null;
+
+  const ids = input.map((value) => Number(value));
+  if (!ids.every((id) => Number.isInteger(id) && id > 0)) return null;
+
+  return ids;
+}
+
 credentialsRouter.get("/", (c) => {
   const kind = c.req.query("kind");
   const credentials = credentialService.listCredentials({
     kind: kind as credentialService.CredentialKind | undefined,
   });
   return c.json({ credentials });
+});
+
+credentialsRouter.put("/reorder", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const credentialIds = parseCredentialIdList(body?.credentialIds);
+
+  if (!credentialIds) {
+    return c.json({ error: "credentialIds must be an array of positive integers" }, 400);
+  }
+
+  try {
+    credentialService.reorderCredentials(credentialIds);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reorder credentials";
+    return c.json({ error: message }, 400);
+  }
+
+  return c.json({ status: "ok" });
 });
 
 credentialsRouter.get("/:id", (c) => {

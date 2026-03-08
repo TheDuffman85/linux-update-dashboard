@@ -32,6 +32,15 @@ function parseId(raw: string): number | null {
   return id;
 }
 
+function parseNotificationIdList(input: unknown): number[] | null {
+  if (!Array.isArray(input)) return null;
+
+  const ids = input.map((value) => Number(value));
+  if (!ids.every((id) => Number.isInteger(id) && id > 0)) return null;
+
+  return ids;
+}
+
 function parseConfigJson(raw: string): Record<string, string> {
   try {
     return JSON.parse(raw);
@@ -69,6 +78,24 @@ const notificationsRouter = new Hono();
 notificationsRouter.get("/", (c) => {
   const items = notificationService.listNotifications();
   return c.json({ notifications: items });
+});
+
+notificationsRouter.put("/reorder", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const notificationIds = parseNotificationIdList(body?.notificationIds);
+
+  if (!notificationIds) {
+    return c.json({ error: "notificationIds must be an array of positive integers" }, 400);
+  }
+
+  try {
+    notificationService.reorderNotifications(notificationIds);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reorder notifications";
+    return c.json({ error: message }, 400);
+  }
+
+  return c.json({ status: "ok" });
 });
 
 // Get single notification
