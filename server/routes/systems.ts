@@ -3,10 +3,10 @@ import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import * as updateService from "../services/update-service";
 import { getSSHManager } from "../ssh/connection";
-import { getEncryptor } from "../security";
 import { detectPackageManagers } from "../ssh/detector";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
+import { resolveSystemCredential } from "../services/credential-service";
 
 const systems = new Hono();
 
@@ -17,8 +17,6 @@ function parseId(raw: string): number | null {
 }
 
 const VALID_HOSTNAME = /^[a-zA-Z0-9]([a-zA-Z0-9._:-]*[a-zA-Z0-9])?$/;
-const VALID_USERNAME = /^[a-zA-Z0-9._@-]+$/;
-const VALID_AUTH_TYPES = ["password", "key"];
 
 function validateSystemInput(body: Record<string, unknown>): string | null {
   if (!body.name || typeof body.name !== "string" || body.name.length > 255)
@@ -30,10 +28,10 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       return "port must be an integer between 1 and 65535";
   }
-  if (!body.username || typeof body.username !== "string" || body.username.length > 128 || !VALID_USERNAME.test(body.username))
-    return "username is required (max 128 chars, alphanumeric/._@-)";
-  if (body.authType && !VALID_AUTH_TYPES.includes(body.authType as string))
-    return "authType must be 'password' or 'key'";
+  const credentialId = Number(body.credentialId);
+  if (!Number.isInteger(credentialId) || credentialId <= 0) {
+    return "credentialId must be a positive integer";
+  }
   return null;
 }
 
@@ -62,6 +60,16 @@ function getSystemWriteErrorResponse(error: unknown): Response | null {
     );
   }
 
+  if (error instanceof Error && error.message.includes("credential")) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
   return null;
 }
 
@@ -75,8 +83,6 @@ function serializeSystem(s: Record<string, unknown>) {
   } = s;
   return {
     ...safe,
-    hasPassword: !!encryptedPassword,
-    hasPrivateKey: !!encryptedPrivateKey,
     hasSudoPassword: !!encryptedSudoPassword,
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
@@ -140,11 +146,7 @@ systems.post("/", async (c) => {
       name: body.name,
       hostname: body.hostname,
       port: body.port || 22,
-      authType: body.authType || "password",
-      username: body.username,
-      password: body.password || undefined,
-      privateKey: body.privateKey || undefined,
-      keyPassphrase: body.keyPassphrase || undefined,
+      credentialId: Number(body.credentialId),
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers || undefined,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
@@ -199,11 +201,7 @@ systems.put("/:id", async (c) => {
       name: body.name,
       hostname: body.hostname,
       port: body.port || 22,
-      authType: body.authType || "password",
-      username: body.username,
-      password: body.password || undefined,
-      privateKey: body.privateKey || undefined,
-      keyPassphrase: body.keyPassphrase || undefined,
+      credentialId: Number(body.credentialId),
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers || undefined,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
@@ -237,6 +235,13 @@ systems.delete("/:id", (c) => {
 // Test connection with provided credentials
 systems.post("/test-connection", async (c) => {
   const body = await c.req.json();
+  const credentialId =
+    body.credentialId === undefined || body.credentialId === null
+      ? null
+      : parseId(String(body.credentialId));
+  if (!credentialId) {
+    return c.json({ error: "credentialId must be a positive integer" }, 400);
+  }
   const sourceSystemId =
     body.systemId === undefined || body.systemId === null
       ? null
@@ -245,32 +250,18 @@ systems.post("/test-connection", async (c) => {
     return c.json({ error: "systemId must be a positive integer" }, 400);
   }
 
+  const credential = resolveSystemCredential(credentialId);
+  if (!credential) {
+    return c.json({ error: "Selected credential is not valid for system SSH access" }, 400);
+  }
+
   const system: Record<string, unknown> = {
     hostname: body.hostname,
     port: body.port || 22,
-    username: body.username,
-    authType: body.authType || "password",
+    credentialId,
+    username: credential.username,
+    authType: credential.authType,
   };
-
-  // Encrypt raw credentials immediately — plaintext must never persist beyond this block
-  const encryptor = getEncryptor();
-  if (body.authType === "password" && body.password) {
-    system.encryptedPassword = encryptor.encrypt(body.password);
-  } else if (body.authType === "key" && body.privateKey) {
-    system.encryptedPrivateKey = encryptor.encrypt(body.privateKey);
-    if (body.keyPassphrase) {
-      system.encryptedKeyPassphrase = encryptor.encrypt(body.keyPassphrase);
-    }
-  } else if (sourceSystemId) {
-    // No new credentials entered — fall back to saved (encrypted) ones
-    const saved = systemService.getSystem(sourceSystemId);
-    if (saved) {
-      const s = saved as Record<string, unknown>;
-      system.encryptedPassword = s.encryptedPassword;
-      system.encryptedPrivateKey = s.encryptedPrivateKey;
-      system.encryptedKeyPassphrase = s.encryptedKeyPassphrase;
-    }
-  }
 
   const sshManager = getSSHManager();
   const result = await sshManager.testConnection(system, {

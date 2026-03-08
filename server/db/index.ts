@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
+import { getEncryptor } from "../security";
 import * as schema from "./schema";
 
 let _db: BunSQLiteDatabase<typeof schema> | null = null;
@@ -84,12 +85,24 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  migrateCredentialsTable();
+
   _db.run(sql`CREATE TABLE IF NOT EXISTS systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     hostname TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 22,
+    credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT,
     auth_type TEXT NOT NULL DEFAULT 'password',
     username TEXT NOT NULL,
     encrypted_password TEXT,
@@ -154,12 +167,17 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   _db.run(sql`CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
-    notify_on TEXT NOT NULL DEFAULT '["updates"]',
+    notify_on TEXT NOT NULL DEFAULT '["updates","appUpdates"]',
     system_ids TEXT,
     config TEXT NOT NULL,
+    schedule TEXT,
+    pending_events TEXT,
+    last_sent_at TEXT,
+    last_app_version_notified TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -200,6 +218,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT`);
+  } catch {
+    // Column already exists
+  }
 
   // Migration: add notification tracking column
   try {
@@ -236,6 +259,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_app_version_notified TEXT`);
+  } catch {
+    // Column already exists
+  }
 
   // Migration: add passkey name column
   try {
@@ -243,6 +271,34 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+
+  // Migration: add persisted credential ordering
+  try {
+    _db.run(sql`ALTER TABLE credentials ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    WITH ordered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
+      FROM credentials
+    )
+    UPDATE credentials
+    SET sort_order = (
+      SELECT row_num
+      FROM ordered
+      WHERE ordered.id = credentials.id
+    )
+    WHERE sort_order = 0
+      AND (SELECT coalesce(max(sort_order), 0) FROM credentials) = 0
+      AND (SELECT count(*) FROM credentials) > 1
+      AND EXISTS (
+        SELECT 1
+        FROM ordered
+        WHERE ordered.id = credentials.id
+          AND ordered.row_num <> 0
+      )
+  `);
 
   // Migration: add exclude from upgrade-all flag
   try {
@@ -279,6 +335,34 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
       )
   `);
 
+  // Migration: add persisted notification ordering
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    WITH ordered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
+      FROM notifications
+    )
+    UPDATE notifications
+    SET sort_order = (
+      SELECT row_num
+      FROM ordered
+      WHERE ordered.id = notifications.id
+    )
+    WHERE sort_order = 0
+      AND (SELECT coalesce(max(sort_order), 0) FROM notifications) = 0
+      AND (SELECT count(*) FROM notifications) > 1
+      AND EXISTS (
+        SELECT 1
+        FROM ordered
+        WHERE ordered.id = notifications.id
+          AND ordered.row_num <> 0
+      )
+  `);
+
   // Migration: strip ntfyPriority from ntfy notification configs (priority is now automatic)
   _db.run(sql`UPDATE notifications SET config = json_remove(config, '$.ntfyPriority')
     WHERE type = 'ntfy' AND json_extract(config, '$.ntfyPriority') IS NOT NULL`);
@@ -308,6 +392,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
+  migrateLegacyCredentials(_db);
 
   // Seed default settings
   for (const s of DEFAULT_SETTINGS) {
@@ -356,7 +441,8 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
   const notifyOn: string[] = [];
   if (s.notify_on_updates !== "false") notifyOn.push("updates");
   if (s.notify_on_unreachable === "true") notifyOn.push("unreachable");
-  const notifyOnJson = JSON.stringify(notifyOn.length > 0 ? notifyOn : ["updates"]);
+  notifyOn.push("appUpdates");
+  const notifyOnJson = JSON.stringify(Array.from(new Set(notifyOn)));
 
   // Migrate email config if it was configured
   if (methods.includes("email") && s.smtp_host) {
@@ -383,6 +469,94 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
     db.run(sql`INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config)
       VALUES ('ntfy', 'ntfy', ${enabled ? 1 : 0}, ${notifyOnJson}, NULL, ${config})`);
   }
+}
+
+function migrateLegacyCredentials(db: BunSQLiteDatabase<typeof schema>): void {
+  const systemRows = db.select().from(schema.systems).all();
+  for (const system of systemRows) {
+    if (system.credentialId) continue;
+
+    let kind: "usernamePassword" | "sshKey" | null = null;
+    const payload: Record<string, string> = {
+      username: system.username,
+    };
+
+    if (system.authType === "password" && system.encryptedPassword) {
+      kind = "usernamePassword";
+      payload.password = normalizeSecretValue(system.encryptedPassword);
+    } else if (system.authType === "key" && system.encryptedPrivateKey) {
+      kind = "sshKey";
+      payload.privateKey = normalizeSecretValue(system.encryptedPrivateKey);
+      if (system.encryptedKeyPassphrase) {
+        payload.passphrase = normalizeSecretValue(system.encryptedKeyPassphrase);
+      }
+    }
+
+    if (!kind) continue;
+
+    const result = db.insert(schema.credentials).values({
+      name: `Migrated SSH credential: ${system.name}`,
+      kind,
+      payload: JSON.stringify(payload),
+    }).returning({ id: schema.credentials.id }).get();
+
+    db.update(schema.systems)
+      .set({
+        credentialId: result.id,
+        encryptedPassword: null,
+        encryptedPrivateKey: null,
+        encryptedKeyPassphrase: null,
+      })
+      .where(eq(schema.systems.id, system.id))
+      .run();
+  }
+}
+
+function normalizeSecretValue(value: string): string {
+  if (!value) return "";
+  let encryptor;
+  try {
+    encryptor = getEncryptor();
+  } catch {
+    return value;
+  }
+  try {
+    encryptor.decrypt(value);
+    return value;
+  } catch {
+    return encryptor.encrypt(value);
+  }
+}
+
+function migrateCredentialsTable(): void {
+  if (!_sqlite) return;
+
+  const columns = _sqlite
+    .query("PRAGMA table_info(credentials)")
+    .all() as Array<{ name?: string }>;
+
+  if (!columns.some((column) => column.name === "usage_scopes")) return;
+
+  _sqlite.exec("PRAGMA foreign_keys=OFF");
+  _sqlite.exec(`
+    CREATE TABLE credentials_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  _sqlite.exec(`
+    INSERT INTO credentials_new (id, sort_order, name, kind, payload, created_at, updated_at)
+    SELECT id, 0, name, kind, payload, created_at, updated_at
+    FROM credentials
+  `);
+  _sqlite.exec("DROP TABLE credentials");
+  _sqlite.exec("ALTER TABLE credentials_new RENAME TO credentials");
+  _sqlite.exec("PRAGMA foreign_keys=ON");
 }
 
 export function getDb(): BunSQLiteDatabase<typeof schema> {

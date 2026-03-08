@@ -13,6 +13,7 @@ export interface System {
   name: string;
   hostname: string;
   port: number;
+  credentialId: number | null;
   authType: string;
   username: string;
   pkgManager: string | null;
@@ -103,11 +104,7 @@ export function useCreateSystem() {
       name: string;
       hostname: string;
       port: number;
-      authType: string;
-      username: string;
-      password?: string;
-      privateKey?: string;
-      keyPassphrase?: string;
+      credentialId: number;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
       excludeFromUpgradeAll?: boolean;
@@ -128,11 +125,7 @@ export function useUpdateSystem() {
       name: string;
       hostname: string;
       port: number;
-      authType: string;
-      username: string;
-      password?: string;
-      privateKey?: string;
-      keyPassphrase?: string;
+      credentialId: number;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
       excludeFromUpgradeAll?: boolean;
@@ -189,11 +182,7 @@ export function useTestConnection() {
     mutationFn: (data: {
       hostname: string;
       port: number;
-      username: string;
-      authType: string;
-      password?: string;
-      privateKey?: string;
-      keyPassphrase?: string;
+      credentialId: number;
       systemId?: number;
     }) =>
       apiFetch<{

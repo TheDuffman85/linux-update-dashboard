@@ -31,6 +31,20 @@ export const webauthnCredentials = sqliteTable("webauthn_credentials", {
     .default(sql`(datetime('now'))`),
 });
 
+export const credentials = sqliteTable("credentials", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  name: text("name").notNull(),
+  kind: text("kind").notNull(),
+  payload: text("payload").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
 export const systems = sqliteTable(
   "systems",
   {
@@ -39,6 +53,9 @@ export const systems = sqliteTable(
     name: text("name").notNull(),
     hostname: text("hostname").notNull(),
     port: integer("port").notNull().default(22),
+    credentialId: integer("credential_id").references(() => credentials.id, {
+      onDelete: "restrict",
+    }),
     authType: text("auth_type").notNull().default("password"),
     username: text("username").notNull(),
     encryptedPassword: text("encrypted_password"),
@@ -144,17 +161,19 @@ export const apiTokens = sqliteTable("api_tokens", {
 
 export const notifications = sqliteTable("notifications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  sortOrder: integer("sort_order").notNull().default(0),
   name: text("name").notNull(),
   type: text("type").notNull(),
   enabled: integer("enabled").notNull().default(1),
   notifyOn: text("notify_on")
     .notNull()
-    .default('["updates"]'),
+    .default('["updates","appUpdates"]'),
   systemIds: text("system_ids"),
   config: text("config").notNull(),
   schedule: text("schedule"),
   pendingEvents: text("pending_events"),
   lastSentAt: text("last_sent_at"),
+  lastAppVersionNotified: text("last_app_version_notified"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

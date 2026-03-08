@@ -2,6 +2,7 @@ import { asc, count, eq, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { systems, updateCache } from "../db/schema";
 import { getEncryptor } from "../security";
+import { resolveSystemCredential } from "./credential-service";
 import {
   SYSTEM_INFO_CMD,
   parseSystemInfo,
@@ -54,11 +55,7 @@ export function createSystem(data: {
   name: string;
   hostname: string;
   port: number;
-  authType: string;
-  username: string;
-  password?: string;
-  privateKey?: string;
-  keyPassphrase?: string;
+  credentialId: number;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
   excludeFromUpgradeAll?: boolean;
@@ -67,44 +64,29 @@ export function createSystem(data: {
   const encryptor = getEncryptor();
   const db = getDb();
   const nextSortOrder = getNextSortOrder();
+  const credential = resolveSystemCredential(data.credentialId);
+  if (!credential) {
+    throw new Error("Selected credential is not valid for system SSH access");
+  }
 
   const values: Record<string, unknown> = {
     sortOrder: nextSortOrder,
     name: data.name,
     hostname: data.hostname,
     port: data.port,
-    authType: data.authType,
-    username: data.username,
-  };
-  if (data.password) {
-    values.encryptedPassword = encryptor.encrypt(data.password);
-  }
-  if (data.privateKey) {
-    values.encryptedPrivateKey = encryptor.encrypt(data.privateKey);
-  }
-  if (data.keyPassphrase) {
-    values.encryptedKeyPassphrase = encryptor.encrypt(data.keyPassphrase);
+    credentialId: data.credentialId,
+    authType: credential.authType,
+    username: credential.username,
   }
   if (data.sudoPassword) {
     values.encryptedSudoPassword = encryptor.encrypt(data.sudoPassword);
   }
 
-  // Copy encrypted credentials from source system when duplicating
-  if (data.sourceSystemId) {
+  // Copy sudo password from source system when duplicating unless explicitly overridden
+  if (data.sourceSystemId && !data.sudoPassword) {
     const source = getSystem(data.sourceSystemId);
-    if (source) {
-      if (!data.password && source.encryptedPassword) {
-        values.encryptedPassword = source.encryptedPassword;
-      }
-      if (!data.privateKey && source.encryptedPrivateKey) {
-        values.encryptedPrivateKey = source.encryptedPrivateKey;
-      }
-      if (!data.keyPassphrase && source.encryptedKeyPassphrase) {
-        values.encryptedKeyPassphrase = source.encryptedKeyPassphrase;
-      }
-      if (!data.sudoPassword && source.encryptedSudoPassword) {
-        values.encryptedSudoPassword = source.encryptedSudoPassword;
-      }
+    if (source?.encryptedSudoPassword) {
+      values.encryptedSudoPassword = source.encryptedSudoPassword;
     }
   }
 
@@ -136,11 +118,7 @@ export function updateSystem(
     name: string;
     hostname: string;
     port: number;
-    authType: string;
-    username: string;
-    password?: string;
-    privateKey?: string;
-    keyPassphrase?: string;
+    credentialId: number;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
     excludeFromUpgradeAll?: boolean;
@@ -148,24 +126,20 @@ export function updateSystem(
 ): void {
   const encryptor = getEncryptor();
   const db = getDb();
+  const credential = resolveSystemCredential(data.credentialId);
+  if (!credential) {
+    throw new Error("Selected credential is not valid for system SSH access");
+  }
 
   const values: Record<string, unknown> = {
     name: data.name,
     hostname: data.hostname,
     port: data.port,
-    authType: data.authType,
-    username: data.username,
+    credentialId: data.credentialId,
+    authType: credential.authType,
+    username: credential.username,
     updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
   };
-  if (data.password) {
-    values.encryptedPassword = encryptor.encrypt(data.password);
-  }
-  if (data.privateKey) {
-    values.encryptedPrivateKey = encryptor.encrypt(data.privateKey);
-  }
-  if (data.keyPassphrase) {
-    values.encryptedKeyPassphrase = encryptor.encrypt(data.keyPassphrase);
-  }
   if (data.sudoPassword) {
     values.encryptedSudoPassword = encryptor.encrypt(data.sudoPassword);
   }
@@ -306,6 +280,12 @@ export function getSudoPassword(system: Record<string, unknown>): string | undef
   const encryptor = getEncryptor();
   if (system.encryptedSudoPassword) {
     return encryptor.decrypt(system.encryptedSudoPassword as string);
+  }
+  if (typeof system.credentialId === "number") {
+    const credential = resolveSystemCredential(system.credentialId);
+    if (credential?.authType === "password" && credential.encryptedPassword) {
+      return encryptor.decrypt(credential.encryptedPassword);
+    }
   }
   if (system.authType === "password" && system.encryptedPassword) {
     return encryptor.decrypt(system.encryptedPassword as string);

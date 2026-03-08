@@ -13,7 +13,33 @@ function git(cmd: string): string {
   }
 }
 
-const REPO_URL = "https://github.com/TheDuffman85/linux-update-dashboard";
+function resolveRepoUrl(input: string): string {
+  const trimmed = input.trim().replace(/\.git$/, "");
+  if (!trimmed) return "";
+
+  if (/^[^/\s]+\/[^/\s]+$/.test(trimmed)) {
+    return `https://github.com/${trimmed}`;
+  }
+
+  const sshMatch = trimmed.match(/^git@github\.com:(.+\/.+)$/);
+  if (sshMatch) {
+    return `https://github.com/${sshMatch[1]}`;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname !== "github.com") return "";
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "";
+  }
+}
+
+const REPO_URL = resolveRepoUrl(
+  process.env.VITE_APP_REPO_URL ||
+    process.env.VITE_APP_REPOSITORY ||
+    git("config --get remote.origin.url")
+);
 
 export default defineConfig({
   plugins: [

@@ -11,6 +11,7 @@ export interface NotificationChannel {
   config: Record<string, string>;
   schedule: string | null;
   lastSentAt: string | null;
+  lastAppVersionNotified?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,6 +74,20 @@ export function useUpdateNotification() {
   });
 }
 
+export function useReorderNotifications() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationIds: number[]) =>
+      apiFetch("/notifications/reorder", {
+        method: "PUT",
+        body: JSON.stringify({ notificationIds }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
 export function useDeleteNotification() {
   const qc = useQueryClient();
   return useMutation({
@@ -96,7 +111,12 @@ export function useTestNotification() {
 
 export function useTestNotificationConfig() {
   return useMutation({
-    mutationFn: (data: { type: string; config: Record<string, string>; name?: string; existingId?: number }) =>
+    mutationFn: (data: {
+      type: string;
+      config: Record<string, string>;
+      name?: string;
+      existingId?: number;
+    }) =>
       apiFetch<{ success: boolean; error?: string }>(
         `/notifications/test`,
         { method: "POST", body: JSON.stringify(data) }

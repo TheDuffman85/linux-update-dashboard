@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -7,6 +8,7 @@ import {
   useCreateNotification,
   useUpdateNotification,
   useDeleteNotification,
+  useReorderNotifications,
   useTestNotification,
   useTestNotificationConfig,
   type NotificationChannel,
@@ -23,6 +25,7 @@ const checkboxClass =
 
 const TYPE_LABELS: Record<string, string> = {
   email: "Email",
+  gotify: "Gotify",
   ntfy: "ntfy.sh",
 };
 
@@ -35,7 +38,7 @@ const SCHEDULE_PRESETS: { label: string; value: string }[] = [
   { label: "Custom", value: "custom" },
 ];
 
-const NTFY_PRIORITY_OPTIONS = [
+const PUSH_PRIORITY_OPTIONS = [
   { value: "auto", label: "Automatic" },
   { value: "min", label: "Min" },
   { value: "low", label: "Low" },
@@ -44,17 +47,61 @@ const NTFY_PRIORITY_OPTIONS = [
   { value: "urgent", label: "Urgent" },
 ];
 
+const GOTIFY_PRIORITY_OPTIONS = [
+  { value: "auto", label: "Automatic" },
+  { value: "0", label: "0 - Silent" },
+  { value: "1", label: "1 - Low" },
+  { value: "3", label: "3 - Default low" },
+  { value: "5", label: "5 - Normal" },
+  { value: "8", label: "8 - High" },
+  { value: "10", label: "10 - Max" },
+];
+
 const EMAIL_IMPORTANCE_OPTIONS = [
   { value: "auto", label: "Automatic" },
   { value: "normal", label: "Normal" },
   { value: "important", label: "Important" },
 ];
 
+const EVENT_LABELS: Record<string, string> = {
+  updates: "Updates",
+  unreachable: "Unreachable",
+  appUpdates: "Application updates",
+};
+
+const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];
+
+function moveNotification<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return items;
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
 function describeSchedule(cron: string | null): string {
   if (!cron) return "Immediate";
   const presetMatch = SCHEDULE_PRESETS.find((p) => p.value === cron);
   if (presetMatch) return presetMatch.label;
   return cron;
+}
+
+function normalizeGotifyPriorityOverride(value: string | undefined): string {
+  switch (value) {
+    case "min":
+      return "1";
+    case "low":
+      return "3";
+    case "default":
+      return "5";
+    case "high":
+      return "8";
+    case "urgent":
+      return "10";
+    default:
+      return value || "auto";
+  }
 }
 
 function NotificationForm({
@@ -64,7 +111,15 @@ function NotificationForm({
   loading,
 }: {
   initial?: NotificationChannel;
-  onSubmit: (data: any) => void;
+  onSubmit: (data: {
+    name: string;
+    type: string;
+    enabled: boolean;
+    notifyOn: string[];
+    systemIds: number[] | null;
+    config: Record<string, string>;
+    schedule: string | null;
+  }) => void;
   onCancel: () => void;
   loading: boolean;
 }) {
@@ -75,15 +130,13 @@ function NotificationForm({
   const [type, setType] = useState(initial?.type || "email");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [notifyOn, setNotifyOn] = useState<string[]>(
-    initial?.notifyOn || ["updates"]
+    initial?.notifyOn || DEFAULT_NOTIFY_ON
   );
   const [allSystems, setAllSystems] = useState(initial?.systemIds === null);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>(
     initial?.systemIds || []
   );
 
-  // Email config
-  const hasStoredSmtpPassword = initial?.config.smtpPassword === "(stored)";
   const [smtpHost, setSmtpHost] = useState(initial?.config.smtpHost || "");
   const [smtpPort, setSmtpPort] = useState(initial?.config.smtpPort || "587");
   const [smtpSecure, setSmtpSecure] = useState(
@@ -97,8 +150,14 @@ function NotificationForm({
     initial?.config.emailImportanceOverride || "auto"
   );
 
-  // ntfy config
-  const hasStoredNtfyToken = initial?.config.ntfyToken === "(stored)";
+  const [gotifyUrl, setGotifyUrl] = useState(
+    initial?.config.gotifyUrl || ""
+  );
+  const [gotifyToken, setGotifyToken] = useState("");
+  const [gotifyPriorityOverride, setGotifyPriorityOverride] = useState(
+    normalizeGotifyPriorityOverride(initial?.config.gotifyPriorityOverride)
+  );
+
   const [ntfyUrl, setNtfyUrl] = useState(
     initial?.config.ntfyUrl || "https://ntfy.sh"
   );
@@ -108,7 +167,6 @@ function NotificationForm({
     initial?.config.ntfyPriorityOverride || "auto"
   );
 
-  // Schedule
   const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
   const initialPreset = initial?.schedule
     ? SCHEDULE_PRESETS.find((p) => p.value === initial.schedule)
@@ -146,15 +204,24 @@ function NotificationForm({
           smtpPort,
           smtpSecure: smtpSecure ? "true" : "false",
           smtpUser,
-          smtpPassword: smtpPassword || (hasStoredSmtpPassword ? "(stored)" : ""),
+          smtpPassword:
+            smtpPassword || (initial?.config.smtpPassword === "(stored)" ? "(stored)" : ""),
           smtpFrom,
           emailTo,
           emailImportanceOverride,
         }
+      : type === "gotify"
+        ? {
+            gotifyUrl,
+            gotifyToken:
+              gotifyToken || (initial?.config.gotifyToken === "(stored)" ? "(stored)" : ""),
+            gotifyPriorityOverride,
+          }
       : {
           ntfyUrl,
           ntfyTopic,
-          ntfyToken: ntfyToken || (hasStoredNtfyToken ? "(stored)" : ""),
+          ntfyToken:
+            ntfyToken || (initial?.config.ntfyToken === "(stored)" ? "(stored)" : ""),
           ntfyPriorityOverride,
         };
 
@@ -200,7 +267,6 @@ function NotificationForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Name & Type */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Name</label>
@@ -222,12 +288,12 @@ function NotificationForm({
             disabled={!!initial}
           >
             <option value="email">Email (SMTP)</option>
+            <option value="gotify">Gotify</option>
             <option value="ntfy">ntfy.sh</option>
           </select>
         </div>
       </div>
 
-      {/* Enabled */}
       <label className="flex items-center gap-2">
         <input
           type="checkbox"
@@ -238,10 +304,9 @@ function NotificationForm({
         <span className="text-sm font-medium">Enabled</span>
       </label>
 
-      {/* Events */}
       <div>
         <span className={labelClass}>Events</span>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4">
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -260,10 +325,18 @@ function NotificationForm({
             />
             <span className="text-sm">System unreachable</span>
           </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={notifyOn.includes("appUpdates")}
+              onChange={() => toggleNotifyOn("appUpdates")}
+              className={checkboxClass}
+            />
+            <span className="text-sm">Application update available</span>
+          </label>
         </div>
       </div>
 
-      {/* Systems */}
       <div>
         <span className={labelClass}>Systems</span>
         <label className="flex items-center gap-2 mb-2">
@@ -302,7 +375,6 @@ function NotificationForm({
         )}
       </div>
 
-      {/* Schedule */}
       <div>
         <span className={labelClass}>Schedule</span>
         <div className="flex gap-4 mb-2">
@@ -361,88 +433,177 @@ function NotificationForm({
         )}
       </div>
 
-      {/* Type-specific config */}
-      {type === "email" && (
-        <div className="border-t border-border pt-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-            Email (SMTP)
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>SMTP Host</label>
-              <input
-                type="text"
-                value={smtpHost}
-                onChange={(e) => setSmtpHost(e.target.value)}
-                className={inputClass}
-                placeholder="smtp.example.com"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>SMTP Port</label>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                value={smtpPort}
-                onChange={(e) => setSmtpPort(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Username</label>
-              <input
-                type="text"
-                value={smtpUser}
-                onChange={(e) => setSmtpUser(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Password</label>
-              <input
-                type="password"
-                value={smtpPassword}
-                onChange={(e) => setSmtpPassword(e.target.value)}
-                className={inputClass}
-                placeholder={hasStoredSmtpPassword ? "(unchanged)" : ""}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>From Address</label>
-              <input
-                type="email"
-                value={smtpFrom}
-                onChange={(e) => setSmtpFrom(e.target.value)}
-                className={inputClass}
-                placeholder="dashboard@example.com"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>To Address(es)</label>
-              <input
-                type="text"
-                value={emailTo}
-                onChange={(e) => setEmailTo(e.target.value)}
-                className={inputClass}
-                placeholder="admin@example.com"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Importance</label>
-              <select
-                value={emailImportanceOverride}
-                onChange={(e) => setEmailImportanceOverride(e.target.value)}
-                className={inputClass}
-              >
-                {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+      <div className="border-t border-border pt-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
+          {type === "email" ? "Email (SMTP)" : type === "gotify" ? "Gotify" : "ntfy.sh"}
+        </h3>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {type === "email" ? (
+            <>
+              <div>
+                <label className={labelClass}>SMTP Host</label>
+                <input
+                  type="text"
+                  value={smtpHost}
+                  onChange={(e) => setSmtpHost(e.target.value)}
+                  className={inputClass}
+                  placeholder="smtp.example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>SMTP Port</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={smtpPort}
+                  onChange={(e) => setSmtpPort(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>SMTP User</label>
+                <input
+                  type="text"
+                  value={smtpUser}
+                  onChange={(e) => setSmtpUser(e.target.value)}
+                  className={inputClass}
+                  placeholder="mailer"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>SMTP Password</label>
+                <input
+                  type="password"
+                  value={smtpPassword}
+                  onChange={(e) => setSmtpPassword(e.target.value)}
+                  className={inputClass}
+                  placeholder={initial?.config.smtpPassword === "(stored)" ? "(unchanged)" : ""}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>From Address</label>
+                <input
+                  type="email"
+                  value={smtpFrom}
+                  onChange={(e) => setSmtpFrom(e.target.value)}
+                  className={inputClass}
+                  placeholder="dashboard@example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>To Address(es)</label>
+                <input
+                  type="text"
+                  value={emailTo}
+                  onChange={(e) => setEmailTo(e.target.value)}
+                  className={inputClass}
+                  placeholder="admin@example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Importance</label>
+                <select
+                  value={emailImportanceOverride}
+                  onChange={(e) => setEmailImportanceOverride(e.target.value)}
+                  className={inputClass}
+                >
+                  {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : type === "gotify" ? (
+            <>
+              <div>
+                <label className={labelClass}>Server URL</label>
+                <input
+                  type="url"
+                  value={gotifyUrl}
+                  onChange={(e) => setGotifyUrl(e.target.value)}
+                  className={inputClass}
+                  placeholder="https://gotify.example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Priority</label>
+                <select
+                  value={gotifyPriorityOverride}
+                  onChange={(e) => setGotifyPriorityOverride(e.target.value)}
+                  className={inputClass}
+                >
+                  {GOTIFY_PRIORITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>App Token</label>
+                <input
+                  type="password"
+                  value={gotifyToken}
+                  onChange={(e) => setGotifyToken(e.target.value)}
+                  className={inputClass}
+                  placeholder={initial?.config.gotifyToken === "(stored)" ? "(unchanged)" : ""}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className={labelClass}>Server URL</label>
+                <input
+                  type="url"
+                  value={ntfyUrl}
+                  onChange={(e) => setNtfyUrl(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Topic</label>
+                <input
+                  type="text"
+                  value={ntfyTopic}
+                  onChange={(e) => setNtfyTopic(e.target.value)}
+                  className={inputClass}
+                  placeholder="my-updates"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Access Token</label>
+                <input
+                  type="password"
+                  value={ntfyToken}
+                  onChange={(e) => setNtfyToken(e.target.value)}
+                  className={inputClass}
+                  placeholder={initial?.config.ntfyToken === "(stored)" ? "(unchanged)" : ""}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Priority</label>
+                <select
+                  value={ntfyPriorityOverride}
+                  onChange={(e) => setNtfyPriorityOverride(e.target.value)}
+                  className={inputClass}
+                >
+                  {PUSH_PRIORITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+
+        {type === "email" && (
           <label className="flex items-center gap-2 mt-3">
             <input
               type="checkbox"
@@ -452,63 +613,9 @@ function NotificationForm({
             />
             <span className="text-sm">Use TLS</span>
           </label>
-        </div>
-      )}
+        )}
+      </div>
 
-      {type === "ntfy" && (
-        <div className="border-t border-border pt-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-            ntfy.sh
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>Server URL</label>
-              <input
-                type="url"
-                value={ntfyUrl}
-                onChange={(e) => setNtfyUrl(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Topic</label>
-              <input
-                type="text"
-                value={ntfyTopic}
-                onChange={(e) => setNtfyTopic(e.target.value)}
-                className={inputClass}
-                placeholder="my-updates"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Access Token (optional)</label>
-              <input
-                type="password"
-                value={ntfyToken}
-                onChange={(e) => setNtfyToken(e.target.value)}
-                className={inputClass}
-                placeholder={hasStoredNtfyToken ? "(unchanged)" : ""}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Priority</label>
-              <select
-                value={ntfyPriorityOverride}
-                onChange={(e) => setNtfyPriorityOverride(e.target.value)}
-                className={inputClass}
-              >
-                {NTFY_PRIORITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Actions */}
       <div className="flex justify-end gap-3 pt-2">
         <button
           type="button"
@@ -548,6 +655,7 @@ export default function Notifications() {
   const createNotification = useCreateNotification();
   const updateNotification = useUpdateNotification();
   const deleteNotification = useDeleteNotification();
+  const reorderNotifications = useReorderNotifications();
   const testNotification = useTestNotification();
   const { addToast } = useToast();
   const [showForm, setShowForm] = useState(false);
@@ -555,8 +663,74 @@ export default function Notifications() {
     null
   );
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [orderedChannels, setOrderedChannels] = useState<NotificationChannel[]>([]);
+  const orderedChannelsRef = useRef<NotificationChannel[]>([]);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const sortableRef = useRef<Sortable | null>(null);
 
-  const handleCreate = (data: any) => {
+  useEffect(() => {
+    setOrderedChannels(channels ?? []);
+  }, [channels]);
+
+  useEffect(() => {
+    orderedChannelsRef.current = orderedChannels;
+  }, [orderedChannels]);
+
+  useEffect(() => {
+    const tbody = tbodyRef.current;
+    if (!tbody || orderedChannels.length <= 1) {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+      return;
+    }
+
+    sortableRef.current?.destroy();
+    sortableRef.current = new Sortable(tbody, {
+      animation: 150,
+      handle: ".drag-handle",
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      onEnd: (evt) => {
+        if (
+          evt.oldIndex === undefined ||
+          evt.newIndex === undefined ||
+          evt.oldIndex === evt.newIndex
+        ) {
+          return;
+        }
+
+        const previousChannels = orderedChannelsRef.current;
+        const nextChannels = moveNotification(previousChannels, evt.oldIndex, evt.newIndex);
+
+        setOrderedChannels(nextChannels);
+        reorderNotifications.mutate(nextChannels.map((channel) => channel.id), {
+          onError: (err) => {
+            setOrderedChannels(previousChannels);
+            addToast(err.message, "danger");
+          },
+        });
+      },
+    });
+
+    return () => {
+      sortableRef.current?.destroy();
+      sortableRef.current = null;
+    };
+  }, [orderedChannels.length, reorderNotifications, addToast]);
+
+  useEffect(() => {
+    sortableRef.current?.option("disabled", reorderNotifications.isPending);
+  }, [reorderNotifications.isPending]);
+
+  const handleCreate = (data: {
+    name: string;
+    type: string;
+    enabled: boolean;
+    notifyOn: string[];
+    systemIds: number[] | null;
+    config: Record<string, string>;
+    schedule: string | null;
+  }) => {
     createNotification.mutate(data, {
       onSuccess: () => {
         setShowForm(false);
@@ -566,7 +740,15 @@ export default function Notifications() {
     });
   };
 
-  const handleUpdate = (data: any) => {
+  const handleUpdate = (data: {
+    name: string;
+    type: string;
+    enabled: boolean;
+    notifyOn: string[];
+    systemIds: number[] | null;
+    config: Record<string, string>;
+    schedule: string | null;
+  }) => {
     if (!editChannel) return;
     updateNotification.mutate(
       { id: editChannel.id, ...data },
@@ -654,25 +836,36 @@ export default function Notifications() {
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {channels.map((ch) => (
+            <tbody ref={tbodyRef}>
+              {orderedChannels.map((ch) => (
                 <tr
                   key={ch.id}
                   className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
                 >
-                  <td className="px-4 py-3 font-medium">{ch.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
+                          reorderNotifications.isPending || orderedChannels.length < 2
+                            ? "cursor-not-allowed opacity-40"
+                            : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                        }`}
+                        title="Drag to reorder"
+                        aria-label={`Drag to reorder ${ch.name}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+                        </svg>
+                      </span>
+                      <span className="min-w-0 truncate font-medium">{ch.name}</span>
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                     {TYPE_LABELS[ch.type] || ch.type}
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
                     {ch.notifyOn
-                      .map((e) =>
-                        e === "updates"
-                          ? "Updates"
-                          : e === "unreachable"
-                          ? "Unreachable"
-                          : e
-                      )
+                      .map((e) => EVENT_LABELS[e] || e)
                       .join(", ")}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400">
@@ -778,7 +971,6 @@ export default function Notifications() {
         </div>
       )}
 
-      {/* Add notification modal */}
       <Modal
         open={showForm}
         onClose={() => setShowForm(false)}
@@ -792,7 +984,6 @@ export default function Notifications() {
         />
       </Modal>
 
-      {/* Edit notification modal */}
       <Modal
         open={editChannel !== null}
         onClose={() => setEditChannel(null)}
@@ -809,7 +1000,6 @@ export default function Notifications() {
         )}
       </Modal>
 
-      {/* Delete confirmation */}
       <ConfirmDialog
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}

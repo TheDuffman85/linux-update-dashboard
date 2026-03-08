@@ -5,10 +5,23 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { systems } from "../../server/db/schema";
+import { credentials, systems } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
+
+function createSystemCredential(username: string): number {
+  const db = getDb();
+  const inserted = db.insert(credentials).values({
+    name: `Credential for ${username}`,
+    kind: "usernamePassword",
+    payload: JSON.stringify({
+      username,
+      password: "encrypted-password",
+    }),
+  }).returning({ id: credentials.id }).get();
+  return inserted.id;
+}
 
 describe("systems reorder route", () => {
   let tempDir: string;
@@ -119,6 +132,7 @@ describe("systems reorder route", () => {
 
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
 
     const res = await app.request("/api/systems", {
       method: "POST",
@@ -127,8 +141,7 @@ describe("systems reorder route", () => {
         name: "Primary Copy",
         hostname: "alpha.local",
         port: 22,
-        authType: "password",
-        username: "root",
+        credentialId,
       }),
     });
 
@@ -144,6 +157,7 @@ describe("systems reorder route", () => {
         name: "Alpha",
         hostname: "alpha.local",
         port: 22,
+        credentialId: createSystemCredential("root"),
         authType: "password",
         username: "root",
       },
@@ -151,6 +165,7 @@ describe("systems reorder route", () => {
         name: "Bravo",
         hostname: "bravo.local",
         port: 2222,
+        credentialId: createSystemCredential("admin"),
         authType: "password",
         username: "admin",
       },
@@ -158,6 +173,7 @@ describe("systems reorder route", () => {
 
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
+    const replacementCredentialId = createSystemCredential("root");
 
     const res = await app.request(`/api/systems/${inserted[1].id}`, {
       method: "PUT",
@@ -166,8 +182,7 @@ describe("systems reorder route", () => {
         name: "Bravo",
         hostname: "alpha.local",
         port: 22,
-        authType: "password",
-        username: "root",
+        credentialId: replacementCredentialId,
       }),
     });
 

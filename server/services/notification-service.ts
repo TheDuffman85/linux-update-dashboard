@@ -1,14 +1,21 @@
-import { eq, and, isNotNull } from "drizzle-orm";
+import { eq, and, isNotNull, asc } from "drizzle-orm";
 import { createHash } from "crypto";
 import { Cron } from "croner";
 import { getDb } from "../db";
 import { notifications, systems, updateCache } from "../db/schema";
 import { getProvider, type NotificationPayload } from "./notifications";
 import { getEncryptor } from "../security";
+import {
+  getAppUpdateStatus,
+} from "./app-update-service";
+
+const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
+const DEFAULT_NOTIFY_ON_JSON = JSON.stringify(DEFAULT_NOTIFY_ON);
 
 // Sensitive config keys that need encryption per provider type
 const SENSITIVE_KEYS: Record<string, string[]> = {
   email: ["smtpPassword"],
+  gotify: ["gotifyToken"],
   ntfy: ["ntfyToken"],
 };
 const ALLOWED_CONFIG_KEYS: Record<string, string[]> = {
@@ -21,6 +28,11 @@ const ALLOWED_CONFIG_KEYS: Record<string, string[]> = {
     "smtpFrom",
     "emailTo",
     "emailImportanceOverride",
+  ],
+  gotify: [
+    "gotifyUrl",
+    "gotifyToken",
+    "gotifyPriorityOverride",
   ],
   ntfy: [
     "ntfyUrl",
@@ -114,6 +126,10 @@ function isScheduled(schedule: string | null): boolean {
   return schedule !== null && schedule !== "immediate";
 }
 
+function getDefaultNotifyOn(): string[] {
+  return [...DEFAULT_NOTIFY_ON];
+}
+
 function serializeNotification(row: any) {
   const config = loadSanitizedConfig(row);
   return {
@@ -121,11 +137,12 @@ function serializeNotification(row: any) {
     name: row.name,
     type: row.type,
     enabled: row.enabled === 1,
-    notifyOn: JSON.parse(row.notifyOn || '["updates"]'),
+    notifyOn: JSON.parse(row.notifyOn || DEFAULT_NOTIFY_ON_JSON),
     systemIds: row.systemIds ? JSON.parse(row.systemIds) : null,
     config: maskConfig(row.type, config),
     schedule: row.schedule || null,
     lastSentAt: row.lastSentAt || null,
+    lastAppVersionNotified: row.lastAppVersionNotified || null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -135,7 +152,11 @@ function serializeNotification(row: any) {
 
 export function listNotifications() {
   const db = getDb();
-  const rows = db.select().from(notifications).all();
+  const rows = db
+    .select()
+    .from(notifications)
+    .orderBy(asc(notifications.sortOrder), asc(notifications.name), asc(notifications.id))
+    .all();
   return rows.map(serializeNotification);
 }
 
@@ -156,6 +177,13 @@ export function createNotification(data: {
   schedule?: string | null;
 }) {
   const db = getDb();
+  const nextSortOrder =
+    db
+      .select({ sortOrder: notifications.sortOrder })
+      .from(notifications)
+      .orderBy(asc(notifications.sortOrder), asc(notifications.id))
+      .all()
+      .at(-1)?.sortOrder ?? -1;
   const encConfig = encryptConfig(
     data.type,
     sanitizeNotificationConfig(data.type, data.config)
@@ -163,10 +191,11 @@ export function createNotification(data: {
   const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
   const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
   const result = db.insert(notifications).values({
+    sortOrder: nextSortOrder + 1,
     name: data.name,
     type: data.type,
     enabled: data.enabled !== false ? 1 : 0,
-    notifyOn: JSON.stringify(data.notifyOn || ["updates"]),
+    notifyOn: JSON.stringify(data.notifyOn || getDefaultNotifyOn()),
     systemIds: data.systemIds ? JSON.stringify(data.systemIds) : null,
     config: JSON.stringify(encConfig),
     schedule,
@@ -246,6 +275,33 @@ export function deleteNotification(id: number) {
   return true;
 }
 
+export function reorderNotifications(notificationIds: number[]): void {
+  const db = getDb();
+  const existingNotifications = db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .orderBy(asc(notifications.sortOrder), asc(notifications.name), asc(notifications.id))
+    .all();
+  const existingIds = existingNotifications.map((notification) => notification.id);
+
+  if (notificationIds.length !== existingIds.length) {
+    throw new Error("Notification order must include every notification exactly once");
+  }
+  if (new Set(notificationIds).size !== notificationIds.length) {
+    throw new Error("Notification order contains duplicate IDs");
+  }
+  if (!existingIds.every((id) => notificationIds.includes(id))) {
+    throw new Error("Notification order contains unknown IDs");
+  }
+
+  for (const [sortOrder, id] of notificationIds.entries()) {
+    db.update(notifications)
+      .set({ sortOrder })
+      .where(eq(notifications.id, id))
+      .run();
+  }
+}
+
 // --- Test notification ---
 
 export async function testNotification(id: number): Promise<{ success: boolean; error?: string }> {
@@ -312,6 +368,14 @@ export interface CheckResult {
   nowUnreachable: boolean;
 }
 
+export interface AppUpdateEvent {
+  currentVersion: string | null;
+  currentBranch: string;
+  remoteVersion: string;
+  releaseUrl: string | null;
+  repoUrl: string | null;
+}
+
 export async function processScheduledResults(
   results: CheckResult[]
 ): Promise<void> {
@@ -358,7 +422,7 @@ export async function processScheduledResults(
   // Dispatch to each enabled notification channel
   for (const channel of channels) {
     const notifyOn: string[] = (() => {
-      try { return JSON.parse(channel.notifyOn || '["updates"]'); } catch { return ["updates"]; }
+      try { return JSON.parse(channel.notifyOn || JSON.stringify(getDefaultNotifyOn())); } catch { return getDefaultNotifyOn(); }
     })();
     const scopedSystemIds: number[] | null = (() => {
       try { return channel.systemIds ? JSON.parse(channel.systemIds) : null; } catch { return null; }
@@ -388,31 +452,105 @@ export async function processScheduledResults(
   }
 }
 
+export async function processAppUpdateNotifications(): Promise<void> {
+  const db = getDb();
+  const channels = db
+    .select()
+    .from(notifications)
+    .where(eq(notifications.enabled, 1))
+    .all();
+
+  if (channels.length === 0) return;
+
+  const subscribedChannels = channels.filter((channel) => {
+    try {
+      const notifyOn = JSON.parse(channel.notifyOn || DEFAULT_NOTIFY_ON_JSON);
+      return Array.isArray(notifyOn) && notifyOn.includes("appUpdates");
+    } catch {
+      return false;
+    }
+  });
+
+  if (subscribedChannels.length === 0) return;
+
+  const status = await getAppUpdateStatus();
+  if (!status.updateAvailable || !status.remoteVersion) return;
+
+  const event: AppUpdateEvent = {
+    currentVersion: status.currentVersion,
+    currentBranch: status.currentBranch,
+    remoteVersion: status.remoteVersion,
+    releaseUrl: status.releaseUrl,
+    repoUrl: status.repoUrl,
+  };
+
+  for (const channel of subscribedChannels) {
+    const notifyOn: string[] = (() => {
+      try {
+        return JSON.parse(channel.notifyOn || JSON.stringify(getDefaultNotifyOn()));
+      } catch {
+        return getDefaultNotifyOn();
+      }
+    })();
+
+    if (!notifyOn.includes("appUpdates")) continue;
+    if (channel.lastAppVersionNotified === event.remoteVersion) continue;
+
+    const pending = parsePendingEvents(channel.pendingEvents);
+    if (pending.appUpdate?.remoteVersion === event.remoteVersion) continue;
+
+    if (isScheduled(channel.schedule)) {
+      appendPendingAppUpdate(channel.id, event);
+      continue;
+    }
+
+    const sent = await sendChannelNotification(channel, [], [], event);
+    if (!sent) continue;
+
+    db.update(notifications)
+      .set({
+        lastAppVersionNotified: event.remoteVersion,
+        updatedAt: new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, ""),
+      })
+      .where(eq(notifications.id, channel.id))
+      .run();
+  }
+}
+
 // --- Send notification for a single channel ---
 
 async function sendChannelNotification(
-  channel: { id: number; name: string; type: string; config: string },
+  channel: {
+    id: number;
+    name: string;
+    type: string;
+    config: string;
+  },
   updateResults: CheckResult[],
   unreachableResults: CheckResult[],
-): Promise<void> {
-  const payload = buildBatchPayload(updateResults, unreachableResults);
+  appUpdate: AppUpdateEvent | null = null,
+): Promise<boolean> {
+  const payload = buildBatchPayload(updateResults, unreachableResults, appUpdate);
   const provider = getProvider(channel.type);
-  if (!provider) return;
+  if (!provider) return false;
 
   const config = loadSanitizedConfig(channel);
   const configError = provider.validateConfig(config);
   if (configError) {
     console.warn(`Notification [${channel.name}]: skipped - ${configError}`);
-    return;
+    return false;
   }
 
   try {
     const result = await provider.send(payload, config);
     if (!result.success) {
       console.error(`Notification [${channel.name}] failed:`, result.error);
+      return false;
     }
+    return true;
   } catch (e) {
     console.error(`Notification [${channel.name}] error:`, e);
+    return false;
   }
 }
 
@@ -421,18 +559,25 @@ async function sendChannelNotification(
 interface PendingEvents {
   updates: CheckResult[];
   unreachable: CheckResult[];
+  appUpdate: AppUpdateEvent | null;
 }
 
 function parsePendingEvents(json: string | null): PendingEvents {
-  if (!json) return { updates: [], unreachable: [] };
+  if (!json) return { updates: [], unreachable: [], appUpdate: null };
   try {
     const parsed = JSON.parse(json);
     return {
       updates: Array.isArray(parsed.updates) ? parsed.updates : [],
       unreachable: Array.isArray(parsed.unreachable) ? parsed.unreachable : [],
+      appUpdate:
+        parsed.appUpdate &&
+        typeof parsed.appUpdate === "object" &&
+        typeof parsed.appUpdate.remoteVersion === "string"
+          ? parsed.appUpdate
+          : null,
     };
   } catch {
-    return { updates: [], unreachable: [] };
+    return { updates: [], unreachable: [], appUpdate: null };
   }
 }
 
@@ -463,6 +608,26 @@ function appendPendingEvents(
   const pending = parsePendingEvents(row?.pendingEvents ?? null);
   pending.updates = mergeCheckResults(pending.updates, updateResults);
   pending.unreachable = mergeCheckResults(pending.unreachable, unreachableResults);
+
+  db.update(notifications)
+    .set({ pendingEvents: JSON.stringify(pending) })
+    .where(eq(notifications.id, channelId))
+    .run();
+}
+
+function appendPendingAppUpdate(
+  channelId: number,
+  appUpdate: AppUpdateEvent,
+): void {
+  const db = getDb();
+  const row = db
+    .select({ pendingEvents: notifications.pendingEvents })
+    .from(notifications)
+    .where(eq(notifications.id, channelId))
+    .get();
+
+  const pending = parsePendingEvents(row?.pendingEvents ?? null);
+  pending.appUpdate = appUpdate;
 
   db.update(notifications)
     .set({ pendingEvents: JSON.stringify(pending) })
@@ -502,16 +667,31 @@ export async function processScheduledDigests(): Promise<void> {
     if (!channel.schedule || channel.schedule === "immediate") continue;
 
     const pending = parsePendingEvents(channel.pendingEvents);
-    if (pending.updates.length === 0 && pending.unreachable.length === 0) continue;
+    if (
+      pending.updates.length === 0 &&
+      pending.unreachable.length === 0 &&
+      !pending.appUpdate
+    ) continue;
 
     if (!shouldSendNow(channel.schedule, channel.lastSentAt)) continue;
 
     console.log(`Notification [${channel.name}]: sending scheduled digest`);
-    await sendChannelNotification(channel, pending.updates, pending.unreachable);
+    const sent = await sendChannelNotification(
+      channel,
+      pending.updates,
+      pending.unreachable,
+      pending.appUpdate
+    );
+    if (!sent) continue;
 
     const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
     db.update(notifications)
-      .set({ pendingEvents: null, lastSentAt: now })
+      .set({
+        pendingEvents: null,
+        lastSentAt: now,
+        lastAppVersionNotified:
+          pending.appUpdate?.remoteVersion ?? channel.lastAppVersionNotified,
+      })
       .where(eq(notifications.id, channel.id))
       .run();
   }
@@ -521,7 +701,8 @@ export async function processScheduledDigests(): Promise<void> {
 
 function buildBatchPayload(
   updateResults: CheckResult[],
-  unreachableResults: CheckResult[]
+  unreachableResults: CheckResult[],
+  appUpdate: AppUpdateEvent | null = null,
 ): NotificationPayload {
   const totalUpdates = updateResults.reduce((s, r) => s + r.updateCount, 0);
   const totalSecurity = updateResults.reduce((s, r) => s + r.securityCount, 0);
@@ -556,6 +737,28 @@ function buildBatchPayload(
     if (body) body += "\n\n";
     body += lines;
     if (!title) title = "System(s) unreachable";
+  }
+
+  if (appUpdate) {
+    tags.push("arrow_up");
+    const prefix = appUpdate.currentBranch === "dev" ? "dev-" : "v";
+    const currentVersion = appUpdate.currentVersion
+      ? `${prefix}${appUpdate.currentVersion.replace(/^dev-/, "")}`
+      : "current build";
+    const remoteVersion = `${prefix}${appUpdate.remoteVersion.replace(/^dev-/, "")}`;
+    const lines = [
+      `Linux Update Dashboard: ${currentVersion} -> ${remoteVersion}`,
+    ];
+
+    if (appUpdate.releaseUrl) {
+      lines.push(appUpdate.releaseUrl);
+    } else if (appUpdate.repoUrl) {
+      lines.push(appUpdate.repoUrl);
+    }
+
+    if (body) body += "\n\n";
+    body += lines.join("\n");
+    if (!title) title = "Application update available";
   }
 
   return {

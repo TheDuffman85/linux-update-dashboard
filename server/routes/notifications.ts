@@ -5,9 +5,12 @@ import * as notificationService from "../services/notification-service";
 import { getDb } from "../db";
 import { notifications } from "../db/schema";
 import { getProvider, getProviderNames } from "../services/notifications";
+import {
+  sanitizeNotificationConfig,
+} from "../services/notification-service";
 
 const VALID_TYPES = getProviderNames();
-const VALID_EVENTS = ["updates", "unreachable"];
+const VALID_EVENTS = ["updates", "unreachable", "appUpdates"];
 const MAX_NAME_LENGTH = 100;
 const MAX_CONFIG_VALUE_LENGTH = 1000;
 
@@ -27,6 +30,15 @@ function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id) || id <= 0) return null;
   return id;
+}
+
+function parseNotificationIdList(input: unknown): number[] | null {
+  if (!Array.isArray(input)) return null;
+
+  const ids = input.map((value) => Number(value));
+  if (!ids.every((id) => Number.isInteger(id) && id > 0)) return null;
+
+  return ids;
 }
 
 function parseConfigJson(raw: string): Record<string, string> {
@@ -66,6 +78,24 @@ const notificationsRouter = new Hono();
 notificationsRouter.get("/", (c) => {
   const items = notificationService.listNotifications();
   return c.json({ notifications: items });
+});
+
+notificationsRouter.put("/reorder", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const notificationIds = parseNotificationIdList(body?.notificationIds);
+
+  if (!notificationIds) {
+    return c.json({ error: "notificationIds must be an array of positive integers" }, 400);
+  }
+
+  try {
+    notificationService.reorderNotifications(notificationIds);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reorder notifications";
+    return c.json({ error: message }, 400);
+  }
+
+  return c.json({ status: "ok" });
 });
 
 // Get single notification
@@ -216,14 +246,19 @@ notificationsRouter.put("/:id", async (c) => {
   }
 
   if (body.type !== undefined || body.config !== undefined) {
-    const mergedConfig = {
-      ...notificationService.sanitizeNotificationConfig(existing.type, parseConfigJson(existing.config)),
-      ...(body.config ?? {}),
-    };
     const mergedType = typeof body.type === "string" ? body.type : existing.type;
+    const storedConfig =
+      mergedType === existing.type
+        ? parseConfigJson(existing.config)
+        : {};
+    const effectiveConfig = notificationService.mergeStoredSensitiveConfig(
+      mergedType,
+      storedConfig,
+      (body.config as Record<string, string> | undefined) ?? {}
+    );
     const providerConfigError = validateProviderConfig(
       mergedType,
-      notificationService.sanitizeNotificationConfig(mergedType, mergedConfig)
+      effectiveConfig
     );
     if (providerConfigError) {
       return c.json({ error: providerConfigError }, 400);
@@ -296,13 +331,20 @@ notificationsRouter.post("/test", async (c) => {
     );
   }
 
-  const providerConfigError = validateProviderConfig(type, effectiveConfig);
+  const providerConfigError = validateProviderConfig(
+    type,
+    notificationService.sanitizeNotificationConfig(type, effectiveConfig)
+  );
   if (providerConfigError) {
     return c.json({ error: providerConfigError }, 400);
   }
 
   try {
-    const result = await notificationService.testNotificationConfig(type, effectiveConfig, name);
+    const result = await notificationService.testNotificationConfig(
+      type,
+      notificationService.sanitizeNotificationConfig(type, effectiveConfig),
+      name
+    );
     return c.json(result);
   } catch {
     return c.json({ success: false, error: "Internal error while sending test notification" }, 500);

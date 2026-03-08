@@ -76,6 +76,8 @@ jobs:
             APP_BUILD_DATE=${{ steps.version.outputs.date }}
             APP_COMMIT_HASH=${{ steps.version.outputs.sha8 }}
             APP_BRANCH=main
+            APP_REPOSITORY=${{ github.repository }}
+            APP_REPO_URL=${{ github.server_url }}/${{ github.repository }}
 
       - name: Create git tag
         run: |
