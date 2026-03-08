@@ -36,7 +36,11 @@ export function SystemForm({
   loading?: boolean;
 }) {
   const testConnection = useTestConnection();
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    debugRef?: string;
+  } | null>(null);
   const [name, setName] = useState(initial?.name || "");
   const [hostname, setHostname] = useState(initial?.hostname || "");
   const [port, setPort] = useState(initial?.port || 22);
@@ -184,7 +188,12 @@ export function SystemForm({
 
       {testResult && (
         <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>
-          {testResult.message}
+          <div>{testResult.message}</div>
+          {!testResult.success && testResult.debugRef && (
+            <div className="mt-2 text-xs opacity-80">
+              Check container logs with debug reference <span className="font-mono">{testResult.debugRef}</span>.
+            </div>
+          )}
         </div>
       )}
 

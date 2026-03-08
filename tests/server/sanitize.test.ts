@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { wrapRemoteCommand } from "../../server/ssh/connection";
-import { sanitizeCommand } from "../../server/utils/sanitize";
+import { sanitizeCommand, sanitizeOutput } from "../../server/utils/sanitize";
 
 describe("sanitizeCommand", () => {
   test("strips the POSIX shell transport wrapper", () => {
@@ -24,5 +24,21 @@ describe("sanitizeCommand", () => {
     expect(sanitizeCommand(command)).toBe(
       `export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; printf '%s\\n' "it's fine"`
     );
+  });
+});
+
+describe("sanitizeOutput", () => {
+  test("redacts plaintext password and passphrase-like pairs", () => {
+    expect(
+      sanitizeOutput('password=hunter2 passphrase: "letmein" api_key=abcdef')
+    ).toBe('password=*** passphrase: *** api_key=***');
+  });
+
+  test("redacts embedded credentials and private keys", () => {
+    expect(
+      sanitizeOutput(
+        "https://user:secret@example.com\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
+      )
+    ).toBe("https://***:***@example.com\n[REDACTED PRIVATE KEY]");
   });
 });

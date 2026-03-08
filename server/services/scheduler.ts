@@ -4,6 +4,7 @@ import { systems, updateCache } from "../db/schema";
 import * as cacheService from "./cache-service";
 import * as updateService from "./update-service";
 import * as notificationService from "./notification-service";
+import { logger } from "../logger";
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let initialTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -22,9 +23,10 @@ async function runCheck(forceAll = false): Promise<void> {
       : cacheService.getStaleSystemIds();
     if (staleIds.length === 0) return;
 
-    console.log(
-      `Scheduler: refreshing ${staleIds.length} ${forceAll ? "all" : "stale"} systems`
-    );
+    logger.debug("Scheduler refreshing systems", {
+      count: staleIds.length,
+      mode: forceAll ? "all" : "stale",
+    });
 
     const db = getDb();
 
@@ -83,9 +85,11 @@ async function runCheck(forceAll = false): Promise<void> {
     // Process notifications (non-blocking)
     await notificationService
       .processScheduledResults(checkResults)
-      .catch((e) => console.error("Notification processing error:", e));
+      .catch((e) =>
+        logger.error("Notification processing error", { error: String(e) })
+      );
   } catch (e) {
-    console.error("Scheduler error:", e);
+    logger.error("Scheduler error", { error: String(e) });
   }
 }
 
@@ -93,13 +97,15 @@ async function runDigestCheck(): Promise<void> {
   try {
     await notificationService.processScheduledDigests();
   } catch (e) {
-    console.error("Digest scheduler error:", e);
+    logger.error("Digest scheduler error", { error: String(e) });
   }
 }
 
 export function start(): void {
   const intervalMs = getCheckIntervalMs();
-  console.log(`Scheduler: check interval set to ${intervalMs / 60_000} minutes`);
+  logger.info("Scheduler check interval configured", {
+    minutes: intervalMs / 60_000,
+  });
   // Wait 30s before first check to let the app fully start, then refresh all systems
   initialTimeout = setTimeout(() => {
     runCheck(true);
@@ -113,7 +119,7 @@ export function start(): void {
 export function restart(): void {
   stop();
   const intervalMs = getCheckIntervalMs();
-  console.log(`Scheduler: restarting with interval ${intervalMs / 60_000} minutes`);
+  logger.info("Scheduler restarting", { minutes: intervalMs / 60_000 });
   runCheck();
   timer = setInterval(runCheck, intervalMs);
 

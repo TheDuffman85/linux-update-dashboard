@@ -25,6 +25,11 @@ const SENSITIVE_OUTPUT_PATTERNS: [RegExp, string][] = [
     /\b(PASSWORD|PASSWD|SECRET|SECRET_KEY|TOKEN|ACCESS_TOKEN|API_KEY|PRIVATE_KEY|PASSPHRASE|CREDENTIAL|AUTH)\s*=\s*\S+/gi,
     "$1=***",
   ],
+  // Password/passphrase-like key-value pairs in logs or JSON fragments
+  [
+    /(["']?(?:password|passphrase|token|secret|api[_-]?key|private[_-]?key|credential)["']?\s*[:=]\s*)(["'][^"']*["']|\S+)/gi,
+    "$1***",
+  ],
   // PEM private key blocks
   [
     /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,

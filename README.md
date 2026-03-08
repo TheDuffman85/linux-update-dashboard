@@ -265,7 +265,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL for WebAuthn/OIDC. When set, detected origin must match it. When unset, origin is inferred from request headers (Host/proto plus Origin/Referer heuristics), which works behind reverse proxies without extra config |
 | `LUDASH_TRUST_PROXY` | No | `false` | Trust `X-Forwarded-*` headers from your reverse proxy (needed for forwarded host/proto detection when `LUDASH_BASE_URL` is set) |
-| `LUDASH_LOG_LEVEL` | No | `info` | Log level |
+| `LUDASH_LOG_LEVEL` | No | `info` | Server log level: `debug`, `info`, `warn`, or `error`. Routine per-attempt SSH and scheduler refresh logs are only shown at `debug` |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
@@ -274,6 +274,24 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `NODE_ENV` | No | - | Set to `production` for static file serving |
 
 If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
+
+## Debugging SSH Connection Failures
+
+For container-based installs, set `LUDASH_LOG_LEVEL=debug` and inspect the container logs:
+
+```bash
+docker logs -f linux-update-dashboard
+```
+
+At the default `info` level, the server logs startup, configuration, warnings, and errors without emitting per-attempt SSH connect start/success lines on every refresh. `debug` adds attempt-scoped SSH diagnostics and routine scheduler refresh logs to stdout/stderr so they appear in `docker logs`. Failed test-connection requests include a debug reference ID that you can match against the log entries.
+
+Security constraints:
+
+- Logged SSH diagnostics are intentionally limited to safe metadata such as host, port, username, auth type, elapsed time, and filtered auth/debug events.
+- Passwords, sudo passwords, private keys, passphrases, tokens, and raw SSH payloads are never logged.
+- If a diagnostic cannot be emitted safely, it is omitted.
+
+These logs are intended for trusted operators on trusted hosts. Avoid enabling debug logging longer than needed.
 
 ## Authentication
 
@@ -369,7 +387,6 @@ Package managers are auto-detected on each system over SSH when you test the con
 │   └── test-systems/         # Docker test containers
 ├── run.sh                    # Local dev/production runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
-├── drizzle.config.ts         # Drizzle Kit configuration
 ├── vite.config.ts            # Vite + Tailwind config
 └── package.json
 ```
@@ -403,12 +420,8 @@ bun test
 
 # Type check
 bun run check
-
-# Database management
-bun run db:generate          # Generate migrations from schema changes
-bun run db:migrate           # Apply pending migrations
-bun run db:studio            # Open Drizzle Studio GUI
 ```
+The app creates and upgrades the SQLite schema automatically on startup.
 
 ### Test Systems
 
@@ -423,8 +436,9 @@ This will:
 1. Stop any running dev/production services
 2. Build and start 10 Docker containers (including Alpine, fish-shell, and sudo-password APT fixtures)
 3. Build the frontend in production mode
-4. Run database migrations
-5. Start the production server on `:3001`
+4. Start the production server on `:3001`
+
+The server initializes or upgrades the SQLite schema automatically during startup.
 
 **SSH credentials for all test systems:**
 - User: `testuser`

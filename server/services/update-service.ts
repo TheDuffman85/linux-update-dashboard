@@ -7,6 +7,7 @@ import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
+import { logger } from "../logger";
 import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
 
 // Active operation tracking (visible to the API)
@@ -106,7 +107,9 @@ async function attemptReconnection(
 
     let conn;
     try {
-      conn = await sshManager.connect(system as Record<string, unknown>);
+      conn = await sshManager.connect(system as Record<string, unknown>, {
+        systemId,
+      });
     } catch {
       // Connection failed — server still down, keep retrying
       continue;
@@ -363,7 +366,9 @@ async function checkUpdatesUnlocked(
   let conn;
   let pkgManagers: string[] = [];
   try {
-    conn = await sshManager.connect(system as Record<string, unknown>);
+    conn = await sshManager.connect(system as Record<string, unknown>, {
+      systemId,
+    });
 
     // Update system info
     await systemService.updateSystemInfo(
@@ -425,12 +430,19 @@ async function checkUpdatesUnlocked(
         allUpdates.push(...updates);
         pub({ type: "done", success: true });
       } catch (e) {
-        console.error(`System ${systemId} [${pmName}]: check failed:`, sanitizeOutput(String(e)));
+        logger.warn("System update check failed", {
+          systemId,
+          pkgManager: pmName,
+          error: sanitizeOutput(String(e)),
+        });
         pub({ type: "done", success: false });
       }
     }
   } catch (e) {
-    console.error(`System ${systemId}: connection failed:`, sanitizeOutput(String(e)));
+    logger.warn("System SSH connection failed during update check", {
+      systemId,
+      error: sanitizeOutput(String(e)),
+    });
     systemService.markUnreachable(systemId);
     pub({ type: "done", success: false });
     if (!silent) {
@@ -525,7 +537,9 @@ export async function applyUpgradeAll(
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
     try {
-      conn = await sshManager.connect(system as Record<string, unknown>);
+      conn = await sshManager.connect(system as Record<string, unknown>, {
+        systemId,
+      });
 
       for (const pmName of pkgManagers) {
         const parser = getParser(pmName);
@@ -675,7 +689,9 @@ export async function applyFullUpgradeAll(
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
     try {
-      conn = await sshManager.connect(system as Record<string, unknown>);
+      conn = await sshManager.connect(system as Record<string, unknown>, {
+        systemId,
+      });
 
       for (const pmName of pkgManagers) {
         const parser = getParser(pmName);
@@ -814,7 +830,9 @@ export async function applyUpgradePackage(
     outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
 
     try {
-      conn = await sshManager.connect(system as Record<string, unknown>);
+      conn = await sshManager.connect(system as Record<string, unknown>, {
+        systemId,
+      });
       const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
         outputStream.publish(systemId, { type: "output", data: chunk, stream });
       };
@@ -906,7 +924,9 @@ export async function rebootSystem(
 
       let conn;
       try {
-        conn = await sshManager.connect(system as Record<string, unknown>);
+        conn = await sshManager.connect(system as Record<string, unknown>, {
+          systemId,
+        });
         const result = await sshManager.runCommand(conn, cmd, 30, sudoPassword, (chunk, stream) => {
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
         });

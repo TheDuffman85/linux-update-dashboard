@@ -18,6 +18,6 @@
     },
     "types": ["bun"]
   },
-  "include": ["server/**/*.ts", "client/**/*.ts", "client/**/*.tsx", "vite.config.ts", "drizzle.config.ts"],
+  "include": ["server/**/*.ts", "client/**/*.ts", "client/**/*.tsx", "vite.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

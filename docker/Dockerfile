@@ -27,8 +27,7 @@ RUN apt-get update && apt-get install -y openssh-client && apt-get upgrade -y &&
 
 COPY --from=deps /app/node_modules ./node_modules
 RUN rm -rf node_modules/esbuild node_modules/@esbuild node_modules/@esbuild-kit \
-    node_modules/vite node_modules/@vitejs node_modules/drizzle-kit \
-    node_modules/esbuild-register node_modules/@drizzle-team
+    node_modules/vite node_modules/@vitejs
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/package.json ./

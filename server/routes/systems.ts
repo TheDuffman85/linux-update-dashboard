@@ -6,6 +6,7 @@ import { getSSHManager } from "../ssh/connection";
 import { getEncryptor } from "../security";
 import { detectPackageManagers } from "../ssh/detector";
 import * as outputStream from "../services/output-stream";
+import { logger } from "../logger";
 
 const systems = new Hono();
 
@@ -48,6 +49,20 @@ function parseSystemIdList(value: unknown): number[] | null {
   if (ids.some((id) => id === null)) return null;
 
   return ids as number[];
+}
+
+function getSystemWriteErrorResponse(error: unknown): Response | null {
+  if (error instanceof systemService.DuplicateSystemConnectionError) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  return null;
 }
 
 function serializeSystem(s: Record<string, unknown>) {
@@ -119,23 +134,35 @@ systems.post("/", async (c) => {
     return c.json({ error: "sourceSystemId must be a positive integer" }, 400);
   }
 
-  const systemId = systemService.createSystem({
-    name: body.name,
-    hostname: body.hostname,
-    port: body.port || 22,
-    authType: body.authType || "password",
-    username: body.username,
-    password: body.password || undefined,
-    privateKey: body.privateKey || undefined,
-    keyPassphrase: body.keyPassphrase || undefined,
-    sudoPassword: body.sudoPassword || undefined,
-    disabledPkgManagers: body.disabledPkgManagers || undefined,
-    excludeFromUpgradeAll: body.excludeFromUpgradeAll,
-    sourceSystemId,
-  });
+  let systemId: number;
+  try {
+    systemId = systemService.createSystem({
+      name: body.name,
+      hostname: body.hostname,
+      port: body.port || 22,
+      authType: body.authType || "password",
+      username: body.username,
+      password: body.password || undefined,
+      privateKey: body.privateKey || undefined,
+      keyPassphrase: body.keyPassphrase || undefined,
+      sudoPassword: body.sudoPassword || undefined,
+      disabledPkgManagers: body.disabledPkgManagers || undefined,
+      excludeFromUpgradeAll: body.excludeFromUpgradeAll,
+      sourceSystemId,
+    });
+  } catch (error) {
+    const response = getSystemWriteErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
 
   // Trigger initial check in background
-  updateService.checkUpdates(systemId).catch(console.error);
+  updateService.checkUpdates(systemId).catch((error) => {
+    logger.error("Initial update check failed after system creation", {
+      systemId,
+      error: String(error),
+    });
+  });
 
   return c.json({ id: systemId }, 201);
 });
@@ -167,19 +194,25 @@ systems.put("/:id", async (c) => {
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
 
-  systemService.updateSystem(id, {
-    name: body.name,
-    hostname: body.hostname,
-    port: body.port || 22,
-    authType: body.authType || "password",
-    username: body.username,
-    password: body.password || undefined,
-    privateKey: body.privateKey || undefined,
-    keyPassphrase: body.keyPassphrase || undefined,
-    sudoPassword: body.sudoPassword || undefined,
-    disabledPkgManagers: body.disabledPkgManagers || undefined,
-    excludeFromUpgradeAll: body.excludeFromUpgradeAll,
-  });
+  try {
+    systemService.updateSystem(id, {
+      name: body.name,
+      hostname: body.hostname,
+      port: body.port || 22,
+      authType: body.authType || "password",
+      username: body.username,
+      password: body.password || undefined,
+      privateKey: body.privateKey || undefined,
+      keyPassphrase: body.keyPassphrase || undefined,
+      sudoPassword: body.sudoPassword || undefined,
+      disabledPkgManagers: body.disabledPkgManagers || undefined,
+      excludeFromUpgradeAll: body.excludeFromUpgradeAll,
+    });
+  } catch (error) {
+    const response = getSystemWriteErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
 
   return c.json({ status: "ok" });
 });
@@ -240,12 +273,16 @@ systems.post("/test-connection", async (c) => {
   }
 
   const sshManager = getSSHManager();
-  const result = await sshManager.testConnection(system);
+  const result = await sshManager.testConnection(system, {
+    systemId: sourceSystemId ?? undefined,
+  });
 
   // On successful connection, also detect available package managers
   if (result.success) {
     try {
-      const conn = await sshManager.connect(system);
+      const conn = await sshManager.connect(system, {
+        systemId: sourceSystemId ?? undefined,
+      });
       try {
         const detectedManagers = await detectPackageManagers(sshManager, conn);
         return c.json({ ...result, detectedManagers });
