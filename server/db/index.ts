@@ -168,7 +168,6 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     type TEXT NOT NULL,
-    credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT,
     enabled INTEGER NOT NULL DEFAULT 1,
     notify_on TEXT NOT NULL DEFAULT '["updates"]',
     system_ids TEXT,
@@ -245,11 +244,6 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   // Migration: add notification schedule columns
   try {
     _db.run(sql`ALTER TABLE notifications ADD COLUMN schedule TEXT`);
-  } catch {
-    // Column already exists
-  }
-  try {
-    _db.run(sql`ALTER TABLE notifications ADD COLUMN credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT`);
   } catch {
     // Column already exists
   }
@@ -419,9 +413,6 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
 }
 
 function migrateLegacyCredentials(db: BunSQLiteDatabase<typeof schema>): void {
-  const encryptor = schema ? null : null;
-  void encryptor;
-
   const systemRows = db.select().from(schema.systems).all();
   for (const system of systemRows) {
     if (system.credentialId) continue;
@@ -459,66 +450,6 @@ function migrateLegacyCredentials(db: BunSQLiteDatabase<typeof schema>): void {
       })
       .where(eq(schema.systems.id, system.id))
       .run();
-  }
-
-  const notificationRows = db.select().from(schema.notifications).all();
-  for (const notification of notificationRows) {
-    const config = parseJsonObject(notification.config);
-    if (notification.type === "email" && !notification.credentialId) {
-      if (config.smtpUser || config.smtpPassword) {
-        const credentialPayload: Record<string, string> = {
-          username: config.smtpUser || "",
-          password: normalizeSecretValue(config.smtpPassword || ""),
-        };
-        const result = db.insert(schema.credentials).values({
-          name: `Migrated SMTP credential: ${notification.name}`,
-          kind: "emailSmtp",
-          payload: JSON.stringify(credentialPayload),
-        }).returning({ id: schema.credentials.id }).get();
-
-        delete config.smtpUser;
-        delete config.smtpPassword;
-
-        db.update(schema.notifications)
-          .set({
-            credentialId: result.id,
-            config: JSON.stringify(config),
-          })
-          .where(eq(schema.notifications.id, notification.id))
-          .run();
-      }
-      continue;
-    }
-
-    if (notification.type === "ntfy" && !notification.credentialId && config.ntfyToken) {
-      const result = db.insert(schema.credentials).values({
-        name: `Migrated ntfy credential: ${notification.name}`,
-        kind: "ntfyToken",
-        payload: JSON.stringify({
-          token: normalizeSecretValue(config.ntfyToken),
-        }),
-      }).returning({ id: schema.credentials.id }).get();
-
-      delete config.ntfyToken;
-
-      db.update(schema.notifications)
-        .set({
-          credentialId: result.id,
-          config: JSON.stringify(config),
-        })
-        .where(eq(schema.notifications.id, notification.id))
-        .run();
-    }
-  }
-
-  migrateNotificationCredentialKinds(db);
-}
-
-function parseJsonObject(raw: string): Record<string, string> {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
   }
 }
 
@@ -566,61 +497,6 @@ function migrateCredentialsTable(): void {
   _sqlite.exec("DROP TABLE credentials");
   _sqlite.exec("ALTER TABLE credentials_new RENAME TO credentials");
   _sqlite.exec("PRAGMA foreign_keys=ON");
-}
-
-function migrateNotificationCredentialKinds(db: BunSQLiteDatabase<typeof schema>): void {
-  const rows = db.select().from(schema.credentials).all();
-
-  for (const row of rows) {
-    if (row.kind === "token") {
-      db.update(schema.credentials)
-        .set({ kind: "ntfyToken" })
-        .where(eq(schema.credentials.id, row.id))
-        .run();
-      continue;
-    }
-
-    if (row.kind !== "usernamePassword") continue;
-
-    const systemRefs = db
-      .select({ id: schema.systems.id })
-      .from(schema.systems)
-      .where(eq(schema.systems.credentialId, row.id))
-      .all();
-    const notificationRefs = db
-      .select({ id: schema.notifications.id, type: schema.notifications.type })
-      .from(schema.notifications)
-      .where(eq(schema.notifications.credentialId, row.id))
-      .all();
-
-    if (notificationRefs.length === 0) continue;
-
-    const emailRefs = notificationRefs.filter((ref) => ref.type === "email");
-    const nonEmailRefs = notificationRefs.filter((ref) => ref.type !== "email");
-
-    if (emailRefs.length === 0) continue;
-
-    if (systemRefs.length === 0 && nonEmailRefs.length === 0) {
-      db.update(schema.credentials)
-        .set({ kind: "emailSmtp" })
-        .where(eq(schema.credentials.id, row.id))
-        .run();
-      continue;
-    }
-
-    const clone = db.insert(schema.credentials).values({
-      name: `${row.name} (SMTP)`,
-      kind: "emailSmtp",
-      payload: row.payload,
-    }).returning({ id: schema.credentials.id }).get();
-
-    for (const ref of emailRefs) {
-      db.update(schema.notifications)
-        .set({ credentialId: clone.id })
-        .where(eq(schema.notifications.id, ref.id))
-        .run();
-    }
-  }
 }
 
 export function getDb(): BunSQLiteDatabase<typeof schema> {

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
+import nodemailer from "nodemailer";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { notifications } from "../../server/db/schema";
@@ -55,6 +56,35 @@ describe("notifications routes validation", () => {
     expect(stored?.notifyOn).toBe('["updates","appUpdates"]');
   });
 
+  test("creates email notifications with inline SMTP auth", async () => {
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops email",
+        type: "email",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        config: {
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpSecure: "true",
+          smtpUser: "mailer",
+          smtpPassword: "smtp-secret",
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const stored = getDb().select().from(notifications).get();
+    expect(stored?.config).toContain('"smtpUser":"mailer"');
+    expect(stored?.config).toContain('"smtpPassword":"');
+    expect(stored?.config).not.toContain("smtp-secret");
+  });
+
   test("creates gotify notifications", async () => {
     const res = await app.request("/api/notifications", {
       method: "POST",
@@ -65,7 +95,6 @@ describe("notifications routes validation", () => {
         enabled: true,
         notifyOn: ["updates"],
         systemIds: null,
-        credentialId: null,
         config: {
           gotifyUrl: "https://gotify.example.com",
           gotifyToken: "app-token",
@@ -177,6 +206,92 @@ describe("notifications routes validation", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain("gotify priority override");
+  });
+
+  test("masks and reuses stored email passwords", async () => {
+    const originalCreateTransport = nodemailer.createTransport;
+    let sentAuth: Record<string, unknown> | undefined;
+
+    (nodemailer as any).createTransport = (options: Record<string, unknown>) => {
+      sentAuth = options.auth as Record<string, unknown> | undefined;
+      return {
+        sendMail: async () => {},
+      };
+    };
+
+    try {
+      const encryptedPassword = getEncryptor().encrypt("smtp-secret");
+      const inserted = getDb().insert(notifications).values({
+        name: "Existing email",
+        type: "email",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify({
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpSecure: "true",
+          smtpUser: "mailer",
+          smtpPassword: encryptedPassword,
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        }),
+      }).returning({ id: notifications.id }).get();
+
+      const listRes = await app.request("/api/notifications");
+      expect(listRes.status).toBe(200);
+      const listBody = await listRes.json();
+      expect(listBody.notifications[0].config.smtpPassword).toBe("(stored)");
+
+      const updateRes = await app.request(`/api/notifications/${inserted.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: {
+            smtpPassword: "(stored)",
+            emailImportanceOverride: "important",
+          },
+        }),
+      });
+      expect(updateRes.status).toBe(200);
+
+      const stored = getDb()
+        .select()
+        .from(notifications)
+        .where(eq(notifications.id, inserted.id))
+        .get();
+      expect(stored?.config).toContain(encryptedPassword);
+      expect(stored?.config).not.toContain('"(stored)"');
+
+      const testRes = await app.request("/api/notifications/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          existingId: inserted.id,
+          name: "Existing email",
+          type: "email",
+          config: {
+            smtpHost: "smtp.example.com",
+            smtpPort: "587",
+            smtpSecure: "true",
+            smtpUser: "mailer",
+            smtpPassword: "(stored)",
+            smtpFrom: "dashboard@example.com",
+            emailTo: "admin@example.com",
+            emailImportanceOverride: "important",
+          },
+        }),
+      });
+
+      expect(testRes.status).toBe(200);
+      const testBody = await testRes.json();
+      expect(testBody.success).toBe(true);
+      expect(sentAuth).toEqual({
+        user: "mailer",
+        pass: "smtp-secret",
+      });
+    } finally {
+      (nodemailer as any).createTransport = originalCreateTransport;
+    }
   });
 
   test("inline test reuses stored ntfy token for existing notifications", async () => {

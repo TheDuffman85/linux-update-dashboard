@@ -22,9 +22,6 @@ const labelClass =
 const KIND_LABELS: Record<CredentialKind, string> = {
   usernamePassword: "User / Password",
   sshKey: "SSH Key",
-  emailSmtp: "Email",
-  gotifyToken: "Gotify",
-  ntfyToken: "ntfy",
   certificate: "Certificate",
 };
 
@@ -49,7 +46,6 @@ function CredentialForm({
   const [password, setPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
-  const [token, setToken] = useState("");
   const [certificatePem, setCertificatePem] = useState("");
   const [privateKeyPem, setPrivateKeyPem] = useState("");
   const [privateKeyPassword, setPrivateKeyPassword] = useState("");
@@ -66,22 +62,6 @@ function CredentialForm({
         username,
         privateKey: privateKey || (initial?.payload.privateKey === "(stored)" ? "(stored)" : ""),
         passphrase: passphrase || (initial?.payload.passphrase === "(stored)" ? "(stored)" : ""),
-      };
-    }
-    if (kind === "emailSmtp") {
-      return {
-        username,
-        password: password || (initial?.payload.password === "(stored)" ? "(stored)" : ""),
-      };
-    }
-    if (kind === "gotifyToken") {
-      return {
-        token: token || (initial?.payload.token === "(stored)" ? "(stored)" : ""),
-      };
-    }
-    if (kind === "ntfyToken") {
-      return {
-        token: token || (initial?.payload.token === "(stored)" ? "(stored)" : ""),
       };
     }
     return {
@@ -137,7 +117,7 @@ function CredentialForm({
         </div>
       </div>
 
-      {(kind === "usernamePassword" || kind === "sshKey" || kind === "certificate" || kind === "emailSmtp") && (
+      {(kind === "usernamePassword" || kind === "sshKey" || kind === "certificate") && (
         <div>
           <label className={labelClass}>Username</label>
           <input
@@ -145,15 +125,15 @@ function CredentialForm({
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             className={inputClass}
-            placeholder={kind === "emailSmtp" ? "mailer" : "root"}
+            placeholder="root"
             required
           />
         </div>
       )}
 
-      {(kind === "usernamePassword" || kind === "emailSmtp") && (
+      {kind === "usernamePassword" && (
         <div>
-          <label className={labelClass}>{kind === "emailSmtp" ? "SMTP Password" : "Password"}</label>
+          <label className={labelClass}>Password</label>
           <input
             type="password"
             value={password}
@@ -190,21 +170,6 @@ function CredentialForm({
             />
           </div>
         </>
-      )}
-
-      {(kind === "gotifyToken" || kind === "ntfyToken") && (
-        <div>
-          <label className={labelClass}>
-            {kind === "gotifyToken" ? "App Token" : "Token"}
-          </label>
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            className={inputClass}
-            placeholder={initial?.payload.token === "(stored)" ? "(unchanged)" : ""}
-          />
-        </div>
       )}
 
       {kind === "certificate" && (

@@ -1,21 +1,18 @@
 import { asc, eq } from "drizzle-orm";
 import { utils, type ParsedKey } from "ssh2";
 import { getDb } from "../db";
-import { credentials, notifications, systems } from "../db/schema";
+import { credentials, systems } from "../db/schema";
 import { getEncryptor } from "../security";
 
 export const CREDENTIAL_KINDS = [
   "usernamePassword",
   "sshKey",
-  "emailSmtp",
-  "gotifyToken",
-  "ntfyToken",
   "certificate",
 ] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 
 export interface CredentialReference {
-  type: "system" | "notification";
+  type: "system";
   id: number;
   name: string;
 }
@@ -38,18 +35,12 @@ export interface CredentialDetail extends CredentialSummary {
 const SECRET_FIELDS: Record<CredentialKind, string[]> = {
   usernamePassword: ["password"],
   sshKey: ["privateKey", "passphrase"],
-  emailSmtp: ["password"],
-  gotifyToken: ["token"],
-  ntfyToken: ["token"],
   certificate: ["certificatePem", "privateKeyPem", "privateKeyPassword"],
 };
 
 const ALLOWED_FIELDS: Record<CredentialKind, string[]> = {
   usernamePassword: ["username", "password"],
   sshKey: ["username", "privateKey", "passphrase"],
-  emailSmtp: ["username", "password"],
-  gotifyToken: ["token"],
-  ntfyToken: ["token"],
   certificate: ["username", "certificatePem", "privateKeyPem", "privateKeyPassword"],
 };
 
@@ -77,19 +68,12 @@ export function parseCredentialPayload(raw: string): Record<string, string> {
 
 function getReferences(credentialId: number): CredentialReference[] {
   const db = getDb();
-  const systemRefs = db
+  return db
     .select({ id: systems.id, name: systems.name })
     .from(systems)
     .where(eq(systems.credentialId, credentialId))
     .all()
     .map((item) => ({ ...item, type: "system" as const }));
-  const notificationRefs = db
-    .select({ id: notifications.id, name: notifications.name })
-    .from(notifications)
-    .where(eq(notifications.credentialId, credentialId))
-    .all()
-    .map((item) => ({ ...item, type: "notification" as const }));
-  return [...systemRefs, ...notificationRefs];
 }
 
 function maskPayload(
@@ -140,11 +124,6 @@ function buildSummary(
       ? `${payload.username} • SSH key${payload.passphrase ? " + passphrase" : ""}`
       : `SSH key${payload.passphrase ? " + passphrase" : ""}`;
   }
-  if (kind === "emailSmtp") {
-    return payload.username ? `${payload.username} • SMTP auth` : "SMTP auth";
-  }
-  if (kind === "gotifyToken") return "Gotify app token";
-  if (kind === "ntfyToken") return "ntfy token";
   return payload.username
     ? `${payload.username} • SSH certificate${payload.privateKeyPassword ? " + password" : ""}`
     : `SSH certificate${payload.privateKeyPassword ? " + password" : ""}`;
@@ -223,21 +202,6 @@ export function validateCredentialInput(data: {
     }
   }
 
-  if (data.kind === "emailSmtp") {
-    if (!payload.username) return "payload.username is required";
-    if (!payload.password && existing?.password === undefined) {
-      return "payload.password is required";
-    }
-  }
-
-  if (data.kind === "gotifyToken" && !payload.token && existing?.token === undefined) {
-    return "payload.token is required";
-  }
-
-  if (data.kind === "ntfyToken" && !payload.token && existing?.token === undefined) {
-    return "payload.token is required";
-  }
-
   if (data.kind === "certificate") {
     if (!payload.username) return "payload.username is required";
     const hasCert = !!payload.certificatePem || existing?.certificatePem !== undefined;
@@ -256,7 +220,10 @@ export function listCredentials(filters?: {
   const rows = db.select().from(credentials).orderBy(asc(credentials.name), asc(credentials.id)).all();
 
   return rows
-    .filter((row) => !filters?.kind || row.kind === filters.kind)
+    .filter((row): row is typeof row & { kind: CredentialKind } =>
+      (CREDENTIAL_KINDS as readonly string[]).includes(row.kind) &&
+      (!filters?.kind || row.kind === filters.kind)
+    )
     .map(serializeSummary);
 }
 
@@ -268,6 +235,7 @@ export function getCredentialRow(id: number) {
 export function getCredential(id: number): CredentialDetail | null {
   const row = getCredentialRow(id);
   if (!row) return null;
+  if (!(CREDENTIAL_KINDS as readonly string[]).includes(row.kind)) return null;
   const summary = serializeSummary(row);
   return {
     ...summary,
@@ -304,6 +272,7 @@ export function updateCredential(
 ): boolean {
   const existing = getCredentialRow(id);
   if (!existing) return false;
+  if (!(CREDENTIAL_KINDS as readonly string[]).includes(existing.kind)) return false;
   const kind = existing.kind as CredentialKind;
   const existingPayload = parseCredentialPayload(existing.payload);
   const persistedPayload = buildPersistedPayload(kind, data.payload, existingPayload);
@@ -340,19 +309,10 @@ export function isSystemCredentialKind(kind: CredentialKind): boolean {
   return kind === "usernamePassword" || kind === "sshKey" || kind === "certificate";
 }
 
-export function isNotificationCredentialKind(
-  type: string,
-  kind: CredentialKind
-): boolean {
-  if (type === "email") return kind === "emailSmtp";
-  if (type === "gotify") return kind === "gotifyToken";
-  if (type === "ntfy") return kind === "ntfyToken";
-  return false;
-}
-
 export function resolveSystemCredential(id: number): ResolvedSystemCredential | null {
   const row = getCredentialRow(id);
   if (!row) return null;
+  if (!(CREDENTIAL_KINDS as readonly string[]).includes(row.kind)) return null;
   const kind = row.kind as CredentialKind;
   const payload = parseCredentialPayload(row.payload);
 
@@ -391,41 +351,6 @@ export function resolveSystemCredential(id: number): ResolvedSystemCredential | 
 
   return null;
 }
-
-export function resolveNotificationCredentialConfig(
-  type: string,
-  credentialId: number | null | undefined
-): Record<string, string> | null {
-  if (!credentialId) return {};
-  const row = getCredentialRow(credentialId);
-  if (!row) return null;
-  const kind = row.kind as CredentialKind;
-  if (!isNotificationCredentialKind(type, kind)) return null;
-
-  const payload = parseCredentialPayload(row.payload);
-
-  if (type === "email" && kind === "emailSmtp") {
-    return {
-      smtpUser: payload.username || "",
-      smtpPassword: payload.password || "",
-    };
-  }
-
-  if (type === "gotify" && kind === "gotifyToken") {
-    return {
-      gotifyToken: payload.token || "",
-    };
-  }
-
-  if (type === "ntfy" && kind === "ntfyToken") {
-    return {
-      ntfyToken: payload.token || "",
-    };
-  }
-
-  return null;
-}
-
 export function buildSshCertificateParsedKey(credential: ResolvedSystemCredential): ParsedKey | null {
   if (
     credential.kind !== "certificate" ||

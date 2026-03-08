@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
+import { eq, sql } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { credentials, notifications, systems } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
@@ -125,6 +126,20 @@ describe("legacy credential migration", () => {
         emailTo: "admin@example.com",
       })
     );
+    sqlite.query(
+      "INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      "Ops ntfy",
+      "ntfy",
+      1,
+      '["updates"]',
+      null,
+      JSON.stringify({
+        ntfyUrl: "https://ntfy.sh",
+        ntfyTopic: "updates",
+        ntfyToken: encryptor.encrypt("ntfy-secret"),
+      })
+    );
     sqlite.close();
   });
 
@@ -133,22 +148,34 @@ describe("legacy credential migration", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test("migrates legacy system and notification secrets into credential records", () => {
+  test("migrates ad3f5a2 databases with inline notification secrets intact", () => {
     initDatabase(dbPath);
 
     const db = getDb();
     const migratedCredentials = db.select().from(credentials).all();
-    expect(migratedCredentials).toHaveLength(2);
+    expect(migratedCredentials).toHaveLength(1);
 
     const migratedSystem = db.select().from(systems).get();
     expect(migratedSystem?.credentialId).toBeTruthy();
     expect(migratedSystem?.encryptedPassword).toBeNull();
 
-    const migratedNotification = db.select().from(notifications).get();
-    expect(migratedNotification?.credentialId).toBeTruthy();
-    expect(migratedNotification?.config).not.toContain("smtpPassword");
-    expect(migratedNotification?.config).not.toContain("smtpUser");
-    const smtpCredential = migratedCredentials.find((credential) => credential.kind === "emailSmtp");
-    expect(smtpCredential).toBeTruthy();
+    const migratedNotification = db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.type, "email"))
+      .get();
+    expect(migratedNotification?.config).toContain('"smtpUser":"mailer"');
+    expect(migratedNotification?.config).toContain('"smtpPassword":"');
+
+    const migratedNtfy = db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.type, "ntfy"))
+      .get();
+    expect(migratedNtfy?.config).toContain('"ntfyToken":"');
+
+    const notificationColumns = db.all(sql`PRAGMA table_info(notifications)`) as Array<{ name: string }>;
+    expect(notificationColumns.some((column) => column.name === "credential_id")).toBe(false);
+    expect(migratedCredentials[0]?.kind).toBe("usernamePassword");
   });
 });

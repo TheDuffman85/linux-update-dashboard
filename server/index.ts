@@ -192,10 +192,6 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
   const CREDENTIAL_SECRET_FIELDS: Record<string, string[]> = {
     usernamePassword: ["password"],
     sshKey: ["privateKey", "passphrase"],
-    emailSmtp: ["password"],
-    gotifyToken: ["token"],
-    ntfyToken: ["token"],
-    token: ["token"],
     certificate: ["certificatePem", "privateKeyPem", "privateKeyPassword"],
   };
 

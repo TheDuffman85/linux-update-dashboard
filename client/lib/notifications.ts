@@ -5,7 +5,6 @@ export interface NotificationChannel {
   id: number;
   name: string;
   type: string;
-  credentialId: number | null;
   enabled: boolean;
   notifyOn: string[];
   systemIds: number[] | null;
@@ -36,7 +35,6 @@ export function useCreateNotification() {
       enabled?: boolean;
       notifyOn?: string[];
       systemIds?: number[] | null;
-      credentialId?: number | null;
       config: Record<string, string>;
       schedule?: string | null;
     }) =>
@@ -63,7 +61,6 @@ export function useUpdateNotification() {
       enabled?: boolean;
       notifyOn?: string[];
       systemIds?: number[] | null;
-      credentialId?: number | null;
       config?: Record<string, string>;
       schedule?: string | null;
     }) =>
@@ -102,7 +99,6 @@ export function useTestNotificationConfig() {
   return useMutation({
     mutationFn: (data: {
       type: string;
-      credentialId?: number | null;
       config: Record<string, string>;
       name?: string;
       existingId?: number;

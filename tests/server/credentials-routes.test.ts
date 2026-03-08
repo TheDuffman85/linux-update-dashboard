@@ -51,10 +51,10 @@ describe("credentials routes", () => {
 
   test("returns masked payload fields for credential details", async () => {
     const inserted = getDb().insert(credentials).values({
-      name: "SMTP",
-      kind: "emailSmtp",
+      name: "SSH",
+      kind: "usernamePassword",
       payload: JSON.stringify({
-        username: "mailer",
+        username: "root",
         password: "encrypted-password",
       }),
     }).returning({ id: credentials.id }).get();
@@ -62,30 +62,27 @@ describe("credentials routes", () => {
     const res = await app.request(`/api/credentials/${inserted.id}`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.credential.payload.username).toBe("mailer");
+    expect(body.credential.payload.username).toBe("root");
     expect(body.credential.payload.password).toBe("(stored)");
   });
 
-  test("creates gotify token credentials", async () => {
+  test("rejects notification-only credential kinds", async () => {
     const res = await app.request("/api/credentials", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "Ops Gotify",
-        kind: "gotifyToken",
+        name: "SMTP",
+        kind: "emailSmtp",
         payload: {
-          token: "secret-token",
+          username: "mailer",
+          password: "secret",
         },
       }),
     });
 
-    expect(res.status).toBe(201);
-
-    const listRes = await app.request("/api/credentials?kind=gotifyToken");
-    expect(listRes.status).toBe(200);
-    const body = await listRes.json();
-    expect(body.credentials).toHaveLength(1);
-    expect(body.credentials[0].kind).toBe("gotifyToken");
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("invalid credential kind");
   });
 
   test("blocks deleting credentials that are still referenced", async () => {

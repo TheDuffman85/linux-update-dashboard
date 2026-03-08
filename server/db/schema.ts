@@ -162,9 +162,6 @@ export const notifications = sqliteTable("notifications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   type: text("type").notNull(),
-  credentialId: integer("credential_id").references(() => credentials.id, {
-    onDelete: "restrict",
-  }),
   enabled: integer("enabled").notNull().default(1),
   notifyOn: text("notify_on")
     .notNull()

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -12,7 +12,6 @@ import {
   type NotificationChannel,
 } from "../lib/notifications";
 import { useSystems } from "../lib/systems";
-import { useCredentials } from "../lib/credentials";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -105,7 +104,6 @@ function NotificationForm({
     enabled: boolean;
     notifyOn: string[];
     systemIds: number[] | null;
-    credentialId: number | null;
     config: Record<string, string>;
     schedule: string | null;
   }) => void;
@@ -113,9 +111,6 @@ function NotificationForm({
   loading: boolean;
 }) {
   const { data: systemsList } = useSystems();
-  const { data: emailCredentials } = useCredentials({ kind: "emailSmtp" });
-  const { data: gotifyCredentials } = useCredentials({ kind: "gotifyToken" });
-  const { data: ntfyCredentials } = useCredentials({ kind: "ntfyToken" });
   const testConfig = useTestNotificationConfig();
   const { addToast } = useToast();
   const [name, setName] = useState(initial?.name || "");
@@ -134,6 +129,8 @@ function NotificationForm({
   const [smtpSecure, setSmtpSecure] = useState(
     initial?.config.smtpSecure !== "false"
   );
+  const [smtpUser, setSmtpUser] = useState(initial?.config.smtpUser || "");
+  const [smtpPassword, setSmtpPassword] = useState("");
   const [smtpFrom, setSmtpFrom] = useState(initial?.config.smtpFrom || "");
   const [emailTo, setEmailTo] = useState(initial?.config.emailTo || "");
   const [emailImportanceOverride, setEmailImportanceOverride] = useState(
@@ -143,6 +140,7 @@ function NotificationForm({
   const [gotifyUrl, setGotifyUrl] = useState(
     initial?.config.gotifyUrl || ""
   );
+  const [gotifyToken, setGotifyToken] = useState("");
   const [gotifyPriorityOverride, setGotifyPriorityOverride] = useState(
     normalizeGotifyPriorityOverride(initial?.config.gotifyPriorityOverride)
   );
@@ -151,6 +149,7 @@ function NotificationForm({
     initial?.config.ntfyUrl || "https://ntfy.sh"
   );
   const [ntfyTopic, setNtfyTopic] = useState(initial?.config.ntfyTopic || "");
+  const [ntfyToken, setNtfyToken] = useState("");
   const [ntfyPriorityOverride, setNtfyPriorityOverride] = useState(
     initial?.config.ntfyPriorityOverride || "auto"
   );
@@ -170,23 +169,6 @@ function NotificationForm({
       ? initial.schedule
       : ""
   );
-
-  const [credentialId, setCredentialId] = useState<number | null>(
-    initial?.credentialId ?? null
-  );
-
-  const availableCredentials =
-    type === "email"
-      ? emailCredentials ?? []
-      : type === "gotify"
-        ? gotifyCredentials ?? []
-        : ntfyCredentials ?? [];
-  useEffect(() => {
-    if (credentialId === null) return;
-    if (!availableCredentials.some((credential) => credential.id === credentialId)) {
-      setCredentialId(null);
-    }
-  }, [availableCredentials, credentialId]);
 
   const toggleNotifyOn = (event: string) => {
     setNotifyOn((prev) =>
@@ -208,6 +190,9 @@ function NotificationForm({
           smtpHost,
           smtpPort,
           smtpSecure: smtpSecure ? "true" : "false",
+          smtpUser,
+          smtpPassword:
+            smtpPassword || (initial?.config.smtpPassword === "(stored)" ? "(stored)" : ""),
           smtpFrom,
           emailTo,
           emailImportanceOverride,
@@ -215,11 +200,15 @@ function NotificationForm({
       : type === "gotify"
         ? {
             gotifyUrl,
+            gotifyToken:
+              gotifyToken || (initial?.config.gotifyToken === "(stored)" ? "(stored)" : ""),
             gotifyPriorityOverride,
           }
       : {
           ntfyUrl,
           ntfyTopic,
+          ntfyToken:
+            ntfyToken || (initial?.config.ntfyToken === "(stored)" ? "(stored)" : ""),
           ntfyPriorityOverride,
         };
 
@@ -237,7 +226,6 @@ function NotificationForm({
       enabled,
       notifyOn,
       systemIds: allSystems ? null : selectedSystemIds,
-      credentialId,
       config: buildConfig(),
       schedule: getScheduleValue(),
     });
@@ -247,7 +235,6 @@ function NotificationForm({
     testConfig.mutate(
       {
         type,
-        credentialId,
         config: buildConfig(),
         name: name || undefined,
         existingId: initial?.id,
@@ -463,21 +450,24 @@ function NotificationForm({
                 />
               </div>
               <div className="sm:col-span-2">
-                <label className={labelClass}>SMTP Credential</label>
-                <select
-                  value={credentialId ?? ""}
-                  onChange={(e) =>
-                    setCredentialId(e.target.value ? Number(e.target.value) : null)
-                  }
+                <label className={labelClass}>SMTP User</label>
+                <input
+                  type="text"
+                  value={smtpUser}
+                  onChange={(e) => setSmtpUser(e.target.value)}
                   className={inputClass}
-                >
-                  <option value="">No SMTP auth</option>
-                  {availableCredentials.map((credential) => (
-                    <option key={credential.id} value={credential.id}>
-                      {credential.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="mailer"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>SMTP Password</label>
+                <input
+                  type="password"
+                  value={smtpPassword}
+                  onChange={(e) => setSmtpPassword(e.target.value)}
+                  className={inputClass}
+                  placeholder={initial?.config.smtpPassword === "(stored)" ? "(unchanged)" : ""}
+                />
               </div>
               <div>
                 <label className={labelClass}>From Address</label>
@@ -541,21 +531,14 @@ function NotificationForm({
                 </select>
               </div>
               <div className="sm:col-span-2">
-                <label className={labelClass}>App Token Credential</label>
-                <select
-                  value={credentialId ?? ""}
-                  onChange={(e) =>
-                    setCredentialId(e.target.value ? Number(e.target.value) : null)
-                  }
+                <label className={labelClass}>App Token</label>
+                <input
+                  type="password"
+                  value={gotifyToken}
+                  onChange={(e) => setGotifyToken(e.target.value)}
                   className={inputClass}
-                >
-                  <option value="">Select a Gotify token</option>
-                  {availableCredentials.map((credential) => (
-                    <option key={credential.id} value={credential.id}>
-                      {credential.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={initial?.config.gotifyToken === "(stored)" ? "(unchanged)" : ""}
+                />
               </div>
             </>
           ) : (
@@ -580,21 +563,14 @@ function NotificationForm({
                 />
               </div>
               <div>
-                <label className={labelClass}>Access Credential</label>
-                <select
-                  value={credentialId ?? ""}
-                  onChange={(e) =>
-                    setCredentialId(e.target.value ? Number(e.target.value) : null)
-                  }
+                <label className={labelClass}>Access Token</label>
+                <input
+                  type="password"
+                  value={ntfyToken}
+                  onChange={(e) => setNtfyToken(e.target.value)}
                   className={inputClass}
-                >
-                  <option value="">No token</option>
-                  {availableCredentials.map((credential) => (
-                    <option key={credential.id} value={credential.id}>
-                      {credential.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={initial?.config.ntfyToken === "(stored)" ? "(unchanged)" : ""}
+                />
               </div>
               <div>
                 <label className={labelClass}>Priority</label>
@@ -680,7 +656,6 @@ export default function Notifications() {
     enabled: boolean;
     notifyOn: string[];
     systemIds: number[] | null;
-    credentialId: number | null;
     config: Record<string, string>;
     schedule: string | null;
   }) => {
@@ -699,7 +674,6 @@ export default function Notifications() {
     enabled: boolean;
     notifyOn: string[];
     systemIds: number[] | null;
-    credentialId: number | null;
     config: Record<string, string>;
     schedule: string | null;
   }) => {

@@ -4,13 +4,10 @@ import { apiFetch } from "./client";
 export type CredentialKind =
   | "usernamePassword"
   | "sshKey"
-  | "emailSmtp"
-  | "gotifyToken"
-  | "ntfyToken"
   | "certificate";
 
 export interface CredentialReference {
-  type: "system" | "notification";
+  type: "system";
   id: number;
   name: string;
 }
