@@ -9,6 +9,9 @@ import {
   getAppUpdateStatus,
 } from "./app-update-service";
 
+const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
+const DEFAULT_NOTIFY_ON_JSON = JSON.stringify(DEFAULT_NOTIFY_ON);
+
 // Sensitive config keys that need encryption per provider type
 const SENSITIVE_KEYS: Record<string, string[]> = {
   email: ["smtpPassword"],
@@ -123,6 +126,10 @@ function isScheduled(schedule: string | null): boolean {
   return schedule !== null && schedule !== "immediate";
 }
 
+function getDefaultNotifyOn(): string[] {
+  return [...DEFAULT_NOTIFY_ON];
+}
+
 function serializeNotification(row: any) {
   const config = loadSanitizedConfig(row);
   return {
@@ -130,7 +137,7 @@ function serializeNotification(row: any) {
     name: row.name,
     type: row.type,
     enabled: row.enabled === 1,
-    notifyOn: JSON.parse(row.notifyOn || '["updates"]'),
+    notifyOn: JSON.parse(row.notifyOn || DEFAULT_NOTIFY_ON_JSON),
     systemIds: row.systemIds ? JSON.parse(row.systemIds) : null,
     config: maskConfig(row.type, config),
     schedule: row.schedule || null,
@@ -176,7 +183,7 @@ export function createNotification(data: {
     name: data.name,
     type: data.type,
     enabled: data.enabled !== false ? 1 : 0,
-    notifyOn: JSON.stringify(data.notifyOn || ["updates"]),
+    notifyOn: JSON.stringify(data.notifyOn || getDefaultNotifyOn()),
     systemIds: data.systemIds ? JSON.stringify(data.systemIds) : null,
     config: JSON.stringify(encConfig),
     schedule,
@@ -376,7 +383,7 @@ export async function processScheduledResults(
   // Dispatch to each enabled notification channel
   for (const channel of channels) {
     const notifyOn: string[] = (() => {
-      try { return JSON.parse(channel.notifyOn || '["updates"]'); } catch { return ["updates"]; }
+      try { return JSON.parse(channel.notifyOn || JSON.stringify(getDefaultNotifyOn())); } catch { return getDefaultNotifyOn(); }
     })();
     const scopedSystemIds: number[] | null = (() => {
       try { return channel.systemIds ? JSON.parse(channel.systemIds) : null; } catch { return null; }
@@ -418,7 +425,7 @@ export async function processAppUpdateNotifications(): Promise<void> {
 
   const subscribedChannels = channels.filter((channel) => {
     try {
-      const notifyOn = JSON.parse(channel.notifyOn || '["updates"]');
+      const notifyOn = JSON.parse(channel.notifyOn || DEFAULT_NOTIFY_ON_JSON);
       return Array.isArray(notifyOn) && notifyOn.includes("appUpdates");
     } catch {
       return false;
@@ -441,9 +448,9 @@ export async function processAppUpdateNotifications(): Promise<void> {
   for (const channel of subscribedChannels) {
     const notifyOn: string[] = (() => {
       try {
-        return JSON.parse(channel.notifyOn || '["updates"]');
+        return JSON.parse(channel.notifyOn || JSON.stringify(getDefaultNotifyOn()));
       } catch {
-        return ["updates"];
+        return getDefaultNotifyOn();
       }
     })();
 

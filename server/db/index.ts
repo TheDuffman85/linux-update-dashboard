@@ -169,7 +169,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
-    notify_on TEXT NOT NULL DEFAULT '["updates"]',
+    notify_on TEXT NOT NULL DEFAULT '["updates","appUpdates"]',
     system_ids TEXT,
     config TEXT NOT NULL,
     schedule TEXT,
@@ -383,7 +383,8 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
   const notifyOn: string[] = [];
   if (s.notify_on_updates !== "false") notifyOn.push("updates");
   if (s.notify_on_unreachable === "true") notifyOn.push("unreachable");
-  const notifyOnJson = JSON.stringify(notifyOn.length > 0 ? notifyOn : ["updates"]);
+  notifyOn.push("appUpdates");
+  const notifyOnJson = JSON.stringify(Array.from(new Set(notifyOn)));
 
   // Migrate email config if it was configured
   if (methods.includes("email") && s.smtp_host) {

@@ -85,6 +85,33 @@ describe("notifications routes validation", () => {
     expect(stored?.config).not.toContain("smtp-secret");
   });
 
+  test("defaults new notifications to updates and app updates", async () => {
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Default events email",
+        type: "email",
+        enabled: true,
+        systemIds: null,
+        config: {
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpSecure: "true",
+          smtpUser: "mailer",
+          smtpPassword: "smtp-secret",
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+
+    const stored = getDb().select().from(notifications).get();
+    expect(stored?.notifyOn).toBe('["updates","appUpdates"]');
+  });
+
   test("creates gotify notifications", async () => {
     const res = await app.request("/api/notifications", {
       method: "POST",

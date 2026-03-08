@@ -165,7 +165,7 @@ export const notifications = sqliteTable("notifications", {
   enabled: integer("enabled").notNull().default(1),
   notifyOn: text("notify_on")
     .notNull()
-    .default('["updates"]'),
+    .default('["updates","appUpdates"]'),
   systemIds: text("system_ids"),
   config: text("config").notNull(),
   schedule: text("schedule"),

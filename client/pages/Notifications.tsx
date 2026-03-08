@@ -67,6 +67,8 @@ const EVENT_LABELS: Record<string, string> = {
   appUpdates: "Application updates",
 };
 
+const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];
+
 function describeSchedule(cron: string | null): string {
   if (!cron) return "Immediate";
   const presetMatch = SCHEDULE_PRESETS.find((p) => p.value === cron);
@@ -117,7 +119,7 @@ function NotificationForm({
   const [type, setType] = useState(initial?.type || "email");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [notifyOn, setNotifyOn] = useState<string[]>(
-    initial?.notifyOn || ["updates"]
+    initial?.notifyOn || DEFAULT_NOTIFY_ON
   );
   const [allSystems, setAllSystems] = useState(initial?.systemIds === null);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>(
