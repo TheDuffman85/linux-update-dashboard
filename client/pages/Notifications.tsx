@@ -24,6 +24,7 @@ const checkboxClass =
 
 const TYPE_LABELS: Record<string, string> = {
   email: "Email",
+  gotify: "Gotify",
   ntfy: "ntfy.sh",
 };
 
@@ -36,13 +37,23 @@ const SCHEDULE_PRESETS: { label: string; value: string }[] = [
   { label: "Custom", value: "custom" },
 ];
 
-const NTFY_PRIORITY_OPTIONS = [
+const PUSH_PRIORITY_OPTIONS = [
   { value: "auto", label: "Automatic" },
   { value: "min", label: "Min" },
   { value: "low", label: "Low" },
   { value: "default", label: "Default" },
   { value: "high", label: "High" },
   { value: "urgent", label: "Urgent" },
+];
+
+const GOTIFY_PRIORITY_OPTIONS = [
+  { value: "auto", label: "Automatic" },
+  { value: "0", label: "0 - Silent" },
+  { value: "1", label: "1 - Low" },
+  { value: "3", label: "3 - Default low" },
+  { value: "5", label: "5 - Normal" },
+  { value: "8", label: "8 - High" },
+  { value: "10", label: "10 - Max" },
 ];
 
 const EMAIL_IMPORTANCE_OPTIONS = [
@@ -62,6 +73,23 @@ function describeSchedule(cron: string | null): string {
   const presetMatch = SCHEDULE_PRESETS.find((p) => p.value === cron);
   if (presetMatch) return presetMatch.label;
   return cron;
+}
+
+function normalizeGotifyPriorityOverride(value: string | undefined): string {
+  switch (value) {
+    case "min":
+      return "1";
+    case "low":
+      return "3";
+    case "default":
+      return "5";
+    case "high":
+      return "8";
+    case "urgent":
+      return "10";
+    default:
+      return value || "auto";
+  }
 }
 
 function NotificationForm({
@@ -86,6 +114,7 @@ function NotificationForm({
 }) {
   const { data: systemsList } = useSystems();
   const { data: emailCredentials } = useCredentials({ kind: "emailSmtp" });
+  const { data: gotifyCredentials } = useCredentials({ kind: "gotifyToken" });
   const { data: ntfyCredentials } = useCredentials({ kind: "ntfyToken" });
   const testConfig = useTestNotificationConfig();
   const { addToast } = useToast();
@@ -109,6 +138,13 @@ function NotificationForm({
   const [emailTo, setEmailTo] = useState(initial?.config.emailTo || "");
   const [emailImportanceOverride, setEmailImportanceOverride] = useState(
     initial?.config.emailImportanceOverride || "auto"
+  );
+
+  const [gotifyUrl, setGotifyUrl] = useState(
+    initial?.config.gotifyUrl || ""
+  );
+  const [gotifyPriorityOverride, setGotifyPriorityOverride] = useState(
+    normalizeGotifyPriorityOverride(initial?.config.gotifyPriorityOverride)
   );
 
   const [ntfyUrl, setNtfyUrl] = useState(
@@ -140,7 +176,11 @@ function NotificationForm({
   );
 
   const availableCredentials =
-    type === "email" ? emailCredentials ?? [] : ntfyCredentials ?? [];
+    type === "email"
+      ? emailCredentials ?? []
+      : type === "gotify"
+        ? gotifyCredentials ?? []
+        : ntfyCredentials ?? [];
   useEffect(() => {
     if (credentialId === null) return;
     if (!availableCredentials.some((credential) => credential.id === credentialId)) {
@@ -172,6 +212,11 @@ function NotificationForm({
           emailTo,
           emailImportanceOverride,
         }
+      : type === "gotify"
+        ? {
+            gotifyUrl,
+            gotifyPriorityOverride,
+          }
       : {
           ntfyUrl,
           ntfyTopic,
@@ -243,6 +288,7 @@ function NotificationForm({
             disabled={!!initial}
           >
             <option value="email">Email (SMTP)</option>
+            <option value="gotify">Gotify</option>
             <option value="ntfy">ntfy.sh</option>
           </select>
         </div>
@@ -389,7 +435,7 @@ function NotificationForm({
 
       <div className="border-t border-border pt-4">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-          {type === "email" ? "Email (SMTP)" : "ntfy.sh"}
+          {type === "email" ? "Email (SMTP)" : type === "gotify" ? "Gotify" : "ntfy.sh"}
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -468,6 +514,50 @@ function NotificationForm({
                 </select>
               </div>
             </>
+          ) : type === "gotify" ? (
+            <>
+              <div>
+                <label className={labelClass}>Server URL</label>
+                <input
+                  type="url"
+                  value={gotifyUrl}
+                  onChange={(e) => setGotifyUrl(e.target.value)}
+                  className={inputClass}
+                  placeholder="https://gotify.example.com"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Priority</label>
+                <select
+                  value={gotifyPriorityOverride}
+                  onChange={(e) => setGotifyPriorityOverride(e.target.value)}
+                  className={inputClass}
+                >
+                  {GOTIFY_PRIORITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>App Token Credential</label>
+                <select
+                  value={credentialId ?? ""}
+                  onChange={(e) =>
+                    setCredentialId(e.target.value ? Number(e.target.value) : null)
+                  }
+                  className={inputClass}
+                >
+                  <option value="">Select a Gotify token</option>
+                  {availableCredentials.map((credential) => (
+                    <option key={credential.id} value={credential.id}>
+                      {credential.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
           ) : (
             <>
               <div>
@@ -513,7 +603,7 @@ function NotificationForm({
                   onChange={(e) => setNtfyPriorityOverride(e.target.value)}
                   className={inputClass}
                 >
-                  {NTFY_PRIORITY_OPTIONS.map((option) => (
+                  {PUSH_PRIORITY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>

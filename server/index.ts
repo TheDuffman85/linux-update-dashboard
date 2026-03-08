@@ -193,6 +193,7 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
     usernamePassword: ["password"],
     sshKey: ["privateKey", "passphrase"],
     emailSmtp: ["password"],
+    gotifyToken: ["token"],
     ntfyToken: ["token"],
     token: ["token"],
     certificate: ["certificatePem", "privateKeyPem", "privateKeyPassword"],
@@ -230,6 +231,7 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
   // Migrate sensitive fields in notifications config
   const SENSITIVE_KEYS: Record<string, string[]> = {
     email: ["smtpPassword"],
+    gotify: ["gotifyToken"],
     ntfy: ["ntfyToken"],
   };
 

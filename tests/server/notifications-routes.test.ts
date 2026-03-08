@@ -55,6 +55,34 @@ describe("notifications routes validation", () => {
     expect(stored?.notifyOn).toBe('["updates","appUpdates"]');
   });
 
+  test("creates gotify notifications", async () => {
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops gotify",
+        type: "gotify",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        credentialId: null,
+        config: {
+          gotifyUrl: "https://gotify.example.com",
+          gotifyToken: "app-token",
+          gotifyPriorityOverride: "8",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.id).toBeGreaterThan(0);
+
+    const stored = getDb().select().from(notifications).get();
+    expect(stored?.config).toContain('"gotifyPriorityOverride":"8"');
+    expect(stored?.config).toContain('"gotifyToken":"');
+  });
+
   test("rejects ntfy notifications with unsupported config keys", async () => {
     const res = await app.request("/api/notifications", {
       method: "POST",
@@ -128,6 +156,29 @@ describe("notifications routes validation", () => {
     expect(body.error).toContain("ntfy priority override");
   });
 
+  test("rejects gotify notifications with invalid priority overrides", async () => {
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops gotify",
+        type: "gotify",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        config: {
+          gotifyUrl: "https://gotify.example.com",
+          gotifyToken: "app-token",
+          gotifyPriorityOverride: "11",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("gotify priority override");
+  });
+
   test("inline test reuses stored ntfy token for existing notifications", async () => {
     const originalFetch = globalThis.fetch;
     let authorizationHeader: string | null = null;
@@ -172,6 +223,53 @@ describe("notifications routes validation", () => {
       const body = await res.json();
       expect(body.success).toBe(true);
       expect(authorizationHeader).toBe("Bearer secret-token");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("inline test reuses stored gotify token for existing notifications", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestUrl: string | null = null;
+
+    globalThis.fetch = (async (input) => {
+      requestUrl = String(input);
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      const encryptedToken = getEncryptor().encrypt("secret-gotify-token");
+      const inserted = getDb().insert(notifications).values({
+        name: "Existing gotify",
+        type: "gotify",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify({
+          gotifyUrl: "https://gotify.example.com",
+          gotifyToken: encryptedToken,
+          gotifyPriorityOverride: "8",
+        }),
+      }).returning({ id: notifications.id }).get();
+
+      const res = await app.request("/api/notifications/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          existingId: inserted.id,
+          name: "Existing gotify",
+          type: "gotify",
+          config: {
+            gotifyUrl: "https://gotify.example.com",
+            gotifyToken: "(stored)",
+            gotifyPriorityOverride: "10",
+          },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(requestUrl).toBe("https://gotify.example.com/message?token=secret-gotify-token");
     } finally {
       globalThis.fetch = originalFetch;
     }

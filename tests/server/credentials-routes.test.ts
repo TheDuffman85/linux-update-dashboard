@@ -66,6 +66,28 @@ describe("credentials routes", () => {
     expect(body.credential.payload.password).toBe("(stored)");
   });
 
+  test("creates gotify token credentials", async () => {
+    const res = await app.request("/api/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops Gotify",
+        kind: "gotifyToken",
+        payload: {
+          token: "secret-token",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+
+    const listRes = await app.request("/api/credentials?kind=gotifyToken");
+    expect(listRes.status).toBe(200);
+    const body = await listRes.json();
+    expect(body.credentials).toHaveLength(1);
+    expect(body.credentials[0].kind).toBe("gotifyToken");
+  });
+
   test("blocks deleting credentials that are still referenced", async () => {
     const credentialId = getDb().insert(credentials).values({
       name: "SSH",

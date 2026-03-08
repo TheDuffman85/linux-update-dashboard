@@ -13,6 +13,7 @@ import {
 // Sensitive config keys that need encryption per provider type
 const SENSITIVE_KEYS: Record<string, string[]> = {
   email: ["smtpPassword"],
+  gotify: ["gotifyToken"],
   ntfy: ["ntfyToken"],
 };
 const ALLOWED_CONFIG_KEYS: Record<string, string[]> = {
@@ -25,6 +26,11 @@ const ALLOWED_CONFIG_KEYS: Record<string, string[]> = {
     "smtpFrom",
     "emailTo",
     "emailImportanceOverride",
+  ],
+  gotify: [
+    "gotifyUrl",
+    "gotifyToken",
+    "gotifyPriorityOverride",
   ],
   ntfy: [
     "ntfyUrl",

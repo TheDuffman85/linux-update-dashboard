@@ -8,6 +8,7 @@ export const CREDENTIAL_KINDS = [
   "usernamePassword",
   "sshKey",
   "emailSmtp",
+  "gotifyToken",
   "ntfyToken",
   "certificate",
 ] as const;
@@ -38,6 +39,7 @@ const SECRET_FIELDS: Record<CredentialKind, string[]> = {
   usernamePassword: ["password"],
   sshKey: ["privateKey", "passphrase"],
   emailSmtp: ["password"],
+  gotifyToken: ["token"],
   ntfyToken: ["token"],
   certificate: ["certificatePem", "privateKeyPem", "privateKeyPassword"],
 };
@@ -46,6 +48,7 @@ const ALLOWED_FIELDS: Record<CredentialKind, string[]> = {
   usernamePassword: ["username", "password"],
   sshKey: ["username", "privateKey", "passphrase"],
   emailSmtp: ["username", "password"],
+  gotifyToken: ["token"],
   ntfyToken: ["token"],
   certificate: ["username", "certificatePem", "privateKeyPem", "privateKeyPassword"],
 };
@@ -140,6 +143,7 @@ function buildSummary(
   if (kind === "emailSmtp") {
     return payload.username ? `${payload.username} • SMTP auth` : "SMTP auth";
   }
+  if (kind === "gotifyToken") return "Gotify app token";
   if (kind === "ntfyToken") return "ntfy token";
   return payload.username
     ? `${payload.username} • SSH certificate${payload.privateKeyPassword ? " + password" : ""}`
@@ -224,6 +228,10 @@ export function validateCredentialInput(data: {
     if (!payload.password && existing?.password === undefined) {
       return "payload.password is required";
     }
+  }
+
+  if (data.kind === "gotifyToken" && !payload.token && existing?.token === undefined) {
+    return "payload.token is required";
   }
 
   if (data.kind === "ntfyToken" && !payload.token && existing?.token === undefined) {
@@ -337,6 +345,7 @@ export function isNotificationCredentialKind(
   kind: CredentialKind
 ): boolean {
   if (type === "email") return kind === "emailSmtp";
+  if (type === "gotify") return kind === "gotifyToken";
   if (type === "ntfy") return kind === "ntfyToken";
   return false;
 }
@@ -399,6 +408,12 @@ export function resolveNotificationCredentialConfig(
     return {
       smtpUser: payload.username || "",
       smtpPassword: payload.password || "",
+    };
+  }
+
+  if (type === "gotify" && kind === "gotifyToken") {
+    return {
+      gotifyToken: payload.token || "",
     };
   }
 

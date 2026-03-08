@@ -5,6 +5,7 @@ export type CredentialKind =
   | "usernamePassword"
   | "sshKey"
   | "emailSmtp"
+  | "gotifyToken"
   | "ntfyToken"
   | "certificate";
 

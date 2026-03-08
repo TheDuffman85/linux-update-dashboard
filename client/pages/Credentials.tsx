@@ -23,6 +23,7 @@ const KIND_LABELS: Record<CredentialKind, string> = {
   usernamePassword: "User / Password",
   sshKey: "SSH Key",
   emailSmtp: "Email",
+  gotifyToken: "Gotify",
   ntfyToken: "ntfy",
   certificate: "Certificate",
 };
@@ -71,6 +72,11 @@ function CredentialForm({
       return {
         username,
         password: password || (initial?.payload.password === "(stored)" ? "(stored)" : ""),
+      };
+    }
+    if (kind === "gotifyToken") {
+      return {
+        token: token || (initial?.payload.token === "(stored)" ? "(stored)" : ""),
       };
     }
     if (kind === "ntfyToken") {
@@ -186,9 +192,11 @@ function CredentialForm({
         </>
       )}
 
-      {kind === "ntfyToken" && (
+      {(kind === "gotifyToken" || kind === "ntfyToken") && (
         <div>
-          <label className={labelClass}>Token</label>
+          <label className={labelClass}>
+            {kind === "gotifyToken" ? "App Token" : "Token"}
+          </label>
           <input
             type="password"
             value={token}
