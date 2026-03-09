@@ -12,6 +12,9 @@ import {
   useTestNotification,
   useTestNotificationConfig,
   type NotificationChannel,
+  type NotificationConfig,
+  type WebhookConfig,
+  type WebhookField,
 } from "../lib/notifications";
 import { useSystems } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
@@ -22,11 +25,23 @@ const labelClass =
   "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
 const checkboxClass =
   "w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500";
+const mutedTextClass = "text-xs text-slate-500 dark:text-slate-400";
+const MASKED_VALUE = "(stored)";
+const DISCORD_TEMPLATE = `{
+  "embeds": [
+    {
+      "title": {{event.titleJson}},
+      "description": {{event.bodyJson}},
+      "timestamp": {{event.sentAtJson}}
+    }
+  ]
+}`;
 
 const TYPE_LABELS: Record<string, string> = {
   email: "Email",
   gotify: "Gotify",
   ntfy: "ntfy.sh",
+  webhook: "Webhook",
 };
 
 const SCHEDULE_PRESETS: { label: string; value: string }[] = [
@@ -80,11 +95,9 @@ function moveNotification<T>(items: T[], fromIndex: number, toIndex: number): T[
   return nextItems;
 }
 
-function describeSchedule(cron: string | null): string {
-  if (!cron) return "Immediate";
-  const presetMatch = SCHEDULE_PRESETS.find((p) => p.value === cron);
-  if (presetMatch) return presetMatch.label;
-  return cron;
+function readString(config: NotificationConfig, key: string, fallback = ""): string {
+  const value = config[key];
+  return typeof value === "string" ? value : fallback;
 }
 
 function normalizeGotifyPriorityOverride(value: string | undefined): string {
@@ -104,6 +117,281 @@ function normalizeGotifyPriorityOverride(value: string | undefined): string {
   }
 }
 
+function describeSchedule(cron: string | null): string {
+  if (!cron) return "Immediate";
+  const presetMatch = SCHEDULE_PRESETS.find((preset) => preset.value === cron);
+  if (presetMatch) return presetMatch.label;
+  return cron;
+}
+
+function defaultWebhookConfig(): WebhookConfig {
+  return {
+    preset: "custom",
+    method: "POST",
+    url: "",
+    query: [],
+    headers: [],
+    auth: { mode: "none" },
+    body: { mode: "text", template: "" },
+    timeoutMs: 10000,
+    retryAttempts: 2,
+    retryDelayMs: 30000,
+    allowInsecureTls: false,
+  };
+}
+
+function parseWebhookField(value: unknown): WebhookField | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.name !== "string" || !raw.name.trim()) return null;
+  return {
+    name: raw.name,
+    value: typeof raw.value === "string" ? raw.value : "",
+    sensitive: raw.sensitive === true,
+  };
+}
+
+function coerceWebhookConfig(config: NotificationConfig): WebhookConfig {
+  const defaults = defaultWebhookConfig();
+  const auth =
+    config.auth && typeof config.auth === "object" && !Array.isArray(config.auth)
+      ? config.auth as Record<string, unknown>
+      : {};
+  const body =
+    config.body && typeof config.body === "object" && !Array.isArray(config.body)
+      ? config.body as Record<string, unknown>
+      : {};
+
+  return {
+    preset: config.preset === "discord" ? "discord" : defaults.preset,
+    method:
+      config.method === "PUT" || config.method === "PATCH" || config.method === "POST"
+        ? config.method
+        : defaults.method,
+    url: typeof config.url === "string" ? config.url : defaults.url,
+    query: Array.isArray(config.query)
+      ? config.query
+          .map((entry) => parseWebhookField({ ...(entry as Record<string, unknown>), sensitive: false }))
+          .filter((entry): entry is WebhookField => !!entry)
+          .map(({ name, value }) => ({ name, value }))
+      : defaults.query,
+    headers: Array.isArray(config.headers)
+      ? config.headers.map(parseWebhookField).filter((entry): entry is WebhookField => !!entry)
+      : defaults.headers,
+    auth:
+      auth.mode === "bearer"
+        ? { mode: "bearer", token: typeof auth.token === "string" ? auth.token : "" }
+        : auth.mode === "basic"
+          ? {
+              mode: "basic",
+              username: typeof auth.username === "string" ? auth.username : "",
+              password: typeof auth.password === "string" ? auth.password : "",
+            }
+          : defaults.auth,
+    body:
+      body.mode === "json"
+        ? {
+            mode: "json",
+            template: typeof body.template === "string" ? body.template : "",
+          }
+        : body.mode === "form"
+          ? {
+              mode: "form",
+              fields: Array.isArray(body.fields)
+                ? body.fields.map(parseWebhookField).filter((entry): entry is WebhookField => !!entry)
+                : [],
+            }
+          : {
+              mode: "text",
+              template: typeof body.template === "string" ? body.template : "",
+            },
+    timeoutMs: typeof config.timeoutMs === "number" ? config.timeoutMs : defaults.timeoutMs,
+    retryAttempts: typeof config.retryAttempts === "number" ? config.retryAttempts : defaults.retryAttempts,
+    retryDelayMs: typeof config.retryDelayMs === "number" ? config.retryDelayMs : defaults.retryDelayMs,
+    allowInsecureTls: config.allowInsecureTls === true,
+  };
+}
+
+function preserveSensitiveValue(currentValue: string, initialValue?: string, sensitive?: boolean): string {
+  if (!sensitive) return currentValue;
+  if (currentValue) return currentValue;
+  return initialValue === MASKED_VALUE ? MASKED_VALUE : "";
+}
+
+function finalizeWebhookFields(currentFields: WebhookField[], initialFields: WebhookField[]): WebhookField[] {
+  return currentFields
+    .filter((field) => field.name.trim())
+    .map((field, index) => ({
+      ...field,
+      value: preserveSensitiveValue(field.value, initialFields[index]?.value, field.sensitive),
+    }));
+}
+
+function finalizeWebhookConfig(current: WebhookConfig, initial?: WebhookConfig): WebhookConfig {
+  const initialHeaders = initial?.headers ?? [];
+  const initialFormFields = initial?.body.mode === "form" ? initial.body.fields : [];
+
+  return {
+    ...current,
+    query: current.query.filter((field) => field.name.trim()),
+    headers: finalizeWebhookFields(current.headers, initialHeaders),
+    auth:
+      current.auth.mode === "bearer"
+        ? {
+            mode: "bearer",
+            token: preserveSensitiveValue(
+              current.auth.token,
+              initial?.auth.mode === "bearer" ? initial.auth.token : undefined,
+              true,
+            ),
+          }
+        : current.auth.mode === "basic"
+          ? {
+              mode: "basic",
+              username: current.auth.username,
+              password: preserveSensitiveValue(
+                current.auth.password,
+                initial?.auth.mode === "basic" ? initial.auth.password : undefined,
+                true,
+              ),
+            }
+          : { mode: "none" },
+    body:
+      current.body.mode === "form"
+        ? {
+            mode: "form",
+            fields: finalizeWebhookFields(current.body.fields, initialFormFields),
+          }
+        : {
+            mode: current.body.mode,
+            template: current.body.template,
+          },
+  };
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function describeDelivery(channel: NotificationChannel): string | null {
+  if (!channel.lastDeliveryStatus) return null;
+  const when = formatTimestamp(channel.lastDeliveryAt);
+  const code = channel.lastDeliveryCode ? ` (${channel.lastDeliveryCode})` : "";
+  const message = channel.lastDeliveryMessage ? ` - ${channel.lastDeliveryMessage}` : "";
+  return `${channel.lastDeliveryStatus}${code}${when ? ` at ${when}` : ""}${message}`;
+}
+
+function isLoopbackOrPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") return true;
+  if (host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.")) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return true;
+  if (host.startsWith("169.254.")) return true;
+  if (host.startsWith("fc") || host.startsWith("fd")) return true;
+  return false;
+}
+
+function getWebhookDestinationWarning(urlValue: string): string | null {
+  if (!urlValue.trim()) return null;
+  try {
+    const url = new URL(urlValue);
+    const host = url.hostname.toLowerCase();
+    if (host === "metadata.google.internal" || host === "169.254.169.254") {
+      return "This destination is blocked server-side because it targets cloud metadata endpoints.";
+    }
+    if (isLoopbackOrPrivateHost(host)) {
+      return "This destination appears to be loopback, link-local, or private. That is allowed for trusted self-hosted targets, but treat it as an advanced setting.";
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function RowEditor({
+  items,
+  onChange,
+  label,
+  allowSensitive = false,
+}: {
+  items: WebhookField[];
+  onChange: (items: WebhookField[]) => void;
+  label: string;
+  allowSensitive?: boolean;
+}) {
+  const updateItem = (index: number, patch: Partial<WebhookField>) => {
+    onChange(items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+  };
+
+  const removeItem = (index: number) => {
+    onChange(items.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <span className={labelClass}>{label}</span>
+        <button
+          type="button"
+          onClick={() => onChange([...items, { name: "", value: "", sensitive: false }])}
+          className="px-2 py-1 text-xs rounded border border-border hover:bg-slate-50 dark:hover:bg-slate-700"
+        >
+          Add row
+        </button>
+      </div>
+      <div className="space-y-2">
+        {items.length === 0 ? (
+          <p className={mutedTextClass}>No entries configured</p>
+        ) : (
+          items.map((item, index) => (
+            <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-2 items-center">
+              <input
+                type="text"
+                value={item.name}
+                onChange={(e) => updateItem(index, { name: e.target.value })}
+                className={inputClass}
+                placeholder="Name"
+              />
+              <input
+                type={allowSensitive && item.sensitive ? "password" : "text"}
+                value={item.value === MASKED_VALUE ? "" : item.value}
+                onChange={(e) => updateItem(index, { value: e.target.value })}
+                className={inputClass}
+                placeholder={item.value === MASKED_VALUE ? "(unchanged)" : "Value"}
+              />
+              {allowSensitive ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={item.sensitive}
+                    onChange={(e) => updateItem(index, {
+                      sensitive: e.target.checked,
+                      value: !e.target.checked && item.value === MASKED_VALUE ? "" : item.value,
+                    })}
+                    className={checkboxClass}
+                  />
+                  Secret
+                </label>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                onClick={() => removeItem(index)}
+                className="px-2 py-2 text-xs rounded border border-border hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500"
+              >
+                Remove
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function NotificationForm({
   initial,
   onSubmit,
@@ -117,7 +405,7 @@ function NotificationForm({
     enabled: boolean;
     notifyOn: string[];
     systemIds: number[] | null;
-    config: Record<string, string>;
+    config: NotificationConfig;
     schedule: string | null;
   }) => void;
   onCancel: () => void;
@@ -126,6 +414,8 @@ function NotificationForm({
   const { data: systemsList } = useSystems();
   const testConfig = useTestNotificationConfig();
   const { addToast } = useToast();
+  const initialWebhook = initial ? coerceWebhookConfig(initial.config) : defaultWebhookConfig();
+
   const [name, setName] = useState(initial?.name || "");
   const [type, setType] = useState(initial?.type || "email");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
@@ -137,39 +427,37 @@ function NotificationForm({
     initial?.systemIds || []
   );
 
-  const [smtpHost, setSmtpHost] = useState(initial?.config.smtpHost || "");
-  const [smtpPort, setSmtpPort] = useState(initial?.config.smtpPort || "587");
+  const [smtpHost, setSmtpHost] = useState(readString(initial?.config || {}, "smtpHost"));
+  const [smtpPort, setSmtpPort] = useState(readString(initial?.config || {}, "smtpPort", "587"));
   const [smtpSecure, setSmtpSecure] = useState(
-    initial?.config.smtpSecure !== "false"
+    readString(initial?.config || {}, "smtpSecure", "true") !== "false"
   );
-  const [smtpUser, setSmtpUser] = useState(initial?.config.smtpUser || "");
+  const [smtpUser, setSmtpUser] = useState(readString(initial?.config || {}, "smtpUser"));
   const [smtpPassword, setSmtpPassword] = useState("");
-  const [smtpFrom, setSmtpFrom] = useState(initial?.config.smtpFrom || "");
-  const [emailTo, setEmailTo] = useState(initial?.config.emailTo || "");
+  const [smtpFrom, setSmtpFrom] = useState(readString(initial?.config || {}, "smtpFrom"));
+  const [emailTo, setEmailTo] = useState(readString(initial?.config || {}, "emailTo"));
   const [emailImportanceOverride, setEmailImportanceOverride] = useState(
-    initial?.config.emailImportanceOverride || "auto"
+    readString(initial?.config || {}, "emailImportanceOverride", "auto")
   );
 
-  const [gotifyUrl, setGotifyUrl] = useState(
-    initial?.config.gotifyUrl || ""
-  );
+  const [gotifyUrl, setGotifyUrl] = useState(readString(initial?.config || {}, "gotifyUrl"));
   const [gotifyToken, setGotifyToken] = useState("");
   const [gotifyPriorityOverride, setGotifyPriorityOverride] = useState(
-    normalizeGotifyPriorityOverride(initial?.config.gotifyPriorityOverride)
+    normalizeGotifyPriorityOverride(readString(initial?.config || {}, "gotifyPriorityOverride"))
   );
 
-  const [ntfyUrl, setNtfyUrl] = useState(
-    initial?.config.ntfyUrl || "https://ntfy.sh"
-  );
-  const [ntfyTopic, setNtfyTopic] = useState(initial?.config.ntfyTopic || "");
+  const [ntfyUrl, setNtfyUrl] = useState(readString(initial?.config || {}, "ntfyUrl", "https://ntfy.sh"));
+  const [ntfyTopic, setNtfyTopic] = useState(readString(initial?.config || {}, "ntfyTopic"));
   const [ntfyToken, setNtfyToken] = useState("");
   const [ntfyPriorityOverride, setNtfyPriorityOverride] = useState(
-    initial?.config.ntfyPriorityOverride || "auto"
+    readString(initial?.config || {}, "ntfyPriorityOverride", "auto")
   );
+
+  const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>(initialWebhook);
 
   const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
   const initialPreset = initial?.schedule
-    ? SCHEDULE_PRESETS.find((p) => p.value === initial.schedule)
+    ? SCHEDULE_PRESETS.find((preset) => preset.value === initial.schedule)
       ? initial.schedule
       : "custom"
     : SCHEDULE_PRESETS[0].value;
@@ -178,7 +466,7 @@ function NotificationForm({
   );
   const [schedulePreset, setSchedulePreset] = useState(initialPreset);
   const [customCron, setCustomCron] = useState(
-    initial?.schedule && !SCHEDULE_PRESETS.find((p) => p.value === initial.schedule)
+    initial?.schedule && !SCHEDULE_PRESETS.find((preset) => preset.value === initial.schedule)
       ? initial.schedule
       : ""
   );
@@ -186,44 +474,72 @@ function NotificationForm({
   const toggleNotifyOn = (event: string) => {
     setNotifyOn((prev) =>
       prev.includes(event)
-        ? prev.filter((e) => e !== event)
+        ? prev.filter((entry) => entry !== event)
         : [...prev, event]
     );
   };
 
   const toggleSystem = (id: number) => {
     setSelectedSystemIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id]
     );
   };
 
-  const buildConfig = (): Record<string, string> =>
-    type === "email"
-      ? {
-          smtpHost,
-          smtpPort,
-          smtpSecure: smtpSecure ? "true" : "false",
-          smtpUser,
-          smtpPassword:
-            smtpPassword || (initial?.config.smtpPassword === "(stored)" ? "(stored)" : ""),
-          smtpFrom,
-          emailTo,
-          emailImportanceOverride,
-        }
-      : type === "gotify"
-        ? {
-            gotifyUrl,
-            gotifyToken:
-              gotifyToken || (initial?.config.gotifyToken === "(stored)" ? "(stored)" : ""),
-            gotifyPriorityOverride,
-          }
-      : {
-          ntfyUrl,
-          ntfyTopic,
-          ntfyToken:
-            ntfyToken || (initial?.config.ntfyToken === "(stored)" ? "(stored)" : ""),
-          ntfyPriorityOverride,
-        };
+  const applyDiscordPreset = () => {
+    setWebhookConfig((prev) => ({
+      ...prev,
+      preset: "discord",
+      method: "POST",
+      body: {
+        mode: "json",
+        template: DISCORD_TEMPLATE,
+      },
+    }));
+  };
+
+  const resetCustomPreset = () => {
+    setWebhookConfig((prev) => ({
+      ...defaultWebhookConfig(),
+      url: prev.url,
+    }));
+  };
+
+  const buildConfig = (): NotificationConfig => {
+    if (type === "email") {
+      return {
+        smtpHost,
+        smtpPort,
+        smtpSecure: smtpSecure ? "true" : "false",
+        smtpUser,
+        smtpPassword:
+          smtpPassword || (readString(initial?.config || {}, "smtpPassword") === MASKED_VALUE ? MASKED_VALUE : ""),
+        smtpFrom,
+        emailTo,
+        emailImportanceOverride,
+      };
+    }
+
+    if (type === "gotify") {
+      return {
+        gotifyUrl,
+        gotifyToken:
+          gotifyToken || (readString(initial?.config || {}, "gotifyToken") === MASKED_VALUE ? MASKED_VALUE : ""),
+        gotifyPriorityOverride,
+      };
+    }
+
+    if (type === "ntfy") {
+      return {
+        ntfyUrl,
+        ntfyTopic,
+        ntfyToken:
+          ntfyToken || (readString(initial?.config || {}, "ntfyToken") === MASKED_VALUE ? MASKED_VALUE : ""),
+        ntfyPriorityOverride,
+      };
+    }
+
+    return finalizeWebhookConfig(webhookConfig, initial ? coerceWebhookConfig(initial.config) : undefined);
+  };
 
   const getScheduleValue = (): string | null => {
     if (scheduleMode === "immediate") return null;
@@ -265,6 +581,8 @@ function NotificationForm({
     );
   };
 
+  const destinationWarning = type === "webhook" ? getWebhookDestinationWarning(webhookConfig.url) : null;
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -290,6 +608,7 @@ function NotificationForm({
             <option value="email">Email (SMTP)</option>
             <option value="gotify">Gotify</option>
             <option value="ntfy">ntfy.sh</option>
+            <option value="webhook">Webhook</option>
           </select>
         </div>
       </div>
@@ -307,33 +626,17 @@ function NotificationForm({
       <div>
         <span className={labelClass}>Events</span>
         <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={notifyOn.includes("updates")}
-              onChange={() => toggleNotifyOn("updates")}
-              className={checkboxClass}
-            />
-            <span className="text-sm">Updates available</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={notifyOn.includes("unreachable")}
-              onChange={() => toggleNotifyOn("unreachable")}
-              className={checkboxClass}
-            />
-            <span className="text-sm">System unreachable</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={notifyOn.includes("appUpdates")}
-              onChange={() => toggleNotifyOn("appUpdates")}
-              className={checkboxClass}
-            />
-            <span className="text-sm">Application update available</span>
-          </label>
+          {Object.entries(EVENT_LABELS).map(([event, label]) => (
+            <label key={event} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={notifyOn.includes(event)}
+                onChange={() => toggleNotifyOn(event)}
+                className={checkboxClass}
+              />
+              <span className="text-sm">{label}</span>
+            </label>
+          ))}
         </div>
       </div>
 
@@ -353,21 +656,19 @@ function NotificationForm({
             {systemsList.length === 0 ? (
               <p className="text-xs text-slate-400 p-1">No systems configured</p>
             ) : (
-              systemsList.map((s) => (
+              systemsList.map((system) => (
                 <label
-                  key={s.id}
+                  key={system.id}
                   className="flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-50 dark:hover:bg-slate-700/50"
                 >
                   <input
                     type="checkbox"
-                    checked={selectedSystemIds.includes(s.id)}
-                    onChange={() => toggleSystem(s.id)}
+                    checked={selectedSystemIds.includes(system.id)}
+                    onChange={() => toggleSystem(system.id)}
                     className={checkboxClass}
                   />
-                  <span className="text-sm">{s.name}</span>
-                  <span className="text-xs text-slate-400">
-                    {s.hostname}
-                  </span>
+                  <span className="text-sm">{system.name}</span>
+                  <span className="text-xs text-slate-400">{system.hostname}</span>
                 </label>
               ))
             )}
@@ -406,9 +707,9 @@ function NotificationForm({
               onChange={(e) => setSchedulePreset(e.target.value)}
               className={inputClass}
             >
-              {SCHEDULE_PRESETS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
+              {SCHEDULE_PRESETS.map((preset) => (
+                <option key={preset.value} value={preset.value}>
+                  {preset.label}
                 </option>
               ))}
             </select>
@@ -426,51 +727,32 @@ function NotificationForm({
                 </p>
               </div>
             )}
-            <p className="text-xs text-slate-500">
+            <p className={mutedTextClass}>
               Events are batched and sent as a digest at the scheduled time.
             </p>
           </div>
         )}
       </div>
 
-      <div className="border-t border-border pt-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-          {type === "email" ? "Email (SMTP)" : type === "gotify" ? "Gotify" : "ntfy.sh"}
+      <div className="border-t border-border pt-4 space-y-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {TYPE_LABELS[type] || type}
         </h3>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {type === "email" ? (
-            <>
+        {type === "email" && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>SMTP Host</label>
-                <input
-                  type="text"
-                  value={smtpHost}
-                  onChange={(e) => setSmtpHost(e.target.value)}
-                  className={inputClass}
-                  placeholder="smtp.example.com"
-                />
+                <input value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} className={inputClass} />
               </div>
               <div>
                 <label className={labelClass}>SMTP Port</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={smtpPort}
-                  onChange={(e) => setSmtpPort(e.target.value)}
-                  className={inputClass}
-                />
+                <input value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} className={inputClass} />
               </div>
               <div className="sm:col-span-2">
                 <label className={labelClass}>SMTP User</label>
-                <input
-                  type="text"
-                  value={smtpUser}
-                  onChange={(e) => setSmtpUser(e.target.value)}
-                  className={inputClass}
-                  placeholder="mailer"
-                />
+                <input value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} className={inputClass} />
               </div>
               <div className="sm:col-span-2">
                 <label className={labelClass}>SMTP Password</label>
@@ -479,28 +761,16 @@ function NotificationForm({
                   value={smtpPassword}
                   onChange={(e) => setSmtpPassword(e.target.value)}
                   className={inputClass}
-                  placeholder={initial?.config.smtpPassword === "(stored)" ? "(unchanged)" : ""}
+                  placeholder={readString(initial?.config || {}, "smtpPassword") === MASKED_VALUE ? "(unchanged)" : ""}
                 />
               </div>
               <div>
                 <label className={labelClass}>From Address</label>
-                <input
-                  type="email"
-                  value={smtpFrom}
-                  onChange={(e) => setSmtpFrom(e.target.value)}
-                  className={inputClass}
-                  placeholder="dashboard@example.com"
-                />
+                <input value={smtpFrom} onChange={(e) => setSmtpFrom(e.target.value)} className={inputClass} />
               </div>
               <div>
                 <label className={labelClass}>To Address(es)</label>
-                <input
-                  type="text"
-                  value={emailTo}
-                  onChange={(e) => setEmailTo(e.target.value)}
-                  className={inputClass}
-                  placeholder="admin@example.com"
-                />
+                <input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} className={inputClass} />
               </div>
               <div>
                 <label className={labelClass}>Importance</label>
@@ -510,109 +780,341 @@ function NotificationForm({
                   className={inputClass}
                 >
                   {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
+                    <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
               </div>
-            </>
-          ) : type === "gotify" ? (
-            <>
-              <div>
-                <label className={labelClass}>Server URL</label>
-                <input
-                  type="url"
-                  value={gotifyUrl}
-                  onChange={(e) => setGotifyUrl(e.target.value)}
-                  className={inputClass}
-                  placeholder="https://gotify.example.com"
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Priority</label>
-                <select
-                  value={gotifyPriorityOverride}
-                  onChange={(e) => setGotifyPriorityOverride(e.target.value)}
-                  className={inputClass}
-                >
-                  {GOTIFY_PRIORITY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="sm:col-span-2">
-                <label className={labelClass}>App Token</label>
-                <input
-                  type="password"
-                  value={gotifyToken}
-                  onChange={(e) => setGotifyToken(e.target.value)}
-                  className={inputClass}
-                  placeholder={initial?.config.gotifyToken === "(stored)" ? "(unchanged)" : ""}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className={labelClass}>Server URL</label>
-                <input
-                  type="url"
-                  value={ntfyUrl}
-                  onChange={(e) => setNtfyUrl(e.target.value)}
-                  className={inputClass}
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Topic</label>
-                <input
-                  type="text"
-                  value={ntfyTopic}
-                  onChange={(e) => setNtfyTopic(e.target.value)}
-                  className={inputClass}
-                  placeholder="my-updates"
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Access Token</label>
-                <input
-                  type="password"
-                  value={ntfyToken}
-                  onChange={(e) => setNtfyToken(e.target.value)}
-                  className={inputClass}
-                  placeholder={initial?.config.ntfyToken === "(stored)" ? "(unchanged)" : ""}
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Priority</label>
-                <select
-                  value={ntfyPriorityOverride}
-                  onChange={(e) => setNtfyPriorityOverride(e.target.value)}
-                  className={inputClass}
-                >
-                  {PUSH_PRIORITY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
-        </div>
+            </div>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={smtpSecure}
+                onChange={(e) => setSmtpSecure(e.target.checked)}
+                className={checkboxClass}
+              />
+              <span className="text-sm">Use TLS</span>
+            </label>
+          </>
+        )}
 
-        {type === "email" && (
-          <label className="flex items-center gap-2 mt-3">
-            <input
-              type="checkbox"
-              checked={smtpSecure}
-              onChange={(e) => setSmtpSecure(e.target.checked)}
-              className={checkboxClass}
+        {type === "gotify" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Server URL</label>
+              <input value={gotifyUrl} onChange={(e) => setGotifyUrl(e.target.value)} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Priority</label>
+              <select
+                value={gotifyPriorityOverride}
+                onChange={(e) => setGotifyPriorityOverride(e.target.value)}
+                className={inputClass}
+              >
+                {GOTIFY_PRIORITY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className={labelClass}>App Token</label>
+              <input
+                type="password"
+                value={gotifyToken}
+                onChange={(e) => setGotifyToken(e.target.value)}
+                className={inputClass}
+                placeholder={readString(initial?.config || {}, "gotifyToken") === MASKED_VALUE ? "(unchanged)" : ""}
+              />
+            </div>
+          </div>
+        )}
+
+        {type === "ntfy" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Server URL</label>
+              <input value={ntfyUrl} onChange={(e) => setNtfyUrl(e.target.value)} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Topic</label>
+              <input value={ntfyTopic} onChange={(e) => setNtfyTopic(e.target.value)} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Access Token</label>
+              <input
+                type="password"
+                value={ntfyToken}
+                onChange={(e) => setNtfyToken(e.target.value)}
+                className={inputClass}
+                placeholder={readString(initial?.config || {}, "ntfyToken") === MASKED_VALUE ? "(unchanged)" : ""}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Priority</label>
+              <select
+                value={ntfyPriorityOverride}
+                onChange={(e) => setNtfyPriorityOverride(e.target.value)}
+                className={inputClass}
+              >
+                {PUSH_PRIORITY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {type === "webhook" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Preset</label>
+                <select
+                  value={webhookConfig.preset}
+                  onChange={(e) => {
+                    const value = e.target.value as WebhookConfig["preset"];
+                    if (value === "discord") {
+                      applyDiscordPreset();
+                    } else {
+                      resetCustomPreset();
+                    }
+                  }}
+                  className={inputClass}
+                >
+                  <option value="custom">Custom</option>
+                  <option value="discord">Discord</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelClass}>Method</label>
+                <select
+                  value={webhookConfig.method}
+                  onChange={(e) => setWebhookConfig((prev) => ({
+                    ...prev,
+                    method: e.target.value as WebhookConfig["method"],
+                  }))}
+                  className={inputClass}
+                >
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="PATCH">PATCH</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className={labelClass}>URL</label>
+              <input
+                type="url"
+                value={webhookConfig.url}
+                onChange={(e) => setWebhookConfig((prev) => ({ ...prev, url: e.target.value }))}
+                className={inputClass}
+                placeholder="https://example.com/webhook"
+              />
+              {destinationWarning && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{destinationWarning}</p>
+              )}
+            </div>
+
+            <RowEditor
+              label="Query Parameters"
+              items={webhookConfig.query.map((entry) => ({ ...entry, sensitive: false }))}
+              onChange={(items) => setWebhookConfig((prev) => ({
+                ...prev,
+                query: items.map(({ name, value }) => ({ name, value })),
+              }))}
             />
-            <span className="text-sm">Use TLS</span>
-          </label>
+            <p className={mutedTextClass}>
+              Query parameters are intentionally not secret. URLs are more likely to be logged by receivers, proxies, and monitoring systems.
+            </p>
+
+            <RowEditor
+              label="Headers"
+              items={webhookConfig.headers}
+              onChange={(items) => setWebhookConfig((prev) => ({ ...prev, headers: items }))}
+              allowSensitive
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className={labelClass}>Auth</label>
+                <select
+                  value={webhookConfig.auth.mode}
+                  onChange={(e) => {
+                    const mode = e.target.value;
+                    setWebhookConfig((prev) => ({
+                      ...prev,
+                      auth:
+                        mode === "bearer"
+                          ? { mode: "bearer", token: "" }
+                          : mode === "basic"
+                            ? { mode: "basic", username: "", password: "" }
+                            : { mode: "none" },
+                    }));
+                  }}
+                  className={inputClass}
+                >
+                  <option value="none">None</option>
+                  <option value="bearer">Bearer token</option>
+                  <option value="basic">Basic auth</option>
+                </select>
+              </div>
+              {webhookConfig.auth.mode === "bearer" && (
+                <div className="sm:col-span-2">
+                  <label className={labelClass}>Bearer Token</label>
+                  <input
+                    type="password"
+                    value={webhookConfig.auth.token === MASKED_VALUE ? "" : webhookConfig.auth.token}
+                    onChange={(e) => setWebhookConfig((prev) => ({
+                      ...prev,
+                      auth: { mode: "bearer", token: e.target.value },
+                    }))}
+                    className={inputClass}
+                    placeholder={initialWebhook.auth.mode === "bearer" && initialWebhook.auth.token === MASKED_VALUE ? "(unchanged)" : ""}
+                  />
+                </div>
+              )}
+              {webhookConfig.auth.mode === "basic" && (
+                <>
+                  <div>
+                    <label className={labelClass}>Username</label>
+                    <input
+                      value={webhookConfig.auth.username}
+                      onChange={(e) => setWebhookConfig((prev) => ({
+                        ...prev,
+                        auth: { mode: "basic", username: e.target.value, password: prev.auth.mode === "basic" ? prev.auth.password : "" },
+                      }))}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Password</label>
+                    <input
+                      type="password"
+                      value={webhookConfig.auth.password === MASKED_VALUE ? "" : webhookConfig.auth.password}
+                      onChange={(e) => setWebhookConfig((prev) => ({
+                        ...prev,
+                        auth: { mode: "basic", username: prev.auth.mode === "basic" ? prev.auth.username : "", password: e.target.value },
+                      }))}
+                      className={inputClass}
+                      placeholder={initialWebhook.auth.mode === "basic" && initialWebhook.auth.password === MASKED_VALUE ? "(unchanged)" : ""}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <div>
+                <label className={labelClass}>Body Mode</label>
+                <select
+                  value={webhookConfig.body.mode}
+                  onChange={(e) => {
+                    const mode = e.target.value;
+                    setWebhookConfig((prev) => ({
+                      ...prev,
+                      body:
+                        mode === "form"
+                          ? { mode: "form", fields: prev.body.mode === "form" ? prev.body.fields : [] }
+                          : {
+                              mode: mode as "text" | "json",
+                              template: prev.body.mode === "form" ? "" : prev.body.template,
+                            },
+                    }));
+                  }}
+                  className={inputClass}
+                >
+                  <option value="text">Text</option>
+                  <option value="json">JSON</option>
+                  <option value="form">Form URL Encoded</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelClass}>Timeout (ms)</label>
+                <input
+                  type="number"
+                  min={1000}
+                  max={30000}
+                  value={webhookConfig.timeoutMs}
+                  onChange={(e) => setWebhookConfig((prev) => ({ ...prev, timeoutMs: Number(e.target.value) }))}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Retry Attempts</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={webhookConfig.retryAttempts}
+                  onChange={(e) => setWebhookConfig((prev) => ({ ...prev, retryAttempts: Number(e.target.value) }))}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Retry Delay (ms)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={300000}
+                  value={webhookConfig.retryDelayMs}
+                  onChange={(e) => setWebhookConfig((prev) => ({ ...prev, retryDelayMs: Number(e.target.value) }))}
+                  className={inputClass}
+                />
+              </div>
+            </div>
+
+            {webhookConfig.body.mode === "form" ? (
+              <RowEditor
+                label="Form Fields"
+                items={webhookConfig.body.fields}
+                onChange={(items) => setWebhookConfig((prev) => ({
+                  ...prev,
+                  body: { mode: "form", fields: items },
+                }))}
+                allowSensitive
+              />
+            ) : (
+              <div>
+                <label className={labelClass}>Body Template</label>
+                <textarea
+                  value={webhookConfig.body.template}
+                  onChange={(e) => setWebhookConfig((prev) => ({
+                    ...prev,
+                    body: prev.body.mode === "form"
+                      ? prev.body
+                      : { ...prev.body, template: e.target.value },
+                  }))}
+                  className={`${inputClass} min-h-32`}
+                  placeholder={
+                    webhookConfig.body.mode === "json"
+                      ? "{\n  \"title\": \"{{event.title}}\"\n}"
+                      : "{{event.body}}"
+                  }
+                />
+                <p className={mutedTextClass}>
+                  Templates support simple dotted event paths like <code>{"{{event.title}}"}</code>.
+                </p>
+              </div>
+            )}
+
+            <div className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={webhookConfig.allowInsecureTls}
+                  onChange={(e) => setWebhookConfig((prev) => ({
+                    ...prev,
+                    allowInsecureTls: e.target.checked,
+                  }))}
+                  className={checkboxClass}
+                />
+                <span className="text-sm font-medium">Allow insecure TLS (advanced)</span>
+              </label>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Disabled by default. Only use this for exceptional self-signed endpoints you explicitly trust.
+              </p>
+            </div>
+          </div>
         )}
       </div>
 
@@ -624,11 +1126,7 @@ function NotificationForm({
           className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 mr-auto"
           title="Send test notification"
         >
-          {testConfig.isPending ? (
-            <span className="spinner spinner-sm" />
-          ) : (
-            "Send Test"
-          )}
+          {testConfig.isPending ? <span className="spinner spinner-sm" /> : "Send Test"}
         </button>
         <button
           type="button"
@@ -659,9 +1157,7 @@ export default function Notifications() {
   const testNotification = useTestNotification();
   const { addToast } = useToast();
   const [showForm, setShowForm] = useState(false);
-  const [editChannel, setEditChannel] = useState<NotificationChannel | null>(
-    null
-  );
+  const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [orderedChannels, setOrderedChannels] = useState<NotificationChannel[]>([]);
   const orderedChannelsRef = useRef<NotificationChannel[]>([]);
@@ -728,7 +1224,7 @@ export default function Notifications() {
     enabled: boolean;
     notifyOn: string[];
     systemIds: number[] | null;
-    config: Record<string, string>;
+    config: NotificationConfig;
     schedule: string | null;
   }) => {
     createNotification.mutate(data, {
@@ -746,7 +1242,7 @@ export default function Notifications() {
     enabled: boolean;
     notifyOn: string[];
     systemIds: number[] | null;
-    config: Record<string, string>;
+    config: NotificationConfig;
     schedule: string | null;
   }) => {
     if (!editChannel) return;
@@ -800,7 +1296,7 @@ export default function Notifications() {
     if (systemIds.length === 0) return "None";
     if (!systemsList) return `${systemIds.length} system${systemIds.length !== 1 ? "s" : ""}`;
     const names = systemIds
-      .map((id) => systemsList.find((s) => s.id === id)?.name)
+      .map((id) => systemsList.find((system) => system.id === id)?.name)
       .filter(Boolean);
     if (names.length <= 2) return names.join(", ");
     return `${names.length} systems`;
@@ -837,13 +1333,13 @@ export default function Notifications() {
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedChannels.map((ch) => (
+              {orderedChannels.map((channel) => (
                 <tr
-                  key={ch.id}
+                  key={channel.id}
                   className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
                 >
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-start gap-2 min-w-0">
                       <span
                         className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
                           reorderNotifications.isPending || orderedChannels.length < 2
@@ -851,41 +1347,44 @@ export default function Notifications() {
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
                         title="Drag to reorder"
-                        aria-label={`Drag to reorder ${ch.name}`}
+                        aria-label={`Drag to reorder ${channel.name}`}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
                         </svg>
                       </span>
-                      <span className="min-w-0 truncate font-medium">{ch.name}</span>
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{channel.name}</div>
+                        {describeDelivery(channel) && (
+                          <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                            Last delivery: {describeDelivery(channel)}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                    {TYPE_LABELS[ch.type] || ch.type}
+                    {TYPE_LABELS[channel.type] || channel.type}
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
-                    {ch.notifyOn
-                      .map((e) => EVENT_LABELS[e] || e)
-                      .join(", ")}
+                    {channel.notifyOn.map((event) => EVENT_LABELS[event] || event).join(", ")}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400">
-                    {getSystemScopeLabel(ch.systemIds)}
+                    {getSystemScopeLabel(channel.systemIds)}
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
-                    {describeSchedule(ch.schedule)}
+                    {describeSchedule(channel.schedule)}
                   </td>
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => handleToggleEnabled(ch)}
+                      onClick={() => handleToggleEnabled(channel)}
                       className={`relative w-9 h-5 rounded-full transition-colors ${
-                        ch.enabled
-                          ? "bg-blue-500"
-                          : "bg-slate-300 dark:bg-slate-600"
+                        channel.enabled ? "bg-blue-500" : "bg-slate-300 dark:bg-slate-600"
                       }`}
                     >
                       <span
                         className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                          ch.enabled ? "translate-x-4" : ""
+                          channel.enabled ? "translate-x-4" : ""
                         }`}
                       />
                     </button>
@@ -893,61 +1392,31 @@ export default function Notifications() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <button
-                        onClick={() => handleTest(ch.id)}
+                        onClick={() => handleTest(channel.id)}
                         disabled={testNotification.isPending}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                         title="Send test notification"
                       >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                          />
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                         </svg>
                       </button>
                       <button
-                        onClick={() => setEditChannel(ch)}
+                        onClick={() => setEditChannel(channel)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                         title="Edit"
                       >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                          />
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                         </svg>
                       </button>
                       <button
-                        onClick={() => setDeleteId(ch.id)}
+                        onClick={() => setDeleteId(channel.id)}
                         className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
                         title="Delete"
                       >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                          />
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                       </button>
                     </div>

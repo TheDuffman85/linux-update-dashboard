@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import * as notificationService from "../services/notification-service";
 import { getDb } from "../db";
 import { notifications } from "../db/schema";
-import { getProvider, getProviderNames } from "../services/notifications";
+import { getProvider, getProviderNames, type NotificationConfig } from "../services/notifications";
 import {
   sanitizeNotificationConfig,
 } from "../services/notification-service";
@@ -12,7 +12,7 @@ import {
 const VALID_TYPES = getProviderNames();
 const VALID_EVENTS = ["updates", "unreachable", "appUpdates"];
 const MAX_NAME_LENGTH = 100;
-const MAX_CONFIG_VALUE_LENGTH = 1000;
+const MAX_CONFIG_JSON_LENGTH = 50_000;
 
 function isValidSchedule(value: unknown): boolean {
   if (value === null || value === "immediate") return true;
@@ -41,9 +41,10 @@ function parseNotificationIdList(input: unknown): number[] | null {
   return ids;
 }
 
-function parseConfigJson(raw: string): Record<string, string> {
+function parseConfigJson(raw: string): NotificationConfig {
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -54,16 +55,19 @@ function validateConfigShape(config: unknown): string | null {
     return "config must be an object";
   }
 
-  for (const [key, val] of Object.entries(config)) {
-    if (typeof val !== "string" || val.length > MAX_CONFIG_VALUE_LENGTH) {
-      return `config.${key} must be a string (max ${MAX_CONFIG_VALUE_LENGTH} chars)`;
+  try {
+    const serialized = JSON.stringify(config);
+    if (!serialized || serialized.length > MAX_CONFIG_JSON_LENGTH) {
+      return `config must serialize to at most ${MAX_CONFIG_JSON_LENGTH} characters`;
     }
+  } catch {
+    return "config must be JSON-serializable";
   }
 
   return null;
 }
 
-function validateProviderConfig(type: string, config: Record<string, string>): string | null {
+function validateProviderConfig(type: string, config: NotificationConfig): string | null {
   const provider = getProvider(type);
   if (!provider) {
     return `type must be one of: ${VALID_TYPES.join(", ")}`;
@@ -254,7 +258,7 @@ notificationsRouter.put("/:id", async (c) => {
     const effectiveConfig = notificationService.mergeStoredSensitiveConfig(
       mergedType,
       storedConfig,
-      (body.config as Record<string, string> | undefined) ?? {}
+      (body.config as NotificationConfig | undefined) ?? {}
     );
     const providerConfigError = validateProviderConfig(
       mergedType,
@@ -304,7 +308,7 @@ notificationsRouter.post("/test", async (c) => {
     return c.json({ error: "name must be a string of 1-100 characters" }, 400);
   }
 
-  let effectiveConfig = config as Record<string, string>;
+  let effectiveConfig = config as NotificationConfig;
   if (existingId !== undefined) {
     if (typeof existingId !== "number" || !Number.isInteger(existingId) || existingId <= 0) {
       return c.json({ error: "existingId must be a positive integer" }, 400);
@@ -327,7 +331,7 @@ notificationsRouter.post("/test", async (c) => {
     effectiveConfig = notificationService.mergeStoredSensitiveConfig(
       type,
       parseConfigJson(existing.config),
-      config as Record<string, string>
+      config as NotificationConfig
     );
   }
 

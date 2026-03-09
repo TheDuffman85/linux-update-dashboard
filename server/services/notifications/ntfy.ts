@@ -1,5 +1,6 @@
-import type { NotificationProvider, NotificationPayload, NotificationResult } from "./types";
+import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
+import { createFlatProvider } from "./flat-provider";
 
 const VALID_PRIORITY_OVERRIDES = ["auto", "min", "low", "default", "high", "urgent"] as const;
 const ALLOWED_CONFIG_KEYS = new Set([
@@ -32,8 +33,15 @@ function resolvePriority(
   return payloadPriority || "default";
 }
 
-export const ntfyProvider: NotificationProvider = {
+export const ntfyProvider = createFlatProvider({
   name: "ntfy",
+  allowedKeys: [
+    "ntfyUrl",
+    "ntfyTopic",
+    "ntfyToken",
+    "ntfyPriorityOverride",
+  ],
+  sensitiveKeys: ["ntfyToken"],
 
   validateConfig(config) {
     for (const key of Object.keys(config)) {
@@ -98,4 +106,4 @@ export const ntfyProvider: NotificationProvider = {
 
     return { success: true };
   },
-};
+});

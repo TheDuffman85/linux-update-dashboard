@@ -3,52 +3,45 @@ import { createHash } from "crypto";
 import { Cron } from "croner";
 import { getDb } from "../db";
 import { notifications, systems, updateCache } from "../db/schema";
-import { getProvider, type NotificationPayload } from "./notifications";
-import { getEncryptor } from "../security";
 import {
-  getAppUpdateStatus,
-} from "./app-update-service";
+  getProvider,
+  type AppUpdateEvent,
+  type CheckResult,
+  type NotificationConfig,
+  type NotificationEventData,
+  type NotificationEventType,
+  type NotificationPayload,
+  type NotificationPriority,
+  type NotificationResult,
+} from "./notifications";
+import { sanitizeOutput } from "../utils/sanitize";
+import { getAppUpdateStatus } from "./app-update-service";
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
 const DEFAULT_NOTIFY_ON_JSON = JSON.stringify(DEFAULT_NOTIFY_ON);
+const DIAGNOSTIC_MESSAGE_LIMIT = 500;
+const STORED_SENTINEL = "(stored)";
 
-// Sensitive config keys that need encryption per provider type
-const SENSITIVE_KEYS: Record<string, string[]> = {
-  email: ["smtpPassword"],
-  gotify: ["gotifyToken"],
-  ntfy: ["ntfyToken"],
-};
-const ALLOWED_CONFIG_KEYS: Record<string, string[]> = {
-  email: [
-    "smtpHost",
-    "smtpPort",
-    "smtpSecure",
-    "smtpUser",
-    "smtpPassword",
-    "smtpFrom",
-    "emailTo",
-    "emailImportanceOverride",
-  ],
-  gotify: [
-    "gotifyUrl",
-    "gotifyToken",
-    "gotifyPriorityOverride",
-  ],
-  ntfy: [
-    "ntfyUrl",
-    "ntfyTopic",
-    "ntfyToken",
-    "ntfyPriorityOverride",
-  ],
-};
-
-function getSensitiveKeys(type: string): string[] {
-  return SENSITIVE_KEYS[type] || [];
+function getProviderOrThrow(type: string) {
+  const provider = getProvider(type);
+  if (!provider) {
+    throw new Error(`Unknown notification provider: ${type}`);
+  }
+  return provider;
 }
 
-function parseConfig(configJson: string): Record<string, string> {
+function nowSql(): string {
+  return new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function parseConfig(configJson: string): NotificationConfig {
   try {
-    return JSON.parse(configJson);
+    const parsed = JSON.parse(configJson);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -56,39 +49,34 @@ function parseConfig(configJson: string): Record<string, string> {
 
 export function sanitizeNotificationConfig(
   type: string,
-  config: Record<string, string>
-): Record<string, string> {
-  const allowedKeys = ALLOWED_CONFIG_KEYS[type];
-  if (!allowedKeys) return { ...config };
-
-  return Object.fromEntries(
-    Object.entries(config).filter(([key]) => allowedKeys.includes(key))
-  );
+  config: NotificationConfig,
+): NotificationConfig {
+  return getProviderOrThrow(type).sanitizeConfig(config);
 }
 
 export function mergeStoredSensitiveConfig(
   type: string,
-  storedConfig: Record<string, string>,
-  incomingConfig: Record<string, string>
-): Record<string, string> {
-  const sanitizedStored = sanitizeNotificationConfig(type, storedConfig);
-  const merged = sanitizeNotificationConfig(type, {
-    ...sanitizedStored,
-    ...incomingConfig,
-  });
-
-  for (const key of getSensitiveKeys(type)) {
-    if (merged[key] === "(stored)") {
-      merged[key] = sanitizedStored[key] || "";
-    }
-  }
-
-  return merged;
+  storedConfig: NotificationConfig,
+  incomingConfig: NotificationConfig,
+): NotificationConfig {
+  const provider = getProviderOrThrow(type);
+  return provider.mergeConfig(provider.sanitizeConfig(storedConfig), incomingConfig);
 }
 
-function loadSanitizedConfig(row: { id: number; type: string; config: string }): Record<string, string> {
+function prepareConfigForStorage(
+  type: string,
+  config: NotificationConfig,
+): NotificationConfig {
+  const provider = getProviderOrThrow(type);
+  return provider.prepareConfigForStorage(provider.sanitizeConfig(config));
+}
+
+function loadSanitizedConfig(row: { id: number; type: string; config: string }): NotificationConfig {
+  const provider = getProvider(row.type);
   const parsed = parseConfig(row.config);
-  const sanitized = sanitizeNotificationConfig(row.type, parsed);
+  if (!provider) return parsed;
+
+  const sanitized = provider.sanitizeConfig(parsed);
 
   if (JSON.stringify(parsed) !== JSON.stringify(sanitized)) {
     getDb()
@@ -101,25 +89,9 @@ function loadSanitizedConfig(row: { id: number; type: string; config: string }):
   return sanitized;
 }
 
-function maskConfig(type: string, config: Record<string, string>): Record<string, string> {
-  const sensitive = SENSITIVE_KEYS[type] || [];
-  const masked = { ...config };
-  for (const key of sensitive) {
-    if (masked[key]) masked[key] = "(stored)";
-  }
-  return masked;
-}
-
-function encryptConfig(type: string, config: Record<string, string>): Record<string, string> {
-  const sensitive = SENSITIVE_KEYS[type] || [];
-  const encrypted = { ...config };
-  const enc = getEncryptor();
-  for (const key of sensitive) {
-    if (encrypted[key] && encrypted[key] !== "(stored)") {
-      encrypted[key] = enc.encrypt(encrypted[key]);
-    }
-  }
-  return encrypted;
+function maskConfig(type: string, config: NotificationConfig): NotificationConfig {
+  const provider = getProvider(type);
+  return provider ? provider.maskConfig(config) : config;
 }
 
 function isScheduled(schedule: string | null): boolean {
@@ -130,25 +102,55 @@ function getDefaultNotifyOn(): string[] {
   return [...DEFAULT_NOTIFY_ON];
 }
 
-function serializeNotification(row: any) {
+function parseNotifyOn(raw: string | null): string[] {
+  try {
+    const parsed = JSON.parse(raw || DEFAULT_NOTIFY_ON_JSON);
+    return Array.isArray(parsed) ? parsed.map(String) : getDefaultNotifyOn();
+  } catch {
+    return getDefaultNotifyOn();
+  }
+}
+
+function parseSystemIds(raw: string | null): number[] | null {
+  try {
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed === null) return null;
+    return Array.isArray(parsed) ? parsed.map((value) => Number(value)).filter(Number.isInteger) : null;
+  } catch {
+    return null;
+  }
+}
+
+function truncateDiagnosticMessage(value: string | undefined): string | null {
+  if (!value) return null;
+  const sanitized = sanitizeOutput(value);
+  if (!sanitized) return null;
+  return sanitized.length > DIAGNOSTIC_MESSAGE_LIMIT
+    ? `${sanitized.slice(0, DIAGNOSTIC_MESSAGE_LIMIT - 1)}…`
+    : sanitized;
+}
+
+function serializeNotification(row: typeof notifications.$inferSelect) {
   const config = loadSanitizedConfig(row);
   return {
     id: row.id,
     name: row.name,
     type: row.type,
     enabled: row.enabled === 1,
-    notifyOn: JSON.parse(row.notifyOn || DEFAULT_NOTIFY_ON_JSON),
-    systemIds: row.systemIds ? JSON.parse(row.systemIds) : null,
+    notifyOn: parseNotifyOn(row.notifyOn),
+    systemIds: parseSystemIds(row.systemIds),
     config: maskConfig(row.type, config),
     schedule: row.schedule || null,
     lastSentAt: row.lastSentAt || null,
     lastAppVersionNotified: row.lastAppVersionNotified || null,
+    lastDeliveryStatus: row.lastDeliveryStatus || null,
+    lastDeliveryAt: row.lastDeliveryAt || null,
+    lastDeliveryCode: row.lastDeliveryCode ?? null,
+    lastDeliveryMessage: row.lastDeliveryMessage || null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
-
-// --- CRUD ---
 
 export function listNotifications() {
   const db = getDb();
@@ -173,7 +175,7 @@ export function createNotification(data: {
   enabled?: boolean;
   notifyOn?: string[];
   systemIds?: number[] | null;
-  config: Record<string, string>;
+  config: NotificationConfig;
   schedule?: string | null;
 }) {
   const db = getDb();
@@ -184,12 +186,9 @@ export function createNotification(data: {
       .orderBy(asc(notifications.sortOrder), asc(notifications.id))
       .all()
       .at(-1)?.sortOrder ?? -1;
-  const encConfig = encryptConfig(
-    data.type,
-    sanitizeNotificationConfig(data.type, data.config)
-  );
+  const encConfig = prepareConfigForStorage(data.type, data.config);
   const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
-  const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+  const now = nowSql();
   const result = db.insert(notifications).values({
     sortOrder: nextSortOrder + 1,
     name: data.name,
@@ -212,7 +211,7 @@ export function updateNotification(
     enabled?: boolean;
     notifyOn?: string[];
     systemIds?: number[] | null;
-    config?: Record<string, string>;
+    config?: NotificationConfig;
     schedule?: string | null;
   }
 ) {
@@ -220,8 +219,8 @@ export function updateNotification(
   const existing = db.select().from(notifications).where(eq(notifications.id, id)).get();
   if (!existing) return false;
 
-  const updates: Record<string, any> = {
-    updatedAt: new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, ""),
+  const updates: Record<string, unknown> = {
+    updatedAt: nowSql(),
   };
 
   if (data.name !== undefined) updates.name = data.name;
@@ -234,33 +233,17 @@ export function updateNotification(
     const newSchedule = data.schedule === "immediate" ? null : (data.schedule || null);
     const oldSchedule = existing.schedule;
     updates.schedule = newSchedule;
-    // Clear pending events when schedule changes; anchor lastSentAt to now
-    // so the first digest waits for the next cron occurrence instead of firing immediately
     if (newSchedule !== oldSchedule) {
       updates.pendingEvents = null;
-      updates.lastSentAt = newSchedule
-        ? new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
-        : null;
+      updates.lastSentAt = newSchedule ? nowSql() : null;
     }
   }
 
   if (data.config) {
     const type = data.type || existing.type;
-    const existingConfig = sanitizeNotificationConfig(existing.type, parseConfig(existing.config));
-    const sensitive = SENSITIVE_KEYS[type] || [];
-    const mergedConfig = sanitizeNotificationConfig(type, { ...existingConfig, ...data.config });
-
-    // Encrypt new config values first (skips "(stored)" sentinel)
-    const encConfig = encryptConfig(type, mergedConfig);
-
-    // Restore existing encrypted values for unchanged sensitive fields
-    for (const key of sensitive) {
-      if (mergedConfig[key] === "(stored)") {
-        encConfig[key] = existingConfig[key] || "";
-      }
-    }
-
-    updates.config = JSON.stringify(encConfig);
+    const existingConfig = type === existing.type ? loadSanitizedConfig(existing) : {};
+    const mergedConfig = mergeStoredSensitiveConfig(type, existingConfig, data.config);
+    updates.config = JSON.stringify(prepareConfigForStorage(type, mergedConfig));
   }
 
   db.update(notifications).set(updates).where(eq(notifications.id, id)).run();
@@ -290,19 +273,46 @@ export function reorderNotifications(notificationIds: number[]): void {
   if (new Set(notificationIds).size !== notificationIds.length) {
     throw new Error("Notification order contains duplicate IDs");
   }
-  if (!existingIds.every((id) => notificationIds.includes(id))) {
+  if (!existingIds.every((rowId) => notificationIds.includes(rowId))) {
     throw new Error("Notification order contains unknown IDs");
   }
 
-  for (const [sortOrder, id] of notificationIds.entries()) {
+  for (const [sortOrder, notificationId] of notificationIds.entries()) {
     db.update(notifications)
       .set({ sortOrder })
-      .where(eq(notifications.id, id))
+      .where(eq(notifications.id, notificationId))
       .run();
   }
 }
 
-// --- Test notification ---
+function buildTestPayload(name?: string): NotificationPayload {
+  const sentAt = nowIso();
+  const event: NotificationEventData = {
+    title: "Test Notification",
+    body: `This is a test notification from Linux Update Dashboard.${name ? `\nChannel: ${name}` : ""}`,
+    priority: "default",
+    tags: ["white_check_mark"],
+    sentAt,
+    eventTypes: [],
+    totals: {
+      systemsWithUpdates: 0,
+      totalUpdates: 0,
+      totalSecurity: 0,
+      unreachableSystems: 0,
+    },
+    updates: [],
+    unreachable: [],
+    appUpdate: null,
+  };
+
+  return {
+    title: event.title,
+    body: event.body,
+    priority: event.priority,
+    tags: event.tags,
+    event,
+  };
+}
 
 export async function testNotification(id: number): Promise<{ success: boolean; error?: string }> {
   const db = getDb();
@@ -315,30 +325,22 @@ export async function testNotification(id: number): Promise<{ success: boolean; 
 
 export async function testNotificationConfig(
   type: string,
-  config: Record<string, string>,
+  config: NotificationConfig,
   name?: string,
 ): Promise<{ success: boolean; error?: string }> {
   const provider = getProvider(type);
   if (!provider) return { success: false, error: `Unknown provider: ${type}` };
 
-  const configError = provider.validateConfig(config);
+  const sanitizedConfig = provider.sanitizeConfig(config);
+  const configError = provider.validateConfig(sanitizedConfig);
   if (configError) return { success: false, error: configError };
 
-  const payload: NotificationPayload = {
-    title: "Test Notification",
-    body: `This is a test notification from Linux Update Dashboard.${name ? `\nChannel: ${name}` : ""}`,
-    priority: "default",
-    tags: ["white_check_mark"],
-  };
-
   try {
-    return await provider.send(payload, config);
-  } catch (e) {
-    return { success: false, error: String(e) };
+    return await provider.send(buildTestPayload(name), sanitizedConfig);
+  } catch (error) {
+    return { success: false, error: sanitizeOutput(String(error)) };
   }
 }
-
-// --- Hash computation for deduplication ---
 
 function computeUpdateHash(systemId: number): string {
   const db = getDb();
@@ -357,31 +359,10 @@ function computeUpdateHash(systemId: number): string {
   return createHash("sha256").update(raw).digest("hex").slice(0, 16);
 }
 
-// --- Core: process results after a scheduled check ---
-
-export interface CheckResult {
-  systemId: number;
-  systemName: string;
-  updateCount: number;
-  securityCount: number;
-  previouslyReachable: boolean;
-  nowUnreachable: boolean;
-}
-
-export interface AppUpdateEvent {
-  currentVersion: string | null;
-  currentBranch: string;
-  remoteVersion: string;
-  releaseUrl: string | null;
-  repoUrl: string | null;
-}
-
 export async function processScheduledResults(
   results: CheckResult[]
 ): Promise<void> {
   const db = getDb();
-
-  // Get all enabled notification channels
   const channels = db
     .select()
     .from(notifications)
@@ -390,7 +371,6 @@ export async function processScheduledResults(
 
   if (channels.length === 0) return;
 
-  // Dedup: figure out which systems have changed
   const updatesChanged: CheckResult[] = [];
   const unreachableChanged: CheckResult[] = [];
 
@@ -419,18 +399,11 @@ export async function processScheduledResults(
 
   if (updatesChanged.length === 0 && unreachableChanged.length === 0) return;
 
-  // Dispatch to each enabled notification channel
   for (const channel of channels) {
-    const notifyOn: string[] = (() => {
-      try { return JSON.parse(channel.notifyOn || JSON.stringify(getDefaultNotifyOn())); } catch { return getDefaultNotifyOn(); }
-    })();
-    const scopedSystemIds: number[] | null = (() => {
-      try { return channel.systemIds ? JSON.parse(channel.systemIds) : null; } catch { return null; }
-    })();
-
-    // Filter results by this channel's system scope
-    const filterByScope = (r: CheckResult) =>
-      scopedSystemIds === null || scopedSystemIds.includes(r.systemId);
+    const notifyOn = parseNotifyOn(channel.notifyOn);
+    const scopedSystemIds = parseSystemIds(channel.systemIds);
+    const filterByScope = (result: CheckResult) =>
+      scopedSystemIds === null || scopedSystemIds.includes(result.systemId);
 
     const channelUpdates = notifyOn.includes("updates")
       ? updatesChanged.filter(filterByScope)
@@ -441,13 +414,11 @@ export async function processScheduledResults(
 
     if (channelUpdates.length === 0 && channelUnreachable.length === 0) continue;
 
-    // Scheduled channels: buffer events for later digest
     if (isScheduled(channel.schedule)) {
       appendPendingEvents(channel.id, channelUpdates, channelUnreachable);
       continue;
     }
 
-    // Immediate channels: send right away
     await sendChannelNotification(channel, channelUpdates, channelUnreachable);
   }
 }
@@ -462,15 +433,7 @@ export async function processAppUpdateNotifications(): Promise<void> {
 
   if (channels.length === 0) return;
 
-  const subscribedChannels = channels.filter((channel) => {
-    try {
-      const notifyOn = JSON.parse(channel.notifyOn || DEFAULT_NOTIFY_ON_JSON);
-      return Array.isArray(notifyOn) && notifyOn.includes("appUpdates");
-    } catch {
-      return false;
-    }
-  });
-
+  const subscribedChannels = channels.filter((channel) => parseNotifyOn(channel.notifyOn).includes("appUpdates"));
   if (subscribedChannels.length === 0) return;
 
   const status = await getAppUpdateStatus();
@@ -485,15 +448,6 @@ export async function processAppUpdateNotifications(): Promise<void> {
   };
 
   for (const channel of subscribedChannels) {
-    const notifyOn: string[] = (() => {
-      try {
-        return JSON.parse(channel.notifyOn || JSON.stringify(getDefaultNotifyOn()));
-      } catch {
-        return getDefaultNotifyOn();
-      }
-    })();
-
-    if (!notifyOn.includes("appUpdates")) continue;
     if (channel.lastAppVersionNotified === event.remoteVersion) continue;
 
     const pending = parsePendingEvents(channel.pendingEvents);
@@ -510,14 +464,46 @@ export async function processAppUpdateNotifications(): Promise<void> {
     db.update(notifications)
       .set({
         lastAppVersionNotified: event.remoteVersion,
-        updatedAt: new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, ""),
+        updatedAt: nowSql(),
       })
       .where(eq(notifications.id, channel.id))
       .run();
   }
 }
 
-// --- Send notification for a single channel ---
+function getWebhookRetryPolicy(config: NotificationConfig): { attempts: number; delayMs: number } {
+  const retryAttempts = typeof config.retryAttempts === "number" ? config.retryAttempts : 0;
+  const retryDelayMs = typeof config.retryDelayMs === "number" ? config.retryDelayMs : 0;
+
+  return {
+    attempts: Math.max(0, Math.min(5, Math.trunc(retryAttempts))),
+    delayMs: Math.max(0, Math.min(300_000, Math.trunc(retryDelayMs))),
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarizeResult(result: NotificationResult): string | null {
+  return truncateDiagnosticMessage(result.summary || result.error);
+}
+
+function updateDeliveryDiagnostics(
+  channelId: number,
+  result: NotificationResult,
+): void {
+  getDb().update(notifications)
+    .set({
+      lastDeliveryStatus: result.success ? "success" : "failed",
+      lastDeliveryAt: nowSql(),
+      lastDeliveryCode: result.statusCode ?? null,
+      lastDeliveryMessage: summarizeResult(result),
+      updatedAt: nowSql(),
+    })
+    .where(eq(notifications.id, channelId))
+    .run();
+}
 
 async function sendChannelNotification(
   channel: {
@@ -537,24 +523,49 @@ async function sendChannelNotification(
   const config = loadSanitizedConfig(channel);
   const configError = provider.validateConfig(config);
   if (configError) {
-    console.warn(`Notification [${channel.name}]: skipped - ${configError}`);
+    const result: NotificationResult = {
+      success: false,
+      error: configError,
+      summary: configError,
+    };
+    updateDeliveryDiagnostics(channel.id, result);
+    console.warn(`Notification [${channel.name}]: skipped - ${sanitizeOutput(configError)}`);
     return false;
   }
 
-  try {
-    const result = await provider.send(payload, config);
-    if (!result.success) {
-      console.error(`Notification [${channel.name}] failed:`, result.error);
-      return false;
+  const retryPolicy = channel.type === "webhook"
+    ? getWebhookRetryPolicy(config)
+    : { attempts: 0, delayMs: 0 };
+
+  let lastResult: NotificationResult = {
+    success: false,
+    error: "Notification delivery failed",
+  };
+
+  for (let attempt = 0; attempt <= retryPolicy.attempts; attempt += 1) {
+    try {
+      lastResult = await provider.send(payload, config);
+    } catch (error) {
+      lastResult = {
+        success: false,
+        error: sanitizeOutput(String(error)),
+      };
     }
-    return true;
-  } catch (e) {
-    console.error(`Notification [${channel.name}] error:`, e);
-    return false;
-  }
-}
 
-// --- Pending events for scheduled channels ---
+    if (lastResult.success) {
+      updateDeliveryDiagnostics(channel.id, lastResult);
+      return true;
+    }
+
+    if (attempt < retryPolicy.attempts && retryPolicy.delayMs > 0) {
+      await sleep(retryPolicy.delayMs);
+    }
+  }
+
+  updateDeliveryDiagnostics(channel.id, lastResult);
+  console.error(`Notification [${channel.name}] failed:`, summarizeResult(lastResult) || "unknown error");
+  return false;
+}
 
 interface PendingEvents {
   updates: CheckResult[];
@@ -583,11 +594,11 @@ function parsePendingEvents(json: string | null): PendingEvents {
 
 function mergeCheckResults(existing: CheckResult[], incoming: CheckResult[]): CheckResult[] {
   const map = new Map<number, CheckResult>();
-  for (const r of existing) map.set(r.systemId, r);
-  for (const r of incoming) {
-    const prev = map.get(r.systemId);
-    if (!prev || r.updateCount > prev.updateCount || r.securityCount > prev.securityCount) {
-      map.set(r.systemId, r);
+  for (const result of existing) map.set(result.systemId, result);
+  for (const result of incoming) {
+    const previous = map.get(result.systemId);
+    if (!previous || result.updateCount > previous.updateCount || result.securityCount > previous.securityCount) {
+      map.set(result.systemId, result);
     }
   }
   return Array.from(map.values());
@@ -635,8 +646,6 @@ function appendPendingAppUpdate(
     .run();
 }
 
-// --- Scheduled digest processing ---
-
 function shouldSendNow(cronExpr: string, lastSentAt: string | null): boolean {
   try {
     const ref = lastSentAt ? new Date(lastSentAt) : new Date(0);
@@ -675,7 +684,6 @@ export async function processScheduledDigests(): Promise<void> {
 
     if (!shouldSendNow(channel.schedule, channel.lastSentAt)) continue;
 
-    console.log(`Notification [${channel.name}]: sending scheduled digest`);
     const sent = await sendChannelNotification(
       channel,
       pending.updates,
@@ -684,11 +692,10 @@ export async function processScheduledDigests(): Promise<void> {
     );
     if (!sent) continue;
 
-    const now = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
     db.update(notifications)
       .set({
         pendingEvents: null,
-        lastSentAt: now,
+        lastSentAt: nowSql(),
         lastAppVersionNotified:
           pending.appUpdate?.remoteVersion ?? channel.lastAppVersionNotified,
       })
@@ -697,15 +704,30 @@ export async function processScheduledDigests(): Promise<void> {
   }
 }
 
-// --- Build a single batched notification ---
+function buildEventTypes(
+  updateResults: CheckResult[],
+  unreachableResults: CheckResult[],
+  appUpdate: AppUpdateEvent | null,
+): NotificationEventType[] {
+  const eventTypes: NotificationEventType[] = [];
+  if (updateResults.length > 0) eventTypes.push("updates");
+  if (unreachableResults.length > 0) eventTypes.push("unreachable");
+  if (appUpdate) eventTypes.push("appUpdates");
+  return eventTypes;
+}
+
+function resolvePriority(totalSecurity: number): NotificationPriority {
+  return totalSecurity > 0 ? "high" : "default";
+}
 
 function buildBatchPayload(
   updateResults: CheckResult[],
   unreachableResults: CheckResult[],
   appUpdate: AppUpdateEvent | null = null,
 ): NotificationPayload {
-  const totalUpdates = updateResults.reduce((s, r) => s + r.updateCount, 0);
-  const totalSecurity = updateResults.reduce((s, r) => s + r.securityCount, 0);
+  const totalUpdates = updateResults.reduce((sum, result) => sum + result.updateCount, 0);
+  const totalSecurity = updateResults.reduce((sum, result) => sum + result.securityCount, 0);
+  const sentAt = nowIso();
 
   let title = "";
   let body = "";
@@ -721,9 +743,9 @@ function buildBatchPayload(
     }
 
     body = updateResults
-      .map((r) => {
-        let line = `${r.systemName}: ${r.updateCount} update${r.updateCount !== 1 ? "s" : ""}`;
-        if (r.securityCount > 0) line += ` (${r.securityCount} security)`;
+      .map((result) => {
+        let line = `${result.systemName}: ${result.updateCount} update${result.updateCount !== 1 ? "s" : ""}`;
+        if (result.securityCount > 0) line += ` (${result.securityCount} security)`;
         return line;
       })
       .join("\n");
@@ -732,7 +754,7 @@ function buildBatchPayload(
   if (unreachableResults.length > 0) {
     tags.push("skull");
     const lines = unreachableResults
-      .map((r) => `${r.systemName}: unreachable`)
+      .map((result) => `${result.systemName}: unreachable`)
       .join("\n");
     if (body) body += "\n\n";
     body += lines;
@@ -761,10 +783,34 @@ function buildBatchPayload(
     if (!title) title = "Application update available";
   }
 
+  const event: NotificationEventData = {
+    title,
+    body,
+    priority: resolvePriority(totalSecurity),
+    tags,
+    sentAt,
+    eventTypes: buildEventTypes(updateResults, unreachableResults, appUpdate),
+    totals: {
+      systemsWithUpdates: updateResults.length,
+      totalUpdates,
+      totalSecurity,
+      unreachableSystems: unreachableResults.length,
+    },
+    updates: updateResults,
+    unreachable: unreachableResults.map((result) => ({
+      systemId: result.systemId,
+      systemName: result.systemName,
+    })),
+    appUpdate,
+  };
+
   return {
     title,
     body,
-    priority: totalSecurity > 0 ? "high" : "default",
+    priority: event.priority,
     tags,
+    event,
   };
 }
+
+export type { CheckResult, AppUpdateEvent } from "./notifications";

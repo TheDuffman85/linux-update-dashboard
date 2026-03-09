@@ -189,6 +189,10 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     pending_events TEXT,
     last_sent_at TEXT,
     last_app_version_notified TEXT,
+    last_delivery_status TEXT,
+    last_delivery_at TEXT,
+    last_delivery_code INTEGER,
+    last_delivery_message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -366,6 +370,26 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   }
   try {
     _db.run(sql`ALTER TABLE notifications ADD COLUMN last_app_version_notified TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_status TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_code INTEGER`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_message TEXT`);
   } catch {
     // Column already exists
   }

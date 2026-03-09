@@ -1,6 +1,37 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
+export type NotificationConfig = Record<string, unknown>;
+
+export interface WebhookField {
+  name: string;
+  value: string;
+  sensitive: boolean;
+}
+
+export type WebhookAuthConfig =
+  | { mode: "none" }
+  | { mode: "bearer"; token: string }
+  | { mode: "basic"; username: string; password: string };
+
+export type WebhookBodyConfig =
+  | { mode: "text" | "json"; template: string }
+  | { mode: "form"; fields: WebhookField[] };
+
+export interface WebhookConfig extends NotificationConfig {
+  preset: "custom" | "discord";
+  method: "POST" | "PUT" | "PATCH";
+  url: string;
+  query: Array<{ name: string; value: string }>;
+  headers: WebhookField[];
+  auth: WebhookAuthConfig;
+  body: WebhookBodyConfig;
+  timeoutMs: number;
+  retryAttempts: number;
+  retryDelayMs: number;
+  allowInsecureTls: boolean;
+}
+
 export interface NotificationChannel {
   id: number;
   name: string;
@@ -8,10 +39,14 @@ export interface NotificationChannel {
   enabled: boolean;
   notifyOn: string[];
   systemIds: number[] | null;
-  config: Record<string, string>;
+  config: NotificationConfig;
   schedule: string | null;
   lastSentAt: string | null;
   lastAppVersionNotified?: string | null;
+  lastDeliveryStatus?: string | null;
+  lastDeliveryAt?: string | null;
+  lastDeliveryCode?: number | null;
+  lastDeliveryMessage?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -35,7 +70,7 @@ export function useCreateNotification() {
       enabled?: boolean;
       notifyOn?: string[];
       systemIds?: number[] | null;
-      config: Record<string, string>;
+      config: NotificationConfig;
       schedule?: string | null;
     }) =>
       apiFetch<{ id: number }>("/notifications", {
@@ -61,7 +96,7 @@ export function useUpdateNotification() {
       enabled?: boolean;
       notifyOn?: string[];
       systemIds?: number[] | null;
-      config?: Record<string, string>;
+      config?: NotificationConfig;
       schedule?: string | null;
     }) =>
       apiFetch(`/notifications/${id}`, {
@@ -113,7 +148,7 @@ export function useTestNotificationConfig() {
   return useMutation({
     mutationFn: (data: {
       type: string;
-      config: Record<string, string>;
+      config: NotificationConfig;
       name?: string;
       existingId?: number;
     }) =>

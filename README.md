@@ -33,7 +33,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
-- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh), scope them to specific systems, and pick which events trigger each channel
+- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh, Webhooks), scope them to specific systems, and pick which events trigger each channel
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Four auth methods:** password, Passkeys (WebAuthn), SSO (OpenID Connect), and API tokens for external integrations
 - **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
@@ -76,7 +76,7 @@ Expandable history entries with the executed command and its full output.
 ![Activity Log](screenshots/screenshot-3.png)
 
 ### Notifications
-Configure notification channels (Email/SMTP, Gotify, ntfy.sh) with per-event and per-system filtering.
+Configure notification channels (Email/SMTP, Gotify, ntfy.sh, Webhooks) with per-event and per-system filtering.
 
 ![Notifications](screenshots/screenshot-4.png)
 
@@ -270,7 +270,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
 | `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Max simultaneous SSH connections |
-| `NODE_EXTRA_CA_CERTS` | No | - | Path to a PEM CA bundle to trust additional/self-signed certificates for outbound TLS (OIDC, SMTP, Gotify, ntfy, etc.) |
+| `NODE_EXTRA_CA_CERTS` | No | - | Path to a PEM CA bundle to trust additional/self-signed certificates for outbound TLS (OIDC, SMTP, Gotify, ntfy, webhooks, etc.) |
 | `NODE_ENV` | No | - | Set to `production` for static file serving |
 
 If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
@@ -565,7 +565,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 ## Security
 
 - **Credential encryption:** SSH passwords and private keys are encrypted at rest using AES-256-GCM with per-entry random IVs and auth tags
-- **Notification secrets:** SMTP passwords, Gotify app tokens, and ntfy tokens are also encrypted at rest within notification channel configs
+- **Notification secrets:** SMTP passwords, Gotify app tokens, ntfy tokens, and webhook secrets are also encrypted at rest within notification channel configs
 - **Key derivation:** supports both raw base64 keys and passphrase-derived keys (PBKDF2-SHA256, 480k iterations)
 - **Session security:** HTTP-only, SameSite=Lax cookies with JWT (HS256)
 - **CSRF protection:** state-changing API requests require a per-session CSRF token header
