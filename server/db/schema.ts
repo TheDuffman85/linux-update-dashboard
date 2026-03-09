@@ -1,4 +1,5 @@
 import {
+  type AnySQLiteColumn,
   sqliteTable,
   text,
   integer,
@@ -56,12 +57,25 @@ export const systems = sqliteTable(
     credentialId: integer("credential_id").references(() => credentials.id, {
       onDelete: "restrict",
     }),
+    proxyJumpSystemId: integer("proxy_jump_system_id").references(
+      (): AnySQLiteColumn => systems.id,
+      {
+        onDelete: "restrict",
+      }
+    ),
     authType: text("auth_type").notNull().default("password"),
     username: text("username").notNull(),
     encryptedPassword: text("encrypted_password"),
     encryptedPrivateKey: text("encrypted_private_key"),
     encryptedKeyPassphrase: text("encrypted_key_passphrase"),
     encryptedSudoPassword: text("encrypted_sudo_password"),
+    hostKeyVerificationEnabled: integer("host_key_verification_enabled")
+      .notNull()
+      .default(1),
+    trustedHostKey: text("trusted_host_key"),
+    trustedHostKeyAlgorithm: text("trusted_host_key_algorithm"),
+    trustedHostKeyFingerprintSha256: text("trusted_host_key_fingerprint_sha256"),
+    hostKeyTrustedAt: text("host_key_trusted_at"),
     pkgManager: text("pkg_manager"),
     detectedPkgManagers: text("detected_pkg_managers"),
     disabledPkgManagers: text("disabled_pkg_managers"),
@@ -78,6 +92,7 @@ export const systems = sqliteTable(
     excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
       .notNull()
       .default(0),
+    hidden: integer("hidden").notNull().default(0),
     needsReboot: integer("needs_reboot").notNull().default(0),
     systemInfoUpdatedAt: text("system_info_updated_at"),
     isReachable: integer("is_reachable").notNull().default(0),

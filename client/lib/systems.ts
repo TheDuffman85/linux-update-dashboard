@@ -14,8 +14,16 @@ export interface System {
   hostname: string;
   port: number;
   credentialId: number | null;
+  proxyJumpSystemId: number | null;
   authType: string;
   username: string;
+  hostKeyVerificationEnabled: number;
+  approvedHostKey: string | null;
+  trustedHostKeyAlgorithm: string | null;
+  trustedHostKeyFingerprintSha256: string | null;
+  hostKeyTrustedAt: string | null;
+  hostKeyStatus: "verified" | "verification_disabled" | "needs_approval";
+  proxyJumpChain: Array<{ id: number; name: string }>;
   pkgManager: string | null;
   detectedPkgManagers: string[] | null;
   disabledPkgManagers: string[] | null;
@@ -29,6 +37,7 @@ export interface System {
   memory: string | null;
   disk: string | null;
   excludeFromUpgradeAll: number;
+  hidden: number;
   needsReboot: number;
   isReachable: number;
   lastSeenAt: string | null;
@@ -105,9 +114,13 @@ export function useCreateSystem() {
       hostname: string;
       port: number;
       credentialId: number;
+      proxyJumpSystemId?: number | null;
+      hostKeyVerificationEnabled?: boolean;
+      validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
       excludeFromUpgradeAll?: boolean;
+      hidden?: boolean;
       sourceSystemId?: number;
     }) => apiFetch<{ id: number }>("/systems", { method: "POST", body: JSON.stringify(data) }),
     onSuccess: async () => {
@@ -126,9 +139,13 @@ export function useUpdateSystem() {
       hostname: string;
       port: number;
       credentialId: number;
+      proxyJumpSystemId?: number | null;
+      hostKeyVerificationEnabled?: boolean;
+      validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
       excludeFromUpgradeAll?: boolean;
+      hidden?: boolean;
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["systems"] });
@@ -183,6 +200,18 @@ export function useTestConnection() {
       hostname: string;
       port: number;
       credentialId: number;
+      proxyJumpSystemId?: number | null;
+      hostKeyVerificationEnabled?: boolean;
+      trustChallengeToken?: string;
+      approvedHostKeys?: Array<{
+        systemId?: number;
+        role: "jump" | "target";
+        host: string;
+        port: number;
+        algorithm: string;
+        fingerprintSha256: string;
+        rawKey: string;
+      }>;
       systemId?: number;
     }) =>
       apiFetch<{
@@ -190,9 +219,34 @@ export function useTestConnection() {
         message: string;
         debugRef?: string;
         detectedManagers?: string[];
+        validatedConfigToken?: string;
+        trustChallengeToken?: string;
+        hostKeyChallenges?: Array<{
+          systemId?: number;
+          role: "jump" | "target";
+          host: string;
+          port: number;
+          algorithm: string;
+          fingerprintSha256: string;
+          rawKey: string;
+        }>;
       }>(
         "/systems/test-connection",
         { method: "POST", body: JSON.stringify(data) }
       ),
+  });
+}
+
+export function useRevokeHostKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ status: string }>(`/systems/${id}/revoke-host-key`, {
+        method: "POST",
+      }),
+    onSuccess: async (_data, id) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+    },
   });
 }

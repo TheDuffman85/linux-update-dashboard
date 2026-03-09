@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildPersistentSetupCommand,
+  buildTestConnectionFailureMessage,
   buildTailMonitorCommand,
   preparePersistentSudoCommand,
   wrapRemoteCommand,
@@ -93,5 +94,32 @@ describe("buildTailMonitorCommand", () => {
     expect(cmd).toContain('kill "$TAILPID" 2>/dev/null || true');
     expect(cmd).not.toContain("tail --pid=");
     expect(cmd).not.toContain("&;");
+  });
+});
+
+describe("buildTestConnectionFailureMessage", () => {
+  test("explains loopback targets when Proxy Jump channel opening fails", () => {
+    const message = buildTestConnectionFailureMessage(
+      {
+        hostname: "localhost",
+        proxyJumpSystemId: 17,
+      },
+      new Error("(SSH) Channel open failure: Connection refused")
+    );
+
+    expect(message).toContain("Connection failed: (SSH) Channel open failure: Connection refused");
+    expect(message).toContain("localhost is resolved from the jump host");
+    expect(message).toContain("Use a host or IP that the jump host can reach instead of loopback");
+  });
+
+  test("leaves direct-connection failures unchanged", () => {
+    const message = buildTestConnectionFailureMessage(
+      {
+        hostname: "localhost",
+      },
+      new Error("(SSH) Channel open failure: Connection refused")
+    );
+
+    expect(message).toBe("Connection failed: (SSH) Channel open failure: Connection refused");
   });
 });

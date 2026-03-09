@@ -1,8 +1,10 @@
 import { sanitizeOutput } from "../utils/sanitize";
 import type { Logger } from "../logger";
+import type { ApprovedHostKeyInput } from "../services/system-connection-validation";
 
 export interface SSHConnectContext {
   systemId?: number;
+  approvedHostKeys?: ApprovedHostKeyInput[];
 }
 
 export interface SSHAttemptLogMeta {

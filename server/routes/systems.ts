@@ -7,6 +7,15 @@ import { detectPackageManagers } from "../ssh/detector";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
 import { resolveSystemCredential } from "../services/credential-service";
+import {
+  clearTrustChallenge,
+  getTrustChallenge,
+  getValidatedConfig,
+  issueTrustChallengeToken,
+  issueValidatedConfigToken,
+  type ApprovedHostKeyInput,
+  type SystemConnectionConfig,
+} from "../services/system-connection-validation";
 
 const systems = new Hono();
 
@@ -31,6 +40,28 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
   const credentialId = Number(body.credentialId);
   if (!Number.isInteger(credentialId) || credentialId <= 0) {
     return "credentialId must be a positive integer";
+  }
+  if (
+    body.proxyJumpSystemId !== undefined &&
+    body.proxyJumpSystemId !== null &&
+    !parseId(String(body.proxyJumpSystemId))
+  ) {
+    return "proxyJumpSystemId must be a positive integer";
+  }
+  if (
+    body.hostKeyVerificationEnabled !== undefined &&
+    typeof body.hostKeyVerificationEnabled !== "boolean"
+  ) {
+    return "hostKeyVerificationEnabled must be a boolean";
+  }
+  if (body.hidden !== undefined && typeof body.hidden !== "boolean") {
+    return "hidden must be a boolean";
+  }
+  if (
+    body.validatedConfigToken !== undefined &&
+    typeof body.validatedConfigToken !== "string"
+  ) {
+    return "validatedConfigToken must be a string";
   }
   return null;
 }
@@ -70,6 +101,29 @@ function getSystemWriteErrorResponse(error: unknown): Response | null {
     );
   }
 
+  if (error instanceof systemService.InvalidProxyJumpConfigurationError) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  if (error instanceof systemService.ProxyJumpDependencyError) {
+    return new Response(
+      JSON.stringify({
+        error: error.message,
+        dependents: error.dependents,
+      }),
+      {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
   return null;
 }
 
@@ -79,14 +133,145 @@ function serializeSystem(s: Record<string, unknown>) {
     encryptedPrivateKey,
     encryptedKeyPassphrase,
     encryptedSudoPassword,
+    trustedHostKey,
     ...safe
   } = s;
   return {
     ...safe,
     hasSudoPassword: !!encryptedSudoPassword,
+    approvedHostKey:
+      typeof s.trustedHostKey === "string" &&
+      typeof s.trustedHostKeyAlgorithm === "string"
+        ? `${s.trustedHostKeyAlgorithm} ${s.trustedHostKey}`
+        : null,
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
+    hostKeyStatus: systemService.deriveHostKeyStatus({
+      hostKeyVerificationEnabled: s.hostKeyVerificationEnabled as number | null,
+      trustedHostKey: s.trustedHostKey as string | null,
+    }),
+    proxyJumpChain:
+      typeof s.id === "number"
+        ? systemService.getProxyJumpChain({
+            proxyJumpSystemId: s.proxyJumpSystemId as number | null,
+          })
+        : [],
   };
+}
+
+function getValidationSubject(c: { get: (key: string) => unknown }): string | null {
+  try {
+    const user = c.get("user") as { userId?: number; username?: string } | undefined;
+    if (!user?.userId) return null;
+    return `${user.userId}:${user.username || ""}`;
+  } catch {
+    return null;
+  }
+}
+
+function parseConnectionConfig(
+  body: Record<string, unknown>,
+  systemId?: number
+): { config?: SystemConnectionConfig; error?: string } {
+  const hostname = typeof body.hostname === "string" ? body.hostname : "";
+  const port = body.port === undefined || body.port === null ? 22 : Number(body.port);
+  const credentialId = Number(body.credentialId);
+  const proxyJumpSystemId =
+    body.proxyJumpSystemId === undefined || body.proxyJumpSystemId === null
+      ? null
+      : parseId(String(body.proxyJumpSystemId));
+  const hostKeyVerificationEnabled =
+    body.hostKeyVerificationEnabled === undefined
+      ? true
+      : body.hostKeyVerificationEnabled === true;
+
+  if (!hostname || !VALID_HOSTNAME.test(hostname)) {
+    return { error: "hostname is required and must be a valid hostname or IP" };
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { error: "port must be an integer between 1 and 65535" };
+  }
+  if (!Number.isInteger(credentialId) || credentialId <= 0) {
+    return { error: "credentialId must be a positive integer" };
+  }
+  if (
+    body.proxyJumpSystemId !== undefined &&
+    body.proxyJumpSystemId !== null &&
+    !proxyJumpSystemId
+  ) {
+    return { error: "proxyJumpSystemId must be a positive integer" };
+  }
+
+  return {
+    config: {
+      systemId,
+      hostname,
+      port,
+      credentialId,
+      proxyJumpSystemId,
+      hostKeyVerificationEnabled,
+    },
+  };
+}
+
+function parseApprovedHostKeys(value: unknown): ApprovedHostKeyInput[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+
+  const approvals: ApprovedHostKeyInput[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") return null;
+    const item = entry as Record<string, unknown>;
+    const role = item.role === "jump" ? "jump" : item.role === "target" ? "target" : null;
+    const port = Number(item.port);
+    const systemId =
+      item.systemId === undefined || item.systemId === null
+        ? undefined
+        : parseId(String(item.systemId));
+    if (
+      !role ||
+      typeof item.host !== "string" ||
+      !item.host ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      typeof item.algorithm !== "string" ||
+      !item.algorithm ||
+      typeof item.fingerprintSha256 !== "string" ||
+      !item.fingerprintSha256 ||
+      typeof item.rawKey !== "string" ||
+      !item.rawKey ||
+      (item.systemId !== undefined && item.systemId !== null && !systemId)
+    ) {
+      return null;
+    }
+    approvals.push({
+      systemId: systemId ?? undefined,
+      role,
+      host: item.host,
+      port,
+      algorithm: item.algorithm,
+      fingerprintSha256: item.fingerprintSha256,
+      rawKey: item.rawKey,
+    });
+  }
+
+  return approvals;
+}
+
+function approvalsMatchChallenges(
+  challenges: ApprovedHostKeyInput[],
+  approvals: ApprovedHostKeyInput[]
+): boolean {
+  return challenges.every((challenge) =>
+    approvals.some((approval) =>
+      approval.role === challenge.role &&
+      approval.host === challenge.host &&
+      approval.port === challenge.port &&
+      approval.fingerprintSha256 === challenge.fingerprintSha256 &&
+      approval.rawKey === challenge.rawKey &&
+      (approval.systemId ?? null) === (challenge.systemId ?? null)
+    )
+  );
 }
 
 // List all systems
@@ -139,18 +324,37 @@ systems.post("/", async (c) => {
   if (body.sourceSystemId !== undefined && body.sourceSystemId !== null && !sourceIdCandidate) {
     return c.json({ error: "sourceSystemId must be a positive integer" }, 400);
   }
+  const parsedConfig = parseConnectionConfig(body);
+  if (!parsedConfig.config) {
+    return c.json({ error: parsedConfig.error || "Invalid connection config" }, 400);
+  }
+  const validatedConfig =
+    typeof body.validatedConfigToken === "string"
+      ? getValidatedConfig(
+          body.validatedConfigToken,
+          parsedConfig.config,
+          getValidationSubject(c)
+        )
+      : null;
+  if (body.validatedConfigToken && !validatedConfig) {
+    return c.json({ error: "The provided connection validation has expired. Test the connection again." }, 400);
+  }
 
   let systemId: number;
   try {
     systemId = systemService.createSystem({
       name: body.name,
-      hostname: body.hostname,
-      port: body.port || 22,
-      credentialId: Number(body.credentialId),
+      hostname: parsedConfig.config.hostname,
+      port: parsedConfig.config.port,
+      credentialId: parsedConfig.config.credentialId,
+      proxyJumpSystemId: parsedConfig.config.proxyJumpSystemId,
+      hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
-      disabledPkgManagers: body.disabledPkgManagers || undefined,
+      disabledPkgManagers: body.disabledPkgManagers ?? undefined,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
+      hidden: body.hidden,
       sourceSystemId,
+      trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
   } catch (error) {
     const response = getSystemWriteErrorResponse(error);
@@ -195,16 +399,35 @@ systems.put("/:id", async (c) => {
   const body = await c.req.json();
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
+  const parsedConfig = parseConnectionConfig(body, id);
+  if (!parsedConfig.config) {
+    return c.json({ error: parsedConfig.error || "Invalid connection config" }, 400);
+  }
+  const validatedConfig =
+    typeof body.validatedConfigToken === "string"
+      ? getValidatedConfig(
+          body.validatedConfigToken,
+          parsedConfig.config,
+          getValidationSubject(c)
+        )
+      : null;
+  if (body.validatedConfigToken && !validatedConfig) {
+    return c.json({ error: "The provided connection validation has expired. Test the connection again." }, 400);
+  }
 
   try {
     systemService.updateSystem(id, {
       name: body.name,
-      hostname: body.hostname,
-      port: body.port || 22,
-      credentialId: Number(body.credentialId),
+      hostname: parsedConfig.config.hostname,
+      port: parsedConfig.config.port,
+      credentialId: parsedConfig.config.credentialId,
+      proxyJumpSystemId: parsedConfig.config.proxyJumpSystemId,
+      hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
-      disabledPkgManagers: body.disabledPkgManagers || undefined,
+      disabledPkgManagers: body.disabledPkgManagers ?? undefined,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
+      hidden: body.hidden,
+      trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
   } catch (error) {
     const response = getSystemWriteErrorResponse(error);
@@ -223,25 +446,33 @@ systems.post("/:id/reboot", async (c) => {
   return c.json(result, result.success ? 200 : 500);
 });
 
+systems.post("/:id/revoke-host-key", (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const system = systemService.getSystem(id);
+  if (!system) return c.json({ error: "System not found" }, 404);
+  systemService.clearTrustedHostKey(id);
+  return c.json({ status: "ok" });
+});
+
 // Delete system
 systems.delete("/:id", (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   outputStream.removeStream(id);
-  systemService.deleteSystem(id);
+  try {
+    systemService.deleteSystem(id);
+  } catch (error) {
+    const response = getSystemWriteErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   return c.json({ status: "ok" });
 });
 
 // Test connection with provided credentials
 systems.post("/test-connection", async (c) => {
   const body = await c.req.json();
-  const credentialId =
-    body.credentialId === undefined || body.credentialId === null
-      ? null
-      : parseId(String(body.credentialId));
-  if (!credentialId) {
-    return c.json({ error: "credentialId must be a positive integer" }, 400);
-  }
   const sourceSystemId =
     body.systemId === undefined || body.systemId === null
       ? null
@@ -249,40 +480,111 @@ systems.post("/test-connection", async (c) => {
   if (body.systemId !== undefined && body.systemId !== null && !sourceSystemId) {
     return c.json({ error: "systemId must be a positive integer" }, 400);
   }
+  const parsedConfig = parseConnectionConfig(body, sourceSystemId ?? undefined);
+  if (!parsedConfig.config) {
+    return c.json({ error: parsedConfig.error || "Invalid connection config" }, 400);
+  }
+  try {
+    systemService.validateProxyJumpConfiguration(
+      parsedConfig.config.proxyJumpSystemId ?? null,
+      sourceSystemId ?? undefined
+    );
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Invalid ProxyJump configuration" }, 400);
+  }
 
-  const credential = resolveSystemCredential(credentialId);
+  const credential = resolveSystemCredential(parsedConfig.config.credentialId);
   if (!credential) {
     return c.json({ error: "Selected credential is not valid for system SSH access" }, 400);
   }
+  const existingSystem = sourceSystemId
+    ? systemService.getSystem(sourceSystemId)
+    : null;
+  const approvedHostKeys = parseApprovedHostKeys(body.approvedHostKeys);
+  if (!approvedHostKeys) {
+    return c.json({ error: "approvedHostKeys must be an array of host-key approvals" }, 400);
+  }
 
   const system: Record<string, unknown> = {
-    hostname: body.hostname,
-    port: body.port || 22,
-    credentialId,
+    hostname: parsedConfig.config.hostname,
+    port: parsedConfig.config.port,
+    credentialId: parsedConfig.config.credentialId,
+    proxyJumpSystemId: parsedConfig.config.proxyJumpSystemId,
+    hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
     username: credential.username,
     authType: credential.authType,
+    trustedHostKey:
+      existingSystem &&
+      existingSystem.hostname === parsedConfig.config.hostname &&
+      existingSystem.port === parsedConfig.config.port
+        ? existingSystem.trustedHostKey
+        : null,
   };
+
+  if (body.trustChallengeToken !== undefined && typeof body.trustChallengeToken !== "string") {
+    return c.json({ error: "trustChallengeToken must be a string" }, 400);
+  }
+
+  if (body.trustChallengeToken) {
+    const challenges = getTrustChallenge(
+      String(body.trustChallengeToken),
+      parsedConfig.config,
+      getValidationSubject(c)
+    );
+    if (!challenges) {
+      return c.json({ error: "Host-key approval session expired. Test the connection again." }, 400);
+    }
+    if (!approvalsMatchChallenges(challenges, approvedHostKeys)) {
+      return c.json({ error: "Host-key approvals do not match the requested trust challenge." }, 400);
+    }
+    for (const approval of approvedHostKeys) {
+      if (approval.systemId) {
+        systemService.persistTrustedHostKey(approval.systemId, approval);
+      }
+    }
+    clearTrustChallenge(String(body.trustChallengeToken));
+  } else if (approvedHostKeys.length > 0) {
+    return c.json({ error: "approvedHostKeys require a trustChallengeToken" }, 400);
+  }
 
   const sshManager = getSSHManager();
   const result = await sshManager.testConnection(system, {
     systemId: sourceSystemId ?? undefined,
+    approvedHostKeys,
   });
+
+  if (result.hostKeyChallenges?.length) {
+    return c.json({
+      ...result,
+      trustChallengeToken: issueTrustChallengeToken(
+        parsedConfig.config,
+        result.hostKeyChallenges,
+        getValidationSubject(c)
+      ),
+    });
+  }
 
   // On successful connection, also detect available package managers
   if (result.success) {
+    const validatedConfigToken = issueValidatedConfigToken(
+      parsedConfig.config,
+      getValidationSubject(c),
+      approvedHostKeys.find((approval) => approval.role === "target")
+    );
     try {
       const conn = await sshManager.connect(system, {
         systemId: sourceSystemId ?? undefined,
+        approvedHostKeys,
       });
       try {
         const detectedManagers = await detectPackageManagers(sshManager, conn);
-        return c.json({ ...result, detectedManagers });
+        return c.json({ ...result, detectedManagers, validatedConfigToken });
       } finally {
         sshManager.disconnect(conn);
       }
     } catch {
       // Detection failed but connection test succeeded — return without managers
-      return c.json({ ...result, detectedManagers: [] });
+      return c.json({ ...result, detectedManagers: [], validatedConfigToken });
     }
   }
 

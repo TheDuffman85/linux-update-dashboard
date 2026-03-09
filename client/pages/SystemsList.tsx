@@ -228,6 +228,21 @@ export default function SystemsList() {
                       ) : (
                         <Badge variant="muted" small>Unknown</Badge>
                       )}
+                      {s.hidden === 1 && (
+                        <Badge variant="muted" small>Hidden</Badge>
+                      )}
+                      {s.hostKeyStatus === "verification_disabled" ? (
+                        <Badge variant="warning" small>Host key off</Badge>
+                      ) : s.hostKeyStatus === "needs_approval" ? (
+                        <Badge variant="info" small>Needs trust</Badge>
+                      ) : (
+                        <Badge variant="success" small>Host key ok</Badge>
+                      )}
+                      {s.proxyJumpChain.length > 0 && (
+                        <Badge variant="muted" small>
+                          via {s.proxyJumpChain[0].name}
+                        </Badge>
+                      )}
                       {s.needsReboot === 1 && (
                         <span className="text-amber-500" title="Reboot required">
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -328,9 +343,17 @@ export default function SystemsList() {
             hostname: duplicateSource.hostname,
             port: duplicateSource.port,
             credentialId: duplicateSource.credentialId ?? undefined,
+            proxyJumpSystemId: duplicateSource.proxyJumpSystemId,
+            hostKeyVerificationEnabled:
+              duplicateSource.hostKeyVerificationEnabled !== 0,
+            approvedHostKey: duplicateSource.approvedHostKey,
+            trustedHostKeyFingerprintSha256:
+              duplicateSource.trustedHostKeyFingerprintSha256,
             detectedPkgManagers: duplicateSource.detectedPkgManagers ?? undefined,
             disabledPkgManagers: duplicateSource.disabledPkgManagers ?? undefined,
             excludeFromUpgradeAll: duplicateSource.excludeFromUpgradeAll,
+            hidden: duplicateSource.hidden === 1,
+            hostKeyStatus: duplicateSource.hostKeyStatus,
           } : undefined}
           sourceSystemId={duplicateSource?.id}
           onSubmit={handleCreate}
@@ -347,9 +370,17 @@ export default function SystemsList() {
               hostname: editSystem.hostname,
               port: editSystem.port,
               credentialId: editSystem.credentialId ?? undefined,
+              proxyJumpSystemId: editSystem.proxyJumpSystemId,
+              hostKeyVerificationEnabled:
+                editSystem.hostKeyVerificationEnabled !== 0,
+              approvedHostKey: editSystem.approvedHostKey,
+              trustedHostKeyFingerprintSha256:
+                editSystem.trustedHostKeyFingerprintSha256,
               detectedPkgManagers: editSystem.detectedPkgManagers ?? undefined,
               disabledPkgManagers: editSystem.disabledPkgManagers ?? undefined,
               excludeFromUpgradeAll: editSystem.excludeFromUpgradeAll,
+              hidden: editSystem.hidden === 1,
+              hostKeyStatus: editSystem.hostKeyStatus,
             }}
             systemId={editSystem.id}
             onSubmit={handleUpdate}
