@@ -1,5 +1,5 @@
-import { randomUUID } from "crypto";
-import { Client } from "ssh2";
+import { createHash, randomUUID } from "crypto";
+import { Client, utils, type ClientChannel } from "ssh2";
 import type { CredentialEncryptor } from "../security";
 import { logger } from "../logger";
 import { sanitizeOutput } from "../utils/sanitize";
@@ -13,6 +13,11 @@ import {
   buildSshCertificateParsedKey,
   resolveSystemCredential,
 } from "../services/credential-service";
+import {
+  MAX_PROXY_JUMP_DEPTH,
+  getSystem,
+} from "../services/system-service";
+import type { ApprovedHostKeyInput } from "../services/system-connection-validation";
 
 // Non-interactive SSH sessions often have a minimal PATH; force C locale so
 // package-manager output is always in English for reliable parsing.
@@ -133,6 +138,58 @@ export interface TestConnectionResult {
   success: boolean;
   message: string;
   debugRef?: string;
+  hostKeyChallenges?: ApprovedHostKeyInput[];
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+function isLoopbackHost(hostname: unknown): hostname is string {
+  return typeof hostname === "string" && LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
+}
+
+export function buildTestConnectionFailureMessage(
+  system: Record<string, unknown>,
+  err: SSHConnectionError
+): string {
+  const baseMessage = `Connection failed: ${sanitizeOutput(err.message || String(err))}`;
+  const hasProxyJump = typeof system.proxyJumpSystemId === "number";
+  if (!hasProxyJump || !isLoopbackHost(system.hostname)) {
+    return baseMessage;
+  }
+
+  const rawMessage = err.message || String(err);
+  if (!/channel open failure/i.test(rawMessage)) {
+    return baseMessage;
+  }
+
+  return `${baseMessage}. With Proxy Jump enabled, ${system.hostname} is resolved from the jump host. Use a host or IP that the jump host can reach instead of loopback.`;
+}
+
+interface ResolvedSSHHop extends Record<string, unknown> {
+  systemId?: number;
+  role: "jump" | "target";
+  name?: string;
+  hostname: string;
+  port: number;
+  username: string;
+  authType: "password" | "key";
+  credentialId?: number;
+  hostKeyVerificationEnabled: boolean;
+  trustedHostKey?: string | null;
+}
+
+class HostKeyVerificationError extends Error {
+  challenges: ApprovedHostKeyInput[];
+
+  constructor(challenges: ApprovedHostKeyInput[]) {
+    super(
+      challenges.some((challenge) => challenge.fingerprintSha256)
+        ? "SSH host key approval required"
+        : "SSH host key verification failed"
+    );
+    this.name = "HostKeyVerificationError";
+    this.challenges = challenges;
+  }
 }
 
 export class SSHConnectionManager {
@@ -142,6 +199,7 @@ export class SSHConnectionManager {
   private defaultTimeout: number;
   private defaultCmdTimeout: number;
   private encryptor: CredentialEncryptor;
+  private chainedConnections = new WeakMap<Client, Client[]>();
 
   constructor(
     maxConcurrent: number,
@@ -180,42 +238,143 @@ export class SSHConnectionManager {
   ): Promise<Client> {
     await this.acquireSemaphore();
 
-    const attemptId = randomUUID();
-    const startedAt = Date.now();
-    const meta = buildSSHAttemptLogMeta(system, context);
-    const conn = new Client();
+    const chain = this.resolveChain(system, context);
+    const clients: Client[] = [];
+
+    try {
+      let forwardClient: Client | null = null;
+
+      for (const [index, hop] of chain.entries()) {
+        const sock = forwardClient
+          ? await this.openForwardStream(forwardClient, hop.hostname, hop.port)
+          : undefined;
+        const client = await this.connectSingleHop(
+          hop,
+          index,
+          chain.length,
+          context,
+          sock
+        );
+        clients.push(client);
+        forwardClient = client;
+      }
+
+      const leaf = clients.at(-1);
+      if (!leaf) {
+        throw new Error("SSH connection chain resolved to no hops");
+      }
+      this.chainedConnections.set(leaf, clients);
+      return leaf;
+    } catch (error) {
+      for (const client of clients.reverse()) {
+        try {
+          client.end();
+        } catch {}
+      }
+      this.releaseSemaphore();
+      throw error;
+    }
+  }
+
+  private resolveChain(
+    system: Record<string, unknown>,
+    context: SSHConnectContext
+  ): ResolvedSSHHop[] {
+    const chain: ResolvedSSHHop[] = [];
+    const seen = new Set<number>();
+    if (context.systemId) seen.add(context.systemId);
+
+    const target: ResolvedSSHHop = {
+      ...system,
+      systemId: context.systemId ?? (typeof system.id === "number" ? system.id : undefined),
+      role: "target",
+      hostname: String(system.hostname || ""),
+      port:
+        typeof system.port === "number" && Number.isInteger(system.port) && system.port > 0
+          ? system.port
+          : 22,
+      username: String(system.username || ""),
+      authType: system.authType === "key" ? "key" : "password",
+      credentialId:
+        typeof system.credentialId === "number" ? system.credentialId : undefined,
+      hostKeyVerificationEnabled:
+        system.hostKeyVerificationEnabled === undefined
+          ? true
+          : system.hostKeyVerificationEnabled === true ||
+            system.hostKeyVerificationEnabled === 1,
+      trustedHostKey:
+        typeof system.trustedHostKey === "string" ? system.trustedHostKey : null,
+    };
+    chain.push(target);
+
+    let currentProxyJumpId =
+      typeof system.proxyJumpSystemId === "number"
+        ? system.proxyJumpSystemId
+        : null;
+
+    while (currentProxyJumpId) {
+      if (seen.has(currentProxyJumpId)) {
+        throw new Error("ProxyJump configuration contains a cycle.");
+      }
+      if (chain.length >= MAX_PROXY_JUMP_DEPTH) {
+        throw new Error(
+          `ProxyJump chain exceeds the maximum depth of ${MAX_PROXY_JUMP_DEPTH}.`
+        );
+      }
+      seen.add(currentProxyJumpId);
+
+      const hop = getSystem(currentProxyJumpId);
+      if (!hop) {
+        throw new Error("Selected ProxyJump system does not exist.");
+      }
+
+      chain.push({
+        ...hop,
+        systemId: hop.id,
+        role: "jump",
+        hostname: hop.hostname,
+        port: hop.port,
+        username: hop.username,
+        authType: hop.authType === "key" ? "key" : "password",
+        credentialId: hop.credentialId ?? undefined,
+        hostKeyVerificationEnabled: hop.hostKeyVerificationEnabled === 1,
+        trustedHostKey: hop.trustedHostKey,
+      });
+      currentProxyJumpId = hop.proxyJumpSystemId ?? null;
+    }
+
+    return chain.reverse().map((hop, index, hops) => ({
+      ...hop,
+      role: index === hops.length - 1 ? "target" : "jump",
+    }));
+  }
+
+  private buildConnectionConfig(hop: ResolvedSSHHop): Record<string, unknown> {
     const connectConfig: Record<string, unknown> = {
-      host: meta.host,
-      port: meta.port,
-      username: meta.username,
+      host: hop.hostname,
+      port: hop.port,
+      username: hop.username,
       readyTimeout: this.defaultTimeout * 1000,
     };
 
-    logger.debug("SSH connect attempt started", {
-      attemptId,
-      ...meta,
-    });
-
-    if (meta.authType === "password" && system.encryptedPassword) {
-      connectConfig.password = this.encryptor.decrypt(
-        system.encryptedPassword as string
-      );
-    } else if (meta.authType === "password" && system.credentialId) {
-      const credential = resolveSystemCredential(Number(system.credentialId));
+    if (hop.authType === "password" && hop.encryptedPassword) {
+      connectConfig.password = this.encryptor.decrypt(hop.encryptedPassword as string);
+    } else if (hop.authType === "password" && hop.credentialId) {
+      const credential = resolveSystemCredential(Number(hop.credentialId));
       if (credential?.encryptedPassword) {
         connectConfig.password = this.encryptor.decrypt(credential.encryptedPassword);
       }
-    } else if (meta.authType === "key" && system.encryptedPrivateKey) {
+    } else if (hop.authType === "key" && hop.encryptedPrivateKey) {
       connectConfig.privateKey = this.encryptor.decrypt(
-        system.encryptedPrivateKey as string
+        hop.encryptedPrivateKey as string
       );
-      if (system.encryptedKeyPassphrase) {
+      if (hop.encryptedKeyPassphrase) {
         connectConfig.passphrase = this.encryptor.decrypt(
-          system.encryptedKeyPassphrase as string
+          hop.encryptedKeyPassphrase as string
         );
       }
-    } else if (meta.authType === "key" && system.credentialId) {
-      const credential = resolveSystemCredential(Number(system.credentialId));
+    } else if (hop.authType === "key" && hop.credentialId) {
+      const credential = resolveSystemCredential(Number(hop.credentialId));
       if (credential?.kind === "certificate") {
         const parsedKey = buildSshCertificateParsedKey(credential);
         if (parsedKey) {
@@ -239,16 +398,103 @@ export class SSHConnectionManager {
       }
     }
 
+    return connectConfig;
+  }
+
+  private findApprovedHostKey(
+    hop: ResolvedSSHHop,
+    context: SSHConnectContext
+  ): ApprovedHostKeyInput | undefined {
+    return context.approvedHostKeys?.find((approvedHostKey) =>
+      approvedHostKey.role === hop.role &&
+      approvedHostKey.host === hop.hostname &&
+      approvedHostKey.port === hop.port &&
+      (approvedHostKey.systemId ?? null) === (hop.systemId ?? null)
+    );
+  }
+
+  private createHostKeyChallenge(
+    hop: ResolvedSSHHop,
+    key: Buffer,
+    reason: "missing" | "mismatch"
+  ): ApprovedHostKeyInput {
+    const parsedKey = utils.parseKey(key);
+    const algorithm =
+      parsedKey instanceof Error ? "unknown" : parsedKey.type;
+    const fingerprintSha256 = `SHA256:${createHash("sha256")
+      .update(key)
+      .digest("base64")
+      .replace(/=+$/g, "")}`;
+
+    return {
+      systemId: hop.systemId,
+      role: hop.role,
+      host: hop.hostname,
+      port: hop.port,
+      algorithm,
+      fingerprintSha256,
+      rawKey: key.toString("base64"),
+    };
+  }
+
+  private async connectSingleHop(
+    hop: ResolvedSSHHop,
+    hopIndex: number,
+    hopCount: number,
+    context: SSHConnectContext,
+    sock?: ClientChannel
+  ): Promise<Client> {
+    const attemptId = randomUUID();
+    const startedAt = Date.now();
+    const meta = buildSSHAttemptLogMeta(hop, context);
+    const conn = new Client();
+    const connectConfig = this.buildConnectionConfig(hop);
+    const approvedHostKey = this.findApprovedHostKey(hop, context);
+    let hostKeyError: HostKeyVerificationError | null = null;
+
+    connectConfig.readyTimeout = this.defaultTimeout * 1000;
+    if (sock) {
+      connectConfig.sock = sock;
+    }
+
+    connectConfig.hostVerifier = (key: Buffer) => {
+      if (!hop.hostKeyVerificationEnabled) return true;
+
+      const currentKey = key.toString("base64");
+      const expectedKey = approvedHostKey?.rawKey || hop.trustedHostKey;
+      if (expectedKey && expectedKey === currentKey) return true;
+
+      hostKeyError = new HostKeyVerificationError([
+        this.createHostKeyChallenge(
+          hop,
+          key,
+          expectedKey ? "mismatch" : "missing"
+        ),
+      ]);
+      return false;
+    };
+
     const debugHook = createSafeSshDebugHook(logger, attemptId);
     if (debugHook) {
       connectConfig.debug = debugHook;
     }
+
+    logger.debug("SSH connect attempt started", {
+      attemptId,
+      hopIndex: hopIndex + 1,
+      hopCount,
+      hopRole: hop.role,
+      ...meta,
+    });
 
     return new Promise<Client>((resolve, reject) => {
       const onReady = () => {
         conn.removeListener("error", onError);
         logger.debug("SSH connect attempt succeeded", {
           attemptId,
+          hopIndex: hopIndex + 1,
+          hopCount,
+          hopRole: hop.role,
           elapsedMs: Date.now() - startedAt,
           ...meta,
         });
@@ -257,10 +503,12 @@ export class SSHConnectionManager {
 
       const onError = (err: SSHConnectionError) => {
         conn.removeListener("ready", onReady);
-        this.releaseSemaphore();
         err.debugRef = attemptId;
         logger.warn("SSH connect attempt failed", {
           attemptId,
+          hopIndex: hopIndex + 1,
+          hopCount,
+          hopRole: hop.role,
           elapsedMs: Date.now() - startedAt,
           ...meta,
           errorLevel: err.level,
@@ -269,7 +517,7 @@ export class SSHConnectionManager {
             : undefined,
           error: sanitizeOutput(err.message || String(err)),
         });
-        reject(err);
+        reject(hostKeyError ?? err);
       };
 
       conn.once("ready", onReady);
@@ -278,8 +526,30 @@ export class SSHConnectionManager {
     });
   }
 
+  private openForwardStream(
+    conn: Client,
+    host: string,
+    port: number
+  ): Promise<ClientChannel> {
+    return new Promise((resolve, reject) => {
+      conn.forwardOut("127.0.0.1", 0, host, port, (err, stream) => {
+        if (err || !stream) {
+          reject(err ?? new Error("Failed to open ProxyJump forward stream"));
+          return;
+        }
+        resolve(stream);
+      });
+    });
+  }
+
   disconnect(conn: Client): void {
-    conn.end();
+    const chain = this.chainedConnections.get(conn) ?? [conn];
+    this.chainedConnections.delete(conn);
+    for (const client of [...chain].reverse()) {
+      try {
+        client.end();
+      } catch {}
+    }
     this.releaseSemaphore();
   }
 
@@ -633,6 +903,15 @@ export class SSHConnectionManager {
         message: `Unexpected response: ${result.stderr || result.stdout}`,
       };
     } catch (e: unknown) {
+      if (e instanceof HostKeyVerificationError) {
+        return {
+          success: false,
+          message: e.challenges.some((challenge) => challenge.rawKey)
+            ? "SSH host key approval required"
+            : "SSH host key verification failed",
+          hostKeyChallenges: e.challenges,
+        };
+      }
       const err = e as SSHConnectionError;
       if (err.level === "client-authentication") {
         return {
@@ -643,7 +922,7 @@ export class SSHConnectionManager {
       }
       return {
         success: false,
-        message: `Connection failed: ${sanitizeOutput(err.message || String(err))}`,
+        message: buildTestConnectionFailureMessage(system, err),
         debugRef: err.debugRef,
       };
     } finally {

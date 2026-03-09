@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, systems } from "../../server/db/schema";
+import { credentials, systems, updateCache } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
+import { issueValidatedConfigToken } from "../../server/services/system-connection-validation";
 
 function createSystemCredential(username: string): number {
   const db = getDb();
@@ -21,6 +23,24 @@ function createSystemCredential(username: string): number {
     }),
   }).returning({ id: credentials.id }).get();
   return inserted.id;
+}
+
+function createValidatedConfigToken(data: {
+  systemId?: number;
+  hostname: string;
+  port: number;
+  credentialId: number;
+  proxyJumpSystemId?: number | null;
+  hostKeyVerificationEnabled?: boolean;
+}): string {
+  return issueValidatedConfigToken({
+    systemId: data.systemId,
+    hostname: data.hostname,
+    port: data.port,
+    credentialId: data.credentialId,
+    proxyJumpSystemId: data.proxyJumpSystemId ?? null,
+    hostKeyVerificationEnabled: data.hostKeyVerificationEnabled ?? false,
+  });
 }
 
 describe("systems reorder route", () => {
@@ -142,12 +162,79 @@ describe("systems reorder route", () => {
         hostname: "alpha.local",
         port: 22,
         credentialId,
+        hostKeyVerificationEnabled: false,
+        validatedConfigToken: createValidatedConfigToken({
+          hostname: "alpha.local",
+          port: 22,
+          credentialId,
+        }),
       }),
     });
 
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error).toContain("already exists");
+  });
+
+  test("allows creating a system without a validated host-key token", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Untrusted Save",
+        hostname: "untrusted.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: true,
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const created = listSystems().find((system) => system.name === "Untrusted Save");
+    expect(created?.hostKeyVerificationEnabled).toBe(1);
+    expect(created?.trustedHostKey).toBeNull();
+  });
+
+  test("persists the hidden flag on create and update", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const createRes = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Hidden System",
+        hostname: "hidden.local",
+        port: 22,
+        credentialId,
+        hidden: true,
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const created = listSystems().find((system) => system.name === "Hidden System");
+    expect(created?.hidden).toBe(1);
+
+    const updateRes = await app.request(`/api/systems/${created!.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Hidden System",
+        hostname: "hidden.local",
+        port: 22,
+        credentialId,
+        hidden: false,
+      }),
+    });
+
+    expect(updateRes.status).toBe(200);
+    const updated = listSystems().find((system) => system.id === created!.id);
+    expect(updated?.hidden).toBe(0);
   });
 
   test("returns 409 when updating a system to match another connection tuple", async () => {
@@ -183,11 +270,209 @@ describe("systems reorder route", () => {
         hostname: "alpha.local",
         port: 22,
         credentialId: replacementCredentialId,
+        hostKeyVerificationEnabled: false,
+        validatedConfigToken: createValidatedConfigToken({
+          systemId: inserted[1].id,
+          hostname: "alpha.local",
+          port: 22,
+          credentialId: replacementCredentialId,
+        }),
       }),
     });
 
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error).toContain("already exists");
+  });
+
+  test("rejects deleting a system that is referenced as a ProxyJump host", async () => {
+    const db = getDb();
+    const jumpCredentialId = createSystemCredential("jump");
+    const targetCredentialId = createSystemCredential("target");
+    const inserted = db.insert(systems).values([
+      {
+        name: "Jump",
+        hostname: "jump.local",
+        port: 22,
+        credentialId: jumpCredentialId,
+        authType: "password",
+        username: "jump",
+      },
+      {
+        name: "Target",
+        hostname: "target.local",
+        port: 22,
+        credentialId: targetCredentialId,
+        authType: "password",
+        username: "target",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    db.update(systems)
+      .set({ proxyJumpSystemId: inserted[0].id })
+      .where(eq(systems.id, inserted[1].id))
+      .run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${inserted[0].id}`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("ProxyJump");
+  });
+
+  test("revokes the stored approved host key", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "Trusted",
+      hostname: "trusted.local",
+      port: 22,
+      credentialId: createSystemCredential("root"),
+      authType: "password",
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      trustedHostKey: "ZmFrZS1ob3N0LWtleQ==",
+      trustedHostKeyAlgorithm: "ssh-ed25519",
+      trustedHostKeyFingerprintSha256: "SHA256:abc",
+      hostKeyTrustedAt: "2026-03-09 10:00:00",
+    }).returning({ id: systems.id }).get().id;
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}/revoke-host-key`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(200);
+    const updated = getDb().select().from(systems).where(eq(systems.id, systemId)).get();
+    expect(updated?.trustedHostKey).toBeNull();
+    expect(updated?.trustedHostKeyAlgorithm).toBeNull();
+    expect(updated?.trustedHostKeyFingerprintSha256).toBeNull();
+    expect(updated?.hostKeyTrustedAt).toBeNull();
+  });
+
+  test("clears stored host key when saving a system with verification disabled", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Disable Verification",
+      hostname: "disable.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      trustedHostKey: "ZmFrZS1ob3N0LWtleQ==",
+      trustedHostKeyAlgorithm: "ssh-ed25519",
+      trustedHostKeyFingerprintSha256: "SHA256:abc",
+      hostKeyTrustedAt: "2026-03-09 10:00:00",
+    }).returning({ id: systems.id }).get().id;
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Disable Verification",
+        hostname: "disable.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const updated = db.select().from(systems).where(eq(systems.id, systemId)).get();
+    expect(updated?.hostKeyVerificationEnabled).toBe(0);
+    expect(updated?.trustedHostKey).toBeNull();
+    expect(updated?.trustedHostKeyAlgorithm).toBeNull();
+    expect(updated?.trustedHostKeyFingerprintSha256).toBeNull();
+  });
+
+  test("allows clearing all disabled package managers on update", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Pkg Toggle",
+      hostname: "pkg-toggle.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+      detectedPkgManagers: JSON.stringify(["apt"]),
+      disabledPkgManagers: JSON.stringify(["apt"]),
+    }).returning({ id: systems.id }).get().id;
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Pkg Toggle",
+        hostname: "pkg-toggle.local",
+        port: 22,
+        credentialId,
+        disabledPkgManagers: [],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const updated = db.select().from(systems).where(eq(systems.id, systemId)).get();
+    expect(updated?.disabledPkgManagers).toBe("[]");
+  });
+
+  test("clears cached updates when disabled package managers change", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Cache Clear",
+      hostname: "cache-clear.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+      detectedPkgManagers: JSON.stringify(["apt"]),
+      disabledPkgManagers: JSON.stringify([]),
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "openssl",
+      currentVersion: "1.0",
+      newVersion: "1.1",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Cache Clear",
+        hostname: "cache-clear.local",
+        port: 22,
+        credentialId,
+        disabledPkgManagers: ["apt"],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const cached = db
+      .select()
+      .from(updateCache)
+      .where(eq(updateCache.systemId, systemId))
+      .all();
+    expect(cached).toHaveLength(0);
   });
 });

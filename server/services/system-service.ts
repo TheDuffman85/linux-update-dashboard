@@ -3,6 +3,8 @@ import { getDb } from "../db";
 import { systems, updateCache } from "../db/schema";
 import { getEncryptor } from "../security";
 import { resolveSystemCredential } from "./credential-service";
+import * as cacheService from "./cache-service";
+import type { ApprovedHostKeyInput } from "./system-connection-validation";
 import {
   SYSTEM_INFO_CMD,
   parseSystemInfo,
@@ -14,6 +16,7 @@ import type { Client } from "ssh2";
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
+export const MAX_PROXY_JUMP_DEPTH = 10;
 
 export class DuplicateSystemConnectionError extends Error {
   constructor() {
@@ -22,6 +25,36 @@ export class DuplicateSystemConnectionError extends Error {
     );
     this.name = "DuplicateSystemConnectionError";
   }
+}
+
+export class InvalidProxyJumpConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidProxyJumpConfigurationError";
+  }
+}
+
+export class ProxyJumpDependencyError extends Error {
+  dependents: Array<{ id: number; name: string }>;
+
+  constructor(dependents: Array<{ id: number; name: string }>) {
+    const names = dependents.map((system) => system.name).join(", ");
+    super(
+      `This system is used as a ProxyJump host by: ${names}. Remove those references before deleting it.`
+    );
+    this.name = "ProxyJumpDependencyError";
+    this.dependents = dependents;
+  }
+}
+
+export function deriveHostKeyStatus(system: {
+  hostKeyVerificationEnabled?: number | null;
+  trustedHostKey?: string | null;
+}): "verified" | "verification_disabled" | "needs_approval" {
+  if (system.hostKeyVerificationEnabled === 0) {
+    return "verification_disabled";
+  }
+  return system.trustedHostKey ? "verified" : "needs_approval";
 }
 
 function isSystemConnectionUniqueConstraintError(error: unknown): boolean {
@@ -42,6 +75,16 @@ export function listSystems() {
     .all();
 }
 
+export function listVisibleSystems() {
+  const db = getDb();
+  return db
+    .select()
+    .from(systems)
+    .where(eq(systems.hidden, 0))
+    .orderBy(asc(systems.sortOrder), asc(systems.name), asc(systems.id))
+    .all();
+}
+
 export function getSystem(systemId: number) {
   const db = getDb();
   return db
@@ -56,10 +99,14 @@ export function createSystem(data: {
   hostname: string;
   port: number;
   credentialId: number;
+  proxyJumpSystemId?: number | null;
+  hostKeyVerificationEnabled?: boolean;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
   excludeFromUpgradeAll?: boolean;
+  hidden?: boolean;
   sourceSystemId?: number;
+  trustedHostKeyData?: ApprovedHostKeyInput;
 }): number {
   const encryptor = getEncryptor();
   const db = getDb();
@@ -68,6 +115,7 @@ export function createSystem(data: {
   if (!credential) {
     throw new Error("Selected credential is not valid for system SSH access");
   }
+  validateProxyJumpConfiguration(data.proxyJumpSystemId ?? null);
 
   const values: Record<string, unknown> = {
     sortOrder: nextSortOrder,
@@ -75,8 +123,10 @@ export function createSystem(data: {
     hostname: data.hostname,
     port: data.port,
     credentialId: data.credentialId,
+    proxyJumpSystemId: data.proxyJumpSystemId ?? null,
     authType: credential.authType,
     username: credential.username,
+    hostKeyVerificationEnabled: data.hostKeyVerificationEnabled === false ? 0 : 1,
   }
   if (data.sudoPassword) {
     values.encryptedSudoPassword = encryptor.encrypt(data.sudoPassword);
@@ -95,6 +145,15 @@ export function createSystem(data: {
   }
   if (data.excludeFromUpgradeAll !== undefined) {
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
+  }
+  if (data.hidden !== undefined) {
+    values.hidden = data.hidden ? 1 : 0;
+  }
+  if (data.hostKeyVerificationEnabled !== false && data.trustedHostKeyData) {
+    values.trustedHostKey = data.trustedHostKeyData.rawKey;
+    values.trustedHostKeyAlgorithm = data.trustedHostKeyData.algorithm;
+    values.trustedHostKeyFingerprintSha256 = data.trustedHostKeyData.fingerprintSha256;
+    values.hostKeyTrustedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
   }
 
   try {
@@ -119,25 +178,40 @@ export function updateSystem(
     hostname: string;
     port: number;
     credentialId: number;
+    proxyJumpSystemId?: number | null;
+    hostKeyVerificationEnabled?: boolean;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
     excludeFromUpgradeAll?: boolean;
+    hidden?: boolean;
+    trustedHostKeyData?: ApprovedHostKeyInput;
   }
 ): void {
   const encryptor = getEncryptor();
   const db = getDb();
+  const existing = getSystem(systemId);
+  if (!existing) throw new Error("System not found");
   const credential = resolveSystemCredential(data.credentialId);
   if (!credential) {
     throw new Error("Selected credential is not valid for system SSH access");
   }
+  validateProxyJumpConfiguration(data.proxyJumpSystemId ?? null, systemId);
+  const hostChanged =
+    existing.hostname !== data.hostname || existing.port !== data.port;
+  const disabledPkgManagersChanged =
+    data.disabledPkgManagers !== undefined &&
+    JSON.stringify(data.disabledPkgManagers) !==
+      (existing.disabledPkgManagers ?? null);
 
   const values: Record<string, unknown> = {
     name: data.name,
     hostname: data.hostname,
     port: data.port,
     credentialId: data.credentialId,
+    proxyJumpSystemId: data.proxyJumpSystemId ?? null,
     authType: credential.authType,
     username: credential.username,
+    hostKeyVerificationEnabled: data.hostKeyVerificationEnabled === false ? 0 : 1,
     updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
   };
   if (data.sudoPassword) {
@@ -149,12 +223,35 @@ export function updateSystem(
   if (data.excludeFromUpgradeAll !== undefined) {
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
   }
+  if (data.hidden !== undefined) {
+    values.hidden = data.hidden ? 1 : 0;
+  }
+  if (hostChanged) {
+    values.trustedHostKey = null;
+    values.trustedHostKeyAlgorithm = null;
+    values.trustedHostKeyFingerprintSha256 = null;
+    values.hostKeyTrustedAt = null;
+  }
+  if (data.hostKeyVerificationEnabled === false) {
+    values.trustedHostKey = null;
+    values.trustedHostKeyAlgorithm = null;
+    values.trustedHostKeyFingerprintSha256 = null;
+    values.hostKeyTrustedAt = null;
+  } else if (data.trustedHostKeyData) {
+    values.trustedHostKey = data.trustedHostKeyData.rawKey;
+    values.trustedHostKeyAlgorithm = data.trustedHostKeyData.algorithm;
+    values.trustedHostKeyFingerprintSha256 = data.trustedHostKeyData.fingerprintSha256;
+    values.hostKeyTrustedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
+  }
 
   try {
     db.update(systems)
       .set(values as Partial<typeof systems.$inferInsert>)
       .where(eq(systems.id, systemId))
       .run();
+    if (disabledPkgManagersChanged) {
+      cacheService.invalidateCache(systemId);
+    }
   } catch (error) {
     if (isSystemConnectionUniqueConstraintError(error)) {
       throw new DuplicateSystemConnectionError();
@@ -165,6 +262,10 @@ export function updateSystem(
 
 export function deleteSystem(systemId: number): void {
   const db = getDb();
+  const dependents = listSystemsUsingProxyJump(systemId);
+  if (dependents.length > 0) {
+    throw new ProxyJumpDependencyError(dependents);
+  }
   db.delete(systems).where(eq(systems.id, systemId)).run();
 }
 
@@ -329,6 +430,20 @@ export function listSystemsWithUpdateCounts() {
   });
 }
 
+export function listVisibleSystemsWithUpdateCounts() {
+  const allSystems = listVisibleSystems();
+  const db = getDb();
+
+  return allSystems.map((s) => {
+    const result = db
+      .select({ count: count() })
+      .from(updateCache)
+      .where(eq(updateCache.systemId, s.id))
+      .get();
+    return { ...s, updateCount: result?.count ?? 0 };
+  });
+}
+
 function getNextSortOrder(): number {
   const db = getDb();
   const result = db
@@ -339,4 +454,100 @@ function getNextSortOrder(): number {
     .get();
 
   return (result?.maxSortOrder ?? -1) + 1;
+}
+
+export function listSystemsUsingProxyJump(systemId: number): Array<{ id: number; name: string }> {
+  return getDb()
+    .select({ id: systems.id, name: systems.name })
+    .from(systems)
+    .where(eq(systems.proxyJumpSystemId, systemId))
+    .all();
+}
+
+export function validateProxyJumpConfiguration(
+  proxyJumpSystemId: number | null,
+  systemId?: number
+): void {
+  if (!proxyJumpSystemId) return;
+
+  const seen = new Set<number>();
+  if (systemId) seen.add(systemId);
+  let currentId: number | null = proxyJumpSystemId;
+  let depth = 0;
+
+  while (currentId) {
+    if (seen.has(currentId)) {
+      throw new InvalidProxyJumpConfigurationError(
+        "ProxyJump configuration contains a cycle."
+      );
+    }
+    seen.add(currentId);
+    depth++;
+    if (depth > MAX_PROXY_JUMP_DEPTH) {
+      throw new InvalidProxyJumpConfigurationError(
+        `ProxyJump chain exceeds the maximum depth of ${MAX_PROXY_JUMP_DEPTH}.`
+      );
+    }
+
+    const hop = getSystem(currentId);
+    if (!hop) {
+      throw new InvalidProxyJumpConfigurationError(
+        "Selected ProxyJump system does not exist."
+      );
+    }
+
+    currentId = hop.proxyJumpSystemId ?? null;
+  }
+}
+
+export function getProxyJumpChain(
+  system: { proxyJumpSystemId?: number | null } | null
+): Array<{ id: number; name: string }> {
+  if (!system?.proxyJumpSystemId) return [];
+
+  const chain: Array<{ id: number; name: string }> = [];
+  const seen = new Set<number>();
+  let currentId: number | null = system.proxyJumpSystemId;
+  let depth = 0;
+
+  while (currentId) {
+    if (seen.has(currentId) || depth >= MAX_PROXY_JUMP_DEPTH) break;
+    seen.add(currentId);
+    const hop = getSystem(currentId);
+    if (!hop) break;
+    chain.push({ id: hop.id, name: hop.name });
+    currentId = hop.proxyJumpSystemId ?? null;
+    depth++;
+  }
+
+  return chain;
+}
+
+export function persistTrustedHostKey(
+  systemId: number,
+  approvedHostKey: ApprovedHostKeyInput
+): void {
+  getDb()
+    .update(systems)
+    .set({
+      trustedHostKey: approvedHostKey.rawKey,
+      trustedHostKeyAlgorithm: approvedHostKey.algorithm,
+      trustedHostKeyFingerprintSha256: approvedHostKey.fingerprintSha256,
+      hostKeyTrustedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
+export function clearTrustedHostKey(systemId: number): void {
+  getDb()
+    .update(systems)
+    .set({
+      trustedHostKey: null,
+      trustedHostKeyAlgorithm: null,
+      trustedHostKeyFingerprintSha256: null,
+      hostKeyTrustedAt: null,
+    })
+    .where(eq(systems.id, systemId))
+    .run();
 }

@@ -6,7 +6,7 @@ import * as updateService from "../services/update-service";
 const dashboard = new Hono();
 
 dashboard.get("/stats", (c) => {
-  const allSystems = systemService.listSystemsWithUpdateCounts();
+  const allSystems = systemService.listVisibleSystemsWithUpdateCounts();
 
   const systemsWithMeta = allSystems.map((s) => ({
     ...s,
@@ -39,7 +39,7 @@ dashboard.get("/stats", (c) => {
 });
 
 dashboard.get("/systems", (c) => {
-  const allSystems = systemService.listSystemsWithUpdateCounts();
+  const allSystems = systemService.listVisibleSystemsWithUpdateCounts();
 
   const systemsWithMeta = allSystems.map((s) => ({
     ...s,

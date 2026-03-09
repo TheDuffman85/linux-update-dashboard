@@ -103,12 +103,18 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     hostname TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 22,
     credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT,
+    proxy_jump_system_id INTEGER REFERENCES systems(id) ON DELETE RESTRICT,
     auth_type TEXT NOT NULL DEFAULT 'password',
     username TEXT NOT NULL,
     encrypted_password TEXT,
     encrypted_private_key TEXT,
     encrypted_key_passphrase TEXT,
     encrypted_sudo_password TEXT,
+    host_key_verification_enabled INTEGER NOT NULL DEFAULT 1,
+    trusted_host_key TEXT,
+    trusted_host_key_algorithm TEXT,
+    trusted_host_key_fingerprint_sha256 TEXT,
+    host_key_trusted_at TEXT,
     pkg_manager TEXT,
     detected_pkg_managers TEXT,
     disabled_pkg_managers TEXT,
@@ -121,10 +127,15 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     cpu_cores TEXT,
     memory TEXT,
     disk TEXT,
+    exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    needs_reboot INTEGER NOT NULL DEFAULT 0,
+    boot_id TEXT,
     system_info_updated_at TEXT,
     is_reachable INTEGER NOT NULL DEFAULT 0,
     last_seen_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_notified_hash TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(hostname, port, username)
   )`);
@@ -223,6 +234,35 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+  const systemColumns = _sqlite
+    .query("PRAGMA table_info(systems)")
+    .all() as Array<{ name?: string }>;
+  const hasProxyJumpSystemId = systemColumns.some((column) => column.name === "proxy_jump_system_id");
+  const hasHostKeyVerificationEnabled = systemColumns.some((column) => column.name === "host_key_verification_enabled");
+  const hasTrustedHostKey = systemColumns.some((column) => column.name === "trusted_host_key");
+  const hasTrustedHostKeyAlgorithm = systemColumns.some((column) => column.name === "trusted_host_key_algorithm");
+  const hasTrustedHostKeyFingerprintSha256 = systemColumns.some((column) => column.name === "trusted_host_key_fingerprint_sha256");
+  const hasHostKeyTrustedAt = systemColumns.some((column) => column.name === "host_key_trusted_at");
+
+  if (!hasProxyJumpSystemId) {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN proxy_jump_system_id INTEGER REFERENCES systems(id) ON DELETE RESTRICT`);
+  }
+  if (!hasHostKeyVerificationEnabled) {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN host_key_verification_enabled INTEGER NOT NULL DEFAULT 1`);
+    _db.run(sql`UPDATE systems SET host_key_verification_enabled = 0`);
+  }
+  if (!hasTrustedHostKey) {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN trusted_host_key TEXT`);
+  }
+  if (!hasTrustedHostKeyAlgorithm) {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN trusted_host_key_algorithm TEXT`);
+  }
+  if (!hasTrustedHostKeyFingerprintSha256) {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN trusted_host_key_fingerprint_sha256 TEXT`);
+  }
+  if (!hasHostKeyTrustedAt) {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN host_key_trusted_at TEXT`);
+  }
 
   // Migration: add notification tracking column
   try {
@@ -303,6 +343,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   // Migration: add exclude from upgrade-all flag
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`);
   } catch {
     // Column already exists
   }

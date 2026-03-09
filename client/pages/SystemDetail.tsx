@@ -639,6 +639,21 @@ export default function SystemDetail() {
             { label: "Hostname", value: `${system.hostname}${system.port !== 22 ? `:${system.port}` : ""}` },
             { label: "Username", value: system.username },
             { label: "Auth Type", value: system.authType },
+            {
+              label: "ProxyJump",
+              value: system.proxyJumpChain.length > 0
+                ? system.proxyJumpChain.map((hop) => hop.name).join(" -> ")
+                : "Direct",
+            },
+            {
+              label: "Host Key",
+              value:
+                system.hostKeyStatus === "verified"
+                  ? "Verified"
+                  : system.hostKeyStatus === "verification_disabled"
+                    ? "Verification disabled"
+                    : "Needs approval",
+            },
             { label: "Status", value: system.isReachable === 1 ? "Online" : system.isReachable === -1 ? "Offline" : "Unknown" },
           ]}
         />
@@ -757,6 +772,7 @@ export default function SystemDetail() {
         danger
         loading={rebooting}
       />
+
     </Layout>
   );
 }
