@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { wrapRemoteCommand } from "../../server/ssh/connection";
+import { sudo } from "../../server/ssh/parsers/types";
 import { sanitizeCommand, sanitizeOutput } from "../../server/utils/sanitize";
 
 describe("sanitizeCommand", () => {
@@ -12,10 +13,17 @@ describe("sanitizeCommand", () => {
 
   test("strips the shell wrapper before simplifying sudo", () => {
     const command = wrapRemoteCommand(
-      'if [ "$(id -u)" = "0" ]; then apt-get upgrade -y; elif command -v sudo >/dev/null 2>&1; then sudo -S apt-get upgrade -y; else apt-get upgrade -y; fi 2>&1'
+      `if [ "$(id -u)" = "0" ]; then apt-get upgrade -y; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apt-get upgrade -y; else apt-get upgrade -y; fi 2>&1`
     );
     expect(sanitizeCommand(command)).toBe(
       "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; sudo apt-get upgrade -y 2>&1"
+    );
+  });
+
+  test("simplifies sudo wrappers built by the shared helper", () => {
+    const command = wrapRemoteCommand(`${sudo("apt-get update -qq")} 2>&1`);
+    expect(sanitizeCommand(command)).toBe(
+      "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; sudo apt-get update -qq 2>&1"
     );
   });
 

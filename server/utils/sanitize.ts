@@ -49,10 +49,10 @@ export function sanitizeOutput(text: string): string {
 // ── Command display sanitization ─────────────────────────────────────────────
 
 // Matches the verbose sudo() wrapper from server/ssh/parsers/types.ts:
-//   if [ "$(id -u)" = "0" ]; then CMD; elif command -v sudo >/dev/null 2>&1; then sudo -S CMD; else CMD; fi
+//   if [ "$(id -u)" = "0" ]; then CMD; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' CMD; else CMD; fi
 const SUDO_WRAPPER_RE =
-  /if \[ "\$\(id -u\)" = "0" \]; then (.+?); elif command -v sudo >\/dev\/null 2>&1; then sudo -S \1; else \1; fi/g;
-const POSIX_SHELL_WRAPPER_RE = /^sh -lc '([\s\S]*)'$/;
+  /if \[ "\$\(id -u\)" = "0" \]; then (.+?); elif command -v sudo >\/dev\/null 2>&1; then sudo -S(?: -p ''| -p "")? \1; else \1; fi/g;
+const POSIX_SHELL_WRAPPER_RE = /^sh -c '([\s\S]*)'$/;
 const SHELL_SINGLE_QUOTE_ESCAPE_RE = /'\"'\"'/g;
 
 function unwrapShellCommand(command: string): string {

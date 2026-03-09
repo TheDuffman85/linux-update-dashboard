@@ -1,0 +1,129 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "crypto";
+import { eq } from "drizzle-orm";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { closeDatabase, getDb, initDatabase } from "../../server/db";
+import { credentials, systems, updateHistory } from "../../server/db/schema";
+import { initEncryptor, getEncryptor } from "../../server/security";
+import { initSSHManager } from "../../server/ssh/connection";
+import { checkUpdates } from "../../server/services/update-service";
+import { createSystem } from "../../server/services/system-service";
+import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
+
+const SYSTEM_INFO_OUTPUT = `===OS===
+NAME="Debian GNU/Linux"
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+VERSION_ID="12"
+===KERNEL===
+6.1.0
+===HOSTNAME===
+debian-test
+===UPTIME===
+up 1 day
+===ARCH===
+x86_64
+===CPU===
+2
+===MEM===
+Mem:           1.9Gi       512Mi       1.0Gi
+===DISK===
+/dev/root        20G    5G   14G  27% /
+===BOOT_ID===
+boot-id
+===REBOOT_FILE===
+ABSENT
+===NEEDS_RESTARTING===
+0
+===INSTALLED_KERNELS===
+6.1.0
+`;
+
+describe("checkUpdates", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-check-updates-"));
+    initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("fails the check when the sudo-backed refresh command exits non-zero", async () => {
+    const db = getDb();
+    const encryptor = getEncryptor();
+    const credentialId = db.insert(credentials).values({
+      name: "Debian password",
+      kind: "usernamePassword",
+      payload: JSON.stringify({
+        username: "testuser",
+        password: encryptor.encrypt("testpass"),
+      }),
+    }).returning({ id: credentials.id }).get().id;
+
+    const systemId = createSystem({
+      name: "Debian",
+      hostname: "127.0.0.1",
+      port: 22,
+      credentialId,
+      sudoPassword: "wrongpass",
+      hostKeyVerificationEnabled: false,
+    });
+
+    db.update(systems)
+      .set({
+        pkgManager: "apt",
+        detectedPkgManagers: JSON.stringify(["apt"]),
+      })
+      .where(eq(systems.id, systemId))
+      .run();
+
+    const sshManager = initSSHManager(1, 1, 1, encryptor);
+    let aptListAttempted = false;
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return {
+          stdout: SYSTEM_INFO_OUTPUT,
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        return {
+          stdout: "sudo: a password is required\n",
+          stderr: "",
+          exitCode: 1,
+        };
+      }
+      if (command.includes("apt list --upgradable")) {
+        aptListAttempted = true;
+        return {
+          stdout: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await expect(checkUpdates(systemId)).rejects.toThrow("[apt] sudo: a password is required");
+    expect(aptListAttempted).toBe(false);
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, systemId))
+      .all()
+      .at(-1);
+
+    expect(history?.status).toBe("failed");
+    expect(history?.packageCount).toBe(0);
+    expect(history?.error).toContain("[apt] sudo: a password is required");
+  });
+});
