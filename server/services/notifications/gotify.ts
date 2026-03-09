@@ -1,5 +1,6 @@
-import type { NotificationProvider, NotificationPayload, NotificationResult } from "./types";
+import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
+import { createFlatProvider } from "./flat-provider";
 
 const ALLOWED_CONFIG_KEYS = new Set([
   "gotifyUrl",
@@ -60,8 +61,14 @@ function resolvePriority(
   }
 }
 
-export const gotifyProvider: NotificationProvider = {
+export const gotifyProvider = createFlatProvider({
   name: "gotify",
+  allowedKeys: [
+    "gotifyUrl",
+    "gotifyToken",
+    "gotifyPriorityOverride",
+  ],
+  sensitiveKeys: ["gotifyToken"],
 
   validateConfig(config) {
     for (const key of Object.keys(config)) {
@@ -120,4 +127,4 @@ export const gotifyProvider: NotificationProvider = {
 
     return { success: true };
   },
-};
+});

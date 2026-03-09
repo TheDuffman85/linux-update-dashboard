@@ -235,6 +235,123 @@ describe("notifications routes validation", () => {
     expect(body.error).toContain("gotify priority override");
   });
 
+  test("creates webhook notifications with nested config and encrypted secrets", async () => {
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops webhook",
+        type: "webhook",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        config: {
+          preset: "custom",
+          method: "POST",
+          url: "https://example.com/webhook",
+          query: [{ name: "source", value: "{{event.eventTypes.0}}" }],
+          headers: [{ name: "X-Api-Key", value: "header-secret", sensitive: true }],
+          auth: { mode: "bearer", token: "bearer-secret" },
+          body: { mode: "text", template: "hello" },
+          timeoutMs: 10000,
+          retryAttempts: 2,
+          retryDelayMs: 30000,
+          allowInsecureTls: false,
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+
+    const stored = getDb().select().from(notifications).get();
+    expect(stored?.config).not.toContain("header-secret");
+    expect(stored?.config).not.toContain("bearer-secret");
+    expect(stored?.config).toContain('"template":"hello"');
+  });
+
+  test("rejects webhook notifications with invalid methods", async () => {
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad webhook",
+        type: "webhook",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        config: {
+          preset: "custom",
+          method: "DELETE",
+          url: "https://example.com/webhook",
+          query: [],
+          headers: [],
+          auth: { mode: "none" },
+          body: { mode: "text", template: "hello" },
+          timeoutMs: 10000,
+          retryAttempts: 2,
+          retryDelayMs: 30000,
+          allowInsecureTls: false,
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("POST, PUT, or PATCH");
+  });
+
+  test("masks and reuses stored webhook secrets", async () => {
+    const inserted = getDb().insert(notifications).values({
+      name: "Ops webhook",
+      type: "webhook",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      config: JSON.stringify({
+        preset: "custom",
+        method: "POST",
+        url: "https://example.com/webhook",
+        query: [],
+        headers: [{ name: "X-Api-Key", value: getEncryptor().encrypt("header-secret"), sensitive: true }],
+        auth: { mode: "bearer", token: getEncryptor().encrypt("bearer-secret") },
+        body: { mode: "text", template: "body-secret" },
+        timeoutMs: 10000,
+        retryAttempts: 2,
+        retryDelayMs: 30000,
+        allowInsecureTls: false,
+      }),
+    }).returning({ id: notifications.id }).get();
+
+    const updateRes = await app.request(`/api/notifications/${inserted.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        config: {
+          preset: "custom",
+          method: "POST",
+          url: "https://example.com/webhook",
+          query: [],
+          headers: [{ name: "X-Api-Key", value: "(stored)", sensitive: true }],
+          auth: { mode: "bearer", token: "(stored)" },
+          body: { mode: "text", template: "body-secret-updated" },
+          timeoutMs: 10000,
+          retryAttempts: 2,
+          retryDelayMs: 30000,
+          allowInsecureTls: false,
+        },
+      }),
+    });
+
+    expect(updateRes.status).toBe(200);
+
+    const getRes = await app.request(`/api/notifications/${inserted.id}`);
+    expect(getRes.status).toBe(200);
+
+    const body = await getRes.json();
+    expect(body.config.headers[0].value).toBe("(stored)");
+    expect(body.config.auth.token).toBe("(stored)");
+    expect(body.config.body.template).toBe("body-secret-updated");
+  });
+
   test("masks and reuses stored email passwords", async () => {
     const originalCreateTransport = nodemailer.createTransport;
     let sentAuth: Record<string, unknown> | undefined;

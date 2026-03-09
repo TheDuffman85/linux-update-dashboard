@@ -24,20 +24,22 @@ import type { ApprovedHostKeyInput } from "../services/system-connection-validat
 const PATH_PREFIX =
   "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ";
 
-const SUDO_STDIN_PATTERN = /\bsudo -S(?=\s)/g;
+const SUDO_STDIN_PATTERN = /\bsudo -S(?: -p ''| -p "")?(?=\s)/g;
 
 function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 export function wrapRemoteCommand(command: string): string {
-  return `sh -lc ${shellSingleQuote(PATH_PREFIX + command)}`;
+  // Avoid `sh -l`: login shells source profile files, and user dotfiles often
+  // contain bash/zsh-specific init that breaks under /bin/sh during SSH exec.
+  return `sh -c ${shellSingleQuote(PATH_PREFIX + command)}`;
 }
 
 /**
  * For nohup/background execution, there is no interactive stdin channel.
- * Convert `sudo -S` calls to `sudo -n` for systems where elevation is already
- * available non-interactively (root or passwordless sudo).
+ * Convert stdin-driven sudo invocations to `sudo -n` for systems where
+ * elevation is already available non-interactively (root or passwordless sudo).
  */
 export function preparePersistentSudoCommand(command: string): string {
   if (!command.includes("sudo -S")) return command;

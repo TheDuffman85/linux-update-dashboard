@@ -42,5 +42,5 @@ export function validatePackageName(pkg: string): string {
  * Handles: root user, sudo available, no root/no sudo.
  */
 export function sudo(cmd: string): string {
-  return `if [ "$(id -u)" = "0" ]; then ${cmd}; elif command -v sudo >/dev/null 2>&1; then sudo -S ${cmd}; else ${cmd}; fi`;
+  return `if [ "$(id -u)" = "0" ]; then ${cmd}; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' ${cmd}; else ${cmd}; fi`;
 }

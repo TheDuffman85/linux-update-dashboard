@@ -11,8 +11,12 @@ describe("wrapRemoteCommand", () => {
   test("wraps commands in a POSIX shell with PATH and locale setup", () => {
     const wrapped = wrapRemoteCommand("echo ok");
     expect(wrapped).toBe(
-      "sh -lc 'export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; echo ok'"
+      "sh -c 'export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; echo ok'"
     );
+  });
+
+  test("does not invoke a login shell that would source profile files", () => {
+    expect(wrapRemoteCommand("echo ok")).not.toContain("sh -lc");
   });
 
   test("escapes single quotes in the wrapped payload", () => {
@@ -27,17 +31,18 @@ describe("preparePersistentSudoCommand", () => {
     expect(preparePersistentSudoCommand(cmd)).toBe(cmd);
   });
 
-  test("replaces sudo -S with sudo -n", () => {
+  test("replaces sudo -S with sudo -n and drops the prompt override", () => {
     const cmd =
-      'if [ "$(id -u)" = "0" ]; then apt-get upgrade -y; elif command -v sudo >/dev/null 2>&1; then sudo -S apt-get upgrade -y; else apt-get upgrade -y; fi 2>&1';
+      `if [ "$(id -u)" = "0" ]; then apt-get upgrade -y; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apt-get upgrade -y; else apt-get upgrade -y; fi 2>&1`;
     const out = preparePersistentSudoCommand(cmd);
     expect(out).toContain("then sudo -n apt-get upgrade -y");
     expect(out).not.toContain("then sudo -S apt-get");
+    expect(out).not.toContain("sudo -n -p ''");
   });
 
   test("replaces every sudo -S occurrence", () => {
     const out = preparePersistentSudoCommand(
-      "sudo -S apt-get update && sudo -S apt-get upgrade"
+      "sudo -S -p '' apt-get update && sudo -S -p '' apt-get upgrade"
     );
     expect((out.match(/sudo -n/g) || []).length).toBe(2);
     expect((out.match(/sudo -S/g) || []).length).toBe(0);
@@ -45,10 +50,10 @@ describe("preparePersistentSudoCommand", () => {
 
   test("still produces a wrapped command without sudo stdin usage", () => {
     const prepared = preparePersistentSudoCommand(
-      "sudo -S apt-get update && sudo -S apt-get upgrade"
+      "sudo -S -p '' apt-get update && sudo -S -p '' apt-get upgrade"
     );
     const wrapped = wrapRemoteCommand(prepared);
-    expect(wrapped).toContain("sh -lc");
+    expect(wrapped).toContain("sh -c");
     expect(wrapped).toContain("sudo -n apt-get update && sudo -n apt-get upgrade");
     expect(wrapped).not.toContain("sudo -S");
   });
@@ -74,7 +79,7 @@ describe("buildPersistentSetupCommand", () => {
 
   test("keeps sudo-stdin launch path when a password is provided", () => {
     const command =
-      'if [ "$(id -u)" = "0" ]; then apk upgrade; elif command -v sudo >/dev/null 2>&1; then sudo -S apk upgrade; else apk upgrade; fi 2>&1';
+      `if [ "$(id -u)" = "0" ]; then apk upgrade; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apk upgrade; else apk upgrade; fi 2>&1`;
     const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
       command,
       true

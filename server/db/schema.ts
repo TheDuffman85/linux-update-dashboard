@@ -188,6 +188,10 @@ export const notifications = sqliteTable("notifications", {
   pendingEvents: text("pending_events"),
   lastSentAt: text("last_sent_at"),
   lastAppVersionNotified: text("last_app_version_notified"),
+  lastDeliveryStatus: text("last_delivery_status"),
+  lastDeliveryAt: text("last_delivery_at"),
+  lastDeliveryCode: integer("last_delivery_code"),
+  lastDeliveryMessage: text("last_delivery_message"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

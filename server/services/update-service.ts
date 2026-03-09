@@ -361,7 +361,9 @@ async function checkUpdatesUnlocked(
   const sshManager = getSSHManager();
   const allUpdates: ParsedUpdate[] = [];
   const allCommands: string[] = [];
+  const checkErrors: string[] = [];
   let checkOutput = "";
+  let successfulChecks = 0;
 
   let conn;
   let pkgManagers: string[] = [];
@@ -421,21 +423,30 @@ async function checkUpdatesUnlocked(
             }
           );
           checkOutput += result.stdout;
+          checkOutput += result.stderr;
           lastStdout = result.stdout;
           lastStderr = result.stderr;
           lastExitCode = result.exitCode;
+
+          if (result.exitCode !== 0) {
+            throw new Error(
+              result.stderr || result.stdout || `Command exited with code ${result.exitCode}`
+            );
+          }
         }
 
         const updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode);
         allUpdates.push(...updates);
-        pub({ type: "done", success: true });
+        successfulChecks++;
       } catch (e) {
+        const errorText = e instanceof Error ? e.message : String(e);
+        checkErrors.push(`[${pmName}] ${errorText}`);
         logger.warn("System update check failed", {
           systemId,
           pkgManager: pmName,
-          error: sanitizeOutput(String(e)),
+          error: sanitizeOutput(errorText),
         });
-        pub({ type: "done", success: false });
+        pub({ type: "error", message: errorText });
       }
     }
   } catch (e) {
@@ -459,6 +470,15 @@ async function checkUpdatesUnlocked(
   cacheService.invalidateCache(systemId);
   storeUpdates(systemId, allUpdates);
 
+  const historyStatus =
+    checkErrors.length === 0
+      ? "success"
+      : successfulChecks > 0
+        ? "warning"
+        : "failed";
+  const combinedErrors =
+    checkErrors.length > 0 ? checkErrors.join("\n\n") : undefined;
+
   // Log history (skip when silent — e.g. called from reconnection context)
   if (!silent) {
     logHistory(
@@ -467,13 +487,19 @@ async function checkUpdatesUnlocked(
       allUpdates.length > 0
         ? [...new Set(allUpdates.map((u) => u.pkgManager))].join(",")
         : pkgManagers.join(","),
-      "success",
+      historyStatus,
       {
         packageCount: allUpdates.length,
         command: allCommands.join(" && "),
         output: checkOutput.slice(0, 5000) || undefined,
+        error: combinedErrors?.slice(0, 2000),
       }
     );
+    pub({ type: "done", success: historyStatus === "success" });
+  }
+
+  if (!silent && successfulChecks === 0 && combinedErrors) {
+    throw new Error(combinedErrors);
   }
 
   return allUpdates;

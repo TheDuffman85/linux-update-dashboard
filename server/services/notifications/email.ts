@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
-import type { NotificationProvider, NotificationPayload, NotificationResult } from "./types";
+import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
+import { createFlatProvider } from "./flat-provider";
 
 // Basic email format check (RFC 5322 simplified)
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -42,8 +43,19 @@ function resolveEmailImportance(
   };
 }
 
-export const emailProvider: NotificationProvider = {
+export const emailProvider = createFlatProvider({
   name: "email",
+  allowedKeys: [
+    "smtpHost",
+    "smtpPort",
+    "smtpSecure",
+    "smtpUser",
+    "smtpPassword",
+    "smtpFrom",
+    "emailTo",
+    "emailImportanceOverride",
+  ],
+  sensitiveKeys: ["smtpPassword"],
 
   validateConfig(config) {
     if (!config.smtpHost) return "SMTP host is required";
@@ -113,6 +125,6 @@ export const emailProvider: NotificationProvider = {
 
     return { success: true };
   },
-};
+});
 
 export { resolveEmailImportance };
