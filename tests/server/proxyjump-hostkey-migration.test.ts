@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
@@ -130,5 +130,59 @@ describe("ProxyJump host-key migration", () => {
     expect(columns.some((column) => column.name === "proxy_jump_system_id")).toBe(true);
     expect(columns.some((column) => column.name === "host_key_verification_enabled")).toBe(true);
     expect(columns.some((column) => column.name === "trusted_host_key")).toBe(true);
+  });
+
+  test("rebuilds the legacy systems uniqueness constraint to include ProxyJump", () => {
+    initDatabase(dbPath);
+
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      {
+        name: "Jump One",
+        hostname: "jump-one.local",
+        port: 22,
+        authType: "password",
+        username: "jump",
+      },
+      {
+        name: "Jump Two",
+        hostname: "jump-two.local",
+        port: 22,
+        authType: "password",
+        username: "jump",
+      },
+      {
+        name: "Target One",
+        hostname: "shared.internal",
+        port: 22,
+        proxyJumpSystemId: null,
+        authType: "password",
+        username: "root",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    db.update(systems)
+      .set({ proxyJumpSystemId: inserted[0].id })
+      .where(eq(systems.id, inserted[2].id))
+      .run();
+
+    db.insert(systems).values({
+      name: "Target Two",
+      hostname: "shared.internal",
+      port: 22,
+      proxyJumpSystemId: inserted[1].id,
+      authType: "password",
+      username: "root",
+    }).run();
+
+    const targetSystems = db
+      .select()
+      .from(systems)
+      .where(sql`${systems.hostname} = 'shared.internal'`)
+      .all();
+    expect(targetSystems).toHaveLength(2);
+
+    const indexes = db.all(sql`PRAGMA index_list(systems)`) as Array<{ name: string }>;
+    expect(indexes.some((index) => index.name === "systems_connection_identity_idx")).toBe(true);
   });
 });

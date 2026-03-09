@@ -8,9 +8,10 @@ import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { credentials, systems, updateCache } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
-import { initEncryptor } from "../../server/security";
+import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
 import { issueValidatedConfigToken } from "../../server/services/system-connection-validation";
+import { initSSHManager } from "../../server/ssh/connection";
 
 function createSystemCredential(username: string): number {
   const db = getDb();
@@ -199,6 +200,64 @@ describe("systems reorder route", () => {
     expect(created?.trustedHostKey).toBeNull();
   });
 
+  test("allows creating the same connection tuple behind a different ProxyJump host", async () => {
+    const db = getDb();
+    const jumpCredentialId = createSystemCredential("jump");
+    const targetCredentialId = createSystemCredential("root");
+    const inserted = db.insert(systems).values([
+      {
+        name: "Jump One",
+        hostname: "jump-one.local",
+        port: 22,
+        credentialId: jumpCredentialId,
+        authType: "password",
+        username: "jump",
+      },
+      {
+        name: "Jump Two",
+        hostname: "jump-two.local",
+        port: 22,
+        credentialId: jumpCredentialId,
+        authType: "password",
+        username: "jump",
+      },
+      {
+        name: "Target One",
+        hostname: "shared.internal",
+        port: 22,
+        credentialId: targetCredentialId,
+        proxyJumpSystemId: null,
+        authType: "password",
+        username: "root",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    db.update(systems)
+      .set({ proxyJumpSystemId: inserted[0].id })
+      .where(eq(systems.id, inserted[2].id))
+      .run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Target Two",
+        hostname: "shared.internal",
+        port: 22,
+        credentialId: targetCredentialId,
+        proxyJumpSystemId: inserted[1].id,
+        hostKeyVerificationEnabled: false,
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const created = listSystems().find((system) => system.name === "Target Two");
+    expect(created?.proxyJumpSystemId).toBe(inserted[1].id);
+  });
+
   test("persists the hidden flag on create and update", async () => {
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
@@ -283,6 +342,95 @@ describe("systems reorder route", () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error).toContain("already exists");
+  });
+
+  test("accepts a duplicate-flow validation token when saving with a new ProxyJump host", async () => {
+    const db = getDb();
+    const jumpCredentialId = createSystemCredential("jump");
+    const targetCredentialId = createSystemCredential("root");
+    const inserted = db.insert(systems).values([
+      {
+        name: "Jump One",
+        hostname: "jump-one.local",
+        port: 22,
+        credentialId: jumpCredentialId,
+        authType: "password",
+        username: "jump",
+      },
+      {
+        name: "Jump Two",
+        hostname: "jump-two.local",
+        port: 22,
+        credentialId: jumpCredentialId,
+        authType: "password",
+        username: "jump",
+      },
+      {
+        name: "Source",
+        hostname: "shared.internal",
+        port: 22,
+        credentialId: targetCredentialId,
+        proxyJumpSystemId: null,
+        authType: "password",
+        username: "root",
+        hostKeyVerificationEnabled: 1,
+        trustedHostKey: "ZmFrZS1ob3N0LWtleQ==",
+        trustedHostKeyAlgorithm: "ssh-ed25519",
+        trustedHostKeyFingerprintSha256: "SHA256:source",
+        hostKeyTrustedAt: "2026-03-09 10:00:00",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    db.update(systems)
+      .set({ proxyJumpSystemId: inserted[0].id })
+      .where(eq(systems.id, inserted[2].id))
+      .run();
+
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    (sshManager as any).testConnection = async () => ({
+      success: true,
+      message: "Connection successful",
+    });
+    (sshManager as any).connect = async () => {
+      throw new Error("skip detection");
+    };
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const testRes = await app.request("/api/systems/test-connection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hostname: "shared.internal",
+        port: 22,
+        credentialId: targetCredentialId,
+        proxyJumpSystemId: inserted[1].id,
+        hostKeyVerificationEnabled: true,
+        sourceSystemId: inserted[2].id,
+      }),
+    });
+
+    expect(testRes.status).toBe(200);
+    const testBody = await testRes.json();
+    expect(testBody.validatedConfigToken).toEqual(expect.any(String));
+
+    const createRes = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Duplicated Through Jump Two",
+        hostname: "shared.internal",
+        port: 22,
+        credentialId: targetCredentialId,
+        proxyJumpSystemId: inserted[1].id,
+        hostKeyVerificationEnabled: true,
+        sourceSystemId: inserted[2].id,
+        validatedConfigToken: testBody.validatedConfigToken,
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
   });
 
   test("rejects deleting a system that is referenced as a ProxyJump host", async () => {

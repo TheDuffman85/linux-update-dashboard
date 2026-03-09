@@ -213,6 +213,7 @@ export function useTestConnection() {
         rawKey: string;
       }>;
       systemId?: number;
+      sourceSystemId?: number;
     }) =>
       apiFetch<{
         success: boolean;
