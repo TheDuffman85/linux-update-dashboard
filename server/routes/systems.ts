@@ -473,21 +473,28 @@ systems.delete("/:id", (c) => {
 // Test connection with provided credentials
 systems.post("/test-connection", async (c) => {
   const body = await c.req.json();
-  const sourceSystemId =
+  const systemId =
     body.systemId === undefined || body.systemId === null
       ? null
       : parseId(String(body.systemId));
-  if (body.systemId !== undefined && body.systemId !== null && !sourceSystemId) {
+  if (body.systemId !== undefined && body.systemId !== null && !systemId) {
     return c.json({ error: "systemId must be a positive integer" }, 400);
   }
-  const parsedConfig = parseConnectionConfig(body, sourceSystemId ?? undefined);
+  const sourceSystemId =
+    body.sourceSystemId === undefined || body.sourceSystemId === null
+      ? null
+      : parseId(String(body.sourceSystemId));
+  if (body.sourceSystemId !== undefined && body.sourceSystemId !== null && !sourceSystemId) {
+    return c.json({ error: "sourceSystemId must be a positive integer" }, 400);
+  }
+  const parsedConfig = parseConnectionConfig(body, systemId ?? undefined);
   if (!parsedConfig.config) {
     return c.json({ error: parsedConfig.error || "Invalid connection config" }, 400);
   }
   try {
     systemService.validateProxyJumpConfiguration(
       parsedConfig.config.proxyJumpSystemId ?? null,
-      sourceSystemId ?? undefined
+      systemId ?? undefined
     );
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Invalid ProxyJump configuration" }, 400);
@@ -497,8 +504,9 @@ systems.post("/test-connection", async (c) => {
   if (!credential) {
     return c.json({ error: "Selected credential is not valid for system SSH access" }, 400);
   }
-  const existingSystem = sourceSystemId
-    ? systemService.getSystem(sourceSystemId)
+  const hostKeySourceSystemId = sourceSystemId ?? systemId;
+  const existingSystem = hostKeySourceSystemId
+    ? systemService.getSystem(hostKeySourceSystemId)
     : null;
   const approvedHostKeys = parseApprovedHostKeys(body.approvedHostKeys);
   if (!approvedHostKeys) {
@@ -549,7 +557,7 @@ systems.post("/test-connection", async (c) => {
 
   const sshManager = getSSHManager();
   const result = await sshManager.testConnection(system, {
-    systemId: sourceSystemId ?? undefined,
+    systemId: systemId ?? undefined,
     approvedHostKeys,
   });
 
@@ -573,7 +581,7 @@ systems.post("/test-connection", async (c) => {
     );
     try {
       const conn = await sshManager.connect(system, {
-        systemId: sourceSystemId ?? undefined,
+        systemId: systemId ?? undefined,
         approvedHostKeys,
       });
       try {

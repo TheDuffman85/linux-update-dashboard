@@ -1,4 +1,4 @@
-import { asc, count, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { systems, updateCache } from "../db/schema";
 import { getEncryptor } from "../security";
@@ -16,12 +16,13 @@ import type { Client } from "ssh2";
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
+const SYSTEM_CONNECTION_UNIQUE_INDEX = "systems_connection_identity_idx";
 export const MAX_PROXY_JUMP_DEPTH = 10;
 
 export class DuplicateSystemConnectionError extends Error {
   constructor() {
     super(
-      "A system with the same hostname, port, and username already exists. Change one of those fields before saving."
+      "A system with the same hostname, port, username, and ProxyJump host already exists. Change one of those fields before saving."
     );
     this.name = "DuplicateSystemConnectionError";
   }
@@ -62,8 +63,39 @@ function isSystemConnectionUniqueConstraintError(error: unknown): boolean {
 
   return (
     error.message.includes("UNIQUE constraint failed") &&
-    error.message.includes(SYSTEM_CONNECTION_UNIQUE_CONSTRAINT)
+    (
+      error.message.includes(SYSTEM_CONNECTION_UNIQUE_CONSTRAINT) ||
+      error.message.includes(SYSTEM_CONNECTION_UNIQUE_INDEX)
+    )
   );
+}
+
+function assertSystemConnectionIsUnique(data: {
+  hostname: string;
+  port: number;
+  username: string;
+  proxyJumpSystemId?: number | null;
+  excludeSystemId?: number;
+}): void {
+  const db = getDb();
+  const baseConditions = [
+    eq(systems.hostname, data.hostname),
+    eq(systems.port, data.port),
+    eq(systems.username, data.username),
+    sql`coalesce(${systems.proxyJumpSystemId}, 0) = ${data.proxyJumpSystemId ?? 0}`,
+  ];
+  const whereClause = data.excludeSystemId
+    ? and(...baseConditions, ne(systems.id, data.excludeSystemId))
+    : and(...baseConditions);
+  const existing = db
+    .select({ id: systems.id })
+    .from(systems)
+    .where(whereClause)
+    .get();
+
+  if (existing) {
+    throw new DuplicateSystemConnectionError();
+  }
 }
 
 export function listSystems() {
@@ -116,6 +148,12 @@ export function createSystem(data: {
     throw new Error("Selected credential is not valid for system SSH access");
   }
   validateProxyJumpConfiguration(data.proxyJumpSystemId ?? null);
+  assertSystemConnectionIsUnique({
+    hostname: data.hostname,
+    port: data.port,
+    username: credential.username,
+    proxyJumpSystemId: data.proxyJumpSystemId ?? null,
+  });
 
   const values: Record<string, unknown> = {
     sortOrder: nextSortOrder,
@@ -196,6 +234,13 @@ export function updateSystem(
     throw new Error("Selected credential is not valid for system SSH access");
   }
   validateProxyJumpConfiguration(data.proxyJumpSystemId ?? null, systemId);
+  assertSystemConnectionIsUnique({
+    hostname: data.hostname,
+    port: data.port,
+    username: credential.username,
+    proxyJumpSystemId: data.proxyJumpSystemId ?? null,
+    excludeSystemId: systemId,
+  });
   const hostChanged =
     existing.hostname !== data.hostname || existing.port !== data.port;
   const disabledPkgManagersChanged =

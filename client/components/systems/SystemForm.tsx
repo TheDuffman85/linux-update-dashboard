@@ -200,7 +200,8 @@ export function SystemForm({
         credentialId,
         proxyJumpSystemId,
         hostKeyVerificationEnabled,
-        systemId: systemId ?? sourceSystemId,
+        systemId,
+        sourceSystemId: systemId ? undefined : sourceSystemId,
         ...extra,
       },
       {

@@ -104,8 +104,7 @@ export const systems = sqliteTable(
     updatedAt: text("updated_at")
       .notNull()
       .default(sql`(datetime('now'))`),
-  },
-  (table) => [unique().on(table.hostname, table.port, table.username)]
+  }
 );
 
 export const updateCache = sqliteTable(
