@@ -347,9 +347,37 @@ Usage:
 curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/stats
 ```
 
-### Telegram Notifications
+## Notification Channels
 
-Telegram notifications are configured from the **Notifications** page as a `Telegram` channel type. Each Telegram notification stores its own bot token, private-chat binding, and optional command capability.
+Notification channels are configured from the **Notifications** page. You can create multiple channels of different types, subscribe each one to different events, limit them to specific systems, and choose whether they deliver immediately or on a cron-based digest schedule.
+
+### Common Channel Options
+
+Every channel supports the same high-level behavior:
+
+- **Channel types:** `Email`, `Gotify`, `ntfy`, `Telegram`, and `Webhook`
+- **Events:** `updates`, `unreachable`, and `appUpdates`
+- **Default events:** new channels default to `updates` and `appUpdates`
+- **System scope:** `All systems` or a selected list of system IDs
+- **Schedule:** `immediate` delivery or a cron expression for digest delivery
+- **Test send:** use **Send Test** to validate a saved channel or inline config
+- **Secrets:** passwords, tokens, and webhook secrets are encrypted at rest
+
+Digest schedules buffer matching events until the next cron run. Immediate channels send as soon as the event is detected. Delivery diagnostics are stored with the channel, including the last status, response code, and a short response/error summary.
+
+### Channel Overview
+
+| Type | Best for | Notes |
+|------|----------|-------|
+| `Email` | inbox-based alerts | SMTP transport with optional auth and importance override |
+| `Gotify` | mobile/self-hosted push | app token stored encrypted |
+| `ntfy` | lightweight push topics | topic-based delivery with optional bearer token |
+| `Telegram` | chat notifications and optional remote actions | private-chat only |
+| `Webhook` | integrations with automation tools, chat ops, and custom receivers | supports templates, auth, retries, and a Discord preset |
+
+### Telegram
+
+Telegram channels store their own bot token, private-chat binding, and optional command capability.
 
 #### Notification-only setup
 
@@ -361,30 +389,35 @@ Telegram notifications are configured from the **Notifications** page as a `Tele
 6. Start the bot from Telegram. The dashboard will bind that private chat to the notification channel.
 7. Use **Send Test** from the notification editor to verify delivery.
 
-Notes:
-- Telegram notifications only support **private chats** in v1.
-- Binding uses a **single-use, time-limited deep link**.
-- If you change the bot token later, the existing chat binding is cleared and must be linked again.
+Binding details:
+
+- Telegram notifications support **private chats only** in v1
+- binding uses a **single-use deep link** that expires after **10 minutes**
+- the channel shows a binding status of `unbound`, `pending`, or `bound`
+- changing the bot token clears the existing binding and requires linking again
 
 #### Optional Telegram commands
 
-Telegram commands are **disabled by default**. Enable them only if you want that private chat to trigger dashboard actions.
+Telegram commands are **disabled by default**. Enable them only if that private chat should be allowed to trigger dashboard actions.
 
-When you enable **Enable bot commands** on a linked Telegram notification:
+When **Enable bot commands** is turned on for a linked Telegram channel:
+
 - the dashboard auto-generates a dedicated **write-capable API token** for that channel
-- only the normal SHA-256 token hash is stored in the `api_tokens` table
-- the bot keeps an encrypted copy in the Telegram channel config so it can call the existing API routes
-- the notification editor shows the command token status, creation/use timestamps, and lets you **reissue** the token if it was deleted or has otherwise become unusable
+- only the normal SHA-256 hash is stored in the `api_tokens` table
+- the bot keeps an encrypted copy in the Telegram channel config so it can call existing API routes
+- the notification editor shows token status plus created, last-used, and expiry timestamps
+- you can **reissue** the token if it is missing, expired, or was deleted manually
 
 The generated command token is automatically revoked when:
+
 - commands are disabled
 - the Telegram chat is unlinked
 - the Telegram notification channel is deleted
 - the Telegram bot token changes
 
-If the backing API token is deleted manually, commands stop working by design. The Telegram notification editor will show that state and allows issuing a fresh replacement token after the chat is linked.
+If the backing API token is deleted manually, commands stop working by design until you reissue it from the channel editor.
 
-#### Telegram Commands
+#### Telegram commands
 
 Supported commands:
 
@@ -397,23 +430,79 @@ Supported commands:
 - `/upgradepkg <system-id> <package>`
 
 Behavior:
-- Telegram registers `/help`, `/menu`, and `/status` in Telegram's native command picker/menu
-- `/menu` opens an inline action menu for common status, refresh, upgrade, full-upgrade, and single-package upgrade flows, with paging/back navigation for larger system or package lists
-- `/status` lists the systems this Telegram channel is allowed to control
-- `/check` starts an update refresh/check for one allowed system
-- `/upgrade`, `/fullupgrade`, and `/upgradepkg` require an explicit Telegram confirmation button before execution
-- `/check`, `/upgrade`, `/fullupgrade`, and `/upgradepkg` are still supported as typed commands, but they are intentionally not placed in Telegram's native command picker because they require a target argument
-- `/fullupgrade` is only offered for systems that actually support full-upgrade semantics; unsupported systems are excluded from the full-upgrade menu and rejected if targeted manually
-- command scope follows the notification channel's configured `systemIds`; if the channel is scoped to a subset of systems, commands are limited to that same subset
-- package upgrades use the existing single-package upgrade API
 
-#### Security Notes
+- Telegram registers `/help`, `/menu`, and `/status` in Telegram's native command picker
+- `/menu` opens an inline menu for status, refresh, upgrade, full-upgrade, and package-upgrade flows
+- `/status` lists the systems this channel is allowed to control
+- `/check` triggers a refresh/check for one allowed system
+- `/upgrade`, `/fullupgrade`, and `/upgradepkg` require an explicit confirmation button before execution
+- confirmation buttons expire after **5 minutes**
+- `/fullupgrade` is only offered for systems that actually support full-upgrade semantics
+- command scope follows the channel's configured `systemIds`; a scoped channel can only act on those same systems
 
-- Telegram command access is **private-chat-only**
+#### Telegram security notes
+
+- command access is **private-chat-only**
 - commands are **off by default**
-- mutating commands require a **confirmation step**
-- Telegram bot tokens and generated command tokens are **encrypted at rest**
-- if you do not need remote actions from Telegram, leave commands disabled and use the channel for notifications only
+- mutating commands require confirmation
+- bot tokens and generated command tokens are **encrypted at rest**
+- if you only need alerts, leave commands disabled and use Telegram as a notification-only channel
+
+### Webhooks
+
+Webhook channels are intended for custom integrations such as Home Assistant, n8n, Node-RED, custom APIs, chat bridges, and Discord-compatible endpoints.
+
+#### Webhook capabilities
+
+- methods: `POST`, `PUT`, or `PATCH`
+- presets: `custom` or `discord`
+- authentication: none, bearer token, or basic auth
+- request body modes: plain text, JSON template, or form-encoded fields
+- optional query parameters and custom headers
+- configurable timeout, retry count, retry delay, and optional insecure TLS for self-signed/internal targets
+
+Default webhook behavior:
+
+- timeout defaults to **10 seconds**
+- retries default to **2**
+- retry delay defaults to **30 seconds**
+- delivery diagnostics record the last HTTP status and a truncated response body or error message
+
+#### Webhook template variables
+
+Webhook templates use simple Mustache variable tags. Only dotted `event.*` paths are allowed; sections, loops, and other Mustache control tags are rejected.
+
+Available values include:
+
+- `{{event.title}}`, `{{event.body}}`, `{{event.priority}}`, `{{event.sentAt}}`
+- `{{event.eventTypes.0}}`, `{{event.tags.0}}`, `{{event.tagsCsv}}`
+- `{{event.totals.totalUpdates}}`, `{{event.totals.totalSecurity}}`, `{{event.totals.unreachableSystems}}`
+- `{{event.updatesText}}`, `{{event.unreachableText}}`, `{{event.appUpdateText}}`
+- `{{event.json}}`, `{{event.updatesJson}}`, `{{event.unreachableJson}}`, `{{event.appUpdateJson}}`
+- JSON-safe variants such as `{{event.titleJson}}`, `{{event.bodyJson}}`, `{{event.sentAtJson}}`, and `{{event.decoratedTitleJson}}`
+
+Use the `...Json` helpers when you are embedding strings inside a JSON document. Example:
+
+```json
+{
+  "title": {{event.decoratedTitleJson}},
+  "message": {{event.bodyJson}},
+  "rawEvent": {{event.json}}
+}
+```
+
+#### Webhook validation and security
+
+- webhook URLs must be valid `http` or `https` URLs
+- embedded credentials in the URL are rejected
+- the metadata endpoints `169.254.169.254` and `metadata.google.internal` are blocked
+- reserved headers such as `Authorization`, `Host`, `Content-Length`, `Connection`, and `Cookie` cannot be set manually
+- if you need auth, use the built-in bearer/basic auth settings instead of custom `Authorization` headers
+- sensitive header values, auth secrets, and sensitive form fields are masked in the UI and reused safely on update
+
+#### Discord preset
+
+The `discord` preset keeps the webhook in JSON mode and uses a Discord embed payload based on the notification title/body. Existing legacy Discord templates are upgraded automatically to the current JSON-safe format when loaded.
 
 ## Supported Package Managers
 
