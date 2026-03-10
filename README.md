@@ -29,12 +29,14 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 ## Features
 
-- **Multi-distribution support:** APT (Debian/Ubuntu), DNF (Fedora/RHEL 8+), YUM (CentOS/older RHEL), Pacman (Arch/Manjaro), Flatpak, and Snap
+- **Multi-distribution support:** APT (Debian/Ubuntu), DNF (Fedora/RHEL 8+), YUM (CentOS/older RHEL), Pacman (Arch/Manjaro), APK (Alpine), Flatpak, and Snap
+- **Reusable credential vault:** store username/password, SSH key, or OpenSSH certificate credentials once and reuse them across systems
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
 - **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
+- **Safer SSH workflows:** optional host-key verification with explicit trust approval, plus ProxyJump support for reaching internal hosts
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Four auth methods:** password, Passkeys (WebAuthn), SSO (OpenID Connect), and API tokens for external integrations
 - **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
@@ -42,6 +44,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
 - **System duplication:** clone an existing system entry (including encrypted credentials) to quickly add similar servers
 - **Exclude from Upgrade All:** make individual systems start unchecked in the Upgrade All Systems dialog
+- **Visibility controls:** hide systems from the main dashboard without deleting them
 - **Notification digests:** schedule notification delivery on a cron expression for batched digest summaries instead of immediate alerts
 - **Dark mode:** dark/light theme with OS preference detection
 - **Update history:** logs every check and upgrade operation per system
@@ -62,7 +65,7 @@ Manage all connected servers with status, update counts, and quick actions.
 ![Systems List](screenshots/screenshot-2.1.png)
 
 ### Add System
-Add a new server via SSH with password or key-based authentication.
+Add a new server via SSH using a saved credential, with package-manager detection, host-key trust, and ProxyJump support.
 
 ![Add System](screenshots/screenshot-2.2.png)
 
@@ -77,7 +80,7 @@ Expandable history entries with the executed command and its full output.
 ![Activity Log](screenshots/screenshot-3.png)
 
 ### Notifications
-Configure notification channels (Email/SMTP, Gotify, ntfy.sh, Webhooks) with per-event and per-system filtering.
+Configure notification channels (Email/SMTP, Gotify, ntfy.sh, Telegram, Webhooks) with per-event and per-system filtering.
 
 ![Notifications](screenshots/screenshot-4.png)
 
@@ -102,14 +105,14 @@ Configure update schedules, SSH timeouts, OIDC single sign-on, and API tokens.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/linux-update-dashboard.git
+git clone https://github.com/TheDuffman85/linux-update-dashboard.git
 cd linux-update-dashboard
 
 # Install dependencies
 bun install
 
 # Generate an encryption key
-export LUDASH_ENCRYPTION_KEY=$(bun -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
 
 # Start development servers
 bun run dev
@@ -513,6 +516,7 @@ The `discord` preset keeps the webhook in JSON mode and uses a Discord embed pay
 | DNF | Fedora, RHEL 8+, AlmaLinux, Rocky |
 | YUM | CentOS, older RHEL |
 | Pacman | Arch Linux, Manjaro |
+| APK | Alpine Linux |
 | Flatpak | Any (cross-distribution) |
 | Snap | Any (cross-distribution) |
 
@@ -531,20 +535,20 @@ Package managers are auto-detected on each system over SSH when you test the con
 │   ├── lib/                  # TanStack Query hooks and API client
 │   ├── components/           # Shared UI components
 │   ├── context/              # Auth and toast providers
-│   ├── hooks/                # Custom hooks (theme)
+│   ├── hooks/                # Custom hooks
 │   ├── pages/                # Route pages
 │   └── styles/               # Tailwind CSS
 ├── server/                   # Hono backend
 │   ├── auth/                 # Password, WebAuthn, OIDC, session handling
-│   ├── db/                   # SQLite + Drizzle schema (8 tables)
-│   ├── middleware/            # Auth and rate-limit middleware
+│   ├── db/                   # SQLite + Drizzle schema (9 tables)
+│   ├── middleware/           # Auth and rate-limit middleware
 │   ├── routes/               # API route handlers
 │   ├── services/             # Business logic, caching, scheduling
 │   └── ssh/                  # SSH connection manager + parsers
 ├── tests/server/             # Bun test suites
 ├── docker/                   # Dockerfile, compose, entrypoint
 │   └── test-systems/         # Docker test containers
-├── run.sh                    # Local dev/production runner
+├── run.sh                    # Local dev/production/test runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
 ├── vite.config.ts            # Vite + Tailwind config
 └── package.json
@@ -564,7 +568,7 @@ There's a helper script `run.sh` to manage services.
 ./run.sh
 ```
 
-Or use the npm scripts directly:
+Or use the Bun scripts directly:
 
 ```bash
 # Start both dev servers (backend :3001 + Vite :5173 with HMR)
@@ -650,6 +654,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/auth/login` | Password login |
 | POST | `/api/auth/logout` | Clear session |
 | GET | `/api/auth/me` | Current user info |
+| POST | `/api/auth/change-password` | Change the current user's password |
 | POST | `/api/auth/webauthn/register/options` | Start passkey registration |
 | POST | `/api/auth/webauthn/register/verify` | Complete passkey registration |
 | POST | `/api/auth/webauthn/login/options` | Start passkey login |
@@ -664,10 +669,12 @@ All endpoints require authentication unless noted. Responses are JSON.
 | GET | `/api/systems` | List all systems with update counts |
 | GET | `/api/systems/:id` | System detail with updates and history |
 | POST | `/api/systems` | Add a new system |
+| PUT | `/api/systems/reorder` | Reorder systems |
 | PUT | `/api/systems/:id` | Update system configuration |
-| DELETE | `/api/systems/:id` | Remove a system |
 | POST | `/api/systems/test-connection` | Test SSH connectivity |
 | POST | `/api/systems/:id/reboot` | Reboot a system |
+| POST | `/api/systems/:id/revoke-host-key` | Clear the stored trusted host key |
+| DELETE | `/api/systems/:id` | Remove a system |
 | GET | `/api/systems/:id/updates` | Cached updates for a system |
 | GET | `/api/systems/:id/history` | Upgrade history for a system |
 
@@ -688,6 +695,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/notifications` | List all notification channels |
+| PUT | `/api/notifications/reorder` | Reorder notification channels |
 | GET | `/api/notifications/:id` | Get a notification channel |
 | POST | `/api/notifications` | Create a notification channel |
 | PUT | `/api/notifications/:id` | Update a notification channel |
@@ -697,6 +705,17 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/notifications/:id/telegram/reissue-command-token` | Rotate the Telegram command token for a linked channel with commands enabled |
 | POST | `/api/notifications/test` | Test a notification config inline (before saving) |
 | POST | `/api/notifications/:id/test` | Send a test notification |
+
+### Credentials (`/api/credentials/*`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/credentials` | List saved credentials |
+| PUT | `/api/credentials/reorder` | Reorder credentials |
+| GET | `/api/credentials/:id` | Get a credential with masked secrets |
+| POST | `/api/credentials` | Create a credential |
+| PUT | `/api/credentials/:id` | Update a credential |
+| DELETE | `/api/credentials/:id` | Delete a credential |
 
 ### Passkeys (`/api/passkeys/*`)
 
