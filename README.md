@@ -33,7 +33,8 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
-- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh, Webhooks), scope them to specific systems, and pick which events trigger each channel
+- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
+- **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Four auth methods:** password, Passkeys (WebAuthn), SSO (OpenID Connect), and API tokens for external integrations
 - **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
@@ -346,6 +347,74 @@ Usage:
 curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/stats
 ```
 
+### Telegram Notifications
+
+Telegram notifications are configured from the **Notifications** page as a `Telegram` channel type. Each Telegram notification stores its own bot token, private-chat binding, and optional command capability.
+
+#### Notification-only setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the bot token.
+2. In the dashboard, go to **Notifications** and create a new `Telegram` channel.
+3. Paste the bot token, choose events/system scope, and save the channel.
+4. Re-open that Telegram channel and click **Create Link**.
+5. Open the generated `https://t.me/<bot>?start=<nonce>` link in Telegram from the private account that should receive notifications.
+6. Start the bot from Telegram. The dashboard will bind that private chat to the notification channel.
+7. Use **Send Test** from the notification editor to verify delivery.
+
+Notes:
+- Telegram notifications only support **private chats** in v1.
+- Binding uses a **single-use, time-limited deep link**.
+- If you change the bot token later, the existing chat binding is cleared and must be linked again.
+
+#### Optional Telegram commands
+
+Telegram commands are **disabled by default**. Enable them only if you want that private chat to trigger dashboard actions.
+
+When you enable **Enable bot commands** on a linked Telegram notification:
+- the dashboard auto-generates a dedicated **write-capable API token** for that channel
+- only the normal SHA-256 token hash is stored in the `api_tokens` table
+- the bot keeps an encrypted copy in the Telegram channel config so it can call the existing API routes
+- the notification editor shows the command token status, creation/use timestamps, and lets you **reissue** the token if it was deleted or has otherwise become unusable
+
+The generated command token is automatically revoked when:
+- commands are disabled
+- the Telegram chat is unlinked
+- the Telegram notification channel is deleted
+- the Telegram bot token changes
+
+If the backing API token is deleted manually, commands stop working by design. The Telegram notification editor will show that state and allows issuing a fresh replacement token after the chat is linked.
+
+#### Telegram Commands
+
+Supported commands:
+
+- `/help`
+- `/menu`
+- `/status`
+- `/check <system-id>`
+- `/upgrade <system-id>`
+- `/fullupgrade <system-id>`
+- `/upgradepkg <system-id> <package>`
+
+Behavior:
+- Telegram registers `/help`, `/menu`, and `/status` in Telegram's native command picker/menu
+- `/menu` opens an inline action menu for common status, refresh, upgrade, full-upgrade, and single-package upgrade flows, with paging/back navigation for larger system or package lists
+- `/status` lists the systems this Telegram channel is allowed to control
+- `/check` starts an update refresh/check for one allowed system
+- `/upgrade`, `/fullupgrade`, and `/upgradepkg` require an explicit Telegram confirmation button before execution
+- `/check`, `/upgrade`, `/fullupgrade`, and `/upgradepkg` are still supported as typed commands, but they are intentionally not placed in Telegram's native command picker because they require a target argument
+- `/fullupgrade` is only offered for systems that actually support full-upgrade semantics; unsupported systems are excluded from the full-upgrade menu and rejected if targeted manually
+- command scope follows the notification channel's configured `systemIds`; if the channel is scoped to a subset of systems, commands are limited to that same subset
+- package upgrades use the existing single-package upgrade API
+
+#### Security Notes
+
+- Telegram command access is **private-chat-only**
+- commands are **off by default**
+- mutating commands require a **confirmation step**
+- Telegram bot tokens and generated command tokens are **encrypted at rest**
+- if you do not need remote actions from Telegram, leave commands disabled and use the channel for notifications only
+
 ## Supported Package Managers
 
 | Package Manager | Distributions |
@@ -533,6 +602,9 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/notifications` | Create a notification channel |
 | PUT | `/api/notifications/:id` | Update a notification channel |
 | DELETE | `/api/notifications/:id` | Delete a notification channel |
+| POST | `/api/notifications/:id/telegram/link` | Create a one-time Telegram chat binding link |
+| POST | `/api/notifications/:id/telegram/unlink` | Remove the Telegram chat binding and revoke any generated command token |
+| POST | `/api/notifications/:id/telegram/reissue-command-token` | Rotate the Telegram command token for a linked channel with commands enabled |
 | POST | `/api/notifications/test` | Test a notification config inline (before saving) |
 | POST | `/api/notifications/:id/test` | Send a test notification |
 
@@ -565,7 +637,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 ## Security
 
 - **Credential encryption:** SSH passwords and private keys are encrypted at rest using AES-256-GCM with per-entry random IVs and auth tags
-- **Notification secrets:** SMTP passwords, Gotify app tokens, ntfy tokens, and webhook secrets are also encrypted at rest within notification channel configs
+- **Notification secrets:** SMTP passwords, Gotify app tokens, ntfy tokens, Telegram bot tokens, Telegram command tokens, and webhook secrets are also encrypted at rest within notification channel configs
 - **Key derivation:** supports both raw base64 keys and passphrase-derived keys (PBKDF2-SHA256, 480k iterations)
 - **Session security:** HTTP-only, SameSite=Lax cookies with JWT (HS256)
 - **CSRF protection:** state-changing API requests require a per-session CSRF token header
@@ -573,6 +645,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **Notification URL validation:** outbound notification URLs are validated for correct format (http/https); private/local targets are allowed since they are admin-configured
 - **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify, 20 failed bearer attempts/min per IP)
 - **API token security:** only SHA-256 hashes stored, tokens blocked from management endpoints, CSRF skipped for stateless bearer requests
+- **Telegram command safety:** Telegram commands are private-chat-only, disabled by default, scoped to the channel's allowed systems, and mutating actions require confirmation
 - **Password-disable safeguard:** password login cannot be disabled unless a passkey or SSO is configured (enforced server-side)
 - **Timing-safe login:** a pre-computed dummy hash is always compared on failed lookups to prevent username enumeration
 - **Encrypted OIDC secrets:** OIDC client secrets are encrypted at rest alongside SSH credentials

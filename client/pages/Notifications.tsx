@@ -6,13 +6,17 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   useNotifications,
   useCreateNotification,
+  useCreateTelegramLink,
+  useReissueTelegramCommandToken,
   useUpdateNotification,
   useDeleteNotification,
   useReorderNotifications,
   useTestNotification,
   useTestNotificationConfig,
+  useUnlinkTelegramChat,
   type NotificationChannel,
   type NotificationConfig,
+  type TelegramConfig,
   type WebhookConfig,
   type WebhookField,
 } from "../lib/notifications";
@@ -27,6 +31,18 @@ const checkboxClass =
   "w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500";
 const mutedTextClass = "text-xs text-slate-500 dark:text-slate-400";
 const MASKED_VALUE = "(stored)";
+const TELEGRAM_BINDING_STATUS_LABELS: Record<string, string> = {
+  unbound: "Not linked",
+  pending: "Link pending",
+  bound: "Linked",
+};
+const TELEGRAM_COMMAND_TOKEN_STATUS_LABELS: Record<string, string> = {
+  "not-required": "Not required",
+  pending: "Waiting for linked chat",
+  missing: "Missing or revoked",
+  expired: "Expired",
+  active: "Active",
+};
 const DISCORD_TEMPLATE = `{
   "embeds": [
     {
@@ -41,6 +57,7 @@ const TYPE_LABELS: Record<string, string> = {
   email: "Email",
   gotify: "Gotify",
   ntfy: "ntfy.sh",
+  telegram: "Telegram",
   webhook: "Webhook",
 };
 
@@ -98,6 +115,48 @@ function moveNotification<T>(items: T[], fromIndex: number, toIndex: number): T[
 function readString(config: NotificationConfig, key: string, fallback = ""): string {
   const value = config[key];
   return typeof value === "string" ? value : fallback;
+}
+
+function readBoolean(config: NotificationConfig, key: string, fallback = false): boolean {
+  const value = config[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function readOptionalString(config: NotificationConfig, key: string): string | undefined {
+  const value = config[key];
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function readOptionalInteger(config: NotificationConfig, key: string): number | undefined {
+  const value = config[key];
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function coerceTelegramConfig(config: NotificationConfig): TelegramConfig {
+  return {
+    telegramBotToken: readString(config, "telegramBotToken"),
+    botUsername: readString(config, "botUsername"),
+    chatId: readString(config, "chatId"),
+    chatDisplayName: readString(config, "chatDisplayName"),
+    chatBoundAt: readString(config, "chatBoundAt"),
+    chatBindingStatus: (() => {
+      const value = readString(config, "chatBindingStatus", "unbound");
+      return value === "pending" || value === "bound" ? value : "unbound";
+    })(),
+    commandsEnabled: readBoolean(config, "commandsEnabled"),
+    commandApiTokenEncrypted: readString(config, "commandApiTokenEncrypted"),
+    commandApiTokenId: readOptionalInteger(config, "commandApiTokenId"),
+    commandTokenStatus: (() => {
+      const value = readString(config, "commandTokenStatus");
+      return value === "not-required" || value === "pending" || value === "missing" || value === "expired" || value === "active"
+        ? value
+        : undefined;
+    })(),
+    commandTokenName: readOptionalString(config, "commandTokenName"),
+    commandTokenCreatedAt: readOptionalString(config, "commandTokenCreatedAt"),
+    commandTokenLastUsedAt: readOptionalString(config, "commandTokenLastUsedAt"),
+    commandTokenExpiresAt: readOptionalString(config, "commandTokenExpiresAt"),
+  };
 }
 
 function normalizeGotifyPriorityOverride(value: string | undefined): string {
@@ -413,8 +472,14 @@ function NotificationForm({
 }) {
   const { data: systemsList } = useSystems();
   const testConfig = useTestNotificationConfig();
+  const createTelegramLink = useCreateTelegramLink();
+  const reissueTelegramCommandToken = useReissueTelegramCommandToken();
+  const unlinkTelegramChat = useUnlinkTelegramChat();
   const { addToast } = useToast();
   const initialWebhook = initial ? coerceWebhookConfig(initial.config) : defaultWebhookConfig();
+  const initialTelegram: TelegramConfig = initial
+    ? coerceTelegramConfig(initial.config)
+    : { chatBindingStatus: "unbound", commandsEnabled: false };
 
   const [name, setName] = useState(initial?.name || "");
   const [type, setType] = useState(initial?.type || "email");
@@ -452,6 +517,24 @@ function NotificationForm({
   const [ntfyPriorityOverride, setNtfyPriorityOverride] = useState(
     readString(initial?.config || {}, "ntfyPriorityOverride", "auto")
   );
+  const [telegramBotToken, setTelegramBotToken] = useState("");
+  const [telegramCommandsEnabled, setTelegramCommandsEnabled] = useState(
+    readBoolean(initial?.config || {}, "commandsEnabled", false)
+  );
+  const [telegramLinkUrl, setTelegramLinkUrl] = useState<string | null>(null);
+  const [telegramLinkExpiresAt, setTelegramLinkExpiresAt] = useState<string | null>(null);
+  const persistedTelegramCommandsEnabled = initialTelegram.commandsEnabled === true;
+  const showTelegramCommandToken = type === "telegram" && telegramCommandsEnabled;
+  const telegramCommandStatusLabel =
+    !telegramCommandsEnabled
+      ? null
+      : persistedTelegramCommandsEnabled
+        ? TELEGRAM_COMMAND_TOKEN_STATUS_LABELS[initialTelegram.commandTokenStatus || "not-required"] || "Unknown"
+        : !initial?.id
+          ? "Save notification first"
+          : !initialTelegram.chatId
+            ? "Waiting for linked chat"
+            : "Will be issued after save";
 
   const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>(initialWebhook);
 
@@ -538,6 +621,14 @@ function NotificationForm({
       };
     }
 
+    if (type === "telegram") {
+      return {
+        telegramBotToken:
+          telegramBotToken || (initialTelegram.telegramBotToken === MASKED_VALUE ? MASKED_VALUE : ""),
+        commandsEnabled: telegramCommandsEnabled,
+      };
+    }
+
     return finalizeWebhookConfig(webhookConfig, initial ? coerceWebhookConfig(initial.config) : undefined);
   };
 
@@ -581,6 +672,38 @@ function NotificationForm({
     );
   };
 
+  const handleTelegramLink = () => {
+    if (!initial?.id) return;
+    createTelegramLink.mutate(initial.id, {
+      onSuccess: (data) => {
+        setTelegramLinkUrl(data.url);
+        setTelegramLinkExpiresAt(data.expiresAt);
+        addToast("Telegram link created", "success");
+      },
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleTelegramUnlink = () => {
+    if (!initial?.id) return;
+    unlinkTelegramChat.mutate(initial.id, {
+      onSuccess: () => {
+        setTelegramLinkUrl(null);
+        setTelegramLinkExpiresAt(null);
+        addToast("Telegram chat unlinked", "success");
+      },
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleTelegramReissueCommandToken = () => {
+    if (!initial?.id) return;
+    reissueTelegramCommandToken.mutate(initial.id, {
+      onSuccess: () => addToast("Telegram command token reissued", "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
   const destinationWarning = type === "webhook" ? getWebhookDestinationWarning(webhookConfig.url) : null;
 
   return (
@@ -608,6 +731,7 @@ function NotificationForm({
             <option value="email">Email (SMTP)</option>
             <option value="gotify">Gotify</option>
             <option value="ntfy">ntfy.sh</option>
+            <option value="telegram">Telegram</option>
             <option value="webhook">Webhook</option>
           </select>
         </div>
@@ -860,6 +984,150 @@ function NotificationForm({
                 ))}
               </select>
             </div>
+          </div>
+        )}
+
+        {type === "telegram" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className={labelClass}>Bot Token</label>
+                <input
+                  type="password"
+                  value={telegramBotToken}
+                  onChange={(e) => setTelegramBotToken(e.target.value)}
+                  className={inputClass}
+                  placeholder={initialTelegram.telegramBotToken === MASKED_VALUE ? "(unchanged)" : "123456789:AA..."}
+                />
+                <p className={mutedTextClass}>
+                  Create the bot with BotFather, then paste the bot token here.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-sm font-medium">Chat binding</div>
+                  <div className={mutedTextClass}>
+                    {TELEGRAM_BINDING_STATUS_LABELS[initialTelegram.chatBindingStatus || "unbound"] || "Not linked"}
+                    {initialTelegram.chatDisplayName ? ` · ${initialTelegram.chatDisplayName}` : ""}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTelegramLink}
+                    disabled={!initial?.id || createTelegramLink.isPending}
+                    className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    {createTelegramLink.isPending ? <span className="spinner spinner-sm" /> : "Create Link"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTelegramUnlink}
+                    disabled={!initial?.id || !initialTelegram.chatId || unlinkTelegramChat.isPending}
+                    className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    {unlinkTelegramChat.isPending ? <span className="spinner spinner-sm" /> : "Unlink"}
+                  </button>
+                </div>
+              </div>
+              {!initial?.id && (
+                <p className={mutedTextClass}>
+                  Save this notification first, then reopen it to create the one-time Telegram connect link.
+                </p>
+              )}
+              {telegramLinkUrl && (
+                <div className="rounded-lg border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/20 p-3 space-y-2">
+                  <p className="text-sm">
+                    Open this link in Telegram to bind the private chat:
+                  </p>
+                  <a
+                    href={telegramLinkUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm break-all text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    {telegramLinkUrl}
+                  </a>
+                  {telegramLinkExpiresAt && (
+                    <p className={mutedTextClass}>
+                      Expires: {formatTimestamp(telegramLinkExpiresAt)}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={telegramCommandsEnabled}
+                  onChange={(e) => setTelegramCommandsEnabled(e.target.checked)}
+                  className={checkboxClass}
+                />
+                <span className="text-sm font-medium">Enable bot commands</span>
+              </label>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Disabled by default. When enabled, the dashboard auto-generates a dedicated writable API token for this Telegram channel after the private chat is linked.
+              </p>
+            </div>
+
+            {showTelegramCommandToken && (
+              <div className="rounded-lg border border-border p-3 space-y-2">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-medium">Command token</div>
+                    <div className={mutedTextClass}>
+                      {telegramCommandStatusLabel}
+                      {persistedTelegramCommandsEnabled && initialTelegram.commandTokenName ? ` · ${initialTelegram.commandTokenName}` : ""}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTelegramReissueCommandToken}
+                    disabled={
+                      !initial?.id ||
+                      !persistedTelegramCommandsEnabled ||
+                      !initialTelegram.chatId ||
+                      reissueTelegramCommandToken.isPending
+                    }
+                    className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    {reissueTelegramCommandToken.isPending ? <span className="spinner spinner-sm" /> : "Reissue Token"}
+                  </button>
+                </div>
+                {persistedTelegramCommandsEnabled && initialTelegram.commandApiTokenId ? (
+                  <p className={mutedTextClass}>Token ID: #{initialTelegram.commandApiTokenId}</p>
+                ) : null}
+                {persistedTelegramCommandsEnabled && initialTelegram.commandTokenCreatedAt ? (
+                  <p className={mutedTextClass}>Created: {formatTimestamp(initialTelegram.commandTokenCreatedAt)}</p>
+                ) : null}
+                {persistedTelegramCommandsEnabled && initialTelegram.commandTokenLastUsedAt ? (
+                  <p className={mutedTextClass}>Last used: {formatTimestamp(initialTelegram.commandTokenLastUsedAt)}</p>
+                ) : null}
+                {persistedTelegramCommandsEnabled && initialTelegram.commandTokenExpiresAt ? (
+                  <p className={mutedTextClass}>Expires: {formatTimestamp(initialTelegram.commandTokenExpiresAt)}</p>
+                ) : null}
+                {!persistedTelegramCommandsEnabled && (
+                  <p className={mutedTextClass}>
+                    Save this notification to activate Telegram commands and issue the dedicated command token.
+                  </p>
+                )}
+                {persistedTelegramCommandsEnabled && !initialTelegram.chatId && (
+                  <p className={mutedTextClass}>
+                    Link the Telegram private chat first. The command token is issued only after the chat is linked.
+                  </p>
+                )}
+                {persistedTelegramCommandsEnabled && initialTelegram.chatId && (initialTelegram.commandTokenStatus === "missing" || initialTelegram.commandTokenStatus === "expired") && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Telegram bot commands cannot authenticate right now. Reissue the token to restore command access.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -1167,6 +1435,18 @@ export default function Notifications() {
   useEffect(() => {
     setOrderedChannels(channels ?? []);
   }, [channels]);
+
+  useEffect(() => {
+    if (!editChannel) return;
+    const refreshed = channels?.find((channel) => channel.id === editChannel.id) || null;
+    if (!refreshed) {
+      setEditChannel(null);
+      return;
+    }
+    if (refreshed !== editChannel) {
+      setEditChannel(refreshed);
+    }
+  }, [channels, editChannel]);
 
   useEffect(() => {
     orderedChannelsRef.current = orderedChannels;

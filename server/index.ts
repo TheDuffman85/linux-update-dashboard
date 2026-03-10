@@ -12,6 +12,7 @@ import * as scheduler from "./services/scheduler";
 import { createApp, websocket } from "./app";
 import { setRequestIp } from "./request-ip-store";
 import { logger } from "./logger";
+import * as telegramBot from "./services/telegram-bot";
 
 // Ensure data directory exists with restrictive permissions
 mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -84,10 +85,16 @@ const server = Bun.serve({
   websocket,
 });
 
+logger.info("Starting Telegram bot polling");
+telegramBot.start().catch((error) => {
+  logger.error("Telegram bot service failed to start", { error: String(error) });
+});
+
 // Graceful shutdown
 process.on("SIGINT", () => {
   logger.info("Shutting down");
   scheduler.stop();
+  telegramBot.stop();
   closeDatabase();
   server.stop();
   process.exit(0);
@@ -95,6 +102,7 @@ process.on("SIGINT", () => {
 
 process.on("SIGTERM", () => {
   scheduler.stop();
+  telegramBot.stop();
   closeDatabase();
   server.stop();
   process.exit(0);
@@ -229,6 +237,7 @@ function migrateEncryptionSalt(rawKey: string, newSalt: Buffer | null): void {
     email: ["smtpPassword"],
     gotify: ["gotifyToken"],
     ntfy: ["ntfyToken"],
+    telegram: ["telegramBotToken", "commandApiTokenEncrypted"],
   };
 
   const allNotifications = dbInstance.select().from(notifications).all();

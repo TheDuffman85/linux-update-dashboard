@@ -281,6 +281,7 @@ systems.get("/", (c) => {
     ...serializeSystem(s as Record<string, unknown>),
     cacheAge: cacheService.getCacheAge(s.id),
     activeOperation: updateService.getActiveOperation(s.id),
+    supportsFullUpgrade: updateService.supportsFullUpgrade(s.id),
   }));
   return c.json({ systems: systemsWithMeta });
 });

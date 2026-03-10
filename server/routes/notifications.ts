@@ -2,12 +2,14 @@ import { Hono } from "hono";
 import { Cron } from "croner";
 import { eq } from "drizzle-orm";
 import * as notificationService from "../services/notification-service";
+import * as telegramBotService from "../services/telegram-bot";
 import { getDb } from "../db";
 import { notifications } from "../db/schema";
 import { getProvider, getProviderNames, type NotificationConfig } from "../services/notifications";
 import {
   sanitizeNotificationConfig,
 } from "../services/notification-service";
+import type { SessionData } from "../auth/session";
 
 const VALID_TYPES = getProviderNames();
 const VALID_EVENTS = ["updates", "unreachable", "appUpdates"];
@@ -76,7 +78,18 @@ function validateProviderConfig(type: string, config: NotificationConfig): strin
   return provider.validateConfig(config);
 }
 
-const notificationsRouter = new Hono();
+type AuthEnv = {
+  Variables: {
+    user: SessionData;
+  };
+};
+
+const notificationsRouter = new Hono<AuthEnv>();
+
+function getActorUserId(c: { get: (key: "user") => SessionData | undefined }): number | undefined {
+  const user = c.get("user");
+  return user?.userId;
+}
 
 // List all notifications
 notificationsRouter.get("/", (c) => {
@@ -110,6 +123,69 @@ notificationsRouter.get("/:id", (c) => {
   const item = notificationService.getNotification(id);
   if (!item) return c.json({ error: "Not found" }, 404);
   return c.json(item);
+});
+
+notificationsRouter.post("/:id/telegram/link", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+
+  const row = getDb().select().from(notifications).where(eq(notifications.id, id)).get();
+  if (!row || row.type !== "telegram") {
+    return c.json({ error: "Telegram notification not found" }, 404);
+  }
+
+  try {
+    const userId = getActorUserId(c);
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    const result = await telegramBotService.createBindingLink(id, userId);
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create Telegram link";
+    return c.json({ error: message }, 400);
+  }
+});
+
+notificationsRouter.post("/:id/telegram/unlink", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+
+  const row = getDb().select().from(notifications).where(eq(notifications.id, id)).get();
+  if (!row || row.type !== "telegram") {
+    return c.json({ error: "Telegram notification not found" }, 404);
+  }
+
+  try {
+    await telegramBotService.unlinkNotification(id);
+    return c.json({ status: "ok" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to unlink Telegram chat";
+    return c.json({ error: message }, 400);
+  }
+});
+
+notificationsRouter.post("/:id/telegram/reissue-command-token", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+
+  const row = getDb().select().from(notifications).where(eq(notifications.id, id)).get();
+  if (!row || row.type !== "telegram") {
+    return c.json({ error: "Telegram notification not found" }, 404);
+  }
+
+  const userId = getActorUserId(c);
+  if (!userId) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  try {
+    await telegramBotService.reissueCommandToken(id, userId);
+    return c.json({ status: "ok" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reissue Telegram command token";
+    return c.json({ error: message }, 400);
+  }
 });
 
 // Create notification
@@ -176,6 +252,9 @@ notificationsRouter.post("/", async (c) => {
     config,
     schedule: schedule ?? null,
   });
+
+  const created = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
+  await telegramBotService.reconcileNotificationChange(null, created, getActorUserId(c));
 
   return c.json({ id }, 201);
 });
@@ -269,19 +348,25 @@ notificationsRouter.put("/:id", async (c) => {
     }
   }
 
+  const previous = existing;
   const ok = notificationService.updateNotification(id, allowed as any);
   if (!ok) return c.json({ error: "Not found" }, 404);
+
+  const current = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
+  await telegramBotService.reconcileNotificationChange(previous, current, getActorUserId(c));
 
   return c.json({ ok: true });
 });
 
 // Delete notification
-notificationsRouter.delete("/:id", (c) => {
+notificationsRouter.delete("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid ID" }, 400);
 
+  const existing = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   const ok = notificationService.deleteNotification(id);
   if (!ok) return c.json({ error: "Not found" }, 404);
+  await telegramBotService.reconcileNotificationChange(existing, null, getActorUserId(c));
   return c.json({ ok: true });
 });
 
