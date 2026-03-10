@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { CredentialEncryptor, isPassphraseKey } from "../../server/security";
-import { randomBytes } from "crypto";
+import { createCipheriv, randomBytes } from "crypto";
 
 describe("CredentialEncryptor", () => {
   const testKey = randomBytes(32).toString("base64");
@@ -73,6 +73,19 @@ describe("CredentialEncryptor", () => {
     const cipher = enc1.encrypt(plaintext);
     // Both should decrypt because base64 keys bypass PBKDF2
     expect(enc2.decrypt(cipher)).toBe(plaintext);
+  });
+
+  test("decrypts ciphertexts with shorter GCM auth tags", () => {
+    const key = randomBytes(32);
+    const iv = randomBytes(16);
+    const plaintext = "legacy-short-tag-secret";
+    const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: 12 });
+    const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    const ciphertext = Buffer.concat([iv, tag, encrypted]).toString("base64");
+
+    const enc = new CredentialEncryptor(key.toString("base64"));
+    expect(enc.decrypt(ciphertext)).toBe(plaintext);
   });
 });
 

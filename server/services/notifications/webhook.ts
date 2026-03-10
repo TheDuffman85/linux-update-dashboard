@@ -1,6 +1,6 @@
 import http from "node:http";
 import https from "node:https";
-import { getEncryptor } from "../../security";
+import { getEncryptor, looksLikeEncryptedValue } from "../../security";
 import { sanitizeOutput } from "../../utils/sanitize";
 import type {
   NotificationConfig,
@@ -114,6 +114,7 @@ function deepClone<T>(value: T): T {
 }
 
 function maybeDecryptable(value: string): boolean {
+  if (!looksLikeEncryptedValue(value)) return false;
   try {
     getEncryptor().decrypt(value);
     return true;
@@ -123,6 +124,7 @@ function maybeDecryptable(value: string): boolean {
 }
 
 function maybeDecrypt(value: string): string {
+  if (!looksLikeEncryptedValue(value)) return value;
   try {
     return getEncryptor().decrypt(value);
   } catch {

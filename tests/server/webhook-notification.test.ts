@@ -199,6 +199,7 @@ describe("webhook provider sending", () => {
 
   test("renders templated JSON bodies and bearer auth", async () => {
     const requestMock = mockHttpRequest(200, "ok");
+    const bearerToken = Buffer.from("super-secret-token-data", "utf8").toString("base64");
 
     try {
       const result = await webhookProvider.send(
@@ -209,7 +210,7 @@ describe("webhook provider sending", () => {
           url: "http://example.com/hook",
           query: [{ name: "source", value: "{{event.eventTypes.0}}" }],
           headers: [{ name: "X-Env", value: "prod", sensitive: false }],
-          auth: { mode: "bearer", token: "super-secret-token" },
+          auth: { mode: "bearer", token: bearerToken },
           body: {
             mode: "json",
             template: "{\"title\":\"{{event.title}}\",\"json\":{{event.json}}}",
@@ -228,7 +229,7 @@ describe("webhook provider sending", () => {
       const body = requestMock.getRequestBody();
 
       expect(String(options?.path)).toBe("/hook?source=updates");
-      expect(headers.Authorization).toBe("Bearer super-secret-token");
+      expect(headers.Authorization).toBe(`Bearer ${bearerToken}`);
       expect(headers["X-Env"]).toBe("prod");
 
       const parsedBody = JSON.parse(body);

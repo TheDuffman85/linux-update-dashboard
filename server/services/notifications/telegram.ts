@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db";
 import { apiTokens } from "../../db/schema";
-import { getEncryptor } from "../../security";
+import { getEncryptor, looksLikeEncryptedValue } from "../../security";
 import { decorateNotificationTitle } from "./presentation";
 import type {
   NotificationConfig,
@@ -42,10 +42,6 @@ const ALL_KEYS = new Set([
 ]);
 const VALID_BINDING_STATUSES = new Set(["unbound", "pending", "bound"]);
 
-function looksEncrypted(value: string): boolean {
-  return /^[A-Za-z0-9+/=]+$/.test(value) && value.length >= 44;
-}
-
 export interface TelegramConfig {
   telegramBotToken?: string;
   botUsername?: string;
@@ -64,7 +60,7 @@ export interface TelegramConfig {
 }
 
 function maybeDecrypt(value: string): string {
-  if (!looksEncrypted(value)) return value;
+  if (!looksLikeEncryptedValue(value)) return value;
   try {
     return getEncryptor().decrypt(value);
   } catch {
@@ -73,7 +69,7 @@ function maybeDecrypt(value: string): string {
 }
 
 function maybeDecryptable(value: string): boolean {
-  if (!looksEncrypted(value)) return false;
+  if (!looksLikeEncryptedValue(value)) return false;
   try {
     getEncryptor().decrypt(value);
     return true;

@@ -1,4 +1,4 @@
-import { getEncryptor } from "../../security";
+import { getEncryptor, looksLikeEncryptedValue } from "../../security";
 import type {
   NotificationConfig,
   NotificationPayload,
@@ -7,6 +7,7 @@ import type {
 } from "./types";
 
 function maybeDecryptable(value: string): boolean {
+  if (!looksLikeEncryptedValue(value)) return false;
   try {
     getEncryptor().decrypt(value);
     return true;
