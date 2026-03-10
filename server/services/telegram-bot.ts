@@ -1,4 +1,8 @@
 import { eq } from "drizzle-orm";
+import { existsSync } from "fs";
+import { readFile } from "fs/promises";
+import { resolve } from "path";
+import { fileURLToPath } from "url";
 import { notifications, apiTokens } from "../db/schema";
 import { getDb } from "../db";
 import { logger } from "../logger";
@@ -22,6 +26,7 @@ const JOB_POLL_INTERVAL_MS = 2000;
 const JOB_POLL_ATTEMPTS = 300;
 const MENU_PAGE_SIZE = 8;
 const PACKAGE_MENU_PAGE_SIZE = 8;
+const TELEGRAM_PROFILE_PHOTO_FILENAME = "telegram-bot-avatar.jpg";
 const TELEGRAM_COMMANDS = [
   { command: "help", description: "Show supported commands" },
   { command: "menu", description: "Open the action menu" },
@@ -118,9 +123,11 @@ class DashboardApiError extends Error {
 const linkRequests = new Map<string, LinkRequest>();
 const pendingConfirmations = new Map<string, PendingConfirmation>();
 const workers = new Map<string, WorkerState>();
+const syncedProfilePhotos = new Set<string>();
 let started = false;
 const COMMAND_TOKEN_AUTH_FAILURE_MESSAGE =
   "Telegram bot command authentication failed. The command token is missing, expired, or revoked. Reissue it in the Telegram notification settings.";
+let botProfilePhotoPath: string | null | undefined;
 
 function nowSql(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19);
@@ -194,6 +201,17 @@ async function telegramApi(
   });
 }
 
+async function telegramApiFormData(
+  botToken: string,
+  method: string,
+  body: FormData,
+): Promise<Response> {
+  return fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+    method: "POST",
+    body,
+  });
+}
+
 async function syncBotCommands(botToken: string): Promise<void> {
   const res = await telegramApi(botToken, "setMyCommands", {
     commands: TELEGRAM_COMMANDS,
@@ -231,6 +249,74 @@ async function getBotUsername(botToken: string): Promise<string> {
     throw new Error(body?.description || `Telegram getMe failed (${res.status})`);
   }
   return body.result.username;
+}
+
+function resolveBotProfilePhotoPath(): string | null {
+  if (botProfilePhotoPath !== undefined) return botProfilePhotoPath;
+
+  const moduleCandidates = [
+    new URL(`../assets/${TELEGRAM_PROFILE_PHOTO_FILENAME}`, import.meta.url),
+    new URL(`../../../server/assets/${TELEGRAM_PROFILE_PHOTO_FILENAME}`, import.meta.url),
+  ];
+
+  for (const candidate of moduleCandidates) {
+    const path = fileURLToPath(candidate);
+    if (existsSync(path)) {
+      botProfilePhotoPath = path;
+      return path;
+    }
+  }
+
+  const cwdCandidates = [
+    resolve(process.cwd(), "server/assets", TELEGRAM_PROFILE_PHOTO_FILENAME),
+    resolve(process.cwd(), "dist/server/assets", TELEGRAM_PROFILE_PHOTO_FILENAME),
+  ];
+
+  for (const candidate of cwdCandidates) {
+    if (existsSync(candidate)) {
+      botProfilePhotoPath = candidate;
+      return candidate;
+    }
+  }
+
+  botProfilePhotoPath = null;
+  return null;
+}
+
+async function syncBotProfilePhoto(botToken: string): Promise<void> {
+  if (syncedProfilePhotos.has(botToken)) return;
+
+  const photoPath = resolveBotProfilePhotoPath();
+  if (!photoPath) {
+    logger.warn("Telegram bot profile photo asset not found", {
+      file: TELEGRAM_PROFILE_PHOTO_FILENAME,
+    });
+    return;
+  }
+
+  try {
+    const photoBuffer = await readFile(photoPath);
+    const form = new FormData();
+    form.set("photo", JSON.stringify({
+      type: "static",
+      photo: "attach://avatar",
+    }));
+    form.set("avatar", new File([photoBuffer], TELEGRAM_PROFILE_PHOTO_FILENAME, {
+      type: "image/jpeg",
+    }));
+
+    const res = await telegramApiFormData(botToken, "setMyProfilePhoto", form);
+    const body = await res.json().catch(() => null) as { ok?: boolean; description?: string } | null;
+    if (!res.ok || !body?.ok) {
+      throw new Error(body?.description || `Telegram setMyProfilePhoto failed (${res.status})`);
+    }
+
+    syncedProfilePhotos.add(botToken);
+  } catch (error) {
+    logger.warn("Telegram bot profile photo sync failed", {
+      error: String(error),
+    });
+  }
 }
 
 async function callDashboardApi<T>(
@@ -1525,6 +1611,7 @@ export async function createBindingLink(notificationId: number, actorUserId: num
     throw new Error("Telegram bot token must be configured before linking a chat");
   }
 
+  await syncBotProfilePhoto(botToken);
   const botUsername = await getBotUsername(botToken);
   const nonce = crypto.randomUUID().replace(/-/g, "");
   const expiresAt = Date.now() + LINK_TTL_MS;
@@ -1599,6 +1686,8 @@ function resetTestingState(): void {
   stop();
   linkRequests.clear();
   pendingConfirmations.clear();
+  syncedProfilePhotos.clear();
+  botProfilePhotoPath = undefined;
 }
 
 export const __testing = {

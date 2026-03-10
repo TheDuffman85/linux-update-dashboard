@@ -13,6 +13,7 @@ import {
   prepareTelegramConfigForStorage,
   resolveTelegramCommandToken,
 } from "../../server/services/notifications/telegram";
+import { __testing as telegramBotTesting } from "../../server/services/telegram-bot";
 
 describe("telegram notification routes", () => {
   let tempDir: string;
@@ -23,6 +24,7 @@ describe("telegram notification routes", () => {
     tempDir = mkdtempSync(join(tmpdir(), "ludash-telegram-routes-test-"));
     initDatabase(join(tempDir, "dashboard.db"));
     initEncryptor(randomBytes(32).toString("base64"));
+    telegramBotTesting.resetTestingState();
 
     app = new Hono();
     app.use("*", async (c, next) => {
@@ -34,6 +36,7 @@ describe("telegram notification routes", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    telegramBotTesting.resetTestingState();
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -57,7 +60,25 @@ describe("telegram notification routes", () => {
     expect(createRes.status).toBe(201);
     const created = await createRes.json();
 
-    globalThis.fetch = (async (_input, _init) => {
+    let profilePhotoUploaded = false;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/setMyProfilePhoto")) {
+        expect(init?.body).toBeInstanceOf(FormData);
+        const form = init?.body as FormData;
+        expect(form.get("photo")).toBe('{"type":"static","photo":"attach://avatar"}');
+        const avatar = form.get("avatar");
+        expect(avatar).toBeInstanceOf(File);
+        expect((avatar as File).name).toBe("telegram-bot-avatar.jpg");
+        expect((avatar as File).type).toBe("image/jpeg");
+        profilePhotoUploaded = true;
+        return new Response(JSON.stringify({
+          ok: true,
+          result: true,
+        }), { status: 200 });
+      }
+
+      expect(url).toContain("/getMe");
       return new Response(JSON.stringify({
         ok: true,
         result: { username: "ludash_test_bot" },
@@ -70,10 +91,58 @@ describe("telegram notification routes", () => {
     expect(linkRes.status).toBe(200);
     const body = await linkRes.json();
     expect(body.url).toContain("https://t.me/ludash_test_bot?start=");
+    expect(profilePhotoUploaded).toBe(true);
 
     const stored = getDb().select().from(notifications).where(eq(notifications.id, created.id)).get();
     expect(stored?.config).toContain('"chatBindingStatus":"pending"');
     expect(stored?.config).toContain('"botUsername":"ludash_test_bot"');
+  });
+
+  test("creates a telegram link even if bot profile photo sync fails", async () => {
+    const createRes = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops Telegram",
+        type: "telegram",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        config: {
+          telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+          commandsEnabled: false,
+        },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+
+    let setPhotoCalls = 0;
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.includes("/setMyProfilePhoto")) {
+        setPhotoCalls += 1;
+        return new Response(JSON.stringify({
+          ok: false,
+          description: "profile photo rejected",
+        }), { status: 400 });
+      }
+
+      expect(url).toContain("/getMe");
+      return new Response(JSON.stringify({
+        ok: true,
+        result: { username: "ludash_test_bot" },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    const linkRes = await app.request(`/api/notifications/${created.id}/telegram/link`, {
+      method: "POST",
+    });
+    expect(linkRes.status).toBe(200);
+    expect(setPhotoCalls).toBe(1);
+
+    const body = await linkRes.json();
+    expect(body.url).toContain("https://t.me/ludash_test_bot?start=");
   });
 
   test("unlink clears chat binding and revokes generated command token", async () => {
