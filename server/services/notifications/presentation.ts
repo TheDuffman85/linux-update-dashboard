@@ -1,4 +1,4 @@
-import type { NotificationPayload } from "./types";
+import type { CheckResult, NotificationPayload } from "./types";
 
 const TAG_ICONS: Record<string, string> = {
   warning: "⚠️",
@@ -19,4 +19,16 @@ export function decorateNotificationTitle(
   }
 
   return payload.title;
+}
+
+export function formatUpdateCounts(updateCount: number, securityCount: number): string {
+  let text = `${updateCount} update${updateCount !== 1 ? "s" : ""}`;
+  if (securityCount > 0) {
+    text += ` (⚠️ ${securityCount} security)`;
+  }
+  return text;
+}
+
+export function formatUpdateLine(result: Pick<CheckResult, "systemName" | "updateCount" | "securityCount">): string {
+  return `${result.systemName}: ${formatUpdateCounts(result.updateCount, result.securityCount)}`;
 }

@@ -151,6 +151,60 @@ describe("telegram bot commands", () => {
     expect(sentMessages.some((body) => body.includes("- beta (#2): 0 updates"))).toBe(true);
   });
 
+  test("formats /status as HTML with emojis and preserves system order", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: "[2,1]",
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentBodies: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems")) {
+        return new Response(JSON.stringify({
+          systems: [
+            { id: 1, name: "alpha & beta", updateCount: 3, securityCount: 2, isReachable: 1 },
+            { id: 2, name: "gamma <prod>", updateCount: 0, securityCount: 0, isReachable: 0 },
+          ],
+        }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentBodies.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        text: "/status",
+        chat: { id: 55, type: "private", first_name: "Alice" },
+        from: { id: 55, first_name: "Alice" },
+      },
+    });
+
+    expect(sentBodies).toHaveLength(1);
+    const parsedBody = JSON.parse(sentBodies[0]) as { text: string; parse_mode?: string };
+
+    expect(parsedBody.parse_mode).toBe("HTML");
+    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system (2 security)");
+    expect(parsedBody.text).toContain("<code>#1</code> 🟢 <b>alpha &amp; beta</b>: 3 updates (⚠️ 2 security)");
+    expect(parsedBody.text).toContain("<code>#2</code> 🟠 <b>gamma &lt;prod&gt;</b>: 0 updates");
+    expect(parsedBody.text.indexOf("alpha &amp; beta")).toBeLessThan(parsedBody.text.indexOf("gamma &lt;prod&gt;"));
+  });
+
   test("requires confirmation before package upgrades", async () => {
     getDb().insert(notifications).values({
       name: "Ops Telegram",

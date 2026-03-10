@@ -446,7 +446,7 @@ describe("webhook delivery diagnostics", () => {
           systemId: insertedSystem.id,
           systemName: "web-1",
           updateCount: 1,
-          securityCount: 0,
+          securityCount: 1,
           previouslyReachable: true,
           nowUnreachable: false,
         },
@@ -458,6 +458,7 @@ describe("webhook delivery diagnostics", () => {
         .where(eq(notifications.id, insertedNotification.id))
         .get();
 
+      expect(requestMock.getRequestBody()).toBe("web-1: 1 update (⚠️ 1 security)");
       expect(row?.lastDeliveryStatus).toBe("success");
       expect(row?.lastDeliveryCode).toBe(200);
       expect(row?.lastDeliveryMessage).toContain("accepted");

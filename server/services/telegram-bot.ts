@@ -16,6 +16,7 @@ import {
   resolveTelegramCommandToken,
   type TelegramConfig,
 } from "./notifications/telegram";
+import { formatUpdateCounts } from "./notifications/presentation";
 
 const TELEGRAM_TYPE = "telegram";
 const LINK_TTL_MS = 10 * 60_000;
@@ -99,6 +100,7 @@ interface AllowedSystem {
   id: number;
   name: string;
   updateCount?: number;
+  securityCount?: number;
   isReachable?: number;
   supportsFullUpgrade?: boolean;
 }
@@ -226,6 +228,18 @@ async function sendTelegramText(botToken: string, chatId: string, text: string, 
   await telegramApi(botToken, "sendMessage", {
     chat_id: chatId,
     text: truncateMessage(text),
+    disable_web_page_preview: true,
+    reply_markup: replyMarkup,
+  }).catch((error) => {
+    logger.error("Telegram sendMessage failed", { error: String(error) });
+  });
+}
+
+async function sendTelegramHtml(botToken: string, chatId: string, html: string, replyMarkup?: unknown): Promise<void> {
+  await telegramApi(botToken, "sendMessage", {
+    chat_id: chatId,
+    text: truncateMessage(html),
+    parse_mode: "HTML",
     disable_web_page_preview: true,
     reply_markup: replyMarkup,
   }).catch((error) => {
@@ -514,10 +528,11 @@ async function fetchAllowedSystems(channel: NotificationRow): Promise<AllowedSys
   const commandToken = resolveTelegramCommandToken(parseConfig(channel.config));
   if (!commandToken) return [];
 
-  const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; isReachable: number; supportsFullUpgrade?: boolean }> }>(
+  const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; securityCount?: number; isReachable: number; supportsFullUpgrade?: boolean }> }>(
     commandToken,
     "/api/systems"
   );
+  // Preserve the dashboard/system sort order returned by the API, even when the channel scope is a subset.
   const scopedIds = channel.systemIds ? new Set<number>(JSON.parse(channel.systemIds)) : null;
   return response.systems.filter((system) => scopedIds === null || scopedIds.has(system.id));
 }
@@ -579,8 +594,23 @@ function formatSystemLabel(system: Pick<AllowedSystem, "id" | "name">): string {
   return `${system.name} (#${system.id})`;
 }
 
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 function formatCount(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function formatReachabilityDot(isReachable?: number): string {
+  return isReachable === -1
+    ? "🔴"
+    : isReachable === 1
+      ? "🟢"
+      : "🟠";
 }
 
 function filterSystemsForAction(
@@ -818,18 +848,23 @@ async function sendStatus(botToken: string, chatId: string, channel: Notificatio
     return;
   }
 
-  const lines = allowedSystems.slice(0, 25).map((system) => {
-    const reachability =
-      system.isReachable === -1 ? "unreachable" :
-      system.isReachable === 1 ? "reachable" :
-      "unknown";
-    return `#${system.id} ${system.name} - ${system.updateCount ?? 0} updates, ${reachability}`;
-  });
-  const suffix = allowedSystems.length > 25 ? `\n…and ${allowedSystems.length - 25} more systems.` : "";
-  await sendTelegramText(
+  const visibleSystems = allowedSystems.slice(0, 25);
+  const pendingUpdateSystems = allowedSystems.filter((system) => Number(system.updateCount ?? 0) > 0).length;
+  const totalSecurityUpdates = allowedSystems.reduce((sum, system) => sum + Number(system.securityCount ?? 0), 0);
+  const summaryIcon = totalSecurityUpdates > 0 ? "⚠️" : "📦";
+  const summaryText = totalSecurityUpdates > 0
+    ? `Pending updates on ${formatCount(pendingUpdateSystems, "system")} (${totalSecurityUpdates} security)`
+    : `Pending updates on ${formatCount(pendingUpdateSystems, "system")}`;
+  const lines = visibleSystems.map((system) =>
+    `<code>#${system.id}</code> ${formatReachabilityDot(system.isReachable)} <b>${escapeTelegramHtml(system.name)}</b>: ${escapeTelegramHtml(formatUpdateCounts(Number(system.updateCount ?? 0), Number(system.securityCount ?? 0)))}`
+  );
+  const suffix = allowedSystems.length > visibleSystems.length
+    ? `\n\n<i>...and ${allowedSystems.length - visibleSystems.length} more systems.</i>`
+    : "";
+  await sendTelegramHtml(
     botToken,
     chatId,
-    `Allowed systems (${allowedSystems.length}):\n${lines.join("\n")}${suffix}`
+    `${summaryIcon} ${escapeTelegramHtml(summaryText)}\n\n${lines.join("\n")}${suffix}`
   );
 }
 

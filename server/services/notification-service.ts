@@ -14,6 +14,7 @@ import {
   type NotificationPriority,
   type NotificationResult,
 } from "./notifications";
+import { formatUpdateLine } from "./notifications/presentation";
 import { sanitizeOutput } from "../utils/sanitize";
 import { getAppUpdateStatus } from "./app-update-service";
 
@@ -743,11 +744,7 @@ function buildBatchPayload(
     }
 
     body = updateResults
-      .map((result) => {
-        let line = `${result.systemName}: ${result.updateCount} update${result.updateCount !== 1 ? "s" : ""}`;
-        if (result.securityCount > 0) line += ` (${result.securityCount} security)`;
-        return line;
-      })
+      .map((result) => formatUpdateLine(result))
       .join("\n");
   }
 

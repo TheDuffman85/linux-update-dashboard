@@ -1,6 +1,6 @@
 import Mustache from "mustache";
 import type { NotificationEventData } from "./types";
-import { decorateNotificationTitle } from "./presentation";
+import { decorateNotificationTitle, formatUpdateLine } from "./presentation";
 
 const ALLOWED_TAG_RE = /^event(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*$/;
 
@@ -38,11 +38,7 @@ export function buildTemplateView(event: NotificationEventData) {
     tags: event.tags,
   });
   const updatesText = event.updates
-    .map((result) => {
-      let line = `${result.systemName}: ${result.updateCount} update${result.updateCount !== 1 ? "s" : ""}`;
-      if (result.securityCount > 0) line += ` (${result.securityCount} security)`;
-      return line;
-    })
+    .map((result) => formatUpdateLine(result))
     .join("\n");
   const unreachableText = event.unreachable
     .map((result) => `${result.systemName}: unreachable`)
