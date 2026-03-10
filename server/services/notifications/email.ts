@@ -2,6 +2,7 @@ import nodemailer from "nodemailer";
 import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
 import { createFlatProvider } from "./flat-provider";
+import { decorateNotificationTitle } from "./presentation";
 
 // Basic email format check (RFC 5322 simplified)
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -114,7 +115,7 @@ export const emailProvider = createFlatProvider({
     await transport.sendMail({
       from: config.smtpFrom,
       to: recipients,
-      subject: payload.title,
+      subject: decorateNotificationTitle(payload),
       text: payload.body,
       priority: importance.mailPriority,
       headers: {

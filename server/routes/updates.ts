@@ -83,6 +83,9 @@ updates.post("/systems/:id/upgrade", async (c) => {
 updates.post("/systems/:id/full-upgrade", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (!updateService.supportsFullUpgrade(id)) {
+    return c.json({ error: "Full upgrade is not supported for this system" }, 400);
+  }
   const jobId = startJob(async () => {
     const result = await updateService.applyFullUpgradeAll(id);
     return {

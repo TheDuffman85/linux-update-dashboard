@@ -1,6 +1,6 @@
 import http from "node:http";
 import https from "node:https";
-import { getEncryptor } from "../../security";
+import { getEncryptor, looksLikeEncryptedValue } from "../../security";
 import { sanitizeOutput } from "../../utils/sanitize";
 import type {
   NotificationConfig,
@@ -51,10 +51,19 @@ const BROKEN_JSONSAFE_DISCORD_TEMPLATE = JSON.stringify(
   null,
   2,
 );
-const DISCORD_TEMPLATE = `{
+const PREVIOUS_DISCORD_TEMPLATE = `{
   "embeds": [
     {
       "title": {{event.titleJson}},
+      "description": {{event.bodyJson}},
+      "timestamp": {{event.sentAtJson}}
+    }
+  ]
+}`;
+const DISCORD_TEMPLATE = `{
+  "embeds": [
+    {
+      "title": {{event.decoratedTitleJson}},
       "description": {{event.bodyJson}},
       "timestamp": {{event.sentAtJson}}
     }
@@ -105,6 +114,7 @@ function deepClone<T>(value: T): T {
 }
 
 function maybeDecryptable(value: string): boolean {
+  if (!looksLikeEncryptedValue(value)) return false;
   try {
     getEncryptor().decrypt(value);
     return true;
@@ -114,6 +124,7 @@ function maybeDecryptable(value: string): boolean {
 }
 
 function maybeDecrypt(value: string): string {
+  if (!looksLikeEncryptedValue(value)) return value;
   try {
     return getEncryptor().decrypt(value);
   } catch {
@@ -252,7 +263,8 @@ function sanitizeWebhookConfig(config: NotificationConfig): WebhookConfig {
     sanitized.body.mode === "json" &&
     (
       sanitized.body.template === LEGACY_DISCORD_TEMPLATE ||
-      sanitized.body.template === BROKEN_JSONSAFE_DISCORD_TEMPLATE
+      sanitized.body.template === BROKEN_JSONSAFE_DISCORD_TEMPLATE ||
+      sanitized.body.template === PREVIOUS_DISCORD_TEMPLATE
     )
   ) {
     sanitized.body.template = DISCORD_TEMPLATE;

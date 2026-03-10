@@ -75,6 +75,7 @@ describe("gotify provider sending", () => {
         title: "Updates",
         body: "hello",
         priority: "high",
+        tags: ["package"],
       },
       {
         gotifyUrl: "https://gotify.example.com",
@@ -86,7 +87,7 @@ describe("gotify provider sending", () => {
     expect(result.success).toBe(true);
     expect(requestUrl?.toString()).toBe("https://gotify.example.com/message?token=token-123");
     expect(JSON.parse(requestBody)).toEqual({
-      title: "Updates",
+      title: "📦 Updates",
       message: "hello",
       priority: 8,
     });

@@ -1,6 +1,7 @@
 import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
 import { createFlatProvider } from "./flat-provider";
+import { decorateNotificationTitle } from "./presentation";
 
 const ALLOWED_CONFIG_KEYS = new Set([
   "gotifyUrl",
@@ -114,7 +115,7 @@ export const gotifyProvider = createFlatProvider({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        title: payload.title,
+        title: decorateNotificationTitle(payload),
         message: payload.body,
         priority: resolvePriority(payload.priority, config.gotifyPriorityOverride),
       }),

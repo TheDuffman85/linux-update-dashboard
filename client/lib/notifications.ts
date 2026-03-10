@@ -32,6 +32,23 @@ export interface WebhookConfig extends NotificationConfig {
   allowInsecureTls: boolean;
 }
 
+export interface TelegramConfig extends NotificationConfig {
+  telegramBotToken?: string;
+  botUsername?: string;
+  chatId?: string;
+  chatDisplayName?: string;
+  chatBoundAt?: string;
+  chatBindingStatus?: "unbound" | "pending" | "bound";
+  commandsEnabled?: boolean;
+  commandApiTokenEncrypted?: string;
+  commandApiTokenId?: number;
+  commandTokenStatus?: "not-required" | "pending" | "missing" | "expired" | "active";
+  commandTokenName?: string;
+  commandTokenCreatedAt?: string;
+  commandTokenLastUsedAt?: string;
+  commandTokenExpiresAt?: string;
+}
+
 export interface NotificationChannel {
   id: number;
   name: string;
@@ -156,5 +173,44 @@ export function useTestNotificationConfig() {
         `/notifications/test`,
         { method: "POST", body: JSON.stringify(data) }
       ),
+  });
+}
+
+export function useCreateTelegramLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ url: string; expiresAt: string }>(`/notifications/${id}/telegram/link`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
+export function useUnlinkTelegramChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ status: string }>(`/notifications/${id}/telegram/unlink`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
+export function useReissueTelegramCommandToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ status: string }>(`/notifications/${id}/telegram/reissue-command-token`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
   });
 }

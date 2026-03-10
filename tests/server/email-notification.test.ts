@@ -80,6 +80,7 @@ describe("email provider sending", () => {
         title: "Updates",
         body: "hello",
         priority: "default",
+        tags: ["warning"],
       },
       {
         smtpHost: "smtp.example.com",
@@ -91,6 +92,7 @@ describe("email provider sending", () => {
     );
 
     expect(result.success).toBe(true);
+    expect(sentMail?.subject).toBe("⚠️ Updates");
     expect(sentMail?.priority).toBe("high");
     expect(sentMail?.headers).toEqual({
       Importance: "high",

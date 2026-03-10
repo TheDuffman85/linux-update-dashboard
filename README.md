@@ -29,11 +29,14 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 ## Features
 
-- **Multi-distribution support:** APT (Debian/Ubuntu), DNF (Fedora/RHEL 8+), YUM (CentOS/older RHEL), Pacman (Arch/Manjaro), Flatpak, and Snap
+- **Multi-distribution support:** APT (Debian/Ubuntu), DNF (Fedora/RHEL 8+), YUM (CentOS/older RHEL), Pacman (Arch/Manjaro), APK (Alpine), Flatpak, and Snap
+- **Reusable credential vault:** store username/password, SSH key, or OpenSSH certificate credentials once and reuse them across systems
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
-- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh, Webhooks), scope them to specific systems, and pick which events trigger each channel
+- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
+- **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
+- **Safer SSH workflows:** optional host-key verification with explicit trust approval, plus ProxyJump support for reaching internal hosts
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Four auth methods:** password, Passkeys (WebAuthn), SSO (OpenID Connect), and API tokens for external integrations
 - **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
@@ -41,6 +44,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
 - **System duplication:** clone an existing system entry (including encrypted credentials) to quickly add similar servers
 - **Exclude from Upgrade All:** make individual systems start unchecked in the Upgrade All Systems dialog
+- **Visibility controls:** hide systems from the main dashboard without deleting them
 - **Notification digests:** schedule notification delivery on a cron expression for batched digest summaries instead of immediate alerts
 - **Dark mode:** dark/light theme with OS preference detection
 - **Update history:** logs every check and upgrade operation per system
@@ -61,7 +65,7 @@ Manage all connected servers with status, update counts, and quick actions.
 ![Systems List](screenshots/screenshot-2.1.png)
 
 ### Add System
-Add a new server via SSH with password or key-based authentication.
+Add a new server via SSH using a saved credential, with package-manager detection, host-key trust, and ProxyJump support.
 
 ![Add System](screenshots/screenshot-2.2.png)
 
@@ -76,7 +80,7 @@ Expandable history entries with the executed command and its full output.
 ![Activity Log](screenshots/screenshot-3.png)
 
 ### Notifications
-Configure notification channels (Email/SMTP, Gotify, ntfy.sh, Webhooks) with per-event and per-system filtering.
+Configure notification channels (Email/SMTP, Gotify, ntfy.sh, Telegram, Webhooks) with per-event and per-system filtering.
 
 ![Notifications](screenshots/screenshot-4.png)
 
@@ -101,14 +105,14 @@ Configure update schedules, SSH timeouts, OIDC single sign-on, and API tokens.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/linux-update-dashboard.git
+git clone https://github.com/TheDuffman85/linux-update-dashboard.git
 cd linux-update-dashboard
 
 # Install dependencies
 bun install
 
 # Generate an encryption key
-export LUDASH_ENCRYPTION_KEY=$(bun -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
 
 # Start development servers
 bun run dev
@@ -346,6 +350,164 @@ Usage:
 curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/stats
 ```
 
+## Notification Channels
+
+Notification channels are configured from the **Notifications** page. You can create multiple channels of different types, subscribe each one to different events, limit them to specific systems, and choose whether they deliver immediately or on a cron-based digest schedule.
+
+### Common Channel Options
+
+Every channel supports the same high-level behavior:
+
+- **Channel types:** `Email`, `Gotify`, `ntfy`, `Telegram`, and `Webhook`
+- **Events:** `updates`, `unreachable`, and `appUpdates`
+- **Default events:** new channels default to `updates` and `appUpdates`
+- **System scope:** `All systems` or a selected list of system IDs
+- **Schedule:** `immediate` delivery or a cron expression for digest delivery
+- **Test send:** use **Send Test** to validate a saved channel or inline config
+- **Secrets:** passwords, tokens, and webhook secrets are encrypted at rest
+
+Digest schedules buffer matching events until the next cron run. Immediate channels send as soon as the event is detected. Delivery diagnostics are stored with the channel, including the last status, response code, and a short response/error summary.
+
+### Channel Overview
+
+| Type | Best for | Notes |
+|------|----------|-------|
+| `Email` | inbox-based alerts | SMTP transport with optional auth and importance override |
+| `Gotify` | mobile/self-hosted push | app token stored encrypted |
+| `ntfy` | lightweight push topics | topic-based delivery with optional bearer token |
+| `Telegram` | chat notifications and optional remote actions | private-chat only |
+| `Webhook` | integrations with automation tools, chat ops, and custom receivers | supports templates, auth, retries, and a Discord preset |
+
+### Telegram
+
+Telegram channels store their own bot token, private-chat binding, and optional command capability.
+
+#### Notification-only setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the bot token.
+2. In the dashboard, go to **Notifications** and create a new `Telegram` channel.
+3. Paste the bot token, choose events/system scope, and save the channel.
+4. Re-open that Telegram channel and click **Create Link**.
+5. Open the generated `https://t.me/<bot>?start=<nonce>` link in Telegram from the private account that should receive notifications.
+6. Start the bot from Telegram. The dashboard will bind that private chat to the notification channel.
+7. Use **Send Test** from the notification editor to verify delivery.
+
+Binding details:
+
+- Telegram notifications support **private chats only** in v1
+- binding uses a **single-use deep link** that expires after **10 minutes**
+- the channel shows a binding status of `unbound`, `pending`, or `bound`
+- changing the bot token clears the existing binding and requires linking again
+
+#### Optional Telegram commands
+
+Telegram commands are **disabled by default**. Enable them only if that private chat should be allowed to trigger dashboard actions.
+
+When **Enable bot commands** is turned on for a linked Telegram channel:
+
+- the dashboard auto-generates a dedicated **write-capable API token** for that channel
+- only the normal SHA-256 hash is stored in the `api_tokens` table
+- the bot keeps an encrypted copy in the Telegram channel config so it can call existing API routes
+- the notification editor shows token status plus created, last-used, and expiry timestamps
+- you can **reissue** the token if it is missing, expired, or was deleted manually
+
+The generated command token is automatically revoked when:
+
+- commands are disabled
+- the Telegram chat is unlinked
+- the Telegram notification channel is deleted
+- the Telegram bot token changes
+
+If the backing API token is deleted manually, commands stop working by design until you reissue it from the channel editor.
+
+#### Telegram commands
+
+Supported commands:
+
+- `/help`
+- `/menu`
+- `/status`
+- `/check <system-id|all>`
+- `/upgrade <system-id|all>`
+- `/fullupgrade <system-id|all>`
+- `/upgradepkg <system-id> <package>`
+
+Behavior:
+
+- Telegram registers `/help`, `/menu`, and `/status` in Telegram's native command picker
+- `/menu` opens an inline menu for status, refresh, upgrade, full-upgrade, and package-upgrade flows
+- `/status` lists the systems this channel is allowed to control
+- `/check`, `/upgrade`, and `/fullupgrade` also accept `all` to target every allowed system that matches that action
+- the system picker in `/menu` includes an `All` button for refresh, upgrade, and full-upgrade flows
+- `/upgrade`, `/fullupgrade`, and `/upgradepkg` require an explicit confirmation button before execution, including `all`
+- confirmation buttons expire after **5 minutes**
+- `/fullupgrade` is only offered for systems that actually support full-upgrade semantics
+- command scope follows the channel's configured `systemIds`; a scoped channel can only act on those same systems
+
+#### Telegram security notes
+
+- command access is **private-chat-only**
+- commands are **off by default**
+- mutating commands require confirmation
+- bot tokens and generated command tokens are **encrypted at rest**
+- if you only need alerts, leave commands disabled and use Telegram as a notification-only channel
+
+### Webhooks
+
+Webhook channels are intended for custom integrations such as Home Assistant, n8n, Node-RED, custom APIs, chat bridges, and Discord-compatible endpoints.
+
+#### Webhook capabilities
+
+- methods: `POST`, `PUT`, or `PATCH`
+- presets: `custom` or `discord`
+- authentication: none, bearer token, or basic auth
+- request body modes: plain text, JSON template, or form-encoded fields
+- optional query parameters and custom headers
+- configurable timeout, retry count, retry delay, and optional insecure TLS for self-signed/internal targets
+
+Default webhook behavior:
+
+- timeout defaults to **10 seconds**
+- retries default to **2**
+- retry delay defaults to **30 seconds**
+- delivery diagnostics record the last HTTP status and a truncated response body or error message
+
+#### Webhook template variables
+
+Webhook templates use simple Mustache variable tags. Only dotted `event.*` paths are allowed; sections, loops, and other Mustache control tags are rejected.
+
+Available values include:
+
+- `{{event.title}}`, `{{event.body}}`, `{{event.priority}}`, `{{event.sentAt}}`
+- `{{event.eventTypes.0}}`, `{{event.tags.0}}`, `{{event.tagsCsv}}`
+- `{{event.totals.totalUpdates}}`, `{{event.totals.totalSecurity}}`, `{{event.totals.unreachableSystems}}`
+- `{{event.updatesText}}`, `{{event.unreachableText}}`, `{{event.appUpdateText}}`
+- `{{event.json}}`, `{{event.updatesJson}}`, `{{event.unreachableJson}}`, `{{event.appUpdateJson}}`
+- JSON-safe variants such as `{{event.titleJson}}`, `{{event.bodyJson}}`, `{{event.sentAtJson}}`, and `{{event.decoratedTitleJson}}`
+
+Use the `...Json` helpers when you are embedding strings inside a JSON document. Example:
+
+```json
+{
+  "title": {{event.decoratedTitleJson}},
+  "message": {{event.bodyJson}},
+  "rawEvent": {{event.json}}
+}
+```
+
+#### Webhook validation and security
+
+- webhook URLs must be valid `http` or `https` URLs
+- embedded credentials in the URL are rejected
+- the metadata endpoints `169.254.169.254` and `metadata.google.internal` are blocked
+- reserved headers such as `Authorization`, `Host`, `Content-Length`, `Connection`, and `Cookie` cannot be set manually
+- if you need auth, use the built-in bearer/basic auth settings instead of custom `Authorization` headers
+- sensitive header values, auth secrets, and sensitive form fields are masked in the UI and reused safely on update
+
+#### Discord preset
+
+The `discord` preset keeps the webhook in JSON mode and uses a Discord embed payload based on the notification title/body. Existing legacy Discord templates are upgraded automatically to the current JSON-safe format when loaded.
+
 ## Supported Package Managers
 
 | Package Manager | Distributions |
@@ -354,6 +516,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | DNF | Fedora, RHEL 8+, AlmaLinux, Rocky |
 | YUM | CentOS, older RHEL |
 | Pacman | Arch Linux, Manjaro |
+| APK | Alpine Linux |
 | Flatpak | Any (cross-distribution) |
 | Snap | Any (cross-distribution) |
 
@@ -372,20 +535,20 @@ Package managers are auto-detected on each system over SSH when you test the con
 │   ├── lib/                  # TanStack Query hooks and API client
 │   ├── components/           # Shared UI components
 │   ├── context/              # Auth and toast providers
-│   ├── hooks/                # Custom hooks (theme)
+│   ├── hooks/                # Custom hooks
 │   ├── pages/                # Route pages
 │   └── styles/               # Tailwind CSS
 ├── server/                   # Hono backend
 │   ├── auth/                 # Password, WebAuthn, OIDC, session handling
-│   ├── db/                   # SQLite + Drizzle schema (8 tables)
-│   ├── middleware/            # Auth and rate-limit middleware
+│   ├── db/                   # SQLite + Drizzle schema (9 tables)
+│   ├── middleware/           # Auth and rate-limit middleware
 │   ├── routes/               # API route handlers
 │   ├── services/             # Business logic, caching, scheduling
 │   └── ssh/                  # SSH connection manager + parsers
 ├── tests/server/             # Bun test suites
 ├── docker/                   # Dockerfile, compose, entrypoint
 │   └── test-systems/         # Docker test containers
-├── run.sh                    # Local dev/production runner
+├── run.sh                    # Local dev/production/test runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
 ├── vite.config.ts            # Vite + Tailwind config
 └── package.json
@@ -405,7 +568,7 @@ There's a helper script `run.sh` to manage services.
 ./run.sh
 ```
 
-Or use the npm scripts directly:
+Or use the Bun scripts directly:
 
 ```bash
 # Start both dev servers (backend :3001 + Vite :5173 with HMR)
@@ -491,6 +654,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/auth/login` | Password login |
 | POST | `/api/auth/logout` | Clear session |
 | GET | `/api/auth/me` | Current user info |
+| POST | `/api/auth/change-password` | Change the current user's password |
 | POST | `/api/auth/webauthn/register/options` | Start passkey registration |
 | POST | `/api/auth/webauthn/register/verify` | Complete passkey registration |
 | POST | `/api/auth/webauthn/login/options` | Start passkey login |
@@ -505,10 +669,12 @@ All endpoints require authentication unless noted. Responses are JSON.
 | GET | `/api/systems` | List all systems with update counts |
 | GET | `/api/systems/:id` | System detail with updates and history |
 | POST | `/api/systems` | Add a new system |
+| PUT | `/api/systems/reorder` | Reorder systems |
 | PUT | `/api/systems/:id` | Update system configuration |
-| DELETE | `/api/systems/:id` | Remove a system |
 | POST | `/api/systems/test-connection` | Test SSH connectivity |
 | POST | `/api/systems/:id/reboot` | Reboot a system |
+| POST | `/api/systems/:id/revoke-host-key` | Clear the stored trusted host key |
+| DELETE | `/api/systems/:id` | Remove a system |
 | GET | `/api/systems/:id/updates` | Cached updates for a system |
 | GET | `/api/systems/:id/history` | Upgrade history for a system |
 
@@ -529,12 +695,27 @@ All endpoints require authentication unless noted. Responses are JSON.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/notifications` | List all notification channels |
+| PUT | `/api/notifications/reorder` | Reorder notification channels |
 | GET | `/api/notifications/:id` | Get a notification channel |
 | POST | `/api/notifications` | Create a notification channel |
 | PUT | `/api/notifications/:id` | Update a notification channel |
 | DELETE | `/api/notifications/:id` | Delete a notification channel |
+| POST | `/api/notifications/:id/telegram/link` | Create a one-time Telegram chat binding link |
+| POST | `/api/notifications/:id/telegram/unlink` | Remove the Telegram chat binding and revoke any generated command token |
+| POST | `/api/notifications/:id/telegram/reissue-command-token` | Rotate the Telegram command token for a linked channel with commands enabled |
 | POST | `/api/notifications/test` | Test a notification config inline (before saving) |
 | POST | `/api/notifications/:id/test` | Send a test notification |
+
+### Credentials (`/api/credentials/*`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/credentials` | List saved credentials |
+| PUT | `/api/credentials/reorder` | Reorder credentials |
+| GET | `/api/credentials/:id` | Get a credential with masked secrets |
+| POST | `/api/credentials` | Create a credential |
+| PUT | `/api/credentials/:id` | Update a credential |
+| DELETE | `/api/credentials/:id` | Delete a credential |
 
 ### Passkeys (`/api/passkeys/*`)
 
@@ -565,7 +746,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 ## Security
 
 - **Credential encryption:** SSH passwords and private keys are encrypted at rest using AES-256-GCM with per-entry random IVs and auth tags
-- **Notification secrets:** SMTP passwords, Gotify app tokens, ntfy tokens, and webhook secrets are also encrypted at rest within notification channel configs
+- **Notification secrets:** SMTP passwords, Gotify app tokens, ntfy tokens, Telegram bot tokens, Telegram command tokens, and webhook secrets are also encrypted at rest within notification channel configs
 - **Key derivation:** supports both raw base64 keys and passphrase-derived keys (PBKDF2-SHA256, 480k iterations)
 - **Session security:** HTTP-only, SameSite=Lax cookies with JWT (HS256)
 - **CSRF protection:** state-changing API requests require a per-session CSRF token header
@@ -573,6 +754,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **Notification URL validation:** outbound notification URLs are validated for correct format (http/https); private/local targets are allowed since they are admin-configured
 - **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify, 20 failed bearer attempts/min per IP)
 - **API token security:** only SHA-256 hashes stored, tokens blocked from management endpoints, CSRF skipped for stateless bearer requests
+- **Telegram command safety:** Telegram commands are private-chat-only, disabled by default, scoped to the channel's allowed systems, and mutating actions require confirmation
 - **Password-disable safeguard:** password login cannot be disabled unless a passkey or SSO is configured (enforced server-side)
 - **Timing-safe login:** a pre-computed dummy hash is always compared on failed lookups to prevent username enumeration
 - **Encrypted OIDC secrets:** OIDC client secrets are encrypted at rest alongside SSH credentials

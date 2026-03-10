@@ -199,6 +199,7 @@ describe("webhook provider sending", () => {
 
   test("renders templated JSON bodies and bearer auth", async () => {
     const requestMock = mockHttpRequest(200, "ok");
+    const bearerToken = Buffer.from("super-secret-token-data", "utf8").toString("base64");
 
     try {
       const result = await webhookProvider.send(
@@ -209,7 +210,7 @@ describe("webhook provider sending", () => {
           url: "http://example.com/hook",
           query: [{ name: "source", value: "{{event.eventTypes.0}}" }],
           headers: [{ name: "X-Env", value: "prod", sensitive: false }],
-          auth: { mode: "bearer", token: "super-secret-token" },
+          auth: { mode: "bearer", token: bearerToken },
           body: {
             mode: "json",
             template: "{\"title\":\"{{event.title}}\",\"json\":{{event.json}}}",
@@ -228,7 +229,7 @@ describe("webhook provider sending", () => {
       const body = requestMock.getRequestBody();
 
       expect(String(options?.path)).toBe("/hook?source=updates");
-      expect(headers.Authorization).toBe("Bearer super-secret-token");
+      expect(headers.Authorization).toBe(`Bearer ${bearerToken}`);
       expect(headers["X-Env"]).toBe("prod");
 
       const parsedBody = JSON.parse(body);
@@ -381,6 +382,7 @@ describe("webhook provider sending", () => {
 
       expect(result.success).toBe(true);
       const parsed = JSON.parse(requestMock.getRequestBody());
+      expect(parsed.embeds[0].title).toBe("📦 Updates available");
       expect(parsed.embeds[0].description).toBe("web-1: 3 updates");
     } finally {
       requestMock.restore();
@@ -445,7 +447,7 @@ describe("webhook delivery diagnostics", () => {
           systemId: insertedSystem.id,
           systemName: "web-1",
           updateCount: 1,
-          securityCount: 0,
+          securityCount: 1,
           previouslyReachable: true,
           nowUnreachable: false,
         },
@@ -457,6 +459,7 @@ describe("webhook delivery diagnostics", () => {
         .where(eq(notifications.id, insertedNotification.id))
         .get();
 
+      expect(requestMock.getRequestBody()).toBe("web-1: 1 update (⚠️ 1 security)");
       expect(row?.lastDeliveryStatus).toBe("success");
       expect(row?.lastDeliveryCode).toBe(200);
       expect(row?.lastDeliveryMessage).toContain("accepted");

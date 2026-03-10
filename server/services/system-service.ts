@@ -453,12 +453,19 @@ export function getSystemWithUpdateCount(systemId: number) {
 
   const db = getDb();
   const result = db
-    .select({ count: count() })
+    .select({
+      count: count(),
+      securityCount: sql<number>`coalesce(sum(case when ${updateCache.isSecurity} = 1 then 1 else 0 end), 0)`,
+    })
     .from(updateCache)
     .where(eq(updateCache.systemId, systemId))
     .get();
 
-  return { ...system, updateCount: result?.count ?? 0 };
+  return {
+    ...system,
+    updateCount: result?.count ?? 0,
+    securityCount: result?.securityCount ?? 0,
+  };
 }
 
 export function listSystemsWithUpdateCounts() {
@@ -467,11 +474,18 @@ export function listSystemsWithUpdateCounts() {
 
   return allSystems.map((s) => {
     const result = db
-      .select({ count: count() })
+      .select({
+        count: count(),
+        securityCount: sql<number>`coalesce(sum(case when ${updateCache.isSecurity} = 1 then 1 else 0 end), 0)`,
+      })
       .from(updateCache)
       .where(eq(updateCache.systemId, s.id))
       .get();
-    return { ...s, updateCount: result?.count ?? 0 };
+    return {
+      ...s,
+      updateCount: result?.count ?? 0,
+      securityCount: result?.securityCount ?? 0,
+    };
   });
 }
 
@@ -481,11 +495,18 @@ export function listVisibleSystemsWithUpdateCounts() {
 
   return allSystems.map((s) => {
     const result = db
-      .select({ count: count() })
+      .select({
+        count: count(),
+        securityCount: sql<number>`coalesce(sum(case when ${updateCache.isSecurity} = 1 then 1 else 0 end), 0)`,
+      })
       .from(updateCache)
       .where(eq(updateCache.systemId, s.id))
       .get();
-    return { ...s, updateCount: result?.count ?? 0 };
+    return {
+      ...s,
+      updateCount: result?.count ?? 0,
+      securityCount: result?.securityCount ?? 0,
+    };
   });
 }
 

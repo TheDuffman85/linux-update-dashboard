@@ -2,6 +2,7 @@ import type { NotificationProvider } from "./types";
 import { emailProvider } from "./email";
 import { gotifyProvider } from "./gotify";
 import { ntfyProvider } from "./ntfy";
+import { telegramProvider } from "./telegram";
 import { webhookProvider } from "./webhook";
 
 export type {
@@ -20,6 +21,7 @@ const providers: Record<string, NotificationProvider> = {
   email: emailProvider,
   gotify: gotifyProvider,
   ntfy: ntfyProvider,
+  telegram: telegramProvider,
   webhook: webhookProvider,
 };
 
