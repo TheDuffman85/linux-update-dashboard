@@ -1,5 +1,6 @@
 import Mustache from "mustache";
 import type { NotificationEventData } from "./types";
+import { decorateNotificationTitle } from "./presentation";
 
 const ALLOWED_TAG_RE = /^event(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*$/;
 
@@ -32,6 +33,10 @@ function jsonStringify(value: unknown): string {
 }
 
 export function buildTemplateView(event: NotificationEventData) {
+  const decoratedTitle = decorateNotificationTitle({
+    title: event.title,
+    tags: event.tags,
+  });
   const updatesText = event.updates
     .map((result) => {
       let line = `${result.systemName}: ${result.updateCount} update${result.updateCount !== 1 ? "s" : ""}`;
@@ -57,7 +62,9 @@ export function buildTemplateView(event: NotificationEventData) {
       updatesText,
       unreachableText,
       appUpdateText,
+      decoratedTitle,
       titleJson: jsonStringify(event.title),
+      decoratedTitleJson: jsonStringify(decoratedTitle),
       bodyJson: jsonStringify(event.body),
       sentAtJson: jsonStringify(event.sentAt),
       priorityJson: jsonStringify(event.priority),

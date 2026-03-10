@@ -51,10 +51,19 @@ const BROKEN_JSONSAFE_DISCORD_TEMPLATE = JSON.stringify(
   null,
   2,
 );
-const DISCORD_TEMPLATE = `{
+const PREVIOUS_DISCORD_TEMPLATE = `{
   "embeds": [
     {
       "title": {{event.titleJson}},
+      "description": {{event.bodyJson}},
+      "timestamp": {{event.sentAtJson}}
+    }
+  ]
+}`;
+const DISCORD_TEMPLATE = `{
+  "embeds": [
+    {
+      "title": {{event.decoratedTitleJson}},
       "description": {{event.bodyJson}},
       "timestamp": {{event.sentAtJson}}
     }
@@ -252,7 +261,8 @@ function sanitizeWebhookConfig(config: NotificationConfig): WebhookConfig {
     sanitized.body.mode === "json" &&
     (
       sanitized.body.template === LEGACY_DISCORD_TEMPLATE ||
-      sanitized.body.template === BROKEN_JSONSAFE_DISCORD_TEMPLATE
+      sanitized.body.template === BROKEN_JSONSAFE_DISCORD_TEMPLATE ||
+      sanitized.body.template === PREVIOUS_DISCORD_TEMPLATE
     )
   ) {
     sanitized.body.template = DISCORD_TEMPLATE;

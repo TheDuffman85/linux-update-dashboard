@@ -85,11 +85,12 @@ describe("telegram provider sending", () => {
       {
         title: "Updates",
         body: "2 packages",
+        tags: ["package"],
         event: {
           title: "Updates",
           body: "2 packages",
           priority: "default",
-          tags: [],
+          tags: ["package"],
           sentAt: new Date().toISOString(),
           eventTypes: [],
           totals: {
@@ -110,8 +111,9 @@ describe("telegram provider sending", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(requestBody).toContain('"chat_id":"55"');
-    expect(requestBody).toContain("Updates");
+    const parsedBody = JSON.parse(requestBody) as { chat_id: string; text: string; parse_mode?: string };
+    expect(parsedBody.chat_id).toBe("55");
+    expect(parsedBody.parse_mode).toBe("HTML");
+    expect(parsedBody.text).toBe("<b>📦 Updates</b>\n\n2 packages");
   });
 });
-

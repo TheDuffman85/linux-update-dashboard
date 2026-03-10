@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db";
 import { apiTokens } from "../../db/schema";
 import { getEncryptor } from "../../security";
+import { decorateNotificationTitle } from "./presentation";
 import type {
   NotificationConfig,
   NotificationPayload,
@@ -279,6 +280,13 @@ function validateTokenFormat(token: string): boolean {
   return /^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(token);
 }
 
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 async function sendTelegramMessage(
   botToken: string,
   chatId: string,
@@ -292,6 +300,7 @@ async function sendTelegramMessage(
     body: JSON.stringify({
       chat_id: chatId,
       text,
+      parse_mode: "HTML",
       disable_web_page_preview: true,
     }),
   });
@@ -374,7 +383,10 @@ export const telegramProvider: NotificationProvider = {
       return { success: false, error: "Telegram chat is not bound yet" };
     }
 
-    const message = `${payload.title}\n\n${payload.body}`;
+    const message = [
+      `<b>${escapeTelegramHtml(decorateNotificationTitle(payload))}</b>`,
+      escapeTelegramHtml(payload.body),
+    ].filter(Boolean).join("\n\n");
     return sendTelegramMessage(botToken, telegram.chatId, message);
   },
 };

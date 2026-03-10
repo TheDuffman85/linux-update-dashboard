@@ -381,6 +381,7 @@ describe("webhook provider sending", () => {
 
       expect(result.success).toBe(true);
       const parsed = JSON.parse(requestMock.getRequestBody());
+      expect(parsed.embeds[0].title).toBe("📦 Updates available");
       expect(parsed.embeds[0].description).toBe("web-1: 3 updates");
     } finally {
       requestMock.restore();

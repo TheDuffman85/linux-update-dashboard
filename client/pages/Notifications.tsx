@@ -46,7 +46,7 @@ const TELEGRAM_COMMAND_TOKEN_STATUS_LABELS: Record<string, string> = {
 const DISCORD_TEMPLATE = `{
   "embeds": [
     {
-      "title": {{event.titleJson}},
+      "title": {{event.decoratedTitleJson}},
       "description": {{event.bodyJson}},
       "timestamp": {{event.sentAtJson}}
     }
