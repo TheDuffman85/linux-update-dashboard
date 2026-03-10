@@ -424,9 +424,9 @@ Supported commands:
 - `/help`
 - `/menu`
 - `/status`
-- `/check <system-id>`
-- `/upgrade <system-id>`
-- `/fullupgrade <system-id>`
+- `/check <system-id|all>`
+- `/upgrade <system-id|all>`
+- `/fullupgrade <system-id|all>`
 - `/upgradepkg <system-id> <package>`
 
 Behavior:
@@ -434,8 +434,9 @@ Behavior:
 - Telegram registers `/help`, `/menu`, and `/status` in Telegram's native command picker
 - `/menu` opens an inline menu for status, refresh, upgrade, full-upgrade, and package-upgrade flows
 - `/status` lists the systems this channel is allowed to control
-- `/check` triggers a refresh/check for one allowed system
-- `/upgrade`, `/fullupgrade`, and `/upgradepkg` require an explicit confirmation button before execution
+- `/check`, `/upgrade`, and `/fullupgrade` also accept `all` to target every allowed system that matches that action
+- the system picker in `/menu` includes an `All` button for refresh, upgrade, and full-upgrade flows
+- `/upgrade`, `/fullupgrade`, and `/upgradepkg` require an explicit confirmation button before execution, including `all`
 - confirmation buttons expire after **5 minutes**
 - `/fullupgrade` is only offered for systems that actually support full-upgrade semantics
 - command scope follows the channel's configured `systemIds`; a scoped channel can only act on those same systems

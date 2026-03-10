@@ -42,8 +42,9 @@ interface PendingConfirmation {
   chatId: string;
   botToken: string;
   actorUserId: number;
-  command: "upgrade" | "full-upgrade" | "upgrade-package";
-  systemId: number;
+  command: "upgrade" | "full-upgrade" | "upgrade-package" | "upgrade-all" | "full-upgrade-all";
+  systemId?: number;
+  targetSystems?: Array<{ id: number; name: string }>;
   packageName?: string;
   expiresAt: number;
 }
@@ -100,6 +101,9 @@ interface AllowedSystem {
 interface SystemUpdate {
   packageName: string;
 }
+
+type SystemAction = "check" | "upgrade" | "fullupgrade" | "pkgsys";
+type BulkAction = "check" | "upgrade" | "fullupgrade";
 
 class DashboardApiError extends Error {
   status: number;
@@ -485,17 +489,137 @@ function resolveSystem(
   return exact.length === 1 ? exact[0] : null;
 }
 
+function formatSystemLabel(system: Pick<AllowedSystem, "id" | "name">): string {
+  return `${system.name} (#${system.id})`;
+}
+
+function formatCount(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function filterSystemsForAction(
+  systemsList: AllowedSystem[],
+  action: SystemAction | BulkAction,
+): AllowedSystem[] {
+  return systemsList.filter((system) =>
+    action === "fullupgrade"
+      ? system.supportsFullUpgrade === true && (system.updateCount ?? 0) > 0
+      : action === "upgrade" || action === "pkgsys"
+        ? (system.updateCount ?? 0) > 0
+        : true
+  );
+}
+
+async function getSystemsForAction(
+  channel: NotificationRow,
+  action: SystemAction | BulkAction,
+): Promise<AllowedSystem[]> {
+  const systems = await fetchAllowedSystems(channel);
+  if (action === "check") return systems;
+  return filterSystemsForAction(systems, action);
+}
+
+async function revalidatePendingConfirmation(
+  channel: NotificationRow,
+  pending: PendingConfirmation,
+): Promise<
+  | { ok: true; systemId?: number; systemName?: string; targetSystems?: Array<{ id: number; name: string }> }
+  | { ok: false; message: string }
+> {
+  const allowedSystems = await fetchAllowedSystems(channel);
+  const allowedById = new Map(allowedSystems.map((system) => [system.id, system]));
+
+  if (pending.command === "upgrade" || pending.command === "full-upgrade" || pending.command === "upgrade-package") {
+    if (!pending.systemId) {
+      return { ok: false, message: "This confirmation is missing a target system." };
+    }
+    const system = allowedById.get(pending.systemId);
+    if (!system) {
+      return { ok: false, message: "This system is no longer allowed for this Telegram command channel." };
+    }
+    return { ok: true, systemId: system.id, systemName: system.name };
+  }
+
+  const targetSystems = (pending.targetSystems ?? [])
+    .map((system) => allowedById.get(system.id))
+    .filter((system): system is AllowedSystem => !!system)
+    .map((system) => ({ id: system.id, name: system.name }));
+
+  if (targetSystems.length === 0) {
+    return { ok: false, message: "No selected systems are still allowed for this Telegram command channel." };
+  }
+
+  return { ok: true, targetSystems };
+}
+
+function noSystemsMessage(action: SystemAction | BulkAction): string {
+  return action === "fullupgrade"
+    ? "No systems in this Telegram command channel currently have updates and support full upgrade."
+    : action === "upgrade"
+      ? "No systems in this Telegram command channel currently have available updates."
+      : action === "pkgsys"
+        ? "No systems in this Telegram command channel currently have packages available to upgrade."
+        : "No systems are available for this Telegram command channel.";
+}
+
+function buildBulkConfirmationPrompt(action: Exclude<BulkAction, "check">, systems: AllowedSystem[]): string {
+  const actionLabel = action === "upgrade" ? "upgrade all" : "full upgrade all";
+  const preview = systems.slice(0, 5).map((system) => `- ${formatSystemLabel(system)}`).join("\n");
+  const suffix = systems.length > 5 ? `\n…and ${systems.length - 5} more systems.` : "";
+  return [
+    `Confirm ${actionLabel} for ${formatCount(systems.length, "system")}?`,
+    preview,
+    suffix,
+  ].filter(Boolean).join("\n");
+}
+
+function buildBulkStartedMessage(action: BulkAction, count: number, failedStarts: number): string {
+  const label =
+    action === "check"
+      ? "Refresh/check all"
+      : action === "upgrade"
+        ? "Upgrade all"
+        : "Full upgrade all";
+  const failures = failedStarts > 0 ? ` ${formatCount(failedStarts, "system")} failed to start.` : "";
+  return `${label} started for ${formatCount(count, "system")}.${failures}`;
+}
+
+function buildBulkSummaryMessage(
+  action: BulkAction,
+  totalCount: number,
+  lines: string[],
+  successCount: number,
+  warningCount: number,
+  failedCount: number,
+): string {
+  const label =
+    action === "check"
+      ? "Refresh/check all"
+      : action === "upgrade"
+        ? "Upgrade all"
+        : "Full upgrade all";
+  const visibleLines = lines.slice(0, 12);
+  const extraLineCount = lines.length - visibleLines.length;
+  return [
+    `${label} finished for ${formatCount(totalCount, "system")}.`,
+    `Success: ${successCount}, warnings: ${warningCount}, failed: ${failedCount}`,
+    visibleLines.join("\n"),
+    extraLineCount > 0 ? `…and ${extraLineCount} more result lines.` : "",
+  ].filter(Boolean).join("\n");
+}
+
 function helpText(): string {
   return [
     "Supported commands:",
     "/help",
     "/menu",
     "/status",
-    "/check <system-id>",
-    "/upgrade <system-id>",
-    "/fullupgrade <system-id>",
+    "/check <system-id|all>",
+    "/upgrade <system-id|all>",
+    "/fullupgrade <system-id|all>",
     "/upgradepkg <system-id> <package>",
     "",
+    "Use 'all' to target every allowed system for that action.",
     "Mutating commands require Telegram confirmation before execution.",
   ].join("\n");
 }
@@ -521,17 +645,21 @@ function pageLabel(totalItems: number, pageSize: number, page: number): string {
 }
 
 function buildSystemMenuKeyboard(
-  action: "check" | "upgrade" | "fullupgrade" | "pkgsys",
+  action: SystemAction,
   systemsList: AllowedSystem[],
   page = 0,
 ) {
   const safePage = clampPage(page, systemsList.length, MENU_PAGE_SIZE);
   const start = safePage * MENU_PAGE_SIZE;
   const pageItems = systemsList.slice(start, start + MENU_PAGE_SIZE);
-  const rows = pageItems.map((system) => [{
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  if (action !== "pkgsys") {
+    rows.push([{ text: "All", callback_data: `menu:runall:${action}` }]);
+  }
+  rows.push(...pageItems.map((system) => [{
     text: `#${system.id} ${system.name}`,
     callback_data: `menu:run:${action}:${system.id}:${safePage}`,
-  }]);
+  }]));
 
   const navRow: Array<{ text: string; callback_data: string }> = [];
   if (safePage > 0) {
@@ -623,7 +751,7 @@ async function executeCommandForSystem(
   botToken: string,
   chatId: string,
   channel: NotificationRow,
-  action: "check" | "upgrade" | "fullupgrade",
+  action: BulkAction,
   system: AllowedSystem,
 ): Promise<void> {
   const commandToken = resolveTelegramCommandToken(parseConfig(channel.config));
@@ -649,14 +777,14 @@ async function executeCommandForSystem(
     return;
   }
 
-  const confirmationToken = createConfirmation(
-    channel.id,
+  const confirmationToken = createConfirmation({
+    notificationId: channel.id,
     chatId,
     botToken,
-    0,
-    action === "upgrade" ? "upgrade" : "full-upgrade",
-    system.id,
-  );
+    actorUserId: 0,
+    command: action === "upgrade" ? "upgrade" : "full-upgrade",
+    systemId: system.id,
+  });
   const prompt = action === "upgrade"
     ? `Confirm upgrade for ${system.name} (#${system.id})?`
     : `Confirm full upgrade for ${system.name} (#${system.id})?`;
@@ -694,28 +822,12 @@ async function promptSystemSelection(
   botToken: string,
   chatId: string,
   channel: NotificationRow,
-  action: "check" | "upgrade" | "fullupgrade" | "pkgsys",
+  action: SystemAction,
   page = 0,
 ): Promise<void> {
-  const allowedSystems = (await fetchAllowedSystems(channel)).filter((system) =>
-    action === "fullupgrade"
-      ? system.supportsFullUpgrade === true && (system.updateCount ?? 0) > 0
-      : action === "upgrade" || action === "pkgsys"
-        ? (system.updateCount ?? 0) > 0
-        : true
-  );
+  const allowedSystems = await getSystemsForAction(channel, action);
   if (allowedSystems.length === 0) {
-    await sendTelegramText(
-      botToken,
-      chatId,
-      action === "fullupgrade"
-        ? "No systems in this Telegram command channel currently have updates and support full upgrade."
-        : action === "upgrade"
-          ? "No systems in this Telegram command channel currently have available updates."
-          : action === "pkgsys"
-            ? "No systems in this Telegram command channel currently have packages available to upgrade."
-        : "No systems are available for this Telegram command channel."
-    );
+    await sendTelegramText(botToken, chatId, noSystemsMessage(action));
     return;
   }
 
@@ -734,27 +846,164 @@ async function promptSystemSelection(
   );
 }
 
-function createConfirmation(
-  notificationId: number,
-  chatId: string,
-  botToken: string,
-  actorUserId: number,
-  command: PendingConfirmation["command"],
-  systemId: number,
-  packageName?: string,
-): string {
+function createConfirmation(pending: Omit<PendingConfirmation, "expiresAt">): string {
   const token = crypto.randomUUID();
   pendingConfirmations.set(token, {
-    notificationId,
-    chatId,
-    botToken,
-    actorUserId,
-    command,
-    systemId,
-    packageName,
+    ...pending,
     expiresAt: Date.now() + CONFIRM_TTL_MS,
   });
   return token;
+}
+
+async function awaitJobResult(
+  commandToken: string,
+  jobId: string,
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < JOB_POLL_ATTEMPTS; attempt += 1) {
+    const job = await callDashboardApi<{ status: string; result?: Record<string, unknown> }>(
+      commandToken,
+      `/api/jobs/${jobId}`
+    );
+    if (job.status === "done") {
+      return job.result || {};
+    }
+    if (job.status === "failed") {
+      throw new Error(sanitizeOutput(String(job.result?.error || "Job failed")));
+    }
+    await sleep(JOB_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Command timed out while waiting for completion.");
+}
+
+async function executeBulkCommand(
+  botToken: string,
+  chatId: string,
+  commandToken: string,
+  action: BulkAction,
+  systems: Array<{ id: number; name: string }>,
+): Promise<void> {
+  const pathBuilder = (systemId: number) =>
+    action === "check"
+      ? `/api/systems/${systemId}/check`
+      : action === "upgrade"
+        ? `/api/systems/${systemId}/upgrade`
+        : `/api/systems/${systemId}/full-upgrade`;
+
+  const startResults = await Promise.all(systems.map(async (system) => {
+    try {
+      const response = await callDashboardApi<{ status: string; jobId: string }>(
+        commandToken,
+        pathBuilder(system.id),
+        { method: "POST" },
+      );
+      return { system, jobId: response.jobId } as const;
+    } catch (error) {
+      if (isCommandTokenAuthError(error)) throw error;
+      return { system, startError: error } as const;
+    }
+  }));
+
+  const startedJobs = startResults.filter((result): result is { system: { id: number; name: string }; jobId: string } => "jobId" in result);
+  const startFailures = startResults.filter((result): result is { system: { id: number; name: string }; startError: unknown } => "startError" in result);
+
+  if (startedJobs.length === 0) {
+    const failureLines = startFailures.map(({ system, startError }) =>
+      `- ${formatSystemLabel(system)}: ${sanitizeOutput(startError instanceof Error ? startError.message : String(startError))}`
+    );
+    await sendTelegramText(
+      botToken,
+      chatId,
+      buildBulkSummaryMessage(action, systems.length, failureLines, 0, 0, startFailures.length),
+    );
+    return;
+  }
+
+  await sendTelegramText(botToken, chatId, buildBulkStartedMessage(action, startedJobs.length, startFailures.length));
+
+  void (async () => {
+    const jobResults = await Promise.all(startedJobs.map(async ({ system, jobId }) => {
+      try {
+        const result = await awaitJobResult(commandToken, jobId);
+        return { system, result } as const;
+      } catch (error) {
+        return { system, error } as const;
+      }
+    }));
+
+    let successCount = 0;
+    let warningCount = 0;
+    let failedCount = startFailures.length;
+    const lines: string[] = startFailures.map(({ system, startError }) =>
+      `- ${formatSystemLabel(system)}: failed to start (${sanitizeOutput(startError instanceof Error ? startError.message : String(startError))})`
+    );
+
+    for (const entry of jobResults) {
+      if ("error" in entry) {
+        if (isCommandTokenAuthError(entry.error)) {
+          await sendTelegramText(botToken, chatId, COMMAND_TOKEN_AUTH_FAILURE_MESSAGE);
+          return;
+        }
+        failedCount += 1;
+        lines.push(
+          `- ${formatSystemLabel(entry.system)}: failed (${sanitizeOutput(entry.error instanceof Error ? entry.error.message : String(entry.error))})`
+        );
+        continue;
+      }
+
+      if (action === "check") {
+        successCount += 1;
+        lines.push(`- ${formatSystemLabel(entry.system)}: ${Number(entry.result.updateCount ?? 0)} updates`);
+        continue;
+      }
+
+      const status = sanitizeOutput(String(entry.result.status || "unknown")).toLowerCase();
+      if (status === "warning") {
+        warningCount += 1;
+      } else if (status === "success") {
+        successCount += 1;
+      } else {
+        failedCount += 1;
+      }
+      lines.push(`- ${formatSystemLabel(entry.system)}: ${status}`);
+    }
+
+    await sendTelegramText(
+      botToken,
+      chatId,
+      buildBulkSummaryMessage(action, systems.length, lines, successCount, warningCount, failedCount),
+    );
+  })().catch(async (error) => {
+    await sendCommandExecutionError(botToken, chatId, error);
+  });
+}
+
+async function promptBulkConfirmation(
+  botToken: string,
+  chatId: string,
+  channel: NotificationRow,
+  action: Exclude<BulkAction, "check">,
+): Promise<void> {
+  const systems = await getSystemsForAction(channel, action);
+  if (systems.length === 0) {
+    await sendTelegramText(botToken, chatId, noSystemsMessage(action));
+    return;
+  }
+
+  const confirmationToken = createConfirmation({
+    notificationId: channel.id,
+    chatId,
+    botToken,
+    actorUserId: 0,
+    command: action === "upgrade" ? "upgrade-all" : "full-upgrade-all",
+    targetSystems: systems.map((system) => ({ id: system.id, name: system.name })),
+  });
+  await sendTelegramText(
+    botToken,
+    chatId,
+    buildBulkConfirmationPrompt(action, systems),
+    buildConfirmationKeyboard(confirmationToken),
+  );
 }
 
 async function pollJobAndReport(
@@ -764,33 +1013,17 @@ async function pollJobAndReport(
   jobId: string,
   summaryBuilder: (result: Record<string, unknown>) => string,
 ): Promise<void> {
-  for (let attempt = 0; attempt < JOB_POLL_ATTEMPTS; attempt += 1) {
-    try {
-      const job = await callDashboardApi<{ status: string; result?: Record<string, unknown> }>(
-        commandToken,
-        `/api/jobs/${jobId}`
-      );
-      if (job.status === "done") {
-        await sendTelegramText(botToken, chatId, summaryBuilder(job.result || {}));
-        return;
-      }
-      if (job.status === "failed") {
-        const error = sanitizeOutput(String(job.result?.error || "Job failed"));
-        await sendTelegramText(botToken, chatId, `Command failed: ${truncateMessage(error)}`);
-        return;
-      }
-    } catch (error) {
-      if (isCommandTokenAuthError(error)) {
-        await sendTelegramText(botToken, chatId, COMMAND_TOKEN_AUTH_FAILURE_MESSAGE);
-      } else {
-        await sendTelegramText(botToken, chatId, `Command polling failed: ${sanitizeOutput(String(error))}`);
-      }
-      return;
+  try {
+    const result = await awaitJobResult(commandToken, jobId);
+    await sendTelegramText(botToken, chatId, summaryBuilder(result));
+  } catch (error) {
+    if (isCommandTokenAuthError(error)) {
+      await sendTelegramText(botToken, chatId, COMMAND_TOKEN_AUTH_FAILURE_MESSAGE);
+    } else {
+      const message = error instanceof Error ? error.message : String(error);
+      await sendTelegramText(botToken, chatId, `Command failed: ${sanitizeOutput(truncateMessage(message))}`);
     }
-    await sleep(JOB_POLL_INTERVAL_MS);
   }
-
-  await sendTelegramText(botToken, chatId, "Command timed out while waiting for completion.");
 }
 
 async function startAsyncCommand(
@@ -852,6 +1085,32 @@ async function handleCommandMessage(
       return;
     }
 
+    if ((parsed.command === "check" || parsed.command === "upgrade" || parsed.command === "fullupgrade") && parsed.args[0]?.toLowerCase() === "all") {
+      if (parsed.command === "check") {
+        const systems = await getSystemsForAction(channel, "check");
+        if (systems.length === 0) {
+          await sendTelegramText(botToken, chatId, noSystemsMessage("check"));
+          return;
+        }
+        await executeBulkCommand(
+          botToken,
+          chatId,
+          commandToken,
+          "check",
+          systems.map((system) => ({ id: system.id, name: system.name })),
+        );
+        return;
+      }
+
+      await promptBulkConfirmation(
+        botToken,
+        chatId,
+        channel,
+        parsed.command === "upgrade" ? "upgrade" : "fullupgrade",
+      );
+      return;
+    }
+
     const allowedSystems = await fetchAllowedSystems(channel);
     const system = resolveSystem(allowedSystems, parsed.args[0]);
     if (!system) {
@@ -868,14 +1127,28 @@ async function handleCommandMessage(
     let prompt = "";
 
     if (parsed.command === "upgrade") {
-      confirmationToken = createConfirmation(channel.id, chatId, botToken, 0, "upgrade", system.id);
+      confirmationToken = createConfirmation({
+        notificationId: channel.id,
+        chatId,
+        botToken,
+        actorUserId: 0,
+        command: "upgrade",
+        systemId: system.id,
+      });
       prompt = `Confirm upgrade for ${system.name} (#${system.id})?`;
     } else if (parsed.command === "fullupgrade") {
       if (!system.supportsFullUpgrade) {
         await sendTelegramText(botToken, chatId, `Full upgrade is not supported for ${system.name} (#${system.id}).`);
         return;
       }
-      confirmationToken = createConfirmation(channel.id, chatId, botToken, 0, "full-upgrade", system.id);
+      confirmationToken = createConfirmation({
+        notificationId: channel.id,
+        chatId,
+        botToken,
+        actorUserId: 0,
+        command: "full-upgrade",
+        systemId: system.id,
+      });
       prompt = `Confirm full upgrade for ${system.name} (#${system.id})?`;
     } else if (parsed.command === "upgradepkg") {
       const packageName = parsed.args[1];
@@ -883,7 +1156,15 @@ async function handleCommandMessage(
         await sendTelegramText(botToken, chatId, "Usage: /upgradepkg <system-id> <package>");
         return;
       }
-      confirmationToken = createConfirmation(channel.id, chatId, botToken, 0, "upgrade-package", system.id, packageName);
+      confirmationToken = createConfirmation({
+        notificationId: channel.id,
+        chatId,
+        botToken,
+        actorUserId: 0,
+        command: "upgrade-package",
+        systemId: system.id,
+        packageName,
+      });
       prompt = `Confirm package upgrade on ${system.name} (#${system.id}) for ${packageName}?`;
     } else {
       await sendTelegramText(botToken, chatId, helpText());
@@ -939,6 +1220,35 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
         return;
       }
 
+      if (menuAction === "runall") {
+        const action = parts[2];
+        if (action === "check") {
+          const commandToken = resolveTelegramCommandToken(parseConfig(channel.config));
+          if (!commandToken) {
+            await sendTelegramText(botToken, chatId, "Command token is not ready for this Telegram channel.");
+            return;
+          }
+          const systems = await getSystemsForAction(channel, "check");
+          if (systems.length === 0) {
+            await sendTelegramText(botToken, chatId, noSystemsMessage("check"));
+            return;
+          }
+          await executeBulkCommand(
+            botToken,
+            chatId,
+            commandToken,
+            "check",
+            systems.map((system) => ({ id: system.id, name: system.name })),
+          );
+          return;
+        }
+
+        if (action === "upgrade" || action === "fullupgrade") {
+          await promptBulkConfirmation(botToken, chatId, channel, action);
+        }
+        return;
+      }
+
       if (menuAction === "run") {
         const action = parts[2];
         const systemId = Number.parseInt(parts[3] || "", 10);
@@ -986,7 +1296,15 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
           return;
         }
 
-        const confirmationToken = createConfirmation(channel.id, chatId, botToken, 0, "upgrade-package", system.id, packageName);
+        const confirmationToken = createConfirmation({
+          notificationId: channel.id,
+          chatId,
+          botToken,
+          actorUserId: 0,
+          command: "upgrade-package",
+          systemId: system.id,
+          packageName,
+        });
         await sendTelegramText(
           botToken,
           chatId,
@@ -1039,14 +1357,20 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
   }
 
   try {
+    const authorized = await revalidatePendingConfirmation(row, pending);
+    if (!authorized.ok) {
+      await sendTelegramText(botToken, chatId, authorized.message);
+      return;
+    }
+
     if (pending.command === "upgrade") {
       await startAsyncCommand(
         botToken,
         chatId,
         commandToken,
-        `/api/systems/${pending.systemId}/upgrade`,
-        `Upgrade started for system #${pending.systemId}.`,
-        (result) => `Upgrade finished for system #${pending.systemId}: ${sanitizeOutput(String(result.status || "unknown"))}\n${truncateMessage(sanitizeOutput(String(result.output || "")))}`,
+        `/api/systems/${authorized.systemId}/upgrade`,
+        `Upgrade started for system #${authorized.systemId}.`,
+        (result) => `Upgrade finished for system #${authorized.systemId}: ${sanitizeOutput(String(result.status || "unknown"))}\n${truncateMessage(sanitizeOutput(String(result.output || "")))}`,
       );
       return;
     }
@@ -1056,10 +1380,20 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
         botToken,
         chatId,
         commandToken,
-        `/api/systems/${pending.systemId}/full-upgrade`,
-        `Full upgrade started for system #${pending.systemId}.`,
-        (result) => `Full upgrade finished for system #${pending.systemId}: ${sanitizeOutput(String(result.status || "unknown"))}\n${truncateMessage(sanitizeOutput(String(result.output || "")))}`,
+        `/api/systems/${authorized.systemId}/full-upgrade`,
+        `Full upgrade started for system #${authorized.systemId}.`,
+        (result) => `Full upgrade finished for system #${authorized.systemId}: ${sanitizeOutput(String(result.status || "unknown"))}\n${truncateMessage(sanitizeOutput(String(result.output || "")))}`,
       );
+      return;
+    }
+
+    if (pending.command === "upgrade-all" && authorized.targetSystems?.length) {
+      await executeBulkCommand(botToken, chatId, commandToken, "upgrade", authorized.targetSystems);
+      return;
+    }
+
+    if (pending.command === "full-upgrade-all" && authorized.targetSystems?.length) {
+      await executeBulkCommand(botToken, chatId, commandToken, "fullupgrade", authorized.targetSystems);
       return;
     }
 
@@ -1068,9 +1402,9 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
         botToken,
         chatId,
         commandToken,
-        `/api/systems/${pending.systemId}/upgrade/${encodeURIComponent(pending.packageName)}`,
-        `Package upgrade started for ${pending.packageName} on system #${pending.systemId}.`,
-        (result) => `Package upgrade finished for ${sanitizeOutput(String(result.package || pending.packageName))} on system #${pending.systemId}: ${sanitizeOutput(String(result.status || "unknown"))}\n${truncateMessage(sanitizeOutput(String(result.output || "")))}`,
+        `/api/systems/${authorized.systemId}/upgrade/${encodeURIComponent(pending.packageName)}`,
+        `Package upgrade started for ${pending.packageName} on system #${authorized.systemId}.`,
+        (result) => `Package upgrade finished for ${sanitizeOutput(String(result.package || pending.packageName))} on system #${authorized.systemId}: ${sanitizeOutput(String(result.status || "unknown"))}\n${truncateMessage(sanitizeOutput(String(result.output || "")))}`,
       );
     }
   } catch (error) {
