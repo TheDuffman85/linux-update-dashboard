@@ -88,6 +88,9 @@ export const systems = sqliteTable(
     cpuCores: text("cpu_cores"),
     memory: text("memory"),
     disk: text("disk"),
+    ignoreKeptBackPackages: integer("ignore_kept_back_packages")
+      .notNull()
+      .default(0),
     bootId: text("boot_id"),
     excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
       .notNull()

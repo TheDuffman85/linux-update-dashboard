@@ -128,6 +128,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     cpu_cores TEXT,
     memory TEXT,
     disk TEXT,
+    ignore_kept_back_packages INTEGER NOT NULL DEFAULT 0,
     exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
@@ -440,6 +441,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN ignore_kept_back_packages INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
 
   // Migration: add persisted system ordering
   try {
@@ -599,6 +605,7 @@ function rebuildSystemsTableWithoutLegacyConstraint(sqlite: Database): void {
       cpu_cores TEXT,
       memory TEXT,
       disk TEXT,
+      ignore_kept_back_packages INTEGER NOT NULL DEFAULT 0,
       exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
@@ -642,6 +649,7 @@ function rebuildSystemsTableWithoutLegacyConstraint(sqlite: Database): void {
     "cpu_cores",
     "memory",
     "disk",
+    "ignore_kept_back_packages",
     "exclude_from_upgrade_all",
     "hidden",
     "needs_reboot",

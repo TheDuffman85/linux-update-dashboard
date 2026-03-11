@@ -1581,6 +1581,7 @@ export async function sync(): Promise<void> {
 
   const activeTokens = new Set<string>();
   for (const row of getTelegramRows()) {
+    if (row.enabled !== 1) continue;
     const token = resolveTelegramBotToken(parseConfig(row.config));
     if (token) activeTokens.add(token);
   }

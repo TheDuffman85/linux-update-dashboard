@@ -2,6 +2,7 @@ import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
 import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCommandInfo } from "../ssh/connection";
+import { getAptKeptBackSimulationCommand, parseAptKeptBackPackages } from "../ssh/parsers/apt";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
@@ -9,25 +10,21 @@ import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
 import { logger } from "../logger";
 import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
-
-// Active operation tracking (visible to the API)
-export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
-  startedAt: string;
-  packageName?: string;
-  remotePid?: number;
-  remoteLogFile?: string;
-  remoteExitFile?: string;
-}
-
-const activeOperations = new Map<number, ActiveOperation>();
+import {
+  clearActiveOperation,
+  getActiveOperation as getStoredActiveOperation,
+  getAllActiveOperations as getStoredActiveOperations,
+  setActiveOperation,
+  type ActiveOperation,
+} from "./active-operation-store";
+import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
 
 export function getActiveOperation(systemId: number): ActiveOperation | null {
-  return activeOperations.get(systemId) ?? null;
+  return getStoredActiveOperation(systemId);
 }
 
 export function getAllActiveOperations(): ReadonlyMap<number, ActiveOperation> {
-  return activeOperations;
+  return getStoredActiveOperations();
 }
 
 // Per-system locks using a simple promise-based mutex
@@ -435,7 +432,67 @@ async function checkUpdatesUnlocked(
           }
         }
 
-        const updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode);
+        let updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode);
+        if (pmName === "apt" && system.ignoreKeptBackPackages === 1 && updates.length > 0) {
+          const simulateCommand = getAptKeptBackSimulationCommand();
+          allCommands.push(simulateCommand);
+          pub({ type: "started", command: simulateCommand, pkgManager: pmName });
+          pub({ type: "phase", phase: "Resolving kept-back packages..." });
+
+          try {
+            const simulation = await sshManager.runCommand(
+              conn,
+              simulateCommand,
+              undefined,
+              sudoPassword,
+              (chunk, stream) => {
+                pub({ type: "output", data: chunk, stream });
+              }
+            );
+            checkOutput += simulation.stdout;
+            checkOutput += simulation.stderr;
+
+            if (simulation.exitCode !== 0) {
+              const reason =
+                simulation.stderr || simulation.stdout || `Command exited with code ${simulation.exitCode}`;
+              logger.warn("APT kept-back detection failed", {
+                systemId,
+                error: sanitizeOutput(reason),
+              });
+              pub({
+                type: "warning",
+                message: "Could not determine kept-back APT packages. Using unfiltered results.",
+              });
+            } else {
+              const keptBackPackages = parseAptKeptBackPackages(
+                `${simulation.stdout}\n${simulation.stderr}`.trim()
+              );
+              if (keptBackPackages === null) {
+                logger.warn("APT kept-back detection returned ambiguous output", {
+                  systemId,
+                });
+                pub({
+                  type: "warning",
+                  message: "APT kept-back output was ambiguous. Using unfiltered results.",
+                });
+              } else if (keptBackPackages.length > 0) {
+                const keptBackSet = new Set(keptBackPackages);
+                updates = updates.filter((update) => !keptBackSet.has(update.packageName));
+              }
+            }
+          } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            logger.warn("APT kept-back detection failed", {
+              systemId,
+              error: sanitizeOutput(reason),
+            });
+            pub({
+              type: "warning",
+              message: "Could not determine kept-back APT packages. Using unfiltered results.",
+            });
+          }
+        }
+
         allUpdates.push(...updates);
         successfulChecks++;
       } catch (e) {
@@ -510,12 +567,13 @@ export async function checkUpdates(
 ): Promise<ParsedUpdate[]> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "check", startedAt: now });
+    setActiveOperation(systemId, { type: "check", startedAt: now });
     outputStream.resetStream(systemId);
     try {
       return await checkUpdatesUnlocked(systemId);
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -525,7 +583,8 @@ export async function applyUpgradeAll(
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "upgrade_all", startedAt: now });
+    setActiveOperation(systemId, { type: "upgrade_all", startedAt: now });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
     const system = systemService.getSystem(systemId);
@@ -659,7 +718,8 @@ export async function applyUpgradeAll(
       if (conn) sshManager.disconnect(conn);
     }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -679,7 +739,8 @@ export async function applyFullUpgradeAll(
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "full_upgrade_all", startedAt: now });
+    setActiveOperation(systemId, { type: "full_upgrade_all", startedAt: now });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
     const system = systemService.getSystem(systemId);
@@ -809,7 +870,8 @@ export async function applyFullUpgradeAll(
       if (conn) sshManager.disconnect(conn);
     }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -820,7 +882,8 @@ export async function applyUpgradePackage(
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "upgrade_package", startedAt: now, packageName });
+    setActiveOperation(systemId, { type: "upgrade_package", startedAt: now, packageName });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
     const system = systemService.getSystem(systemId);
@@ -926,7 +989,8 @@ export async function applyUpgradePackage(
       if (conn) sshManager.disconnect(conn);
     }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -936,7 +1000,8 @@ export async function rebootSystem(
 ): Promise<{ success: boolean; message: string }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "reboot", startedAt: now });
+    setActiveOperation(systemId, { type: "reboot", startedAt: now });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
       const system = systemService.getSystem(systemId);
@@ -989,7 +1054,8 @@ export async function rebootSystem(
         }
       }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }

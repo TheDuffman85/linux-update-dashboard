@@ -16,6 +16,7 @@ import {
   useUnlinkTelegramChat,
   type NotificationChannel,
   type NotificationConfig,
+  type MqttConfig,
   type TelegramConfig,
   type WebhookConfig,
   type WebhookField,
@@ -56,6 +57,7 @@ const DISCORD_TEMPLATE = `{
 const TYPE_LABELS: Record<string, string> = {
   email: "Email",
   gotify: "Gotify",
+  mqtt: "MQTT",
   ntfy: "ntfy.sh",
   telegram: "Telegram",
   webhook: "Webhook",
@@ -132,6 +134,11 @@ function readOptionalInteger(config: NotificationConfig, key: string): number | 
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+function readInteger(config: NotificationConfig, key: string, fallback: number): number {
+  const value = config[key];
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+}
+
 function coerceTelegramConfig(config: NotificationConfig): TelegramConfig {
   return {
     telegramBotToken: readString(config, "telegramBotToken"),
@@ -196,6 +203,27 @@ function defaultWebhookConfig(): WebhookConfig {
     retryAttempts: 2,
     retryDelayMs: 30000,
     allowInsecureTls: false,
+  };
+}
+
+function defaultMqttConfig(): MqttConfig {
+  return {
+    brokerUrl: "",
+    username: "",
+    password: "",
+    clientId: "",
+    keepaliveSeconds: 60,
+    connectTimeoutMs: 10000,
+    qos: 1,
+    publishEvents: true,
+    topic: "",
+    retainEvents: false,
+    homeAssistantEnabled: false,
+    discoveryPrefix: "homeassistant",
+    baseTopic: "ludash",
+    publishAppEntity: true,
+    commandsEnabled: false,
+    payloadInstall: "install",
   };
 }
 
@@ -268,6 +296,28 @@ function coerceWebhookConfig(config: NotificationConfig): WebhookConfig {
     retryAttempts: typeof config.retryAttempts === "number" ? config.retryAttempts : defaults.retryAttempts,
     retryDelayMs: typeof config.retryDelayMs === "number" ? config.retryDelayMs : defaults.retryDelayMs,
     allowInsecureTls: config.allowInsecureTls === true,
+  };
+}
+
+function coerceMqttConfig(config: NotificationConfig): MqttConfig {
+  const defaults = defaultMqttConfig();
+  return {
+    brokerUrl: readString(config, "brokerUrl"),
+    username: readString(config, "username"),
+    password: readString(config, "password"),
+    clientId: readString(config, "clientId"),
+    keepaliveSeconds: readInteger(config, "keepaliveSeconds", defaults.keepaliveSeconds),
+    connectTimeoutMs: readInteger(config, "connectTimeoutMs", defaults.connectTimeoutMs),
+    qos: config.qos === 0 ? 0 : 1,
+    publishEvents: readBoolean(config, "publishEvents", defaults.publishEvents),
+    topic: readString(config, "topic"),
+    retainEvents: readBoolean(config, "retainEvents", defaults.retainEvents),
+    homeAssistantEnabled: readBoolean(config, "homeAssistantEnabled", defaults.homeAssistantEnabled),
+    discoveryPrefix: readString(config, "discoveryPrefix", defaults.discoveryPrefix),
+    baseTopic: readString(config, "baseTopic", defaults.baseTopic),
+    publishAppEntity: readBoolean(config, "publishAppEntity", defaults.publishAppEntity),
+    commandsEnabled: readBoolean(config, "commandsEnabled", defaults.commandsEnabled),
+    payloadInstall: readString(config, "payloadInstall", defaults.payloadInstall),
   };
 }
 
@@ -477,6 +527,7 @@ function NotificationForm({
   const unlinkTelegramChat = useUnlinkTelegramChat();
   const { addToast } = useToast();
   const initialWebhook = initial ? coerceWebhookConfig(initial.config) : defaultWebhookConfig();
+  const initialMqtt = initial ? coerceMqttConfig(initial.config) : defaultMqttConfig();
   const initialTelegram: TelegramConfig = initial
     ? coerceTelegramConfig(initial.config)
     : { chatBindingStatus: "unbound", commandsEnabled: false };
@@ -537,6 +588,7 @@ function NotificationForm({
             : "Will be issued after save";
 
   const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>(initialWebhook);
+  const [mqttConfig, setMqttConfig] = useState<MqttConfig>(initialMqtt);
 
   const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
   const initialPreset = initial?.schedule
@@ -618,6 +670,15 @@ function NotificationForm({
         ntfyToken:
           ntfyToken || (readString(initial?.config || {}, "ntfyToken") === MASKED_VALUE ? MASKED_VALUE : ""),
         ntfyPriorityOverride,
+      };
+    }
+
+    if (type === "mqtt") {
+      return {
+        ...mqttConfig,
+        password:
+          mqttConfig.password ||
+          (readString(initial?.config || {}, "password") === MASKED_VALUE ? MASKED_VALUE : ""),
       };
     }
 
@@ -730,6 +791,7 @@ function NotificationForm({
           >
             <option value="email">Email (SMTP)</option>
             <option value="gotify">Gotify</option>
+            <option value="mqtt">MQTT</option>
             <option value="ntfy">ntfy.sh</option>
             <option value="telegram">Telegram</option>
             <option value="webhook">Webhook</option>
@@ -983,6 +1045,195 @@ function NotificationForm({
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
+            </div>
+          </div>
+        )}
+
+        {type === "mqtt" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className={labelClass}>Broker URL</label>
+                <input
+                  value={mqttConfig.brokerUrl}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, brokerUrl: e.target.value }))}
+                  className={inputClass}
+                  placeholder="mqtt://broker.example.com:1883"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Username</label>
+                <input
+                  value={mqttConfig.username || ""}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, username: e.target.value }))}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Password</label>
+                <input
+                  type="password"
+                  value={mqttConfig.password === MASKED_VALUE ? "" : (mqttConfig.password || "")}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, password: e.target.value }))}
+                  className={inputClass}
+                  placeholder={readString(initial?.config || {}, "password") === MASKED_VALUE ? "(unchanged)" : ""}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Client ID</label>
+                <input
+                  value={mqttConfig.clientId || ""}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, clientId: e.target.value }))}
+                  className={inputClass}
+                  placeholder="Optional"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>QoS</label>
+                <select
+                  value={String(mqttConfig.qos)}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, qos: e.target.value === "0" ? 0 : 1 }))}
+                  className={inputClass}
+                >
+                  <option value="0">0</option>
+                  <option value="1">1</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelClass}>Keepalive (s)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={3600}
+                  value={mqttConfig.keepaliveSeconds}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, keepaliveSeconds: Number(e.target.value) }))}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Connect Timeout (ms)</label>
+                <input
+                  type="number"
+                  min={1000}
+                  max={120000}
+                  value={mqttConfig.connectTimeoutMs}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, connectTimeoutMs: Number(e.target.value) }))}
+                  className={inputClass}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border p-3 space-y-3">
+              <div className="text-sm font-medium">Generic MQTT events</div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={mqttConfig.publishEvents}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, publishEvents: e.target.checked }))}
+                  className={checkboxClass}
+                />
+                <span className="text-sm">Publish notification events to a topic</span>
+              </label>
+              {mqttConfig.publishEvents && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className={labelClass}>Event Topic</label>
+                    <input
+                      value={mqttConfig.topic}
+                      onChange={(e) => setMqttConfig((prev) => ({ ...prev, topic: e.target.value }))}
+                      className={inputClass}
+                      placeholder="ludash/events"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={mqttConfig.retainEvents}
+                      onChange={(e) => setMqttConfig((prev) => ({ ...prev, retainEvents: e.target.checked }))}
+                      className={checkboxClass}
+                    />
+                    <span className="text-sm">Retain event payloads</span>
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-border p-3 space-y-3">
+              <div className="text-sm font-medium">Home Assistant MQTT Update</div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={mqttConfig.homeAssistantEnabled}
+                  onChange={(e) => setMqttConfig((prev) => ({ ...prev, homeAssistantEnabled: e.target.checked }))}
+                  className={checkboxClass}
+                />
+                <span className="text-sm">Enable Home Assistant discovery and retained state sync</span>
+              </label>
+              {mqttConfig.homeAssistantEnabled && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelClass}>Discovery Prefix</label>
+                      <input
+                        value={mqttConfig.discoveryPrefix}
+                        onChange={(e) => setMqttConfig((prev) => ({ ...prev, discoveryPrefix: e.target.value }))}
+                        className={inputClass}
+                        placeholder="homeassistant"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Base Topic</label>
+                      <input
+                        value={mqttConfig.baseTopic}
+                        onChange={(e) => setMqttConfig((prev) => ({ ...prev, baseTopic: e.target.value }))}
+                        className={inputClass}
+                        placeholder="ludash"
+                      />
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={mqttConfig.publishAppEntity}
+                      onChange={(e) => setMqttConfig((prev) => ({ ...prev, publishAppEntity: e.target.checked }))}
+                      className={checkboxClass}
+                    />
+                    <span className="text-sm">Publish Linux Update Dashboard app update entity</span>
+                  </label>
+
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={mqttConfig.commandsEnabled}
+                      onChange={(e) => setMqttConfig((prev) => ({ ...prev, commandsEnabled: e.target.checked }))}
+                      className={checkboxClass}
+                    />
+                    <span className="text-sm">Enable Home Assistant install commands for per-system entities</span>
+                  </label>
+
+                  {mqttConfig.commandsEnabled && (
+                    <div>
+                      <label className={labelClass}>Install Payload</label>
+                      <input
+                        value={mqttConfig.payloadInstall}
+                        onChange={(e) => setMqttConfig((prev) => ({ ...prev, payloadInstall: e.target.value }))}
+                        className={inputClass}
+                        placeholder="install"
+                      />
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-1">
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      The app update entity is visibility-only. Per-system entities use synthetic fingerprint versions for the current pending update set, not real package version pairs.
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      Home Assistant discovery and retained state sync update immediately and are not affected by digest schedules.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

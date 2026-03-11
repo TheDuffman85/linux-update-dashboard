@@ -296,6 +296,53 @@ describe("systems reorder route", () => {
     expect(updated?.hidden).toBe(0);
   });
 
+  test("persists and serializes the ignore kept-back flag", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const createRes = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "APT Filter",
+        hostname: "apt-filter.local",
+        port: 22,
+        credentialId,
+        ignoreKeptBackPackages: true,
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const created = listSystems().find((system) => system.name === "APT Filter");
+    expect(created?.ignoreKeptBackPackages).toBe(1);
+
+    const listRes = await app.request("/api/systems");
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === created!.id);
+    expect(listed.ignoreKeptBackPackages).toBe(1);
+
+    const updateRes = await app.request(`/api/systems/${created!.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "APT Filter",
+        hostname: "apt-filter.local",
+        port: 22,
+        credentialId,
+        ignoreKeptBackPackages: false,
+      }),
+    });
+
+    expect(updateRes.status).toBe(200);
+
+    const detailRes = await app.request(`/api/systems/${created!.id}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.ignoreKeptBackPackages).toBe(0);
+  });
+
   test("returns 409 when updating a system to match another connection tuple", async () => {
     const db = getDb();
     const inserted = db.insert(systems).values([

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import * as updateService from "../services/update-service";
+import * as notificationRuntime from "../services/notification-runtime";
 import { getSSHManager } from "../ssh/connection";
 import { detectPackageManagers } from "../ssh/detector";
 import * as outputStream from "../services/output-stream";
@@ -56,6 +57,12 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
   }
   if (body.hidden !== undefined && typeof body.hidden !== "boolean") {
     return "hidden must be a boolean";
+  }
+  if (
+    body.ignoreKeptBackPackages !== undefined &&
+    typeof body.ignoreKeptBackPackages !== "boolean"
+  ) {
+    return "ignoreKeptBackPackages must be a boolean";
   }
   if (
     body.validatedConfigToken !== undefined &&
@@ -352,6 +359,7 @@ systems.post("/", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers ?? undefined,
+      ignoreKeptBackPackages: body.ignoreKeptBackPackages,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
       hidden: body.hidden,
       sourceSystemId,
@@ -364,6 +372,7 @@ systems.post("/", async (c) => {
   }
 
   // Trigger initial check in background
+  await notificationRuntime.syncSystemState(systemId);
   updateService.checkUpdates(systemId).catch((error) => {
     logger.error("Initial update check failed after system creation", {
       systemId,
@@ -426,6 +435,7 @@ systems.put("/:id", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers ?? undefined,
+      ignoreKeptBackPackages: body.ignoreKeptBackPackages,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
       hidden: body.hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
@@ -435,6 +445,8 @@ systems.put("/:id", async (c) => {
     if (response) return response;
     throw error;
   }
+
+  await notificationRuntime.syncSystemState(id);
 
   return c.json({ status: "ok" });
 });
@@ -457,7 +469,7 @@ systems.post("/:id/revoke-host-key", (c) => {
 });
 
 // Delete system
-systems.delete("/:id", (c) => {
+systems.delete("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   outputStream.removeStream(id);
@@ -468,6 +480,7 @@ systems.delete("/:id", (c) => {
     if (response) return response;
     throw error;
   }
+  await notificationRuntime.syncSystemState(id);
   return c.json({ status: "ok" });
 });
 

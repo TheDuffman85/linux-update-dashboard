@@ -34,7 +34,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
-- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
+- **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
 - **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
 - **Safer SSH workflows:** optional host-key verification with explicit trust approval, plus ProxyJump support for reaching internal hosts
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
@@ -80,7 +80,7 @@ Expandable history entries with the executed command and its full output.
 ![Activity Log](screenshots/screenshot-3.png)
 
 ### Notifications
-Configure notification channels (Email/SMTP, Gotify, ntfy.sh, Telegram, Webhooks) with per-event and per-system filtering.
+Configure notification channels (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks) with per-event and per-system filtering.
 
 ![Notifications](screenshots/screenshot-4.png)
 
@@ -374,9 +374,26 @@ Digest schedules buffer matching events until the next cron run. Immediate chann
 |------|----------|-------|
 | `Email` | inbox-based alerts | SMTP transport with optional auth and importance override |
 | `Gotify` | mobile/self-hosted push | app token stored encrypted |
+| `MQTT` | brokers, automations, and Home Assistant | generic event publishing plus optional Home Assistant MQTT Update entities |
 | `ntfy` | lightweight push topics | topic-based delivery with optional bearer token |
 | `Telegram` | chat notifications and optional remote actions | private-chat only |
 | `Webhook` | integrations with automation tools, chat ops, and custom receivers | supports templates, auth, retries, and a Discord preset |
+
+### MQTT
+
+MQTT channels support two related behaviors:
+
+- generic event publishing to a configured topic using the same notification events as the other providers
+- optional Home Assistant MQTT Update discovery/state publishing with one app entity plus one per-system package-update entity
+
+Home Assistant mode details:
+
+- discovery topics use retained config payloads
+- entity state is synced immediately after checks, upgrades, reconnects, startup, notification edits, and system edits
+- digest schedules only affect the generic MQTT event topic, not Home Assistant state
+- the app entity is visibility-only
+- per-system entities expose synthetic fingerprint versions for the current pending update set, not real package-version pairs
+- optional install commands map to the standard per-system upgrade action
 
 ### Telegram
 

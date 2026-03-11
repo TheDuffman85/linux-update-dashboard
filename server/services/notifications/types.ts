@@ -45,6 +45,10 @@ export interface NotificationPayload {
   priority?: NotificationPriority;
   tags?: string[];
   event: NotificationEventData;
+  channelId?: number | null;
+  channelName?: string | null;
+  systemIds?: number[] | null;
+  schedule?: string | null;
 }
 
 export interface NotificationResult {

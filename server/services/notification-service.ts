@@ -17,6 +17,7 @@ import {
 import { formatUpdateLine } from "./notifications/presentation";
 import { sanitizeOutput } from "../utils/sanitize";
 import { getAppUpdateStatus } from "./app-update-service";
+import { requestNotificationRuntimeAppUpdateSync } from "./notification-runtime-events";
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
 const DEFAULT_NOTIFY_ON_JSON = JSON.stringify(DEFAULT_NOTIFY_ON);
@@ -312,6 +313,7 @@ function buildTestPayload(name?: string): NotificationPayload {
     priority: event.priority,
     tags: event.tags,
     event,
+    channelName: name ?? null,
   };
 }
 
@@ -319,9 +321,32 @@ export async function testNotification(id: number): Promise<{ success: boolean; 
   const db = getDb();
   const row = db.select().from(notifications).where(eq(notifications.id, id)).get();
   if (!row) return { success: false, error: "Notification not found" };
+  if (row.type === "mqtt" && row.enabled !== 1) {
+    return { success: false, error: "MQTT notification is disabled" };
+  }
 
   const config = loadSanitizedConfig(row);
-  return testNotificationConfig(row.type, config, row.name);
+  const provider = getProvider(row.type);
+  if (!provider) return { success: false, error: `Unknown provider: ${row.type}` };
+
+  const sanitizedConfig = provider.sanitizeConfig(config);
+  const configError = provider.validateConfig(sanitizedConfig);
+  if (configError) return { success: false, error: configError };
+
+  try {
+    return await provider.send(
+      {
+        ...buildTestPayload(row.name),
+        channelId: row.id,
+        channelName: row.name,
+        systemIds: parseSystemIds(row.systemIds),
+        schedule: row.schedule || null,
+      },
+      sanitizedConfig,
+    );
+  } catch (error) {
+    return { success: false, error: sanitizeOutput(String(error)) };
+  }
 }
 
 export async function testNotificationConfig(
@@ -432,13 +457,22 @@ export async function processAppUpdateNotifications(): Promise<void> {
     .where(eq(notifications.enabled, 1))
     .all();
 
-  if (channels.length === 0) return;
+  if (channels.length === 0) {
+    await requestNotificationRuntimeAppUpdateSync();
+    return;
+  }
 
   const subscribedChannels = channels.filter((channel) => parseNotifyOn(channel.notifyOn).includes("appUpdates"));
-  if (subscribedChannels.length === 0) return;
+  if (subscribedChannels.length === 0) {
+    await requestNotificationRuntimeAppUpdateSync();
+    return;
+  }
 
   const status = await getAppUpdateStatus();
-  if (!status.updateAvailable || !status.remoteVersion) return;
+  if (!status.updateAvailable || !status.remoteVersion) {
+    await requestNotificationRuntimeAppUpdateSync();
+    return;
+  }
 
   const event: AppUpdateEvent = {
     currentVersion: status.currentVersion,
@@ -470,6 +504,8 @@ export async function processAppUpdateNotifications(): Promise<void> {
       .where(eq(notifications.id, channel.id))
       .run();
   }
+
+  await requestNotificationRuntimeAppUpdateSync();
 }
 
 function getWebhookRetryPolicy(config: NotificationConfig): { attempts: number; delayMs: number } {
@@ -517,7 +553,13 @@ async function sendChannelNotification(
   unreachableResults: CheckResult[],
   appUpdate: AppUpdateEvent | null = null,
 ): Promise<boolean> {
-  const payload = buildBatchPayload(updateResults, unreachableResults, appUpdate);
+  const payload = {
+    ...buildBatchPayload(updateResults, unreachableResults, appUpdate),
+    channelId: channel.id,
+    channelName: channel.name,
+    systemIds: parseSystemIds("systemIds" in channel ? (channel as { systemIds?: string | null }).systemIds ?? null : null),
+    schedule: "schedule" in channel ? (channel as { schedule?: string | null }).schedule ?? null : null,
+  };
   const provider = getProvider(channel.type);
   if (!provider) return false;
 

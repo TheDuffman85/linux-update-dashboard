@@ -1,6 +1,7 @@
 import type { NotificationProvider } from "./types";
 import { emailProvider } from "./email";
 import { gotifyProvider } from "./gotify";
+import { mqttProvider } from "./mqtt";
 import { ntfyProvider } from "./ntfy";
 import { telegramProvider } from "./telegram";
 import { webhookProvider } from "./webhook";
@@ -20,6 +21,7 @@ export type {
 const providers: Record<string, NotificationProvider> = {
   email: emailProvider,
   gotify: gotifyProvider,
+  mqtt: mqttProvider,
   ntfy: ntfyProvider,
   telegram: telegramProvider,
   webhook: webhookProvider,

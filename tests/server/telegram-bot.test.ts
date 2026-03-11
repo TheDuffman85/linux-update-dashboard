@@ -1258,4 +1258,31 @@ describe("telegram bot commands", () => {
     expect(setMyCommandsBody).not.toContain('"command":"upgradepkg"');
     expect(getUpdatesCalls).toBeGreaterThan(0);
   });
+
+  test("start ignores disabled Telegram channels even when a bot token is stored", async () => {
+    getDb().insert(notifications).values({
+      name: "Disabled Telegram",
+      type: "telegram",
+      enabled: 0,
+      notifyOn: '["updates"]',
+      systemIds: null,
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatBindingStatus: "unbound",
+        commandsEnabled: false,
+      })),
+    }).run();
+
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error("Telegram token should not be used for disabled channels");
+    }) as typeof fetch;
+
+    await startTelegramBot();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stopTelegramBot();
+
+    expect(fetchCalls).toBe(0);
+  });
 });
