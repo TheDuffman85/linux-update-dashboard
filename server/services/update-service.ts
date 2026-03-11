@@ -9,25 +9,21 @@ import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
 import { logger } from "../logger";
 import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
-
-// Active operation tracking (visible to the API)
-export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
-  startedAt: string;
-  packageName?: string;
-  remotePid?: number;
-  remoteLogFile?: string;
-  remoteExitFile?: string;
-}
-
-const activeOperations = new Map<number, ActiveOperation>();
+import {
+  clearActiveOperation,
+  getActiveOperation as getStoredActiveOperation,
+  getAllActiveOperations as getStoredActiveOperations,
+  setActiveOperation,
+  type ActiveOperation,
+} from "./active-operation-store";
+import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
 
 export function getActiveOperation(systemId: number): ActiveOperation | null {
-  return activeOperations.get(systemId) ?? null;
+  return getStoredActiveOperation(systemId);
 }
 
 export function getAllActiveOperations(): ReadonlyMap<number, ActiveOperation> {
-  return activeOperations;
+  return getStoredActiveOperations();
 }
 
 // Per-system locks using a simple promise-based mutex
@@ -510,12 +506,13 @@ export async function checkUpdates(
 ): Promise<ParsedUpdate[]> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "check", startedAt: now });
+    setActiveOperation(systemId, { type: "check", startedAt: now });
     outputStream.resetStream(systemId);
     try {
       return await checkUpdatesUnlocked(systemId);
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -525,7 +522,8 @@ export async function applyUpgradeAll(
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "upgrade_all", startedAt: now });
+    setActiveOperation(systemId, { type: "upgrade_all", startedAt: now });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
     const system = systemService.getSystem(systemId);
@@ -659,7 +657,8 @@ export async function applyUpgradeAll(
       if (conn) sshManager.disconnect(conn);
     }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -679,7 +678,8 @@ export async function applyFullUpgradeAll(
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "full_upgrade_all", startedAt: now });
+    setActiveOperation(systemId, { type: "full_upgrade_all", startedAt: now });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
     const system = systemService.getSystem(systemId);
@@ -809,7 +809,8 @@ export async function applyFullUpgradeAll(
       if (conn) sshManager.disconnect(conn);
     }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -820,7 +821,8 @@ export async function applyUpgradePackage(
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "upgrade_package", startedAt: now, packageName });
+    setActiveOperation(systemId, { type: "upgrade_package", startedAt: now, packageName });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
     const system = systemService.getSystem(systemId);
@@ -926,7 +928,8 @@ export async function applyUpgradePackage(
       if (conn) sshManager.disconnect(conn);
     }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }
@@ -936,7 +939,8 @@ export async function rebootSystem(
 ): Promise<{ success: boolean; message: string }> {
   return withLock(systemId, async () => {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    activeOperations.set(systemId, { type: "reboot", startedAt: now });
+    setActiveOperation(systemId, { type: "reboot", startedAt: now });
+    await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
     try {
       const system = systemService.getSystem(systemId);
@@ -989,7 +993,8 @@ export async function rebootSystem(
         }
       }
     } finally {
-      activeOperations.delete(systemId);
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
     }
   });
 }

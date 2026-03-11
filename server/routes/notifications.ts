@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { Cron } from "croner";
 import { eq } from "drizzle-orm";
 import * as notificationService from "../services/notification-service";
-import * as telegramBotService from "../services/telegram-bot";
+import * as notificationRuntime from "../services/notification-runtime";
 import { getDb } from "../db";
 import { notifications } from "../db/schema";
 import { getProvider, getProviderNames, type NotificationConfig } from "../services/notifications";
@@ -139,7 +139,7 @@ notificationsRouter.post("/:id/telegram/link", async (c) => {
     if (!userId) {
       return c.json({ error: "Unauthorized" }, 401);
     }
-    const result = await telegramBotService.createBindingLink(id, userId);
+    const result = await notificationRuntime.createBindingLink(id, userId);
     return c.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create Telegram link";
@@ -157,7 +157,7 @@ notificationsRouter.post("/:id/telegram/unlink", async (c) => {
   }
 
   try {
-    await telegramBotService.unlinkNotification(id);
+    await notificationRuntime.unlinkNotification(id);
     return c.json({ status: "ok" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to unlink Telegram chat";
@@ -180,7 +180,7 @@ notificationsRouter.post("/:id/telegram/reissue-command-token", async (c) => {
   }
 
   try {
-    await telegramBotService.reissueCommandToken(id, userId);
+    await notificationRuntime.reissueCommandToken(id, userId);
     return c.json({ status: "ok" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to reissue Telegram command token";
@@ -254,7 +254,7 @@ notificationsRouter.post("/", async (c) => {
   });
 
   const created = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
-  await telegramBotService.reconcileNotificationChange(null, created, getActorUserId(c));
+  await notificationRuntime.reconcileNotificationChange(null, created, getActorUserId(c));
 
   return c.json({ id }, 201);
 });
@@ -353,7 +353,7 @@ notificationsRouter.put("/:id", async (c) => {
   if (!ok) return c.json({ error: "Not found" }, 404);
 
   const current = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
-  await telegramBotService.reconcileNotificationChange(previous, current, getActorUserId(c));
+  await notificationRuntime.reconcileNotificationChange(previous, current, getActorUserId(c));
 
   return c.json({ ok: true });
 });
@@ -366,7 +366,7 @@ notificationsRouter.delete("/:id", async (c) => {
   const existing = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   const ok = notificationService.deleteNotification(id);
   if (!ok) return c.json({ error: "Not found" }, 404);
-  await telegramBotService.reconcileNotificationChange(existing, null, getActorUserId(c));
+  await notificationRuntime.reconcileNotificationChange(existing, null, getActorUserId(c));
   return c.json({ ok: true });
 });
 
@@ -411,6 +411,10 @@ notificationsRouter.post("/test", async (c) => {
 
     if (existing.type !== type) {
       return c.json({ error: "existingId type does not match the test notification type" }, 400);
+    }
+
+    if (existing.type === "mqtt" && existing.enabled !== 1) {
+      return c.json({ error: "MQTT notification is disabled" }, 400);
     }
 
     effectiveConfig = notificationService.mergeStoredSensitiveConfig(

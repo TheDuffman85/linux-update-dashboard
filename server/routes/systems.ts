@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import * as updateService from "../services/update-service";
+import * as notificationRuntime from "../services/notification-runtime";
 import { getSSHManager } from "../ssh/connection";
 import { detectPackageManagers } from "../ssh/detector";
 import * as outputStream from "../services/output-stream";
@@ -364,6 +365,7 @@ systems.post("/", async (c) => {
   }
 
   // Trigger initial check in background
+  await notificationRuntime.syncSystemState(systemId);
   updateService.checkUpdates(systemId).catch((error) => {
     logger.error("Initial update check failed after system creation", {
       systemId,
@@ -436,6 +438,8 @@ systems.put("/:id", async (c) => {
     throw error;
   }
 
+  await notificationRuntime.syncSystemState(id);
+
   return c.json({ status: "ok" });
 });
 
@@ -457,7 +461,7 @@ systems.post("/:id/revoke-host-key", (c) => {
 });
 
 // Delete system
-systems.delete("/:id", (c) => {
+systems.delete("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   outputStream.removeStream(id);
@@ -468,6 +472,7 @@ systems.delete("/:id", (c) => {
     if (response) return response;
     throw error;
   }
+  await notificationRuntime.syncSystemState(id);
   return c.json({ status: "ok" });
 });
 

@@ -49,6 +49,25 @@ export interface TelegramConfig extends NotificationConfig {
   commandTokenExpiresAt?: string;
 }
 
+export interface MqttConfig extends NotificationConfig {
+  brokerUrl: string;
+  username?: string;
+  password?: string;
+  clientId?: string;
+  keepaliveSeconds: number;
+  connectTimeoutMs: number;
+  qos: 0 | 1;
+  publishEvents: boolean;
+  topic: string;
+  retainEvents: boolean;
+  homeAssistantEnabled: boolean;
+  discoveryPrefix: string;
+  baseTopic: string;
+  publishAppEntity: boolean;
+  commandsEnabled: boolean;
+  payloadInstall: string;
+}
+
 export interface NotificationChannel {
   id: number;
   name: string;
