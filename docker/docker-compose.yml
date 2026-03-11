@@ -5,33 +5,16 @@ services:
       dockerfile: docker/Dockerfile
     container_name: linux-update-dashboard
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     ports:
       - "3001:3001"
     volumes:
       - dashboard_data:/data
     environment:
-      - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
-      # Optional: set fixed session key via Docker secret (otherwise auto-generated in /data)
-      # - LUDASH_SECRET_KEY_FILE=/run/secrets/ludash_secret_key
+      - LUDASH_ENCRYPTION_KEY=my_ludash_encryption_key
       - LUDASH_DB_PATH=/data/dashboard.db
       - LUDASH_LOG_LEVEL=info
       - LUDASH_PORT=3001
       - NODE_ENV=production
-    secrets:
-      - ludash_encryption_key
-      # - ludash_secret_key
 
 volumes:
   dashboard_data:
-
-secrets:
-  ludash_encryption_key:
-    file: ./secrets/ludash_encryption_key.txt
-  # ludash_secret_key:
-  #   file: ./secrets/ludash_secret_key.txt
