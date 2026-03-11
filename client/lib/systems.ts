@@ -36,6 +36,7 @@ export interface System {
   cpuCores: string | null;
   memory: string | null;
   disk: string | null;
+  ignoreKeptBackPackages: number;
   excludeFromUpgradeAll: number;
   hidden: number;
   needsReboot: number;
@@ -119,6 +120,7 @@ export function useCreateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      ignoreKeptBackPackages?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
       sourceSystemId?: number;
@@ -144,6 +146,7 @@ export function useUpdateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      ignoreKeptBackPackages?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),

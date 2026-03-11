@@ -5,14 +5,60 @@ import { sudo, validatePackageName } from "./types";
 const PATTERN =
   /^(\S+?)\/(\S+)\s+(\S+)\s+(\S+)\s+\[upgradable from:\s+(\S+)\]/;
 
-const LOCK_WAIT = "-o DPkg::Lock::Timeout=60";
+export const APT_LOCK_WAIT = "-o DPkg::Lock::Timeout=60";
+
+export function getAptKeptBackSimulationCommand(): string {
+  return (
+    "export DEBIAN_FRONTEND=noninteractive; " +
+    sudo(`apt-get ${APT_LOCK_WAIT} -s upgrade`) +
+    " 2>&1"
+  );
+}
+
+export function parseAptKeptBackPackages(output: string): string[] | null {
+  const lines = output.split("\n");
+  const heading = "The following packages have been kept back:";
+
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() !== heading) continue;
+
+    const packages: string[] = [];
+    let sawPackageLine = false;
+
+    for (let j = i + 1; j < lines.length; j++) {
+      const raw = lines[j];
+      const trimmed = raw.trim();
+
+      if (!trimmed) {
+        if (sawPackageLine) break;
+        continue;
+      }
+
+      if (!/^\s+/.test(raw)) break;
+
+      sawPackageLine = true;
+      for (const token of trimmed.split(/\s+/)) {
+        try {
+          packages.push(validatePackageName(token));
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    if (!sawPackageLine) return null;
+    return [...new Set(packages)];
+  }
+
+  return [];
+}
 
 export const aptParser: PackageParser = {
   name: "apt",
 
   getCheckCommands() {
     return [
-      sudo(`apt-get ${LOCK_WAIT} update -qq`) + " 2>&1",
+      sudo(`apt-get ${APT_LOCK_WAIT} update -qq`) + " 2>&1",
       "DEBIAN_FRONTEND=noninteractive apt list --upgradable 2>/dev/null | tail -n +2",
     ];
   },
@@ -48,7 +94,7 @@ export const aptParser: PackageParser = {
   getUpgradeAllCommand() {
     return (
       "export DEBIAN_FRONTEND=noninteractive; " +
-      sudo(`apt-get ${LOCK_WAIT} upgrade -y`) +
+      sudo(`apt-get ${APT_LOCK_WAIT} upgrade -y`) +
       " 2>&1"
     );
   },
@@ -56,7 +102,7 @@ export const aptParser: PackageParser = {
   getFullUpgradeAllCommand() {
     return (
       "export DEBIAN_FRONTEND=noninteractive; " +
-      sudo(`apt-get ${LOCK_WAIT} full-upgrade -y`) +
+      sudo(`apt-get ${APT_LOCK_WAIT} full-upgrade -y`) +
       " 2>&1"
     );
   },
@@ -65,7 +111,7 @@ export const aptParser: PackageParser = {
     const safePkg = validatePackageName(pkg);
     return (
       "export DEBIAN_FRONTEND=noninteractive; " +
-      sudo(`apt-get ${LOCK_WAIT} install --only-upgrade -y ${safePkg}`) +
+      sudo(`apt-get ${APT_LOCK_WAIT} install --only-upgrade -y ${safePkg}`) +
       " 2>&1"
     );
   },

@@ -493,6 +493,10 @@ export default function SystemDetail() {
   }
 
   const { system, updates, history } = data;
+  const canOfferIgnoredKeptBackFullUpgrade =
+    system.supportsFullUpgrade === true && system.ignoreKeptBackPackages === 1;
+  const showUpgradeAllButton = system.updateCount > 0 || upgrading;
+  const showUpgradeActions = showUpgradeAllButton || canOfferIgnoredKeptBackFullUpgrade;
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -569,48 +573,65 @@ export default function SystemDetail() {
               </span>
             ) : "Refresh"}
           </button>
-          {(system.updateCount > 0 || upgrading) && (
+          {showUpgradeActions && (
             system.supportsFullUpgrade ? (
-              <div className="relative" ref={dropdownRef}>
-                <div className="flex">
-                  <button
-                    onClick={() => setShowUpgradeConfirm(true)}
-                    disabled={upgrading || checking}
-                    className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {upgrading ? (
-                      <span className="flex items-center gap-1.5">
-                        <span className="spinner spinner-sm" />
-                        Upgrading...
-                      </span>
-                    ) : (
-                      `Upgrade All (${system.updateCount})`
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setShowUpgradeDropdown((v) => !v)}
-                    disabled={upgrading || checking}
-                    className="px-1.5 py-1.5 text-sm rounded-r-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 border-l border-blue-500"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                </div>
-                {showUpgradeDropdown && (
-                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-border rounded-lg shadow-lg z-10">
+              showUpgradeAllButton ? (
+                <div className="relative" ref={dropdownRef}>
+                  <div className="flex">
                     <button
-                      onClick={() => {
-                        setShowUpgradeDropdown(false);
-                        setShowFullUpgradeConfirm(true);
-                      }}
-                      className="w-full px-3 py-2 text-sm text-left text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                      onClick={() => setShowUpgradeConfirm(true)}
+                      disabled={upgrading || checking}
+                      className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
                     >
-                      Full Upgrade
+                      {upgrading ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="spinner spinner-sm" />
+                          Upgrading...
+                        </span>
+                      ) : (
+                        `Upgrade All (${system.updateCount})`
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowUpgradeDropdown((v) => !v)}
+                      disabled={upgrading || checking}
+                      className="px-1.5 py-1.5 text-sm rounded-r-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 border-l border-blue-500"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
                     </button>
                   </div>
-                )}
-              </div>
+                  {showUpgradeDropdown && (
+                    <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-border rounded-lg shadow-lg z-10">
+                      <button
+                        onClick={() => {
+                          setShowUpgradeDropdown(false);
+                          setShowFullUpgradeConfirm(true);
+                        }}
+                        className="w-full px-3 py-2 text-sm text-left text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                      >
+                        Full Upgrade
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowFullUpgradeConfirm(true)}
+                  disabled={upgrading || checking}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                >
+                  {upgrading ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="spinner spinner-sm" />
+                      Upgrading...
+                    </span>
+                  ) : (
+                    "Full Upgrade"
+                  )}
+                </button>
+              )
             ) : (
               <button
                 onClick={() => setShowUpgradeConfirm(true)}
@@ -757,7 +778,11 @@ export default function SystemDetail() {
         onClose={() => setShowFullUpgradeConfirm(false)}
         onConfirm={handleFullUpgradeAll}
         title="Full Upgrade All Packages"
-        message={`Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`}
+        message={
+          system.updateCount > 0
+            ? `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`
+            : `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages, including kept-back packages hidden from the normal update count.`
+        }
         confirmLabel="Full Upgrade"
         danger
         loading={upgrading}

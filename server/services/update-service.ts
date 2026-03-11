@@ -2,6 +2,7 @@ import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
 import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCommandInfo } from "../ssh/connection";
+import { getAptKeptBackSimulationCommand, parseAptKeptBackPackages } from "../ssh/parsers/apt";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
@@ -431,7 +432,67 @@ async function checkUpdatesUnlocked(
           }
         }
 
-        const updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode);
+        let updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode);
+        if (pmName === "apt" && system.ignoreKeptBackPackages === 1 && updates.length > 0) {
+          const simulateCommand = getAptKeptBackSimulationCommand();
+          allCommands.push(simulateCommand);
+          pub({ type: "started", command: simulateCommand, pkgManager: pmName });
+          pub({ type: "phase", phase: "Resolving kept-back packages..." });
+
+          try {
+            const simulation = await sshManager.runCommand(
+              conn,
+              simulateCommand,
+              undefined,
+              sudoPassword,
+              (chunk, stream) => {
+                pub({ type: "output", data: chunk, stream });
+              }
+            );
+            checkOutput += simulation.stdout;
+            checkOutput += simulation.stderr;
+
+            if (simulation.exitCode !== 0) {
+              const reason =
+                simulation.stderr || simulation.stdout || `Command exited with code ${simulation.exitCode}`;
+              logger.warn("APT kept-back detection failed", {
+                systemId,
+                error: sanitizeOutput(reason),
+              });
+              pub({
+                type: "warning",
+                message: "Could not determine kept-back APT packages. Using unfiltered results.",
+              });
+            } else {
+              const keptBackPackages = parseAptKeptBackPackages(
+                `${simulation.stdout}\n${simulation.stderr}`.trim()
+              );
+              if (keptBackPackages === null) {
+                logger.warn("APT kept-back detection returned ambiguous output", {
+                  systemId,
+                });
+                pub({
+                  type: "warning",
+                  message: "APT kept-back output was ambiguous. Using unfiltered results.",
+                });
+              } else if (keptBackPackages.length > 0) {
+                const keptBackSet = new Set(keptBackPackages);
+                updates = updates.filter((update) => !keptBackSet.has(update.packageName));
+              }
+            }
+          } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            logger.warn("APT kept-back detection failed", {
+              systemId,
+              error: sanitizeOutput(reason),
+            });
+            pub({
+              type: "warning",
+              message: "Could not determine kept-back APT packages. Using unfiltered results.",
+            });
+          }
+        }
+
         allUpdates.push(...updates);
         successfulChecks++;
       } catch (e) {
