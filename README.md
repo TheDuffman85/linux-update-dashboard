@@ -139,24 +139,30 @@ The production server serves both the API and the built frontend on port 3001.
 ```bash
 # Generate your encryption key (required)
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
+export LUDASH_BASE_URL=http://localhost:3001
 
 # Pull and run
 docker run -d \
   -p 3001:3001 \
   -e LUDASH_ENCRYPTION_KEY=$LUDASH_ENCRYPTION_KEY \
+  -e LUDASH_BASE_URL=$LUDASH_BASE_URL \
   -v ludash_data:/data \
   ghcr.io/theduffman85/linux-update-dashboard:latest
 ```
+
+Set `LUDASH_BASE_URL` to the URL users and integrations will actually use. If you run behind a reverse proxy, also add `-e LUDASH_TRUST_PROXY=true`.
 
 Optional Docker Secrets variant:
 
 ```bash
 mkdir -p ./secrets
 openssl rand -base64 32 > ./secrets/ludash_encryption_key.txt
+export LUDASH_BASE_URL=http://localhost:3001
 
 docker run -d \
   -p 3001:3001 \
   -e LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key \
+  -e LUDASH_BASE_URL=$LUDASH_BASE_URL \
   -v "$(pwd)/secrets/ludash_encryption_key.txt:/run/secrets/ludash_encryption_key:ro" \
   -v ludash_data:/data \
   ghcr.io/theduffman85/linux-update-dashboard:latest
@@ -180,8 +186,9 @@ services:
       # - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
       # - LUDASH_SECRET_KEY_FILE=/run/secrets/ludash_secret_key
       - LUDASH_DB_PATH=/data/dashboard.db
+      - LUDASH_BASE_URL=http://localhost:3001
       - NODE_ENV=production
-      # Optional: set your public URL for stricter origin validation
+      # If you run behind a reverse proxy, set the public URL and trust forwarded headers:
       # - LUDASH_BASE_URL=https://dashboard.example.com
       # - LUDASH_TRUST_PROXY=true
 
@@ -190,6 +197,8 @@ volumes:
 ```
 
 The dashboard will be available at `http://localhost:3001`. Data is persisted in a Docker volume.
+
+Set `LUDASH_BASE_URL` in all deployments. Use the external URL when the dashboard is accessed through a DNS name or reverse proxy.
 
 If you prefer Docker secrets with Compose, add a `secrets:` block and set `LUDASH_ENCRYPTION_KEY_FILE` instead of `LUDASH_ENCRYPTION_KEY`.
 
@@ -208,7 +217,9 @@ services:
     environment:
       - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
       - LUDASH_DB_PATH=/data/dashboard.db
+      - LUDASH_BASE_URL=http://localhost:3001
       - NODE_ENV=production
+      # - LUDASH_TRUST_PROXY=true
     secrets:
       - ludash_encryption_key
 
@@ -235,10 +246,13 @@ cd docker
 
 # Generate your encryption key (required)
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
+export LUDASH_BASE_URL=http://localhost:3001
 
 # Start the container
 docker compose up -d
 ```
+
+If the container is behind a reverse proxy, set `LUDASH_BASE_URL` to the public HTTPS URL and add `LUDASH_TRUST_PROXY=true` in the Compose file.
 
 ### Health Check
 
@@ -268,8 +282,8 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_SECRET_KEY_FILE` | No | Auto-generated | Read `LUDASH_SECRET_KEY` value from file (Docker secrets) |
 | `LUDASH_PORT` | No | `3001` | HTTP server port |
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
-| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Public URL for WebAuthn/OIDC. When set, detected origin must match it. When unset, origin is inferred from request headers (Host/proto plus Origin/Referer heuristics), which works behind reverse proxies without extra config |
-| `LUDASH_TRUST_PROXY` | No | `false` | Trust `X-Forwarded-*` headers from your reverse proxy (needed for forwarded host/proto detection when `LUDASH_BASE_URL` is set) |
+| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Recommended to always set. Public URL used for WebAuthn/OIDC and Home Assistant URLs such as `entity_picture`/`origin.url`. Set it to the URL users and integrations actually use |
+| `LUDASH_TRUST_PROXY` | No | `false` | Set to `true` behind a reverse proxy so `X-Forwarded-*` headers are trusted. Recommended whenever the public URL is provided by a proxy |
 | `LUDASH_LOG_LEVEL` | No | `info` | Server log level: `debug`, `info`, `warn`, or `error`. Routine per-attempt SSH and scheduler refresh logs are only shown at `debug` |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
@@ -310,7 +324,7 @@ Standard username/password login. Passwords are hashed with bcrypt (cost factor 
 
 ### Passkeys (WebAuthn)
 
-Register hardware keys or platform authenticators (Touch ID, Windows Hello) for passwordless login. Each passkey can be given a custom name (e.g. "YubiKey", "MacBook") during registration and renamed later from the Settings page. Works behind reverse proxies without extra configuration; set `LUDASH_BASE_URL` for stricter origin validation.
+Register hardware keys or platform authenticators (Touch ID, Windows Hello) for passwordless login. Each passkey can be given a custom name (e.g. "YubiKey", "MacBook") during registration and renamed later from the Settings page. Set `LUDASH_BASE_URL` to the public URL you use to access the dashboard. Behind a reverse proxy, also set `LUDASH_TRUST_PROXY=true`.
 
 ### SSO (OpenID Connect)
 
@@ -319,6 +333,8 @@ Hook up any OIDC-compatible identity provider (Authentik, Keycloak, Okta, Auth0,
 ```
 {LUDASH_BASE_URL}/api/auth/oidc/callback
 ```
+
+`LUDASH_BASE_URL` should be explicitly set before configuring OIDC so the callback and origin validation stay aligned with your public URL.
 
 #### Self-signed CA support
 
@@ -388,6 +404,8 @@ MQTT channels support two related behaviors:
 - optional Home Assistant MQTT Update discovery/state publishing with one app entity plus one per-system package-update entity
 
 Home Assistant mode details:
+
+`LUDASH_BASE_URL` should be explicitly set for Home Assistant. The integration uses it for URLs such as `entity_picture` and `origin.url`, and setting it avoids unreliable URL inference.
 
 - discovery topics use retained config payloads
 - entity state is synced immediately after checks, upgrades, reconnects, startup, notification edits, and system edits

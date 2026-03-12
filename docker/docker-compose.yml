@@ -14,7 +14,9 @@ services:
       - LUDASH_DB_PATH=/data/dashboard.db
       - LUDASH_LOG_LEVEL=info
       - LUDASH_PORT=3001
+      - LUDASH_BASE_URL=http://localhost:3001
       - NODE_ENV=production
+      # - LUDASH_TRUST_PROXY=true
 
 volumes:
   dashboard_data:
