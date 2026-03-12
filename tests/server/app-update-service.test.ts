@@ -85,4 +85,31 @@ describe("app update service", () => {
     expect(result.remoteVersion).toBe("202603020304");
     expect(result.releaseUrl).toBeNull();
   });
+
+  test("still resolves release metadata when app version env is missing", async () => {
+    process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
+    process.env.LUDASH_APP_BRANCH = "main";
+    delete process.env.LUDASH_APP_VERSION;
+    delete process.env.VITE_APP_VERSION;
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      expect(url).toContain("/releases/latest");
+      return new Response(
+        JSON.stringify({
+          tag_name: "2026.3.99",
+          html_url:
+            "https://github.com/TheDuffman85/linux-update-dashboard/releases/tag/2026.3.99",
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const { getAppUpdateStatus } = await importFreshAppUpdateService();
+    const result = await getAppUpdateStatus(true);
+
+    expect(result.currentVersion).toBeTruthy();
+    expect(result.remoteVersion).toBe("2026.3.99");
+    expect(result.releaseUrl).toContain("/releases/tag/2026.3.99");
+  });
 });

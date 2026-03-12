@@ -35,6 +35,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
+- **Home Assistant MQTT update entities:** publish one Linux Update Dashboard app update entity plus per-system package update entities with discovery, icons/images, rich JSON attributes, and optional install commands
 - **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
 - **Safer SSH workflows:** optional host-key verification with explicit trust approval, plus ProxyJump support for reaching internal hosts
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
@@ -358,7 +359,7 @@ Notification channels are configured from the **Notifications** page. You can cr
 
 Every channel supports the same high-level behavior:
 
-- **Channel types:** `Email`, `Gotify`, `ntfy`, `Telegram`, and `Webhook`
+- **Channel types:** `Email`, `Gotify`, `MQTT`, `ntfy`, `Telegram`, and `Webhook`
 - **Events:** `updates`, `unreachable`, and `appUpdates`
 - **Default events:** new channels default to `updates` and `appUpdates`
 - **System scope:** `All systems` or a selected list of system IDs
@@ -391,9 +392,55 @@ Home Assistant mode details:
 - discovery topics use retained config payloads
 - entity state is synced immediately after checks, upgrades, reconnects, startup, notification edits, and system edits
 - digest schedules only affect the generic MQTT event topic, not Home Assistant state
+- the Home Assistant device name is configured explicitly in the MQTT channel settings
+- discovery config includes `icon: mdi:linux`, `entity_picture`, and `origin.url`
+- `entity_picture` points to the local dashboard logo URL (`{LUDASH_BASE_URL}/assets/logo.png` in production)
 - the app entity is visibility-only
 - per-system entities expose synthetic fingerprint versions for the current pending update set, not real package-version pairs
+- Home Assistant update state and JSON attributes are published on separate retained topics:
+  - `.../state` carries the update entity state payload (`installed_version`, `latest_version`, `title`, `release_summary`, `release_url`, `in_progress`)
+  - `.../attributes` carries the extended JSON attributes payload
 - optional install commands map to the standard per-system upgrade action
+
+Home Assistant app-update entity attributes include:
+
+- `update_available`
+- `current_branch`
+- `origin_url`
+- `repository_url`
+- `channel_id`
+- `channel_name`
+- `device_name`
+- `check_reason`
+
+Home Assistant per-system update entity attributes include:
+
+- `update_count`
+- `security_update_count`
+- `needs_reboot`
+- `reachable`
+- `active_operation`
+- `system`
+- `packages`
+
+The `system` JSON attribute object contains the detected host metadata that the dashboard already knows about, such as:
+
+- system ID/name/hostname/port/username
+- package manager and detected/disabled package managers
+- OS name/version, kernel, uptime, architecture, CPU, memory, disk, boot ID
+- flags such as `ignore_kept_back_packages`, `exclude_from_upgrade_all`, `needs_reboot`, and reachability
+- timestamps such as `last_seen_at`, `system_info_updated_at`, `created_at`, and `updated_at`
+
+The `packages` JSON attribute array contains one object per pending update with:
+
+- `pkg_manager`
+- `package_name`
+- `current_version`
+- `new_version`
+- `architecture`
+- `repository`
+- `is_security`
+- `cached_at`
 
 ### Telegram
 

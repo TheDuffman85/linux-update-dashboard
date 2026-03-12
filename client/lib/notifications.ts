@@ -61,6 +61,7 @@ export interface MqttConfig extends NotificationConfig {
   topic: string;
   retainEvents: boolean;
   homeAssistantEnabled: boolean;
+  deviceName: string;
   discoveryPrefix: string;
   baseTopic: string;
   publishAppEntity: boolean;

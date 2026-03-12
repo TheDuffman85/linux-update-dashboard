@@ -1,7 +1,8 @@
 import { createHash } from "crypto";
 import type { MqttClient } from "mqtt";
-import { asc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { notifications, systems, updateCache } from "../db/schema";
+import { config as appConfig } from "../config";
 import { getDb } from "../db";
 import { logger } from "../logger";
 import {
@@ -27,6 +28,7 @@ import * as systemService from "./system-service";
 
 type NotificationRow = typeof notifications.$inferSelect;
 type SystemRow = typeof systems.$inferSelect;
+type UpdateRow = typeof updateCache.$inferSelect;
 
 interface DiscoveryEntity {
   componentId: string;
@@ -34,6 +36,8 @@ interface DiscoveryEntity {
   discoveryPayload: Record<string, unknown>;
   stateTopic: string;
   statePayload: string;
+  attributesTopic: string;
+  attributesPayload: string;
   availabilityTopic: string;
   availabilityPayload: "online" | "offline";
   commandTopic?: string;
@@ -143,6 +147,108 @@ function buildSyntheticUpdateFingerprintVersion(
   return `pending-${hash.slice(0, 12)}`;
 }
 
+function parseJsonStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getPublicBaseUrl(): string {
+  try {
+    return new URL(appConfig.baseUrl).origin;
+  } catch {
+    return "http://localhost:3001";
+  }
+}
+
+function getLogoUrl(): string {
+  return new URL("/assets/logo.png", `${getPublicBaseUrl()}/`).toString();
+}
+
+function buildSharedDeviceMetadata(row: NotificationRow, config: MqttConfig): Record<string, unknown> {
+  return {
+    identifiers: [`ludash_channel_${row.id}`],
+    name: config.deviceName,
+    manufacturer: "Linux Update Dashboard",
+    model: "MQTT Update Channel",
+  };
+}
+
+function buildDiscoveryOrigin(): Record<string, string> {
+  return {
+    name: "linux-update-dashboard",
+    url: getPublicBaseUrl(),
+  };
+}
+
+function buildSafeSystemAttributes(
+  system: SystemRow,
+  updates: UpdateRow[],
+): Record<string, unknown> {
+  const activeOperation = getActiveOperation(system.id);
+
+  return {
+    update_count: updates.length,
+    security_update_count: updates.filter((entry) => entry.isSecurity === 1).length,
+    needs_reboot: system.needsReboot === 1,
+    reachable: system.isReachable === 1,
+    active_operation: activeOperation
+      ? {
+          type: activeOperation.type,
+          started_at: activeOperation.startedAt,
+          ...(activeOperation.packageName ? { package_name: activeOperation.packageName } : {}),
+        }
+      : null,
+    system: {
+      id: system.id,
+      name: system.name,
+      hostname: system.hostname,
+      port: system.port,
+      username: system.username,
+      proxy_jump_system_id: system.proxyJumpSystemId,
+      pkg_manager: system.pkgManager,
+      detected_pkg_managers: parseJsonStringArray(system.detectedPkgManagers),
+      disabled_pkg_managers: parseJsonStringArray(system.disabledPkgManagers),
+      os_name: system.osName,
+      os_version: system.osVersion,
+      kernel: system.kernel,
+      hostname_remote: system.hostnameRemote,
+      uptime: system.uptime,
+      arch: system.arch,
+      cpu_cores: system.cpuCores,
+      memory: system.memory,
+      disk: system.disk,
+      boot_id: system.bootId,
+      ignore_kept_back_packages: system.ignoreKeptBackPackages === 1,
+      exclude_from_upgrade_all: system.excludeFromUpgradeAll === 1,
+      hidden: system.hidden === 1,
+      needs_reboot: system.needsReboot === 1,
+      is_reachable: system.isReachable === 1,
+      last_seen_at: system.lastSeenAt,
+      system_info_updated_at: system.systemInfoUpdatedAt,
+      created_at: system.createdAt,
+      updated_at: system.updatedAt,
+    },
+    packages: updates
+      .slice()
+      .sort((left, right) => left.packageName.localeCompare(right.packageName))
+      .map((entry) => ({
+        pkg_manager: entry.pkgManager,
+        package_name: entry.packageName,
+        current_version: entry.currentVersion,
+        new_version: entry.newVersion,
+        architecture: entry.architecture,
+        repository: entry.repository,
+        is_security: entry.isSecurity === 1,
+        cached_at: entry.cachedAt,
+      })),
+  };
+}
+
 function buildAppEntity(
   row: NotificationRow,
   config: MqttConfig,
@@ -155,25 +261,22 @@ function buildAppEntity(
   const releaseSummary = status.updateAvailable
     ? `Linux Update Dashboard: ${installedVersion} -> ${latestVersion}`
     : "Linux Update Dashboard is up to date";
+  const logoUrl = getLogoUrl();
+  const publicBaseUrl = getPublicBaseUrl();
 
   return {
     componentId,
     discoveryTopic: buildHomeAssistantDiscoveryTopic(config, row.id, componentId),
     discoveryPayload: {
-      device: {
-        identifiers: [`ludash_channel_${row.id}`],
-        name: row.name || "Linux Update Dashboard",
-        manufacturer: "Linux Update Dashboard",
-        model: "MQTT Update Channel",
-      },
-      origin: {
-        name: "linux-update-dashboard",
-        url: "https://github.com/TheDuffman85/linux-update-dashboard",
-      },
+      device: buildSharedDeviceMetadata(row, config),
+      origin: buildDiscoveryOrigin(),
       unique_id: `ludash_${row.id}_${componentId}`,
       name: "Linux Update Dashboard Update",
       default_entity_id: `update.ludash_${row.id}_${componentId}`,
+      icon: "mdi:linux",
+      entity_picture: logoUrl,
       state_topic: `${topicBase}/state`,
+      json_attributes_topic: `${topicBase}/attributes`,
       availability_topic: `${topicBase}/availability`,
       payload_available: "online",
       payload_not_available: "offline",
@@ -191,6 +294,17 @@ function buildAppEntity(
         : {}),
       in_progress: false,
     }),
+    attributesTopic: `${topicBase}/attributes`,
+    attributesPayload: JSON.stringify({
+      update_available: status.updateAvailable,
+      current_branch: status.currentBranch,
+      origin_url: publicBaseUrl,
+      repository_url: status.repoUrl,
+      channel_id: row.id,
+      channel_name: row.name,
+      device_name: config.deviceName,
+      check_reason: status.reason || null,
+    }),
     availabilityTopic: `${topicBase}/availability`,
     availabilityPayload: "online",
   };
@@ -200,7 +314,7 @@ function buildSystemEntity(
   row: NotificationRow,
   config: MqttConfig,
   system: SystemRow,
-  updates: Array<{ packageName: string; isSecurity: number; newVersion?: string | null }>,
+  updates: UpdateRow[],
 ): DiscoveryEntity {
   const componentId = `system_${system.id}`;
   const topicBase = buildEntityBaseTopic(config, row.id, componentId);
@@ -211,25 +325,21 @@ function buildSystemEntity(
     .sort((left, right) => left.localeCompare(right))
     .slice(0, 3);
   const activeOperation = getActiveOperation(system.id);
+  const logoUrl = getLogoUrl();
 
   return {
     componentId,
     discoveryTopic: buildHomeAssistantDiscoveryTopic(config, row.id, componentId),
     discoveryPayload: {
-      device: {
-        identifiers: [`ludash_channel_${row.id}`],
-        name: row.name || "Linux Update Dashboard",
-        manufacturer: "Linux Update Dashboard",
-        model: "MQTT Update Channel",
-      },
-      origin: {
-        name: "linux-update-dashboard",
-        url: "https://github.com/TheDuffman85/linux-update-dashboard",
-      },
+      device: buildSharedDeviceMetadata(row, config),
+      origin: buildDiscoveryOrigin(),
       unique_id: `ludash_${row.id}_${componentId}`,
       name: `${system.name} Package updates`,
       default_entity_id: `update.ludash_${row.id}_${componentId}`,
+      icon: "mdi:linux",
+      entity_picture: logoUrl,
       state_topic: `${topicBase}/state`,
+      json_attributes_topic: `${topicBase}/attributes`,
       availability_topic: `${topicBase}/availability`,
       payload_available: "online",
       payload_not_available: "offline",
@@ -249,6 +359,13 @@ function buildSystemEntity(
       title: "Package updates",
       release_summary: buildSystemReleaseSummary(updateCount, securityCount, packageNames),
       in_progress: isMutatingOperation(activeOperation?.type),
+    }),
+    attributesTopic: `${topicBase}/attributes`,
+    attributesPayload: JSON.stringify({
+      channel_id: row.id,
+      channel_name: row.name,
+      device_name: config.deviceName,
+      ...buildSafeSystemAttributes(system, updates),
     }),
     availabilityTopic: `${topicBase}/availability`,
     availabilityPayload: availabilityForSystem(system),
@@ -279,13 +396,10 @@ async function buildEntitiesForChannel(
   if (notifyOn.includes("updates") || notifyOn.includes("unreachable")) {
     for (const system of selectedSystems) {
       const updates = db
-        .select({
-          packageName: updateCache.packageName,
-          isSecurity: updateCache.isSecurity,
-          newVersion: updateCache.newVersion,
-        })
+        .select()
         .from(updateCache)
         .where(eq(updateCache.systemId, system.id))
+        .orderBy(updateCache.packageName)
         .all();
       entities.push(buildSystemEntity(row, config, system, updates));
     }
@@ -376,6 +490,12 @@ async function syncRecord(record: RuntimeRecord): Promise<void> {
     messages.push({
       topic: entity.stateTopic,
       payload: entity.statePayload,
+      retain: true,
+      qos: config.qos,
+    });
+    messages.push({
+      topic: entity.attributesTopic,
+      payload: entity.attributesPayload,
       retain: true,
       qos: config.qos,
     });

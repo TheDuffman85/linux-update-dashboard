@@ -223,6 +223,7 @@ function defaultMqttConfig(): MqttConfig {
     topic: "",
     retainEvents: false,
     homeAssistantEnabled: false,
+    deviceName: "Linux Update Dashboard",
     discoveryPrefix: "homeassistant",
     baseTopic: "ludash",
     publishAppEntity: true,
@@ -317,6 +318,7 @@ function coerceMqttConfig(config: NotificationConfig): MqttConfig {
     topic: readString(config, "topic"),
     retainEvents: readBoolean(config, "retainEvents", defaults.retainEvents),
     homeAssistantEnabled: readBoolean(config, "homeAssistantEnabled", defaults.homeAssistantEnabled),
+    deviceName: readString(config, "deviceName", defaults.deviceName),
     discoveryPrefix: readString(config, "discoveryPrefix", defaults.discoveryPrefix),
     baseTopic: readString(config, "baseTopic", defaults.baseTopic),
     publishAppEntity: readBoolean(config, "publishAppEntity", defaults.publishAppEntity),
@@ -1203,6 +1205,15 @@ function NotificationForm({
               {mqttConfig.homeAssistantEnabled && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className={labelClass}>Device Name</label>
+                      <input
+                        value={mqttConfig.deviceName}
+                        onChange={(e) => setMqttConfig((prev) => ({ ...prev, deviceName: e.target.value }))}
+                        className={inputClass}
+                        placeholder="Linux Update Dashboard"
+                      />
+                    </div>
                     <div>
                       <label className={labelClass}>Discovery Prefix</label>
                       <input

@@ -285,6 +285,7 @@ describe("mqtt notifications", () => {
         topic: "ludash/events",
         publishEvents: false,
         homeAssistantEnabled: true,
+        deviceName: "Home Lab Updates",
         discoveryPrefix: "homeassistant",
         baseTopic: "ludash",
         publishAppEntity: false,
@@ -311,8 +312,13 @@ describe("mqtt notifications", () => {
     expect(discovery).toBeTruthy();
     const discoveryPayload = JSON.parse(discovery!.payload);
     expect(discoveryPayload.origin.name).toBe("linux-update-dashboard");
+    expect(discoveryPayload.origin.url).toBe("http://localhost:3001");
     expect(discoveryPayload.device.identifiers).toEqual(["ludash_channel_1"]);
+    expect(discoveryPayload.device.name).toBe("Home Lab Updates");
     expect(discoveryPayload.command_topic).toContain("/command");
+    expect(discoveryPayload.icon).toBe("mdi:linux");
+    expect(discoveryPayload.entity_picture).toBe("http://localhost:3001/assets/logo.png");
+    expect(discoveryPayload.json_attributes_topic).toBe("ludash/channels/1/system_1/attributes");
     expect(discoveryPayload.unique_id).toBe("ludash_1_system_1");
 
     const state = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/system_1/state"));
@@ -323,6 +329,19 @@ describe("mqtt notifications", () => {
     expect(statePayload.release_summary).toContain("3 updates, 1 security");
     expect(statePayload.release_summary).toContain("bash");
     expect(statePayload.in_progress).toBe(false);
+    expect(statePayload.entity_picture).toBeUndefined();
+    expect(statePayload.needs_reboot).toBeUndefined();
+    expect(statePayload.system).toBeUndefined();
+    expect(statePayload.packages).toBeUndefined();
+
+    const attributes = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/system_1/attributes"));
+    expect(attributes).toBeTruthy();
+    const attributesPayload = JSON.parse(attributes!.payload);
+    expect(attributesPayload.needs_reboot).toBe(false);
+    expect(attributesPayload.system.os_name).toBe("Ubuntu");
+    expect(attributesPayload.packages).toHaveLength(3);
+    expect(attributesPayload.packages[0].package_name).toBe("bash");
+    expect(attributesPayload.packages[2].is_security).toBe(true);
 
     expect(runtimeClient.subscriptions.some((entry) => entry.topics.some((topic) => topic.endsWith("/system_1/command")))).toBe(true);
 
@@ -430,9 +449,21 @@ describe("mqtt notifications", () => {
     const runtimeClient = clients[0];
     const state = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/state"));
     expect(state).toBeTruthy();
+    const discovery = runtimeClient.publishes.find((entry) => entry.topic === "homeassistant/update/ludash_1_app_update/config");
+    expect(discovery).toBeTruthy();
+    expect(JSON.parse(discovery!.payload).icon).toBe("mdi:linux");
+    expect(JSON.parse(discovery!.payload).entity_picture).toBe("http://localhost:3001/assets/logo.png");
+    expect(JSON.parse(discovery!.payload).json_attributes_topic).toBe("ludash/channels/1/app_update/attributes");
     const payload = JSON.parse(state!.payload);
     expect(payload.installed_version).toBe("2026.3.1");
     expect(payload.latest_version).toBe("2026.3.2");
     expect(payload.release_url).toContain("/releases/tag/2026.3.2");
+    expect(payload.origin_url).toBeUndefined();
+    expect(payload.entity_picture).toBeUndefined();
+
+    const attributes = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/attributes"));
+    expect(attributes).toBeTruthy();
+    const attributesPayload = JSON.parse(attributes!.payload);
+    expect(attributesPayload.origin_url).toBe("http://localhost:3001");
   });
 });

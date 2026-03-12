@@ -15,6 +15,7 @@ const ALLOWED_KEYS = new Set([
   "topic",
   "retainEvents",
   "homeAssistantEnabled",
+  "deviceName",
   "discoveryPrefix",
   "baseTopic",
   "publishAppEntity",
@@ -34,6 +35,7 @@ export interface MqttConfig extends Record<string, unknown> {
   topic: string;
   retainEvents: boolean;
   homeAssistantEnabled: boolean;
+  deviceName: string;
   discoveryPrefix: string;
   baseTopic: string;
   publishAppEntity: boolean;
@@ -97,6 +99,7 @@ export function defaultMqttConfig(): MqttConfig {
     topic: "",
     retainEvents: false,
     homeAssistantEnabled: false,
+    deviceName: "Linux Update Dashboard",
     discoveryPrefix: "homeassistant",
     baseTopic: "ludash",
     publishAppEntity: true,
@@ -121,6 +124,7 @@ export function sanitizeMqttConfig(config: NotificationConfig): MqttConfig {
     topic: normalizeString(raw.topic),
     retainEvents: raw.retainEvents === true,
     homeAssistantEnabled: raw.homeAssistantEnabled === true,
+    deviceName: normalizeString(raw.deviceName) || defaults.deviceName,
     discoveryPrefix: normalizeTopicSegment(raw.discoveryPrefix, defaults.discoveryPrefix),
     baseTopic: normalizeTopicSegment(raw.baseTopic, defaults.baseTopic),
     publishAppEntity: raw.publishAppEntity !== false,
