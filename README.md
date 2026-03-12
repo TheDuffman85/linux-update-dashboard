@@ -491,17 +491,20 @@ Supported commands:
 - `/help`
 - `/menu`
 - `/status`
-- `/check <system-id|all>`
+- `/refresh <system-id|all>`
+- `/packages <system-id>`
 - `/upgrade <system-id|all>`
 - `/fullupgrade <system-id|all>`
 - `/upgradepkg <system-id> <package>`
 
 Behavior:
 
-- Telegram registers `/help`, `/menu`, and `/status` in Telegram's native command picker
-- `/menu` opens an inline menu for status, refresh, upgrade, full-upgrade, and package-upgrade flows
-- `/status` lists the systems this channel is allowed to control
-- `/check`, `/upgrade`, and `/fullupgrade` also accept `all` to target every allowed system that matches that action
+- Telegram registers `/help` and `/menu` in Telegram's native command picker
+- `/status`, `/refresh`, and `/packages` remain available as typed commands and through `/menu`
+- `/menu` opens an inline menu with `Status`, `Refresh`, `Upgrade`, `Full upgrade`, `Upgrade package`, and `Show packages`
+- `/status` shows the current status for the systems this channel is allowed to control
+- `/refresh`, `/upgrade`, and `/fullupgrade` also accept `all` to target every allowed system that matches that action
+- `/packages` lists the currently cached package updates for one allowed system, including current and target versions
 - the system picker in `/menu` includes an `All` button for refresh, upgrade, and full-upgrade flows
 - `/upgrade`, `/fullupgrade`, and `/upgradepkg` require an explicit confirmation button before execution, including `all`
 - confirmation buttons expire after **5 minutes**

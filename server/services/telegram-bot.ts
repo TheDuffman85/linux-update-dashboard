@@ -31,7 +31,6 @@ const TELEGRAM_PROFILE_PHOTO_FILENAME = "telegram-bot-avatar.jpg";
 const TELEGRAM_COMMANDS = [
   { command: "help", description: "Show supported commands" },
   { command: "menu", description: "Open the action menu" },
-  { command: "status", description: "List allowed systems" },
 ] as const;
 
 type NotificationRow = typeof notifications.$inferSelect;
@@ -107,9 +106,11 @@ interface AllowedSystem {
 
 interface SystemUpdate {
   packageName: string;
+  currentVersion?: string | null;
+  newVersion?: string | null;
 }
 
-type SystemAction = "check" | "upgrade" | "fullupgrade" | "pkgsys";
+type SystemAction = "check" | "upgrade" | "fullupgrade" | "pkgsys" | "pkglist";
 type BulkAction = "check" | "upgrade" | "fullupgrade";
 
 class DashboardApiError extends Error {
@@ -548,6 +549,15 @@ async function fetchSystemUpdates(channel: NotificationRow, systemId: number): P
   return Array.isArray(response.updates) ? response.updates : [];
 }
 
+async function fetchPackageNames(channel: NotificationRow, systemId: number): Promise<string[]> {
+  const updates = await fetchSystemUpdates(channel, systemId);
+  return [...new Set(
+    updates
+      .map((entry) => entry.packageName)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+  )];
+}
+
 async function findCommandChannel(botToken: string, chatId: string): Promise<NotificationRow | null> {
   const rows = getTelegramRows().filter((row) => {
     if (row.enabled !== 1) return false;
@@ -605,12 +615,36 @@ function formatCount(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+function formatPackageUpdateEntry(update: SystemUpdate): string {
+  const currentVersion = typeof update.currentVersion === "string" && update.currentVersion.length > 0
+    ? update.currentVersion
+    : null;
+  const newVersion = typeof update.newVersion === "string" && update.newVersion.length > 0
+    ? update.newVersion
+    : null;
+
+  if (currentVersion && newVersion) {
+    return `- ${update.packageName}: ${currentVersion} -> ${newVersion}`;
+  }
+  if (newVersion) {
+    return `- ${update.packageName}: -> ${newVersion}`;
+  }
+  if (currentVersion) {
+    return `- ${update.packageName}: ${currentVersion}`;
+  }
+  return `- ${update.packageName}`;
+}
+
 function formatReachabilityDot(isReachable?: number): string {
   return isReachable === -1
     ? "🔴"
     : isReachable === 1
       ? "🟢"
       : "🟠";
+}
+
+function buildRefreshFailureMessage(system: Pick<AllowedSystem, "id" | "name">): string {
+  return `Refresh failed for ${system.name} (#${system.id}). Check the dashboard history for details.`;
 }
 
 function filterSystemsForAction(
@@ -620,7 +654,7 @@ function filterSystemsForAction(
   return systemsList.filter((system) =>
     action === "fullupgrade"
       ? system.supportsFullUpgrade === true && (system.updateCount ?? 0) > 0
-      : action === "upgrade" || action === "pkgsys"
+      : action === "upgrade" || action === "pkgsys" || action === "pkglist"
         ? (system.updateCount ?? 0) > 0
         : true
   );
@@ -675,6 +709,8 @@ function noSystemsMessage(action: SystemAction | BulkAction): string {
       ? "No systems in this Telegram command channel currently have available updates."
       : action === "pkgsys"
         ? "No systems in this Telegram command channel currently have packages available to upgrade."
+        : action === "pkglist"
+          ? "No systems in this Telegram command channel currently have package updates."
         : "No systems are available for this Telegram command channel.";
 }
 
@@ -692,7 +728,7 @@ function buildBulkConfirmationPrompt(action: Exclude<BulkAction, "check">, syste
 function buildBulkStartedMessage(action: BulkAction, count: number, failedStarts: number): string {
   const label =
     action === "check"
-      ? "Refresh/check all"
+      ? "Refresh all"
       : action === "upgrade"
         ? "Upgrade all"
         : "Full upgrade all";
@@ -710,7 +746,7 @@ function buildBulkSummaryMessage(
 ): string {
   const label =
     action === "check"
-      ? "Refresh/check all"
+      ? "Refresh all"
       : action === "upgrade"
         ? "Upgrade all"
         : "Full upgrade all";
@@ -730,7 +766,8 @@ function helpText(): string {
     "/help",
     "/menu",
     "/status",
-    "/check <system-id|all>",
+    "/refresh <system-id|all>",
+    "/packages <system-id>",
     "/upgrade <system-id|all>",
     "/fullupgrade <system-id|all>",
     "/upgradepkg <system-id> <package>",
@@ -769,7 +806,7 @@ function buildSystemMenuKeyboard(
   const start = safePage * MENU_PAGE_SIZE;
   const pageItems = systemsList.slice(start, start + MENU_PAGE_SIZE);
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
-  if (action !== "pkgsys") {
+  if (action === "check" || action === "upgrade" || action === "fullupgrade") {
     rows.push([{ text: "All", callback_data: `menu:runall:${action}` }]);
   }
   rows.push(...pageItems.map((system) => [{
@@ -814,19 +851,39 @@ function buildPackageMenuKeyboard(systemId: number, packages: string[], page = 0
   return { inline_keyboard: rows };
 }
 
+function buildPackageUpdatesKeyboard(systemPage = 0) {
+  return {
+    inline_keyboard: [[
+      { text: "Back", callback_data: `menu:list:pkglist:${systemPage}` },
+      { text: "Menu", callback_data: "menu:root" },
+    ]],
+  };
+}
+
+function buildPackageUpdatesMessage(system: Pick<AllowedSystem, "id" | "name">, updates: SystemUpdate[]): string {
+  const visibleUpdates = updates.slice(0, 40);
+  const extraCount = updates.length - visibleUpdates.length;
+  return [
+    `Package updates for ${system.name} (#${system.id}): ${formatCount(updates.length, "package")}`,
+    ...visibleUpdates.map((update) => formatPackageUpdateEntry(update)),
+    extraCount > 0 ? `…and ${extraCount} more packages.` : "",
+  ].filter(Boolean).join("\n");
+}
+
 function buildRootMenuKeyboard() {
   return {
     inline_keyboard: [
       [
         { text: "Status", callback_data: "menu:status" },
-        { text: "Refresh/check", callback_data: "menu:list:check:0" },
+        { text: "Refresh", callback_data: "menu:list:check:0" },
       ],
       [
         { text: "Upgrade", callback_data: "menu:list:upgrade:0" },
         { text: "Full upgrade", callback_data: "menu:list:fullupgrade:0" },
       ],
       [
-        { text: "Single package", callback_data: "menu:list:pkgsys:0" },
+        { text: "Upgrade package", callback_data: "menu:list:pkgsys:0" },
+        { text: "Show packages", callback_data: "menu:list:pkglist:0" },
       ],
     ],
   };
@@ -882,14 +939,19 @@ async function executeCommandForSystem(
   }
 
   if (action === "check") {
-    await startAsyncCommand(
-      botToken,
-      chatId,
-      commandToken,
-      `/api/systems/${system.id}/check`,
-      `Checking updates for ${system.name} (#${system.id})…`,
-      (result) => `Check completed for ${system.name} (#${system.id}): ${result.updateCount ?? 0} updates available.`,
-    );
+    try {
+      await startAsyncCommand(
+        botToken,
+        chatId,
+        commandToken,
+        `/api/systems/${system.id}/check`,
+        `Refreshing updates for ${system.name} (#${system.id})…`,
+        (result) => `Refresh completed for ${system.name} (#${system.id}): ${result.updateCount ?? 0} updates available.`,
+        buildRefreshFailureMessage(system),
+      );
+    } catch {
+      await sendTelegramText(botToken, chatId, buildRefreshFailureMessage(system));
+    }
     return;
   }
 
@@ -921,10 +983,7 @@ async function promptPackageSelection(
   page = 0,
   systemPage = 0,
 ): Promise<void> {
-  const updates = await fetchSystemUpdates(channel, system.id);
-  const packages = updates
-    .map((entry) => entry.packageName)
-    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const packages = await fetchPackageNames(channel, system.id);
 
   if (packages.length === 0) {
     await sendTelegramText(botToken, chatId, `No upgradable packages are currently cached for ${system.name} (#${system.id}).`);
@@ -936,6 +995,28 @@ async function promptPackageSelection(
     chatId,
     `Select a package to upgrade on ${system.name} (#${system.id}). ${pageLabel(packages.length, PACKAGE_MENU_PAGE_SIZE, page)}`,
     buildPackageMenuKeyboard(system.id, packages, page, systemPage),
+  );
+}
+
+async function sendPackageUpdates(
+  botToken: string,
+  chatId: string,
+  channel: NotificationRow,
+  system: AllowedSystem,
+  systemPage?: number,
+): Promise<void> {
+  const updates = await fetchSystemUpdates(channel, system.id);
+
+  if (updates.length === 0) {
+    await sendTelegramText(botToken, chatId, `No cached package updates are currently available for ${system.name} (#${system.id}).`);
+    return;
+  }
+
+  await sendTelegramText(
+    botToken,
+    chatId,
+    buildPackageUpdatesMessage(system, updates),
+    typeof systemPage === "number" ? buildPackageUpdatesKeyboard(systemPage) : undefined,
   );
 }
 
@@ -953,12 +1034,14 @@ async function promptSystemSelection(
   }
 
   const title = action === "check"
-    ? "Select a system to refresh/check:"
+    ? "Select a system to refresh:"
     : action === "upgrade"
       ? "Select a system to upgrade:"
       : action === "fullupgrade"
         ? "Select a system for full upgrade:"
-        : "Select a system to choose a package:";
+        : action === "pkglist"
+          ? "Select a system to view package updates:"
+          : "Select a system to choose a package:";
   await sendTelegramText(
     botToken,
     chatId,
@@ -1030,7 +1113,9 @@ async function executeBulkCommand(
 
   if (startedJobs.length === 0) {
     const failureLines = startFailures.map(({ system, startError }) =>
-      `- ${formatSystemLabel(system)}: ${sanitizeOutput(startError instanceof Error ? startError.message : String(startError))}`
+      action === "check"
+        ? `- ${formatSystemLabel(system)}: failed`
+        : `- ${formatSystemLabel(system)}: ${sanitizeOutput(startError instanceof Error ? startError.message : String(startError))}`
     );
     await sendTelegramText(
       botToken,
@@ -1056,7 +1141,9 @@ async function executeBulkCommand(
     let warningCount = 0;
     let failedCount = startFailures.length;
     const lines: string[] = startFailures.map(({ system, startError }) =>
-      `- ${formatSystemLabel(system)}: failed to start (${sanitizeOutput(startError instanceof Error ? startError.message : String(startError))})`
+      action === "check"
+        ? `- ${formatSystemLabel(system)}: failed`
+        : `- ${formatSystemLabel(system)}: failed to start (${sanitizeOutput(startError instanceof Error ? startError.message : String(startError))})`
     );
 
     for (const entry of jobResults) {
@@ -1067,7 +1154,9 @@ async function executeBulkCommand(
         }
         failedCount += 1;
         lines.push(
-          `- ${formatSystemLabel(entry.system)}: failed (${sanitizeOutput(entry.error instanceof Error ? entry.error.message : String(entry.error))})`
+          action === "check"
+            ? `- ${formatSystemLabel(entry.system)}: failed`
+            : `- ${formatSystemLabel(entry.system)}: failed (${sanitizeOutput(entry.error instanceof Error ? entry.error.message : String(entry.error))})`
         );
         continue;
       }
@@ -1133,6 +1222,7 @@ async function pollJobAndReport(
   commandToken: string,
   jobId: string,
   summaryBuilder: (result: Record<string, unknown>) => string,
+  failureMessage?: string,
 ): Promise<void> {
   try {
     const result = await awaitJobResult(commandToken, jobId);
@@ -1141,8 +1231,12 @@ async function pollJobAndReport(
     if (isCommandTokenAuthError(error)) {
       await sendTelegramText(botToken, chatId, COMMAND_TOKEN_AUTH_FAILURE_MESSAGE);
     } else {
-      const message = error instanceof Error ? error.message : String(error);
-      await sendTelegramText(botToken, chatId, `Command failed: ${sanitizeOutput(truncateMessage(message))}`);
+      if (failureMessage) {
+        await sendTelegramText(botToken, chatId, failureMessage);
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        await sendTelegramText(botToken, chatId, `Command failed: ${sanitizeOutput(truncateMessage(message))}`);
+      }
     }
   }
 }
@@ -1154,12 +1248,13 @@ async function startAsyncCommand(
   path: string,
   startedMessage: string,
   summaryBuilder: (result: Record<string, unknown>) => string,
+  failureMessage?: string,
 ): Promise<void> {
   const response = await callDashboardApi<{ status: string; jobId: string }>(commandToken, path, {
     method: "POST",
   });
   await sendTelegramText(botToken, chatId, startedMessage);
-  void pollJobAndReport(botToken, chatId, commandToken, response.jobId, summaryBuilder);
+  void pollJobAndReport(botToken, chatId, commandToken, response.jobId, summaryBuilder, failureMessage);
 }
 
 async function handleCommandMessage(
@@ -1206,8 +1301,10 @@ async function handleCommandMessage(
       return;
     }
 
-    if ((parsed.command === "check" || parsed.command === "upgrade" || parsed.command === "fullupgrade") && parsed.args[0]?.toLowerCase() === "all") {
-      if (parsed.command === "check") {
+    const requestedCommand = parsed.command === "refresh" ? "check" : parsed.command;
+
+    if ((requestedCommand === "check" || requestedCommand === "upgrade" || requestedCommand === "fullupgrade") && parsed.args[0]?.toLowerCase() === "all") {
+      if (requestedCommand === "check") {
         const systems = await getSystemsForAction(channel, "check");
         if (systems.length === 0) {
           await sendTelegramText(botToken, chatId, noSystemsMessage("check"));
@@ -1227,8 +1324,13 @@ async function handleCommandMessage(
         botToken,
         chatId,
         channel,
-        parsed.command === "upgrade" ? "upgrade" : "fullupgrade",
+        requestedCommand === "upgrade" ? "upgrade" : "fullupgrade",
       );
+      return;
+    }
+
+    if (requestedCommand === "packages" && !parsed.args[0]) {
+      await sendTelegramText(botToken, chatId, "Usage: /packages <system-id>");
       return;
     }
 
@@ -1239,7 +1341,12 @@ async function handleCommandMessage(
       return;
     }
 
-    if (parsed.command === "check") {
+    if (requestedCommand === "packages") {
+      await sendPackageUpdates(botToken, chatId, channel, system);
+      return;
+    }
+
+    if (requestedCommand === "check") {
       await executeCommandForSystem(botToken, chatId, channel, "check", system);
       return;
     }
@@ -1247,7 +1354,7 @@ async function handleCommandMessage(
     let confirmationToken = "";
     let prompt = "";
 
-    if (parsed.command === "upgrade") {
+    if (requestedCommand === "upgrade") {
       confirmationToken = createConfirmation({
         notificationId: channel.id,
         chatId,
@@ -1257,7 +1364,7 @@ async function handleCommandMessage(
         systemId: system.id,
       });
       prompt = `Confirm upgrade for ${system.name} (#${system.id})?`;
-    } else if (parsed.command === "fullupgrade") {
+    } else if (requestedCommand === "fullupgrade") {
       if (!system.supportsFullUpgrade) {
         await sendTelegramText(botToken, chatId, `Full upgrade is not supported for ${system.name} (#${system.id}).`);
         return;
@@ -1271,7 +1378,7 @@ async function handleCommandMessage(
         systemId: system.id,
       });
       prompt = `Confirm full upgrade for ${system.name} (#${system.id})?`;
-    } else if (parsed.command === "upgradepkg") {
+    } else if (requestedCommand === "upgradepkg") {
       const packageName = parsed.args[1];
       if (!packageName) {
         await sendTelegramText(botToken, chatId, "Usage: /upgradepkg <system-id> <package>");
@@ -1335,7 +1442,7 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
       if (menuAction === "list") {
         const action = parts[2];
         const page = Number.parseInt(parts[3] || "0", 10) || 0;
-        if (action === "check" || action === "upgrade" || action === "fullupgrade" || action === "pkgsys") {
+        if (action === "check" || action === "upgrade" || action === "fullupgrade" || action === "pkgsys" || action === "pkglist") {
           await promptSystemSelection(botToken, chatId, channel, action, page);
         }
         return;
@@ -1383,6 +1490,11 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
 
         if (action === "pkgsys") {
           await promptPackageSelection(botToken, chatId, channel, system, 0, sourcePage);
+          return;
+        }
+
+        if (action === "pkglist") {
+          await sendPackageUpdates(botToken, chatId, channel, system, sourcePage);
           return;
         }
 
