@@ -212,6 +212,29 @@ describe("notifications routes validation", () => {
     expect(body.error).toContain("ntfy priority override");
   });
 
+  test("rejects inline mqtt test requests with publish events enabled and a blank topic", async () => {
+    const res = await app.request("/api/notifications/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops mqtt",
+        type: "mqtt",
+        config: {
+          brokerUrl: "mqtt://broker.example.com:1883",
+          publishEvents: true,
+          topic: "   ",
+          homeAssistantEnabled: true,
+          discoveryPrefix: "homeassistant",
+          baseTopic: "ludash",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("MQTT topic is required");
+  });
+
   test("rejects gotify notifications with invalid priority overrides", async () => {
     const res = await app.request("/api/notifications", {
       method: "POST",

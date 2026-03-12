@@ -21,6 +21,10 @@ import {
   type WebhookConfig,
   type WebhookField,
 } from "../lib/notifications";
+import {
+  canSendNotificationFormTest,
+  validateNotificationFormAction,
+} from "../lib/notification-form-validation";
 import { useVisibleSystems } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 
@@ -713,22 +717,36 @@ function NotificationForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const config = buildConfig();
+    const formError = validateNotificationFormAction(type, config);
+    if (formError) {
+      addToast(formError, "danger");
+      return;
+    }
+
     onSubmit({
       name,
       type,
       enabled,
       notifyOn,
       systemIds: allSystems ? null : selectedSystemIds,
-      config: buildConfig(),
+      config,
       schedule: getScheduleValue(),
     });
   };
 
   const handleInlineTest = () => {
+    const config = buildConfig();
+    const formError = validateNotificationFormAction(type, config);
+    if (formError) {
+      addToast(formError, "danger");
+      return;
+    }
+
     testConfig.mutate(
       {
         type,
-        config: buildConfig(),
+        config,
         name: name || undefined,
         existingId: initial?.id,
       },
@@ -778,6 +796,7 @@ function NotificationForm({
   };
 
   const destinationWarning = type === "webhook" ? getWebhookDestinationWarning(webhookConfig.url) : null;
+  const canSendTest = canSendNotificationFormTest(type, buildConfig());
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -1653,8 +1672,8 @@ function NotificationForm({
         <button
           type="button"
           onClick={handleInlineTest}
-          disabled={testConfig.isPending}
-          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 mr-auto"
+          disabled={testConfig.isPending || !canSendTest}
+          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mr-auto"
           title="Send test notification"
         >
           {testConfig.isPending ? <span className="spinner spinner-sm" /> : "Send Test"}
