@@ -3,7 +3,9 @@ import { cors } from "hono/cors";
 import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import { authMiddleware } from "./middleware/auth";
 import { csrfMiddleware } from "./middleware/csrf";
+import { getTrustedPublicOrigin, rememberTrustedPublicOrigin } from "./request-security";
 import * as outputStream from "./services/output-stream";
+import * as notificationRuntime from "./services/notification-runtime";
 import authRoutes from "./routes/auth";
 import dashboardRoutes from "./routes/dashboard";
 import systemsRoutes from "./routes/systems";
@@ -39,6 +41,15 @@ export function createApp() {
       })
     );
   }
+
+  app.use("*", async (c, next) => {
+    const changed = rememberTrustedPublicOrigin(getTrustedPublicOrigin(c));
+    if (changed) {
+      void notificationRuntime.syncSystemState();
+      void notificationRuntime.syncAppUpdateState();
+    }
+    await next();
+  });
 
   // CSRF protection for all API routes (safe methods are exempt)
   app.use("/api/*", csrfMiddleware);

@@ -15,6 +15,7 @@ import * as notificationRuntime from "../../server/services/notification-runtime
 import { __testing as mqttRuntimeTesting } from "../../server/services/mqtt-runtime";
 import { resetAppUpdateStatusCache } from "../../server/services/app-update-service";
 import { testNotification } from "../../server/services/notification-service";
+import { __testing as requestSecurityTesting, rememberTrustedPublicOrigin } from "../../server/request-security";
 
 class FakeMqttClient extends EventEmitter {
   connected = false;
@@ -107,6 +108,7 @@ describe("mqtt notifications", () => {
     await notificationRuntime.stop();
     mqttClientTesting.reset();
     mqttRuntimeTesting.reset();
+    requestSecurityTesting.resetKnownPublicOrigin();
     globalThis.fetch = originalFetch;
     resetAppUpdateStatusCache();
 
@@ -350,6 +352,56 @@ describe("mqtt notifications", () => {
     await flush();
 
     expect(commandSystemId).toBe(systemRow.id);
+  });
+
+  test("runtime uses remembered public origin for Home Assistant URLs", async () => {
+    rememberTrustedPublicOrigin("https://linux-update-dashboard.i.tausend.me");
+    process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
+    process.env.LUDASH_APP_BRANCH = "main";
+    process.env.LUDASH_APP_VERSION = "2026.3.1";
+
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          tag_name: "2026.3.2",
+          html_url: "https://github.com/TheDuffman85/linux-update-dashboard/releases/tag/2026.3.2",
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    getDb().insert(notifications).values({
+      name: "HA App MQTT",
+      type: "mqtt",
+      enabled: 1,
+      notifyOn: '["appUpdates"]',
+      systemIds: null,
+      config: JSON.stringify({
+        brokerUrl: "mqtt://broker.example.com:1883",
+        publishEvents: false,
+        homeAssistantEnabled: true,
+        discoveryPrefix: "homeassistant",
+        baseTopic: "ludash",
+        publishAppEntity: true,
+        commandsEnabled: false,
+        qos: 1,
+      }),
+    }).run();
+
+    await notificationRuntime.start();
+    await flush();
+    await flush();
+
+    const runtimeClient = clients[0];
+    const discovery = runtimeClient.publishes.find((entry) => entry.topic === "homeassistant/update/ludash_1_app_update/config");
+    expect(discovery).toBeTruthy();
+    const discoveryPayload = JSON.parse(discovery!.payload);
+    expect(discoveryPayload.origin.url).toBe("https://linux-update-dashboard.i.tausend.me");
+    expect(discoveryPayload.entity_picture).toBe("https://linux-update-dashboard.i.tausend.me/assets/logo.png");
+
+    const attributes = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/attributes"));
+    expect(attributes).toBeTruthy();
+    expect(JSON.parse(attributes!.payload).origin_url).toBe("https://linux-update-dashboard.i.tausend.me");
   });
 
   test("legacy home assistant mqtt configs migrate channel name into device name", async () => {

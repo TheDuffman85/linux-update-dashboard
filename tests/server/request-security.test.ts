@@ -1,13 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import {
+  __testing as requestSecurityTesting,
+  getKnownPublicOrigin,
   getTrustedPublicOrigin,
   isPrivateOrReservedIp,
   isSafeOutboundUrl,
   isTrustedReturnOrigin,
+  rememberTrustedPublicOrigin,
 } from "../../server/request-security";
 
 describe("request security helpers", () => {
+  afterEach(() => {
+    requestSecurityTesting.resetKnownPublicOrigin();
+  });
+
   test("trusted return origin allows loopback dev origins", () => {
     expect(isTrustedReturnOrigin("http://localhost:5173")).toBe(true);
     expect(isTrustedReturnOrigin("http://127.0.0.1:4173")).toBe(true);
@@ -73,6 +80,32 @@ describe("request security helpers", () => {
       expect(await res.text()).toBe("https://dashboard.example.com");
     } finally {
       if (prev !== undefined) process.env.LUDASH_BASE_URL = prev;
+    }
+  });
+
+  test("known public origin prefers remembered external origin over later loopback requests", () => {
+    const prev = process.env.LUDASH_BASE_URL;
+    delete process.env.LUDASH_BASE_URL;
+    try {
+      expect(rememberTrustedPublicOrigin("https://dashboard.example.com")).toBe(true);
+      expect(getKnownPublicOrigin()).toBe("https://dashboard.example.com");
+
+      expect(rememberTrustedPublicOrigin("http://localhost:3001")).toBe(false);
+      expect(getKnownPublicOrigin()).toBe("https://dashboard.example.com");
+    } finally {
+      if (prev !== undefined) process.env.LUDASH_BASE_URL = prev;
+    }
+  });
+
+  test("known public origin uses explicit base URL when configured", () => {
+    const prev = process.env.LUDASH_BASE_URL;
+    process.env.LUDASH_BASE_URL = "https://linux-update-dashboard.i.tausend.me";
+    try {
+      rememberTrustedPublicOrigin("https://dashboard.example.com");
+      expect(getKnownPublicOrigin()).toBe("https://linux-update-dashboard.i.tausend.me");
+    } finally {
+      if (prev === undefined) delete process.env.LUDASH_BASE_URL;
+      else process.env.LUDASH_BASE_URL = prev;
     }
   });
 
