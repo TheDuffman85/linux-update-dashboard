@@ -61,6 +61,11 @@ export function createApp() {
   app.route("/api/passkeys", passkeysRoutes);
   app.route("/api/tokens", apiTokensRoutes);
 
+  // Expose the canonical logo URL in every environment for external consumers
+  // such as Home Assistant entity pictures.
+  app.get("/assets/logo.svg", serveStatic({ root: "./", path: "assets/logo.svg" }));
+  app.get("/assets/logo.png", serveStatic({ root: "./", path: "assets/logo.png" }));
+
   // WebSocket route for live command output streaming
   // Auth is enforced by authMiddleware on the HTTP GET before upgrade.
   app.get(

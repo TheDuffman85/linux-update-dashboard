@@ -296,6 +296,38 @@ describe("systems reorder route", () => {
     expect(updated?.hidden).toBe(0);
   });
 
+  test("filters hidden systems when requesting visible scope", async () => {
+    const db = getDb();
+    db.insert(systems).values([
+      {
+        name: "Visible",
+        hostname: "visible.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+        hidden: 0,
+      },
+      {
+        name: "Hidden",
+        hostname: "hidden.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+        hidden: 1,
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request("/api/systems?scope=visible");
+    expect(res.status).toBe(200);
+
+    const body = await res.json() as { systems: Array<{ name: string }> };
+    expect(body.systems).toHaveLength(1);
+    expect(body.systems[0].name).toBe("Visible");
+  });
+
   test("persists and serializes the ignore kept-back flag", async () => {
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);

@@ -92,6 +92,18 @@ export function useSystems() {
   });
 }
 
+export function useVisibleSystems() {
+  return useQuery({
+    queryKey: ["systems", "visible"],
+    queryFn: () =>
+      apiFetch<{ systems: System[] }>("/systems?scope=visible").then((r) => r.systems),
+    refetchInterval: (query) => {
+      const hasActiveOps = query.state.data?.some((s) => s.activeOperation);
+      return hasActiveOps ? 3000 : 30_000;
+    },
+  });
+}
+
 export function useSystem(id: number) {
   const query = useQuery({
     queryKey: ["system", id],

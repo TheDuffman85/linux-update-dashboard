@@ -530,7 +530,7 @@ async function fetchAllowedSystems(channel: NotificationRow): Promise<AllowedSys
 
   const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; securityCount?: number; isReachable: number; supportsFullUpgrade?: boolean }> }>(
     commandToken,
-    "/api/systems"
+    "/api/systems?scope=visible"
   );
   // Preserve the dashboard/system sort order returned by the API, even when the channel scope is a subset.
   const scopedIds = channel.systemIds ? new Set<number>(JSON.parse(channel.systemIds)) : null;

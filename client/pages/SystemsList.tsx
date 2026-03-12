@@ -160,6 +160,7 @@ export default function SystemsList() {
   return (
     <Layout
       title="Systems"
+      contentWidth="wide"
       actions={
         <button
           onClick={() => setShowForm(true)}

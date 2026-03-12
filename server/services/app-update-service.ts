@@ -1,4 +1,5 @@
 import { execSync } from "child_process";
+import { readFileSync } from "fs";
 
 const UPDATE_CHECK_CACHE_MS = 60 * 60 * 1000;
 const DEV_TAG_PATTERN = /^dev-\d{12}$/;
@@ -18,7 +19,10 @@ let cachedStatus: { checkedAt: number; data: AppUpdateStatus } | null = null;
 
 function git(cmd: string): string {
   try {
-    return execSync(`git ${cmd}`, { encoding: "utf-8" }).trim();
+    return execSync(`git ${cmd}`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
     return "";
   }
@@ -84,10 +88,24 @@ function getCurrentBranch(): string {
   );
 }
 
+function readPackageVersion(): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync("./package.json", "utf-8")) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version.trim()
+      ? parsed.version.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function getCurrentVersion(): string | null {
   const version =
     process.env.LUDASH_APP_VERSION ||
     process.env.VITE_APP_VERSION ||
+    git("describe --tags --exact-match") ||
+    git("describe --tags --abbrev=0") ||
+    readPackageVersion() ||
     null;
   return version && version.trim() ? version.trim() : null;
 }
@@ -172,22 +190,17 @@ export async function getAppUpdateStatus(force = false): Promise<AppUpdateStatus
     return data;
   }
 
-  if (!currentVersion) {
-    const data = fallback("missing_current_version");
-    cachedStatus = { checkedAt: now, data };
-    return data;
-  }
-
   try {
     let data: AppUpdateStatus;
 
     if (currentBranch === "dev") {
       const remoteVersion = await fetchLatestDevVersion(repo.slug);
+      const normalizedCurrent = currentVersion || "";
       data = {
         updateAvailable:
           Boolean(remoteVersion) &&
-          DEV_TAG_PATTERN.test(currentVersion) &&
-          remoteVersion! > currentVersion.replace(/^dev-/, ""),
+          DEV_TAG_PATTERN.test(normalizedCurrent) &&
+          remoteVersion! > normalizedCurrent.replace(/^dev-/, ""),
         currentVersion,
         currentBranch,
         remoteVersion,
@@ -202,7 +215,7 @@ export async function getAppUpdateStatus(force = false): Promise<AppUpdateStatus
         typeof release?.tag_name === "string"
           ? release.tag_name.replace(/^v/i, "").trim()
           : null;
-      const normalizedCurrent = currentVersion.replace(/^v/i, "").trim();
+      const normalizedCurrent = currentVersion?.replace(/^v/i, "").trim() || null;
 
       data = {
         updateAvailable:

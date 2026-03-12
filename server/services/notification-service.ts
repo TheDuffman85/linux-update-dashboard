@@ -1,4 +1,4 @@
-import { eq, and, isNotNull, asc } from "drizzle-orm";
+import { eq, and, isNotNull, asc, inArray } from "drizzle-orm";
 import { createHash } from "crypto";
 import { Cron } from "croner";
 import { getDb } from "../db";
@@ -18,6 +18,8 @@ import { formatUpdateLine } from "./notifications/presentation";
 import { sanitizeOutput } from "../utils/sanitize";
 import { getAppUpdateStatus } from "./app-update-service";
 import { requestNotificationRuntimeAppUpdateSync } from "./notification-runtime-events";
+import { migrateLegacyMqttDeviceName } from "./notifications/mqtt-shared";
+import * as systemService from "./system-service";
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
 const DEFAULT_NOTIFY_ON_JSON = JSON.stringify(DEFAULT_NOTIFY_ON);
@@ -73,9 +75,11 @@ function prepareConfigForStorage(
   return provider.prepareConfigForStorage(provider.sanitizeConfig(config));
 }
 
-function loadSanitizedConfig(row: { id: number; type: string; config: string }): NotificationConfig {
+function loadSanitizedConfig(row: { id: number; type: string; name: string; config: string }): NotificationConfig {
   const provider = getProvider(row.type);
-  const parsed = parseConfig(row.config);
+  const parsed = row.type === "mqtt"
+    ? migrateLegacyMqttDeviceName(parseConfig(row.config), row.name)
+    : parseConfig(row.config);
   if (!provider) return parsed;
 
   const sanitized = provider.sanitizeConfig(parsed);
@@ -397,10 +401,13 @@ export async function processScheduledResults(
 
   if (channels.length === 0) return;
 
+  const visibleResults = systemService.filterVisibleSystemItems(results);
+  if (visibleResults.length === 0) return;
+
   const updatesChanged: CheckResult[] = [];
   const unreachableChanged: CheckResult[] = [];
 
-  for (const result of results) {
+  for (const result of visibleResults) {
     if (result.updateCount > 0) {
       const currentHash = computeUpdateHash(result.systemId);
       const system = db
@@ -719,9 +726,33 @@ export async function processScheduledDigests(): Promise<void> {
     if (!channel.schedule || channel.schedule === "immediate") continue;
 
     const pending = parsePendingEvents(channel.pendingEvents);
+    const visibleUpdates = systemService.filterVisibleSystemItems(pending.updates);
+    const visibleUnreachable = systemService.filterVisibleSystemItems(pending.unreachable);
+
     if (
-      pending.updates.length === 0 &&
-      pending.unreachable.length === 0 &&
+      visibleUpdates.length !== pending.updates.length ||
+      visibleUnreachable.length !== pending.unreachable.length
+    ) {
+      db.update(notifications)
+        .set({
+          pendingEvents:
+            visibleUpdates.length === 0 &&
+            visibleUnreachable.length === 0 &&
+            !pending.appUpdate
+              ? null
+              : JSON.stringify({
+                  updates: visibleUpdates,
+                  unreachable: visibleUnreachable,
+                  appUpdate: pending.appUpdate,
+                }),
+        })
+        .where(eq(notifications.id, channel.id))
+        .run();
+    }
+
+    if (
+      visibleUpdates.length === 0 &&
+      visibleUnreachable.length === 0 &&
       !pending.appUpdate
     ) continue;
 
@@ -729,8 +760,8 @@ export async function processScheduledDigests(): Promise<void> {
 
     const sent = await sendChannelNotification(
       channel,
-      pending.updates,
-      pending.unreachable,
+      visibleUpdates,
+      visibleUnreachable,
       pending.appUpdate
     );
     if (!sent) continue;

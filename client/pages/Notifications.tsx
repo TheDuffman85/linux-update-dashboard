@@ -21,7 +21,11 @@ import {
   type WebhookConfig,
   type WebhookField,
 } from "../lib/notifications";
-import { useSystems } from "../lib/systems";
+import {
+  canSendNotificationFormTest,
+  validateNotificationFormAction,
+} from "../lib/notification-form-validation";
+import { useVisibleSystems } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -219,6 +223,7 @@ function defaultMqttConfig(): MqttConfig {
     topic: "",
     retainEvents: false,
     homeAssistantEnabled: false,
+    deviceName: "Linux Update Dashboard",
     discoveryPrefix: "homeassistant",
     baseTopic: "ludash",
     publishAppEntity: true,
@@ -313,6 +318,7 @@ function coerceMqttConfig(config: NotificationConfig): MqttConfig {
     topic: readString(config, "topic"),
     retainEvents: readBoolean(config, "retainEvents", defaults.retainEvents),
     homeAssistantEnabled: readBoolean(config, "homeAssistantEnabled", defaults.homeAssistantEnabled),
+    deviceName: readString(config, "deviceName", defaults.deviceName),
     discoveryPrefix: readString(config, "discoveryPrefix", defaults.discoveryPrefix),
     baseTopic: readString(config, "baseTopic", defaults.baseTopic),
     publishAppEntity: readBoolean(config, "publishAppEntity", defaults.publishAppEntity),
@@ -520,7 +526,7 @@ function NotificationForm({
   onCancel: () => void;
   loading: boolean;
 }) {
-  const { data: systemsList } = useSystems();
+  const { data: systemsList } = useVisibleSystems();
   const testConfig = useTestNotificationConfig();
   const createTelegramLink = useCreateTelegramLink();
   const reissueTelegramCommandToken = useReissueTelegramCommandToken();
@@ -620,6 +626,18 @@ function NotificationForm({
     );
   };
 
+  useEffect(() => {
+    if (allSystems) return;
+
+    const visibleSystemIds = new Set(
+      (systemsList || []).map((system) => system.id),
+    );
+    setSelectedSystemIds((prev) => {
+      const next = prev.filter((id) => visibleSystemIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [allSystems, systemsList]);
+
   const applyDiscordPreset = () => {
     setWebhookConfig((prev) => ({
       ...prev,
@@ -701,22 +719,36 @@ function NotificationForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const config = buildConfig();
+    const formError = validateNotificationFormAction(type, config);
+    if (formError) {
+      addToast(formError, "danger");
+      return;
+    }
+
     onSubmit({
       name,
       type,
       enabled,
       notifyOn,
       systemIds: allSystems ? null : selectedSystemIds,
-      config: buildConfig(),
+      config,
       schedule: getScheduleValue(),
     });
   };
 
   const handleInlineTest = () => {
+    const config = buildConfig();
+    const formError = validateNotificationFormAction(type, config);
+    if (formError) {
+      addToast(formError, "danger");
+      return;
+    }
+
     testConfig.mutate(
       {
         type,
-        config: buildConfig(),
+        config,
         name: name || undefined,
         existingId: initial?.id,
       },
@@ -766,6 +798,7 @@ function NotificationForm({
   };
 
   const destinationWarning = type === "webhook" ? getWebhookDestinationWarning(webhookConfig.url) : null;
+  const canSendTest = canSendNotificationFormTest(type, buildConfig());
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -837,12 +870,12 @@ function NotificationForm({
           />
           <span className="text-sm font-medium">All systems</span>
         </label>
-        {!allSystems && systemsList && (
+        {!allSystems && (
           <div className="max-h-40 overflow-y-auto border border-border rounded-lg p-2 space-y-1">
-            {systemsList.length === 0 ? (
+            {(systemsList || []).length === 0 ? (
               <p className="text-xs text-slate-400 p-1">No systems configured</p>
             ) : (
-              systemsList.map((system) => (
+              (systemsList || []).map((system) => (
                 <label
                   key={system.id}
                   className="flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-50 dark:hover:bg-slate-700/50"
@@ -1172,6 +1205,15 @@ function NotificationForm({
               {mqttConfig.homeAssistantEnabled && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className={labelClass}>Device Name</label>
+                      <input
+                        value={mqttConfig.deviceName}
+                        onChange={(e) => setMqttConfig((prev) => ({ ...prev, deviceName: e.target.value }))}
+                        className={inputClass}
+                        placeholder="Linux Update Dashboard"
+                      />
+                    </div>
                     <div>
                       <label className={labelClass}>Discovery Prefix</label>
                       <input
@@ -1641,8 +1683,8 @@ function NotificationForm({
         <button
           type="button"
           onClick={handleInlineTest}
-          disabled={testConfig.isPending}
-          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 mr-auto"
+          disabled={testConfig.isPending || !canSendTest}
+          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mr-auto"
           title="Send test notification"
         >
           {testConfig.isPending ? <span className="spinner spinner-sm" /> : "Send Test"}
@@ -1668,7 +1710,7 @@ function NotificationForm({
 
 export default function Notifications() {
   const { data: channels, isLoading } = useNotifications();
-  const { data: systemsList } = useSystems();
+  const { data: systemsList } = useVisibleSystems();
   const createNotification = useCreateNotification();
   const updateNotification = useUpdateNotification();
   const deleteNotification = useDeleteNotification();
@@ -1829,6 +1871,7 @@ export default function Notifications() {
     const names = systemIds
       .map((id) => systemsList.find((system) => system.id === id)?.name)
       .filter(Boolean);
+    if (names.length === 0) return `${systemIds.length} system${systemIds.length !== 1 ? "s" : ""}`;
     if (names.length <= 2) return names.join(", ");
     return `${names.length} systems`;
   };

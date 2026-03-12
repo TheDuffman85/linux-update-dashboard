@@ -173,6 +173,7 @@ export default function Dashboard() {
   return (
     <Layout
       title="Dashboard"
+      contentWidth="wide"
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button

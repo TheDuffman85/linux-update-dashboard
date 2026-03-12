@@ -460,7 +460,7 @@ export function SystemForm({
               Hide from Dashboard
             </span>
             <span className="block text-xs text-slate-400 mt-0.5">
-              Keeps this system available in Systems, but hides it from the dashboard and from Upgrade All.
+              Keeps this system available in Systems, but hides it from the dashboard, notifications, and Upgrade All.
             </span>
           </span>
         </label>

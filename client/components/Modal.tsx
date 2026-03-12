@@ -34,7 +34,7 @@ export function Modal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={(e) => e.target === e.currentTarget && dismissible && onClose()}
     >
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg md:max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="font-semibold text-lg">{title}</h2>
           <button
