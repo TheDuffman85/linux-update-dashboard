@@ -1,4 +1,4 @@
-import { and, asc, count, eq, ne, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { systems, updateCache } from "../db/schema";
 import { getEncryptor } from "../security";
@@ -115,6 +115,42 @@ export function listVisibleSystems() {
     .where(eq(systems.hidden, 0))
     .orderBy(asc(systems.sortOrder), asc(systems.name), asc(systems.id))
     .all();
+}
+
+export function isSystemVisible(systemId: number): boolean {
+  const row = getDb()
+    .select({ hidden: systems.hidden })
+    .from(systems)
+    .where(eq(systems.id, systemId))
+    .get();
+
+  return !!row && row.hidden === 0;
+}
+
+export function filterVisibleSystemIds(systemIds: number[]): number[] {
+  const uniqueIds = Array.from(
+    new Set(systemIds.filter((systemId) => Number.isInteger(systemId) && systemId > 0)),
+  );
+  if (uniqueIds.length === 0) return [];
+
+  return getDb()
+    .select({ id: systems.id })
+    .from(systems)
+    .where(
+      and(
+        inArray(systems.id, uniqueIds),
+        eq(systems.hidden, 0),
+      ),
+    )
+    .all()
+    .map((row) => row.id);
+}
+
+export function filterVisibleSystemItems<T extends { systemId: number }>(items: T[]): T[] {
+  if (items.length === 0) return [];
+
+  const visibleIds = new Set(filterVisibleSystemIds(items.map((item) => item.systemId)));
+  return items.filter((item) => visibleIds.has(item.systemId));
 }
 
 export function getSystem(systemId: number) {

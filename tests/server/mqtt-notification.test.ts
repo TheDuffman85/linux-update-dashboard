@@ -333,6 +333,63 @@ describe("mqtt notifications", () => {
     expect(commandSystemId).toBe(systemRow.id);
   });
 
+  test("runtime excludes hidden systems from Home Assistant entities", async () => {
+    const visibleSystem = getDb().insert(systems).values({
+      name: "visible-web",
+      hostname: "visible-web.local",
+      port: 22,
+      credentialId: null,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      hidden: 0,
+    }).returning({ id: systems.id }).get();
+    const hiddenSystem = getDb().insert(systems).values({
+      name: "hidden-web",
+      hostname: "hidden-web.local",
+      port: 22,
+      credentialId: null,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      hidden: 1,
+    }).returning({ id: systems.id }).get();
+
+    getDb().insert(updateCache).values([
+      { systemId: visibleSystem.id, pkgManager: "apt", packageName: "bash", newVersion: "1", isSecurity: 0 },
+      { systemId: hiddenSystem.id, pkgManager: "apt", packageName: "curl", newVersion: "1", isSecurity: 0 },
+    ]).run();
+
+    getDb().insert(notifications).values({
+      name: "HA MQTT",
+      type: "mqtt",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: null,
+      config: JSON.stringify({
+        brokerUrl: "mqtt://broker.example.com:1883",
+        topic: "ludash/events",
+        publishEvents: false,
+        homeAssistantEnabled: true,
+        discoveryPrefix: "homeassistant",
+        baseTopic: "ludash",
+        publishAppEntity: false,
+        commandsEnabled: true,
+        payloadInstall: "install",
+        qos: 1,
+      }),
+    }).run();
+
+    await notificationRuntime.start();
+    await flush();
+    await flush();
+
+    const runtimeClient = clients[0];
+    expect(runtimeClient.publishes.some((entry) => entry.topic === `homeassistant/update/ludash_1_system_${visibleSystem.id}/config`)).toBe(true);
+    expect(runtimeClient.publishes.some((entry) => entry.topic === `homeassistant/update/ludash_1_system_${hiddenSystem.id}/config`)).toBe(false);
+    expect(runtimeClient.subscriptions.some((entry) => entry.topics.some((topic) => topic.endsWith(`/system_${hiddenSystem.id}/command`)))).toBe(false);
+  });
+
   test("runtime publishes app entity state with current and latest versions", async () => {
     process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
     process.env.LUDASH_APP_BRANCH = "main";

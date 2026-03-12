@@ -23,6 +23,7 @@ import {
 import { getActiveOperation } from "./active-operation-store";
 import { getAppUpdateStatus } from "./app-update-service";
 import * as updateService from "./update-service";
+import * as systemService from "./system-service";
 
 type NotificationRow = typeof notifications.$inferSelect;
 type SystemRow = typeof systems.$inferSelect;
@@ -264,7 +265,7 @@ async function buildEntitiesForChannel(
   const db = getDb();
   const notifyOn = parseNotifyOn(row.notifyOn);
   const scopedSystemIds = parseSystemIds(row.systemIds);
-  const allSystems = db.select().from(systems).orderBy(asc(systems.id)).all();
+  const allSystems = systemService.listVisibleSystems();
   const selectedSystems = scopedSystemIds === null
     ? allSystems
     : allSystems.filter((system) => scopedSystemIds.includes(system.id));
@@ -531,6 +532,10 @@ async function handleInstallCommand(
   const system = db.select().from(systems).where(eq(systems.id, systemId)).get();
   if (!system) {
     logger.warn("Ignoring MQTT install command for missing system", { channelId, systemId });
+    return;
+  }
+  if (!systemService.isSystemVisible(systemId)) {
+    logger.warn("Ignoring MQTT install command for hidden system", { channelId, systemId });
     return;
   }
 

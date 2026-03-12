@@ -283,7 +283,10 @@ function approvalsMatchChallenges(
 
 // List all systems
 systems.get("/", (c) => {
-  const allSystems = systemService.listSystemsWithUpdateCounts();
+  const scope = c.req.query("scope");
+  const allSystems = scope === "visible"
+    ? systemService.listVisibleSystemsWithUpdateCounts()
+    : systemService.listSystemsWithUpdateCounts();
   const systemsWithMeta = allSystems.map((s) => ({
     ...serializeSystem(s as Record<string, unknown>),
     cacheAge: cacheService.getCacheAge(s.id),

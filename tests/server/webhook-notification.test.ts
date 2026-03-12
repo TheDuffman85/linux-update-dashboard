@@ -10,7 +10,10 @@ import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { notifications, systems, updateCache } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
-import { processScheduledResults } from "../../server/services/notification-service";
+import {
+  processScheduledDigests,
+  processScheduledResults,
+} from "../../server/services/notification-service";
 import { webhookProvider } from "../../server/services/notifications/webhook";
 import type { NotificationPayload } from "../../server/services/notifications";
 
@@ -193,8 +196,17 @@ describe("webhook provider validation", () => {
 });
 
 describe("webhook provider sending", () => {
+  let tempDir: string;
+
   beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-webhook-notification-test-"));
     initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
   });
 
   test("renders templated JSON bodies and bearer auth", async () => {
@@ -235,6 +247,150 @@ describe("webhook provider sending", () => {
       const parsedBody = JSON.parse(body);
       expect(parsedBody.title).toBe("Updates available");
       expect(parsedBody.json.title).toBe("Updates available");
+    } finally {
+      requestMock.restore();
+    }
+  });
+
+  test("skips hidden systems for immediate update notifications", async () => {
+    const requestMock = mockHttpRequest(200, "ok");
+
+    try {
+      const db = getDb();
+      const insertedSystem = db.insert(systems).values({
+        name: "hidden-web",
+        hostname: "hidden-web.local",
+        port: 22,
+        credentialId: null,
+        authType: "password",
+        username: "root",
+        hidden: 1,
+      }).returning({ id: systems.id }).get();
+
+      db.insert(updateCache).values({
+        systemId: insertedSystem.id,
+        pkgManager: "apt",
+        packageName: "openssl",
+        newVersion: "1.2.3",
+        isSecurity: 1,
+      }).run();
+
+      const insertedNotification = db.insert(notifications).values({
+        name: "Webhook",
+        type: "webhook",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify(webhookProvider.prepareConfigForStorage({
+          preset: "custom",
+          method: "POST",
+          url: "http://example.com/hook",
+          query: [],
+          headers: [],
+          auth: { mode: "none" },
+          body: { mode: "text", template: "{{event.body}}" },
+          timeoutMs: 10000,
+          retryAttempts: 0,
+          retryDelayMs: 0,
+          allowInsecureTls: false,
+        })),
+      }).returning({ id: notifications.id }).get();
+
+      await processScheduledResults([
+        {
+          systemId: insertedSystem.id,
+          systemName: "hidden-web",
+          updateCount: 1,
+          securityCount: 1,
+          previouslyReachable: true,
+          nowUnreachable: false,
+        },
+      ]);
+
+      const row = db
+        .select()
+        .from(notifications)
+        .where(eq(notifications.id, insertedNotification.id))
+        .get();
+
+      expect(requestMock.getRequestBody()).toBe("");
+      expect(row?.lastDeliveryStatus).toBeNull();
+    } finally {
+      requestMock.restore();
+    }
+  });
+
+  test("drops hidden systems from scheduled digests before sending", async () => {
+    const requestMock = mockHttpRequest(200, "ok");
+
+    try {
+      const db = getDb();
+      const insertedSystem = db.insert(systems).values({
+        name: "digest-web",
+        hostname: "digest-web.local",
+        port: 22,
+        credentialId: null,
+        authType: "password",
+        username: "root",
+        hidden: 0,
+      }).returning({ id: systems.id }).get();
+
+      db.insert(updateCache).values({
+        systemId: insertedSystem.id,
+        pkgManager: "apt",
+        packageName: "openssl",
+        newVersion: "1.2.3",
+        isSecurity: 1,
+      }).run();
+
+      const insertedNotification = db.insert(notifications).values({
+        name: "Webhook digest",
+        type: "webhook",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        schedule: "* * * * *",
+        lastSentAt: "2000-01-01 00:00:00",
+        config: JSON.stringify(webhookProvider.prepareConfigForStorage({
+          preset: "custom",
+          method: "POST",
+          url: "http://example.com/hook",
+          query: [],
+          headers: [],
+          auth: { mode: "none" },
+          body: { mode: "text", template: "{{event.body}}" },
+          timeoutMs: 10000,
+          retryAttempts: 0,
+          retryDelayMs: 0,
+          allowInsecureTls: false,
+        })),
+      }).returning({ id: notifications.id }).get();
+
+      await processScheduledResults([
+        {
+          systemId: insertedSystem.id,
+          systemName: "digest-web",
+          updateCount: 1,
+          securityCount: 1,
+          previouslyReachable: true,
+          nowUnreachable: false,
+        },
+      ]);
+
+      db.update(systems)
+        .set({ hidden: 1 })
+        .where(eq(systems.id, insertedSystem.id))
+        .run();
+
+      await processScheduledDigests();
+
+      const row = db
+        .select()
+        .from(notifications)
+        .where(eq(notifications.id, insertedNotification.id))
+        .get();
+
+      expect(requestMock.getRequestBody()).toBe("");
+      expect(row?.pendingEvents).toBeNull();
+      expect(row?.lastDeliveryStatus).toBeNull();
     } finally {
       requestMock.restore();
     }

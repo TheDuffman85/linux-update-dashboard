@@ -49,6 +49,7 @@ describe("telegram bot commands", () => {
     globalThis.fetch = (async (input, init) => {
       const url = String(input);
       if (url.includes("/api/systems") && !url.includes("/check")) {
+        expect(url).toContain("/api/systems?scope=visible");
         return new Response(JSON.stringify({
           systems: [{ id: 1, name: "alpha", updateCount: 2, isReachable: 1 }],
         }), { status: 200 });

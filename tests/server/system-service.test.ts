@@ -7,7 +7,12 @@ import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
-import { updateSystemInfo } from "../../server/services/system-service";
+import {
+  filterVisibleSystemIds,
+  filterVisibleSystemItems,
+  isSystemVisible,
+  updateSystemInfo,
+} from "../../server/services/system-service";
 import type { SSHConnectionManager } from "../../server/ssh/connection";
 
 describe("updateSystemInfo reboot detection", () => {
@@ -111,5 +116,54 @@ UNAVAILABLE
     system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
     expect(system?.needsReboot).toBe(0);
     expect(system?.bootId).toBe("boot-new");
+  });
+});
+
+describe("system visibility helpers", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-system-visibility-test-"));
+    initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("returns only visible systems and preserves caller item shape", () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      {
+        name: "Visible",
+        hostname: "visible.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+        hidden: 0,
+      },
+      {
+        name: "Hidden",
+        hostname: "hidden.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+        hidden: 1,
+      },
+    ]).returning({ id: systems.id, name: systems.name }).all();
+
+    expect(isSystemVisible(inserted[0].id)).toBe(true);
+    expect(isSystemVisible(inserted[1].id)).toBe(false);
+    expect(filterVisibleSystemIds([inserted[0].id, inserted[1].id])).toEqual([inserted[0].id]);
+    expect(
+      filterVisibleSystemItems([
+        { systemId: inserted[0].id, systemName: inserted[0].name, updateCount: 1 },
+        { systemId: inserted[1].id, systemName: inserted[1].name, updateCount: 2 },
+      ]),
+    ).toEqual([
+      { systemId: inserted[0].id, systemName: inserted[0].name, updateCount: 1 },
+    ]);
   });
 });

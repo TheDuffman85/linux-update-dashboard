@@ -21,7 +21,7 @@ import {
   type WebhookConfig,
   type WebhookField,
 } from "../lib/notifications";
-import { useSystems } from "../lib/systems";
+import { useVisibleSystems } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -520,7 +520,7 @@ function NotificationForm({
   onCancel: () => void;
   loading: boolean;
 }) {
-  const { data: systemsList } = useSystems();
+  const { data: systemsList } = useVisibleSystems();
   const testConfig = useTestNotificationConfig();
   const createTelegramLink = useCreateTelegramLink();
   const reissueTelegramCommandToken = useReissueTelegramCommandToken();
@@ -619,6 +619,18 @@ function NotificationForm({
       prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id]
     );
   };
+
+  useEffect(() => {
+    if (allSystems) return;
+
+    const visibleSystemIds = new Set(
+      (systemsList || []).map((system) => system.id),
+    );
+    setSelectedSystemIds((prev) => {
+      const next = prev.filter((id) => visibleSystemIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [allSystems, systemsList]);
 
   const applyDiscordPreset = () => {
     setWebhookConfig((prev) => ({
@@ -837,12 +849,12 @@ function NotificationForm({
           />
           <span className="text-sm font-medium">All systems</span>
         </label>
-        {!allSystems && systemsList && (
+        {!allSystems && (
           <div className="max-h-40 overflow-y-auto border border-border rounded-lg p-2 space-y-1">
-            {systemsList.length === 0 ? (
+            {(systemsList || []).length === 0 ? (
               <p className="text-xs text-slate-400 p-1">No systems configured</p>
             ) : (
-              systemsList.map((system) => (
+              (systemsList || []).map((system) => (
                 <label
                   key={system.id}
                   className="flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-50 dark:hover:bg-slate-700/50"
@@ -1668,7 +1680,7 @@ function NotificationForm({
 
 export default function Notifications() {
   const { data: channels, isLoading } = useNotifications();
-  const { data: systemsList } = useSystems();
+  const { data: systemsList } = useVisibleSystems();
   const createNotification = useCreateNotification();
   const updateNotification = useUpdateNotification();
   const deleteNotification = useDeleteNotification();
@@ -1829,6 +1841,7 @@ export default function Notifications() {
     const names = systemIds
       .map((id) => systemsList.find((system) => system.id === id)?.name)
       .filter(Boolean);
+    if (names.length === 0) return `${systemIds.length} system${systemIds.length !== 1 ? "s" : ""}`;
     if (names.length <= 2) return names.join(", ");
     return `${names.length} systems`;
   };
