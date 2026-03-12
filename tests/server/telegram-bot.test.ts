@@ -29,7 +29,7 @@ describe("telegram bot commands", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test("runs check commands through the existing API", async () => {
+  test("runs refresh commands through the existing API", async () => {
     getDb().insert(notifications).values({
       name: "Ops Telegram",
       type: "telegram",
@@ -72,7 +72,7 @@ describe("telegram bot commands", () => {
       update_id: 1,
       message: {
         message_id: 10,
-        text: "/check 1",
+        text: "/refresh 1",
         chat: { id: 55, type: "private", first_name: "Alice" },
         from: { id: 55, first_name: "Alice" },
       },
@@ -80,11 +80,11 @@ describe("telegram bot commands", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(sentMessages.some((body) => body.includes("Checking updates for alpha"))).toBe(true);
-    expect(sentMessages.some((body) => body.includes("Check completed for alpha"))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("Refreshing updates for alpha"))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("Refresh completed for alpha"))).toBe(true);
   });
 
-  test("runs /check all across every allowed system", async () => {
+  test("runs /refresh all across every allowed system", async () => {
     getDb().insert(notifications).values({
       name: "Ops Telegram",
       type: "telegram",
@@ -138,7 +138,7 @@ describe("telegram bot commands", () => {
       update_id: 1,
       message: {
         message_id: 10,
-        text: "/check all",
+        text: "/refresh all",
         chat: { id: 55, type: "private", first_name: "Alice" },
         from: { id: 55, first_name: "Alice" },
       },
@@ -147,9 +147,67 @@ describe("telegram bot commands", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(checkedSystems).toEqual([1, 2]);
-    expect(sentMessages.some((body) => body.includes("Refresh/check all started for 2 systems."))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("Refresh all started for 2 systems."))).toBe(true);
     expect(sentMessages.some((body) => body.includes("- alpha (#1): 2 updates"))).toBe(true);
     expect(sentMessages.some((body) => body.includes("- beta (#2): 0 updates"))).toBe(true);
+  });
+
+  test("lists cached package updates for a system", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: "[1]",
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentBodies: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems/1") && !url.includes("/upgrade/")) {
+        return new Response(JSON.stringify({
+          system: { id: 1, name: "alpha" },
+          updates: [
+            { packageName: "bash", currentVersion: "5.2.15", newVersion: "5.2.21" },
+            { packageName: "openssl", currentVersion: "3.0.2", newVersion: "3.0.3" },
+          ],
+          history: [],
+        }), { status: 200 });
+      }
+      if (url.includes("/api/systems") && !url.includes("/api/systems/1")) {
+        return new Response(JSON.stringify({
+          systems: [{ id: 1, name: "alpha", updateCount: 2, isReachable: 1 }],
+        }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentBodies.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        text: "/packages 1",
+        chat: { id: 55, type: "private", first_name: "Alice" },
+        from: { id: 55, first_name: "Alice" },
+      },
+    });
+
+    const packageMessage = sentBodies.find((body) => body.includes("Package updates for alpha (#1): 2 packages"));
+    expect(packageMessage).toBeTruthy();
+    const parsedBody = JSON.parse(packageMessage || "{}") as { text?: string };
+    expect(parsedBody.text).toContain("- bash: 5.2.15 -> 5.2.21");
+    expect(parsedBody.text).toContain("- openssl: 3.0.2 -> 3.0.3");
   });
 
   test("formats /status as HTML with emojis and preserves system order", async () => {
@@ -581,7 +639,10 @@ describe("telegram bot commands", () => {
       if (url.includes("/api/systems/1") && !url.includes("/upgrade/")) {
         return new Response(JSON.stringify({
           system: { id: 1, name: "alpha" },
-          updates: [{ packageName: "bash" }, { packageName: "openssl" }],
+          updates: [
+            { packageName: "bash", currentVersion: "5.2.15", newVersion: "5.2.21" },
+            { packageName: "openssl", currentVersion: "3.0.2", newVersion: "3.0.3" },
+          ],
           history: [],
         }), { status: 200 });
       }
@@ -664,6 +725,87 @@ describe("telegram bot commands", () => {
     expect(sentBodies.some((body) => body.includes("Confirm package upgrade on alpha"))).toBe(true);
   });
 
+  test("menu shows package updates for a selected system", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: "[1]",
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentBodies: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems/1") && !url.includes("/upgrade/")) {
+        return new Response(JSON.stringify({
+          system: { id: 1, name: "alpha" },
+          updates: [
+            { packageName: "bash", currentVersion: "5.2.15", newVersion: "5.2.21" },
+            { packageName: "openssl", currentVersion: "3.0.2", newVersion: "3.0.3" },
+          ],
+          history: [],
+        }), { status: 200 });
+      }
+      if (url.includes("/api/systems") && !url.includes("/api/systems/1")) {
+        return new Response(JSON.stringify({
+          systems: [{ id: 1, name: "alpha", updateCount: 2, isReachable: 1 }],
+        }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentBodies.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      if (url.includes("/answerCallbackQuery")) {
+        return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      callback_query: {
+        id: "cb-pkglist-1",
+        data: "menu:list:pkglist:0",
+        from: { id: 55, first_name: "Alice" },
+        message: {
+          message_id: 20,
+          chat: { id: 55, type: "private", first_name: "Alice" },
+        },
+      },
+    });
+
+    const systemMenu = sentBodies.find((body) => body.includes("Select a system to view package updates"));
+    expect(systemMenu).toBeTruthy();
+    expect(systemMenu).not.toContain('"callback_data":"menu:runall:pkglist"');
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 2,
+      callback_query: {
+        id: "cb-pkglist-2",
+        data: "menu:run:pkglist:1:0",
+        from: { id: 55, first_name: "Alice" },
+        message: {
+          message_id: 21,
+          chat: { id: 55, type: "private", first_name: "Alice" },
+        },
+      },
+    });
+
+    const packageMessage = sentBodies.find((body) => body.includes("Package updates for alpha (#1): 2 packages"));
+    expect(packageMessage).toBeTruthy();
+    const parsedBody = JSON.parse(packageMessage || "{}") as { text?: string; reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
+    expect(parsedBody.text).toContain("- bash: 5.2.15 -> 5.2.21");
+    expect(parsedBody.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data).toBe("menu:list:pkglist:0");
+  });
+
   test("sends a Telegram error message when the command token is no longer valid", async () => {
     getDb().insert(notifications).values({
       name: "Ops Telegram",
@@ -708,7 +850,7 @@ describe("telegram bot commands", () => {
     expect(sentMessages.some((body) => body.includes("Reissue"))).toBe(true);
   });
 
-  test("sends a sanitized Telegram error message for other API failures", async () => {
+  test("hides backend error details for refresh failures", async () => {
     getDb().insert(notifications).values({
       name: "Ops Telegram",
       type: "telegram",
@@ -747,14 +889,83 @@ describe("telegram bot commands", () => {
       update_id: 1,
       message: {
         message_id: 10,
-        text: "/check 1",
+        text: "/refresh 1",
         chat: { id: 55, type: "private", first_name: "Alice" },
         from: { id: 55, first_name: "Alice" },
       },
     });
 
-    expect(sentMessages.some((body) => body.includes("Command failed: backend exploded"))).toBe(true);
-    expect(sentMessages.some((body) => body.includes("password=***"))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("Refresh failed for alpha (#1)."))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("backend exploded"))).toBe(false);
+    expect(sentMessages.some((body) => body.includes("password=***"))).toBe(false);
+    expect(sentMessages.some((body) => body.includes("secret"))).toBe(false);
+  });
+
+  test("hides backend error details in bulk refresh summaries", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: "[1,2]",
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentMessages: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems") && !url.includes("/check")) {
+        return new Response(JSON.stringify({
+          systems: [
+            { id: 1, name: "alpha", updateCount: 2, isReachable: 1 },
+            { id: 2, name: "beta", updateCount: 1, isReachable: 1 },
+          ],
+        }), { status: 200 });
+      }
+      if (url.includes("/api/systems/1/check")) {
+        return new Response(JSON.stringify({ status: "started", jobId: "job-1" }), { status: 200 });
+      }
+      if (url.includes("/api/systems/2/check")) {
+        return new Response(JSON.stringify({ status: "started", jobId: "job-2" }), { status: 200 });
+      }
+      if (url.includes("/api/jobs/job-1")) {
+        return new Response(JSON.stringify({ status: "done", result: { updateCount: 2 } }), { status: 200 });
+      }
+      if (url.includes("/api/jobs/job-2")) {
+        return new Response(JSON.stringify({
+          status: "failed",
+          result: { error: "apt exploded\npassword=secret" },
+        }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentMessages.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        text: "/refresh all",
+        chat: { id: 55, type: "private", first_name: "Alice" },
+        from: { id: 55, first_name: "Alice" },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(sentMessages.some((body) => body.includes("Refresh all finished for 2 systems."))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("- alpha (#1): 2 updates"))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("- beta (#2): failed"))).toBe(true);
+    expect(sentMessages.some((body) => body.includes("apt exploded"))).toBe(false);
     expect(sentMessages.some((body) => body.includes("secret"))).toBe(false);
   });
 
@@ -914,8 +1125,8 @@ describe("telegram bot commands", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(sentBodies.some((body) => body.includes("Checking updates for alpha"))).toBe(true);
-    expect(sentBodies.some((body) => body.includes("Check completed for alpha"))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("Refreshing updates for alpha"))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("Refresh completed for alpha"))).toBe(true);
 
     await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
       update_id: 2,
@@ -1136,7 +1347,7 @@ describe("telegram bot commands", () => {
       },
     });
 
-    const checkMenu = sentBodies.find((body) => body.includes("Select a system to refresh/check"));
+    const checkMenu = sentBodies.find((body) => body.includes("Select a system to refresh"));
     expect(checkMenu).toBeTruthy();
     expect(checkMenu).toContain("updatable-apt");
     expect(checkMenu).toContain("no-updates-apt");
@@ -1213,7 +1424,7 @@ describe("telegram bot commands", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(checkedSystems).toEqual([1, 2]);
-    expect(sentBodies.some((body) => body.includes("Refresh/check all started for 2 systems."))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("Refresh all started for 2 systems."))).toBe(true);
     expect(sentBodies.some((body) => body.includes("- has-updates (#1): 3 updates"))).toBe(true);
     expect(sentBodies.some((body) => body.includes("- no-updates (#2): 0 updates"))).toBe(true);
   });
@@ -1253,9 +1464,12 @@ describe("telegram bot commands", () => {
     await startTelegramBot();
     await new Promise((resolve) => setTimeout(resolve, 10));
 
+    expect(setMyCommandsBody).toContain('"command":"help"');
     expect(setMyCommandsBody).toContain('"command":"menu"');
-    expect(setMyCommandsBody).toContain('"command":"status"');
     expect(setMyCommandsBody).not.toContain('"command":"check"');
+    expect(setMyCommandsBody).not.toContain('"command":"refresh"');
+    expect(setMyCommandsBody).not.toContain('"command":"packages"');
+    expect(setMyCommandsBody).not.toContain('"command":"status"');
     expect(setMyCommandsBody).not.toContain('"command":"upgradepkg"');
     expect(getUpdatesCalls).toBeGreaterThan(0);
   });
