@@ -9,6 +9,7 @@ import {
   buildEntityBaseTopic,
   buildHomeAssistantDiscoveryTopic,
   buildMqttConnectionOptions,
+  migrateLegacyMqttDeviceName,
   sanitizeMqttConfig,
   type MqttConfig,
   type MqttPublishMessage,
@@ -93,7 +94,7 @@ function parseSystemIds(raw: string | null): number[] | null {
 
 function shouldRunRuntime(row: NotificationRow): boolean {
   if (row.type !== "mqtt" || row.enabled !== 1) return false;
-  const config = sanitizeMqttConfig(parseConfigJson(row.config));
+  const config = sanitizeMqttConfig(migrateLegacyMqttDeviceName(parseConfigJson(row.config), row.name));
   return config.homeAssistantEnabled;
 }
 
@@ -105,7 +106,7 @@ function buildFingerprint(row: NotificationRow): string {
     notifyOn: row.notifyOn,
     systemIds: row.systemIds,
     schedule: row.schedule,
-    config: sanitizeMqttConfig(parseConfigJson(row.config)),
+    config: sanitizeMqttConfig(migrateLegacyMqttDeviceName(parseConfigJson(row.config), row.name)),
   });
 }
 
@@ -457,7 +458,7 @@ async function syncRecord(record: RuntimeRecord): Promise<void> {
 
   if (!record.connected) return;
 
-  const config = sanitizeMqttConfig(parseConfigJson(row.config));
+  const config = sanitizeMqttConfig(migrateLegacyMqttDeviceName(parseConfigJson(row.config), row.name));
   record.config = config;
 
   const entities = await buildEntitiesForChannel(row, config);
@@ -567,7 +568,7 @@ function attachRecordHandlers(record: RuntimeRecord): void {
 }
 
 async function createRecord(row: NotificationRow): Promise<RuntimeRecord> {
-  const config = sanitizeMqttConfig(parseConfigJson(row.config));
+  const config = sanitizeMqttConfig(migrateLegacyMqttDeviceName(parseConfigJson(row.config), row.name));
   const client = createMqttClient(
     config.brokerUrl,
     buildMqttConnectionOptions(config),
@@ -637,7 +638,7 @@ async function handleInstallCommand(
     return;
   }
 
-  const currentConfig = sanitizeMqttConfig(parseConfigJson(row.config));
+  const currentConfig = sanitizeMqttConfig(migrateLegacyMqttDeviceName(parseConfigJson(row.config), row.name));
   if (!currentConfig.commandsEnabled || !currentConfig.homeAssistantEnabled) {
     logger.warn("Ignoring MQTT install command because commands are disabled", { channelId, systemId });
     return;

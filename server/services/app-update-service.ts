@@ -19,7 +19,10 @@ let cachedStatus: { checkedAt: number; data: AppUpdateStatus } | null = null;
 
 function git(cmd: string): string {
   try {
-    return execSync(`git ${cmd}`, { encoding: "utf-8" }).trim();
+    return execSync(`git ${cmd}`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
     return "";
   }

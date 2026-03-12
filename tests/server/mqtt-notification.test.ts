@@ -352,6 +352,35 @@ describe("mqtt notifications", () => {
     expect(commandSystemId).toBe(systemRow.id);
   });
 
+  test("legacy home assistant mqtt configs migrate channel name into device name", async () => {
+    const inserted = getDb().insert(notifications).values({
+      name: "Legacy HA MQTT",
+      type: "mqtt",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: null,
+      config: JSON.stringify({
+        brokerUrl: "mqtt://broker.example.com:1883",
+        topic: "ludash/events",
+        publishEvents: false,
+        homeAssistantEnabled: true,
+        discoveryPrefix: "homeassistant",
+        baseTopic: "ludash",
+        publishAppEntity: false,
+        commandsEnabled: false,
+        qos: 1,
+      }),
+    }).returning({ id: notifications.id }).get();
+
+    const getRes = await app.request(`/api/notifications/${inserted.id}`);
+    expect(getRes.status).toBe(200);
+    const channel = await getRes.json() as { config: Record<string, unknown> };
+    expect(channel.config.deviceName).toBe("Legacy HA MQTT");
+
+    const stored = getDb().select().from(notifications).where(eq(notifications.id, inserted.id)).get();
+    expect(stored?.config).toContain("\"deviceName\":\"Legacy HA MQTT\"");
+  });
+
   test("runtime excludes hidden systems from Home Assistant entities", async () => {
     const visibleSystem = getDb().insert(systems).values({
       name: "visible-web",

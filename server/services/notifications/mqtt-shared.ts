@@ -133,6 +133,23 @@ export function sanitizeMqttConfig(config: NotificationConfig): MqttConfig {
   };
 }
 
+export function migrateLegacyMqttDeviceName(
+  config: NotificationConfig,
+  channelName: string,
+): NotificationConfig {
+  const raw = asObject(config);
+  if (raw.homeAssistantEnabled !== true) return raw;
+  if (Object.prototype.hasOwnProperty.call(raw, "deviceName")) return raw;
+
+  const fallback = normalizeString(channelName);
+  if (!fallback) return raw;
+
+  return {
+    ...raw,
+    deviceName: fallback,
+  };
+}
+
 export function maskMqttConfig(config: NotificationConfig): MqttConfig {
   const sanitized = sanitizeMqttConfig(config);
   if (sanitized.password) sanitized.password = STORED_SENTINEL;

@@ -18,6 +18,7 @@ import { formatUpdateLine } from "./notifications/presentation";
 import { sanitizeOutput } from "../utils/sanitize";
 import { getAppUpdateStatus } from "./app-update-service";
 import { requestNotificationRuntimeAppUpdateSync } from "./notification-runtime-events";
+import { migrateLegacyMqttDeviceName } from "./notifications/mqtt-shared";
 import * as systemService from "./system-service";
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
@@ -74,9 +75,11 @@ function prepareConfigForStorage(
   return provider.prepareConfigForStorage(provider.sanitizeConfig(config));
 }
 
-function loadSanitizedConfig(row: { id: number; type: string; config: string }): NotificationConfig {
+function loadSanitizedConfig(row: { id: number; type: string; name: string; config: string }): NotificationConfig {
   const provider = getProvider(row.type);
-  const parsed = parseConfig(row.config);
+  const parsed = row.type === "mqtt"
+    ? migrateLegacyMqttDeviceName(parseConfig(row.config), row.name)
+    : parseConfig(row.config);
   if (!provider) return parsed;
 
   const sanitized = provider.sanitizeConfig(parsed);
