@@ -14,7 +14,7 @@ import {
 import * as wa from "../auth/webauthn";
 import * as oidc from "../auth/oidc";
 import { rateLimit } from "../middleware/rate-limit";
-import { getTrustedPublicOrigin, isTrustedReturnOrigin } from "../request-security";
+import { getKnownPublicOrigin, getTrustedPublicOrigin, isTrustedReturnOrigin, rememberTrustedPublicOrigin } from "../request-security";
 
 // Pre-computed dummy hash for timing-safe login (L1)
 const DUMMY_HASH = await hashPassword("timing-safe-dummy-password-pad");
@@ -391,6 +391,7 @@ auth.get("/oidc/login", async (c) => {
   }
 
   const publicOrigin = getTrustedPublicOrigin(c);
+  rememberTrustedPublicOrigin(publicOrigin);
   const redirectUri = `${publicOrigin}/api/auth/oidc/callback`;
 
   const state = crypto.randomUUID();
@@ -401,12 +402,15 @@ auth.get("/oidc/login", async (c) => {
   // In dev, the login request comes through Vite's proxy (port 5173),
   // but the callback hits the backend (port 3001) directly from the IdP.
   const referer = c.req.header("referer");
-  let returnOrigin = "";
+  let returnOrigin = publicOrigin;
   if (referer) {
     try {
-      returnOrigin = new URL(referer).origin;
+      const parsed = new URL(referer).origin;
+      if (isTrustedReturnOrigin(parsed)) {
+        returnOrigin = parsed;
+      }
     } catch {
-      returnOrigin = "";
+      returnOrigin = publicOrigin;
     }
   }
 
@@ -428,7 +432,7 @@ auth.get("/oidc/login", async (c) => {
     maxAge: 300,
     path: "/",
   });
-  if (returnOrigin && isTrustedReturnOrigin(returnOrigin)) {
+  if (returnOrigin) {
     setCookie(c, "oidc_return_origin", returnOrigin, {
       httpOnly: true,
       sameSite: "Lax",
@@ -468,8 +472,9 @@ auth.get("/oidc/callback", async (c) => {
     }
 
     if (!callbackUrl) {
-      // Fallback: derive from current request headers.
-      const publicOrigin = getTrustedPublicOrigin(c);
+      // Fallback: prefer the last trusted public origin we observed so proxy
+      // offload still resolves to the external URL when callback headers are thin.
+      const publicOrigin = getKnownPublicOrigin();
       callbackUrl = new URL(`${publicOrigin}${internalUrl.pathname}${internalUrl.search}`);
     }
 
@@ -503,7 +508,10 @@ auth.get("/oidc/callback", async (c) => {
     deleteCookie(c, "oidc_return_origin", { path: "/" });
 
     // Redirect to SPA dashboard (use stored origin for dev where SPA is on a different port)
-    return c.redirect(returnOrigin ? `${returnOrigin}/dashboard` : "/dashboard");
+    const targetOrigin = returnOrigin && isTrustedReturnOrigin(returnOrigin)
+      ? returnOrigin
+      : getKnownPublicOrigin();
+    return c.redirect(`${targetOrigin}/dashboard`);
   } catch (e) {
     console.error("OIDC callback error:", e);
     return c.json({ error: "OIDC authentication failed" }, 400);

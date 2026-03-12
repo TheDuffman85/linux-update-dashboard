@@ -2,9 +2,9 @@ import { createHash } from "crypto";
 import type { MqttClient } from "mqtt";
 import { eq } from "drizzle-orm";
 import { notifications, systems, updateCache } from "../db/schema";
-import { config as appConfig } from "../config";
 import { getDb } from "../db";
 import { logger } from "../logger";
+import { getKnownPublicOrigin } from "../request-security";
 import {
   buildEntityBaseTopic,
   buildHomeAssistantDiscoveryTopic,
@@ -159,11 +159,7 @@ function parseJsonStringArray(value: string | null | undefined): string[] {
 }
 
 function getPublicBaseUrl(): string {
-  try {
-    return new URL(appConfig.baseUrl).origin;
-  } catch {
-    return "http://localhost:3001";
-  }
+  return getKnownPublicOrigin();
 }
 
 function getLogoUrl(): string {

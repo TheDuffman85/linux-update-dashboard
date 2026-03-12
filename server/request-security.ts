@@ -5,6 +5,7 @@ import { config } from "./config";
 import { getRequestIp } from "./request-ip-store";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+let lastTrustedPublicOrigin: string | null = null;
 
 function normalizeHost(value: string): string {
   const trimmed = value.trim().toLowerCase();
@@ -20,6 +21,10 @@ function parseOrigin(value: string): URL | null {
   } catch {
     return null;
   }
+}
+
+function getConfiguredBaseUrl(): string {
+  return process.env.LUDASH_BASE_URL || config.baseUrl;
 }
 
 function defaultPort(protocol: string): string {
@@ -45,7 +50,7 @@ function isLoopbackHost(hostname: string): boolean {
 }
 
 function getCanonicalOrigin(): URL {
-  const parsed = parseOrigin(config.baseUrl);
+  const parsed = parseOrigin(getConfiguredBaseUrl());
   if (parsed) return parsed;
   return new URL("http://localhost:3001");
 }
@@ -109,6 +114,27 @@ function pickHost(c: Context): string | null {
 // headers with pragmatic fallback rules for reverse proxies.
 function hasExplicitBaseUrl(): boolean {
   return !!process.env.LUDASH_BASE_URL;
+}
+
+export function rememberTrustedPublicOrigin(value: string): boolean {
+  if (hasExplicitBaseUrl()) return false;
+
+  const parsed = parseOrigin(value);
+  if (!parsed) return false;
+
+  const current = lastTrustedPublicOrigin ? parseOrigin(lastTrustedPublicOrigin) : null;
+  if (current && !isLoopbackHost(current.hostname) && isLoopbackHost(parsed.hostname)) {
+    return false;
+  }
+
+  if (current?.origin === parsed.origin) return false;
+  lastTrustedPublicOrigin = parsed.origin;
+  return true;
+}
+
+export function getKnownPublicOrigin(): string {
+  if (hasExplicitBaseUrl()) return getCanonicalOrigin().origin;
+  return lastTrustedPublicOrigin || getCanonicalOrigin().origin;
 }
 
 export function getTrustedPublicOrigin(c: Context): string {
@@ -262,3 +288,9 @@ export async function isSafeOutboundUrl(rawUrl: string): Promise<{ safe: boolean
 
   return { safe: true };
 }
+
+export const __testing = {
+  resetKnownPublicOrigin() {
+    lastTrustedPublicOrigin = null;
+  },
+};
