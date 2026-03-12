@@ -4,10 +4,19 @@ import { Toast } from "./Toast";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 
-export function Layout({ children, title, actions }: {
+type LayoutWidth = "default" | "wide" | "full";
+
+const contentWidthClass: Record<LayoutWidth, string> = {
+  default: "max-w-[1200px]",
+  wide: "max-w-[1600px]",
+  full: "max-w-none",
+};
+
+export function Layout({ children, title, actions, contentWidth = "wide" }: {
   children: ReactNode;
   title: string;
   actions?: ReactNode;
+  contentWidth?: LayoutWidth;
 }) {
   const { toasts, removeToast } = useToast();
   const { upgradingCount } = useUpgrade();
@@ -43,7 +52,7 @@ export function Layout({ children, title, actions }: {
             {actions && <div className="flex items-center gap-2 flex-wrap ml-auto shrink-0">{actions}</div>}
           </div>
         </header>
-        <div className="p-4 md:p-6 max-w-[1200px]">{children}</div>
+        <div className={`w-full p-4 md:p-6 ${contentWidthClass[contentWidth]}`}>{children}</div>
       </main>
 
       {/* Toast container */}
