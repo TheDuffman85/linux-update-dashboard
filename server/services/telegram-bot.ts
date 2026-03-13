@@ -102,6 +102,7 @@ interface AllowedSystem {
   securityCount?: number;
   isReachable?: number;
   supportsFullUpgrade?: boolean;
+  excludeFromUpgradeAll?: number;
 }
 
 interface SystemUpdate {
@@ -529,7 +530,7 @@ async function fetchAllowedSystems(channel: NotificationRow): Promise<AllowedSys
   const commandToken = resolveTelegramCommandToken(parseConfig(channel.config));
   if (!commandToken) return [];
 
-  const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; securityCount?: number; isReachable: number; supportsFullUpgrade?: boolean }> }>(
+  const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; securityCount?: number; isReachable: number; supportsFullUpgrade?: boolean; excludeFromUpgradeAll?: number }> }>(
     commandToken,
     "/api/systems?scope=visible"
   );
@@ -660,6 +661,10 @@ function filterSystemsForAction(
   );
 }
 
+function filterSystemsExcludedFromUpgradeAll(systemsList: AllowedSystem[]): AllowedSystem[] {
+  return systemsList.filter((system) => system.excludeFromUpgradeAll !== 1);
+}
+
 async function getSystemsForAction(
   channel: NotificationRow,
   action: SystemAction | BulkAction,
@@ -667,6 +672,15 @@ async function getSystemsForAction(
   const systems = await fetchAllowedSystems(channel);
   if (action === "check") return systems;
   return filterSystemsForAction(systems, action);
+}
+
+async function getSystemsForBulkAction(
+  channel: NotificationRow,
+  action: BulkAction,
+): Promise<AllowedSystem[]> {
+  const systems = await getSystemsForAction(channel, action);
+  if (action === "check") return systems;
+  return filterSystemsExcludedFromUpgradeAll(systems);
 }
 
 async function revalidatePendingConfirmation(
@@ -693,10 +707,21 @@ async function revalidatePendingConfirmation(
   const targetSystems = (pending.targetSystems ?? [])
     .map((system) => allowedById.get(system.id))
     .filter((system): system is AllowedSystem => !!system)
+    .filter((system) =>
+      pending.command === "upgrade-all" || pending.command === "full-upgrade-all"
+        ? system.excludeFromUpgradeAll !== 1
+        : true
+    )
     .map((system) => ({ id: system.id, name: system.name }));
 
   if (targetSystems.length === 0) {
-    return { ok: false, message: "No selected systems are still allowed for this Telegram command channel." };
+    return {
+      ok: false,
+      message:
+        pending.command === "upgrade-all" || pending.command === "full-upgrade-all"
+          ? "No selected systems are still allowed for this Telegram command channel after applying Upgrade All exclusions."
+          : "No selected systems are still allowed for this Telegram command channel.",
+    };
   }
 
   return { ok: true, targetSystems };
@@ -1194,7 +1219,7 @@ async function promptBulkConfirmation(
   channel: NotificationRow,
   action: Exclude<BulkAction, "check">,
 ): Promise<void> {
-  const systems = await getSystemsForAction(channel, action);
+  const systems = await getSystemsForBulkAction(channel, action);
   if (systems.length === 0) {
     await sendTelegramText(botToken, chatId, noSystemsMessage(action));
     return;
