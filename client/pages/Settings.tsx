@@ -148,7 +148,7 @@ export default function Settings() {
       <SettingSection title="Update Schedule">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md">
           <div>
-            <label className={labelClass}>Check Interval (minutes)</label>
+            <label className={labelClass}>Scheduler Interval (minutes)</label>
             <input
               type="number"
               min={5}
@@ -164,7 +164,7 @@ export default function Settings() {
             <label className={labelClass}>Cache Duration (hours)</label>
             <input
               type="number"
-              min={1}
+              min={0}
               max={168}
               value={form.cache_duration_hours || "12"}
               onChange={(e) =>
@@ -174,6 +174,12 @@ export default function Settings() {
             />
           </div>
         </div>
+        <p className="mt-3 max-w-2xl text-xs text-slate-500 dark:text-slate-400">
+          The scheduler wakes up on this interval and rechecks systems whose cached
+          results have expired. Set cache duration to <code>0</code> to disable
+          cache reuse. Manual refreshes, server restarts, and newly added systems
+          can trigger extra checks immediately.
+        </p>
         <button
           onClick={() => handleSave(["check_interval_minutes", "cache_duration_hours"])}
           disabled={updateSettings.isPending}

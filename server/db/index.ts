@@ -14,12 +14,12 @@ const DEFAULT_SETTINGS = [
   {
     key: "cache_duration_hours",
     value: "12",
-    description: "How long to cache update check results (hours)",
+    description: "How long to reuse update check results before they are considered stale (hours, 0 disables cache reuse)",
   },
   {
     key: "check_interval_minutes",
     value: "15",
-    description: "How often to check for stale systems (minutes)",
+    description: "How often the scheduler scans for systems with expired cached results (minutes)",
   },
   {
     key: "concurrent_connections",

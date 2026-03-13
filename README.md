@@ -33,7 +33,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Reusable credential vault:** store username/password, SSH key, or OpenSSH certificate credentials once and reuse them across systems
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Granular updates:** upgrade everything at once or pick individual packages per system
-- **Background scheduling:** periodic checks keep your dashboard up to date (configurable cache duration)
+- **Background scheduling:** periodic checks keep your dashboard up to date with a configurable scheduler interval and cache duration
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
 - **Home Assistant MQTT update entities:** publish one Linux Update Dashboard app update entity plus per-system package update entities with discovery, icons/images, rich JSON attributes, and optional install commands
 - **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
@@ -285,7 +285,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_BASE_URL` | No | `http://localhost:3001` | Recommended to always set. Public URL used for WebAuthn/OIDC and Home Assistant URLs such as `entity_picture`/`origin.url`. Set it to the URL users and integrations actually use |
 | `LUDASH_TRUST_PROXY` | No | `false` | Set to `true` behind a reverse proxy so `X-Forwarded-*` headers are trusted. Recommended whenever the public URL is provided by a proxy |
 | `LUDASH_LOG_LEVEL` | No | `info` | Server log level: `debug`, `info`, `warn`, or `error`. Routine per-attempt SSH and scheduler refresh logs are only shown at `debug` |
-| `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are cached before re-checking |
+| `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are reused before re-checking; `0` disables cache reuse |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
 | `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Max simultaneous SSH connections |
@@ -293,6 +293,15 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `NODE_ENV` | No | - | Set to `production` for static file serving |
 
 If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
+
+## Update Scheduling
+
+The update schedule uses two values:
+
+- **Scheduler Interval:** how often the backend wakes up and looks for systems whose cached results have expired
+- **Cache Duration:** how long to reuse the last successful check result before a system is considered stale again
+
+Set **Cache Duration** to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger immediate checks outside the regular scheduler interval.
 
 ## Debugging SSH Connection Failures
 

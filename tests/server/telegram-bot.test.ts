@@ -348,13 +348,13 @@ describe("telegram bot commands", () => {
     expect(sentBodies.some((body) => body.includes("Package upgrade finished"))).toBe(true);
   });
 
-  test("requires one confirmation before /upgrade all and runs all actionable systems", async () => {
+  test("requires one confirmation before /upgrade all and skips systems excluded from Upgrade All", async () => {
     getDb().insert(notifications).values({
       name: "Ops Telegram",
       type: "telegram",
       enabled: 1,
       notifyOn: '["updates"]',
-      systemIds: "[1,2,3]",
+      systemIds: "[1,2,3,4]",
       config: JSON.stringify(prepareTelegramConfigForStorage({
         telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
         chatId: "55",
@@ -372,9 +372,10 @@ describe("telegram bot commands", () => {
       if (url.includes("/api/systems") && !url.includes("/upgrade")) {
         return new Response(JSON.stringify({
           systems: [
-            { id: 1, name: "alpha", updateCount: 2, isReachable: 1, supportsFullUpgrade: true },
-            { id: 2, name: "beta", updateCount: 0, isReachable: 1, supportsFullUpgrade: true },
-            { id: 3, name: "gamma", updateCount: 1, isReachable: 1, supportsFullUpgrade: false },
+            { id: 1, name: "alpha", updateCount: 2, isReachable: 1, supportsFullUpgrade: true, excludeFromUpgradeAll: 0 },
+            { id: 2, name: "beta", updateCount: 0, isReachable: 1, supportsFullUpgrade: true, excludeFromUpgradeAll: 0 },
+            { id: 3, name: "gamma", updateCount: 1, isReachable: 1, supportsFullUpgrade: false, excludeFromUpgradeAll: 1 },
+            { id: 4, name: "delta", updateCount: 3, isReachable: 1, supportsFullUpgrade: true, excludeFromUpgradeAll: 0 },
           ],
         }), { status: 200 });
       }
@@ -382,14 +383,14 @@ describe("telegram bot commands", () => {
         upgradedSystems.push(1);
         return new Response(JSON.stringify({ status: "started", jobId: "job-up-1" }), { status: 200 });
       }
-      if (url.includes("/api/systems/3/upgrade")) {
-        upgradedSystems.push(3);
-        return new Response(JSON.stringify({ status: "started", jobId: "job-up-3" }), { status: 200 });
+      if (url.includes("/api/systems/4/upgrade")) {
+        upgradedSystems.push(4);
+        return new Response(JSON.stringify({ status: "started", jobId: "job-up-4" }), { status: 200 });
       }
       if (url.includes("/api/jobs/job-up-1")) {
         return new Response(JSON.stringify({ status: "done", result: { status: "success", output: "done" } }), { status: 200 });
       }
-      if (url.includes("/api/jobs/job-up-3")) {
+      if (url.includes("/api/jobs/job-up-4")) {
         return new Response(JSON.stringify({ status: "done", result: { status: "warning", output: "done" } }), { status: 200 });
       }
       if (url.includes("/sendMessage")) {
@@ -417,8 +418,9 @@ describe("telegram bot commands", () => {
     const confirmBody = sentBodies.find((body) => body.includes("Confirm upgrade all for 2 systems?"));
     expect(confirmBody).toBeTruthy();
     expect(confirmBody).toContain("alpha");
-    expect(confirmBody).toContain("gamma");
+    expect(confirmBody).toContain("delta");
     expect(confirmBody).not.toContain("beta");
+    expect(confirmBody).not.toContain("gamma");
     const parsed = JSON.parse(confirmBody || "{}") as { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
     const confirmData = parsed.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data;
     expect(confirmData).toMatch(/^confirm:/);
@@ -438,10 +440,101 @@ describe("telegram bot commands", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(upgradedSystems).toEqual([1, 3]);
+    expect(upgradedSystems).toEqual([1, 4]);
     expect(sentBodies.some((body) => body.includes("Upgrade all started for 2 systems."))).toBe(true);
     expect(sentBodies.some((body) => body.includes("- alpha (#1): success"))).toBe(true);
-    expect(sentBodies.some((body) => body.includes("- gamma (#3): warning"))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("- delta (#4): warning"))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("- gamma (#3):"))).toBe(false);
+  });
+
+  test("requires one confirmation before /fullupgrade all and skips systems excluded from Upgrade All", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: "[1,2,3]",
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentBodies: string[] = [];
+    const fullUpgradedSystems: number[] = [];
+
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems") && !url.includes("/full-upgrade")) {
+        return new Response(JSON.stringify({
+          systems: [
+            { id: 1, name: "alpha", updateCount: 2, isReachable: 1, supportsFullUpgrade: true, excludeFromUpgradeAll: 0 },
+            { id: 2, name: "beta", updateCount: 1, isReachable: 1, supportsFullUpgrade: true, excludeFromUpgradeAll: 1 },
+            { id: 3, name: "gamma", updateCount: 4, isReachable: 1, supportsFullUpgrade: false, excludeFromUpgradeAll: 0 },
+          ],
+        }), { status: 200 });
+      }
+      if (url.includes("/api/systems/1/full-upgrade")) {
+        fullUpgradedSystems.push(1);
+        return new Response(JSON.stringify({ status: "started", jobId: "job-full-up-1" }), { status: 200 });
+      }
+      if (url.includes("/api/jobs/job-full-up-1")) {
+        return new Response(JSON.stringify({ status: "done", result: { status: "success", output: "done" } }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentBodies.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      if (url.includes("/answerCallbackQuery")) {
+        return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        text: "/fullupgrade all",
+        chat: { id: 55, type: "private", first_name: "Alice" },
+        from: { id: 55, first_name: "Alice" },
+      },
+    });
+
+    expect(fullUpgradedSystems).toEqual([]);
+
+    const confirmBody = sentBodies.find((body) => body.includes("Confirm full upgrade all for 1 system?"));
+    expect(confirmBody).toBeTruthy();
+    expect(confirmBody).toContain("alpha");
+    expect(confirmBody).not.toContain("beta");
+    expect(confirmBody).not.toContain("gamma");
+    const parsed = JSON.parse(confirmBody || "{}") as { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
+    const confirmData = parsed.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data;
+    expect(confirmData).toMatch(/^confirm:/);
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 2,
+      callback_query: {
+        id: "cb-full-upgrade-all",
+        data: confirmData,
+        from: { id: 55, first_name: "Alice" },
+        message: {
+          message_id: 11,
+          chat: { id: 55, type: "private", first_name: "Alice" },
+        },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(fullUpgradedSystems).toEqual([1]);
+    expect(sentBodies.some((body) => body.includes("Full upgrade all started for 1 system."))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("- alpha (#1): success"))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("- beta (#2):"))).toBe(false);
+    expect(sentBodies.some((body) => body.includes("- gamma (#3):"))).toBe(false);
   });
 
   test("confirmation re-checks current channel scope for single-system upgrades", async () => {
@@ -615,6 +708,92 @@ describe("telegram bot commands", () => {
     expect(sentBodies.some((body) => body.includes("Upgrade all started for 1 system."))).toBe(true);
     expect(sentBodies.some((body) => body.includes("- beta (#2): success"))).toBe(true);
     expect(sentBodies.some((body) => body.includes("- alpha (#1): success"))).toBe(false);
+  });
+
+  test("bulk confirmation re-checks current Upgrade All exclusions before execution", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: "[1,2]",
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentBodies: string[] = [];
+    const upgradedSystems: number[] = [];
+    let excludeBetaAfterPrompt = false;
+
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems") && !url.includes("/upgrade")) {
+        return new Response(JSON.stringify({
+          systems: [
+            { id: 1, name: "alpha", updateCount: 2, isReachable: 1, supportsFullUpgrade: true, excludeFromUpgradeAll: 0 },
+            { id: 2, name: "beta", updateCount: 1, isReachable: 1, supportsFullUpgrade: true, excludeFromUpgradeAll: excludeBetaAfterPrompt ? 1 : 0 },
+          ],
+        }), { status: 200 });
+      }
+      if (url.includes("/api/systems/1/upgrade")) {
+        upgradedSystems.push(1);
+        return new Response(JSON.stringify({ status: "started", jobId: "job-upgrade-1" }), { status: 200 });
+      }
+      if (url.includes("/api/jobs/job-upgrade-1")) {
+        return new Response(JSON.stringify({ status: "done", result: { status: "success", output: "done" } }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentBodies.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      if (url.includes("/answerCallbackQuery")) {
+        return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        text: "/upgrade all",
+        chat: { id: 55, type: "private", first_name: "Alice" },
+        from: { id: 55, first_name: "Alice" },
+      },
+    });
+
+    const confirmBody = sentBodies.find((body) => body.includes("Confirm upgrade all for 2 systems?"));
+    expect(confirmBody).toBeTruthy();
+    const parsed = JSON.parse(confirmBody || "{}") as { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
+    const confirmData = parsed.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data;
+    expect(confirmData).toMatch(/^confirm:/);
+
+    excludeBetaAfterPrompt = true;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 2,
+      callback_query: {
+        id: "cb-exclusion-bulk",
+        data: confirmData,
+        from: { id: 55, first_name: "Alice" },
+        message: {
+          message_id: 11,
+          chat: { id: 55, type: "private", first_name: "Alice" },
+        },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(upgradedSystems).toEqual([1]);
+    expect(sentBodies.some((body) => body.includes("Upgrade all started for 1 system."))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("- alpha (#1): success"))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("- beta (#2): success"))).toBe(false);
   });
 
   test("menu flow lets the user pick a package before confirmation", async () => {

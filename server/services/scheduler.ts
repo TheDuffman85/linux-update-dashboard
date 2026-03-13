@@ -6,9 +6,10 @@ import * as updateService from "./update-service";
 import * as notificationService from "./notification-service";
 import { logger } from "../logger";
 
-let timer: ReturnType<typeof setInterval> | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
 let initialTimeout: ReturnType<typeof setTimeout> | null = null;
 let digestTimer: ReturnType<typeof setInterval> | null = null;
+let schedulerGeneration = 0;
 
 const DIGEST_INTERVAL_MS = 60_000; // Check scheduled digests every 60s
 
@@ -108,15 +109,36 @@ async function runDigestCheck(): Promise<void> {
   }
 }
 
+function scheduleNextCheck(generation: number): void {
+  if (generation !== schedulerGeneration) return;
+
+  const intervalMs = getCheckIntervalMs();
+  timer = setTimeout(() => {
+    void executeScheduledCheck(generation);
+  }, intervalMs);
+}
+
+async function executeScheduledCheck(
+  generation: number,
+  forceAll = false
+): Promise<void> {
+  try {
+    await runCheck(forceAll);
+  } finally {
+    scheduleNextCheck(generation);
+  }
+}
+
 export function start(): void {
+  const generation = ++schedulerGeneration;
   const intervalMs = getCheckIntervalMs();
   logger.info("Scheduler check interval configured", {
     minutes: intervalMs / 60_000,
   });
   // Wait 30s before first check to let the app fully start, then refresh all systems
   initialTimeout = setTimeout(() => {
-    runCheck(true);
-    timer = setInterval(runCheck, intervalMs);
+    initialTimeout = null;
+    void executeScheduledCheck(generation, true);
   }, 30_000);
 
   // Start digest timer for scheduled notifications
@@ -125,22 +147,23 @@ export function start(): void {
 
 export function restart(): void {
   stop();
+  const generation = ++schedulerGeneration;
   const intervalMs = getCheckIntervalMs();
   logger.info("Scheduler restarting", { minutes: intervalMs / 60_000 });
-  runCheck();
-  timer = setInterval(runCheck, intervalMs);
+  void executeScheduledCheck(generation);
 
   // Restart digest timer
   digestTimer = setInterval(runDigestCheck, DIGEST_INTERVAL_MS);
 }
 
 export function stop(): void {
+  schedulerGeneration += 1;
   if (initialTimeout) {
     clearTimeout(initialTimeout);
     initialTimeout = null;
   }
   if (timer) {
-    clearInterval(timer);
+    clearTimeout(timer);
     timer = null;
   }
   if (digestTimer) {
