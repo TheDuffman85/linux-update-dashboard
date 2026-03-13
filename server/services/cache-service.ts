@@ -1,4 +1,4 @@
-import { eq, sql, gt } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, settings, systems } from "../db/schema";
 
@@ -12,12 +12,18 @@ function getSetting(key: string): string | undefined {
   return row?.value;
 }
 
+function parseNonNegativeInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || "", 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
 export function getCacheDurationHours(): number {
-  return parseInt(getSetting("cache_duration_hours") || "12", 10);
+  return parseNonNegativeInt(getSetting("cache_duration_hours"), 12);
 }
 
 export function getCheckIntervalMinutes(): number {
-  return parseInt(getSetting("check_interval_minutes") || "15", 10);
+  return parseNonNegativeInt(getSetting("check_interval_minutes"), 15);
 }
 
 export function getCachedUpdates(systemId: number) {
@@ -30,16 +36,26 @@ export function getCachedUpdates(systemId: number) {
     .all();
 }
 
-export function isCacheStale(systemId: number): boolean {
-  const cacheHours = getCacheDurationHours();
+function getLatestCheckTimestamp(systemId: number): string | null {
   const db = getDb();
   const row = db
-    .select({ maxCachedAt: sql<string>`max(${updateCache.cachedAt})` })
-    .from(updateCache)
-    .where(eq(updateCache.systemId, systemId))
+    .select({
+      maxCachedAt: sql<string>`max(${updateCache.cachedAt})`,
+      lastSeenAt: systems.lastSeenAt,
+    })
+    .from(systems)
+    .leftJoin(updateCache, eq(updateCache.systemId, systems.id))
+    .where(eq(systems.id, systemId))
+    .groupBy(systems.id, systems.lastSeenAt)
     .get();
 
-  const lastCached = row?.maxCachedAt;
+  return row?.maxCachedAt || row?.lastSeenAt || null;
+}
+
+export function isCacheStale(systemId: number): boolean {
+  const cacheHours = getCacheDurationHours();
+  if (cacheHours === 0) return true;
+  const lastCached = getLatestCheckTimestamp(systemId);
   if (!lastCached) return true;
 
   try {
@@ -52,14 +68,7 @@ export function isCacheStale(systemId: number): boolean {
 }
 
 export function getCacheAge(systemId: number): string | null {
-  const db = getDb();
-  const row = db
-    .select({ maxCachedAt: sql<string>`max(${updateCache.cachedAt})` })
-    .from(updateCache)
-    .where(eq(updateCache.systemId, systemId))
-    .get();
-
-  const lastCached = row?.maxCachedAt;
+  const lastCached = getLatestCheckTimestamp(systemId);
   if (!lastCached) return null;
 
   try {
@@ -97,20 +106,27 @@ export function getAllSystemIds(): number[] {
 
 export function getStaleSystemIds(): number[] {
   const cacheHours = getCacheDurationHours();
+  if (cacheHours === 0) return getAllSystemIds();
   const threshold = new Date(
     Date.now() - cacheHours * 60 * 60 * 1000
   ).toISOString().replace("T", " ").slice(0, 19);
 
   const db = getDb();
-  const allIds = getAllSystemIds();
-
-  const freshRows = db
-    .select({ systemId: updateCache.systemId })
-    .from(updateCache)
-    .where(gt(updateCache.cachedAt, threshold))
-    .groupBy(updateCache.systemId)
+  const freshnessRows = db
+    .select({
+      id: systems.id,
+      maxCachedAt: sql<string>`max(${updateCache.cachedAt})`,
+      lastSeenAt: systems.lastSeenAt,
+    })
+    .from(systems)
+    .leftJoin(updateCache, eq(updateCache.systemId, systems.id))
+    .groupBy(systems.id, systems.lastSeenAt)
     .all();
-  const freshIds = new Set(freshRows.map((r) => r.systemId));
 
-  return allIds.filter((id) => !freshIds.has(id));
+  return freshnessRows
+    .filter((row) => {
+      const lastCheckedAt = row.maxCachedAt || row.lastSeenAt;
+      return !lastCheckedAt || lastCheckedAt <= threshold;
+    })
+    .map((row) => row.id);
 }
