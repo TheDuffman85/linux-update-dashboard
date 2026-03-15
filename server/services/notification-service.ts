@@ -19,6 +19,7 @@ import { sanitizeOutput } from "../utils/sanitize";
 import { getAppUpdateStatus } from "./app-update-service";
 import { requestNotificationRuntimeAppUpdateSync } from "./notification-runtime-events";
 import { migrateLegacyMqttDeviceName } from "./notifications/mqtt-shared";
+import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
@@ -373,13 +374,7 @@ export async function testNotificationConfig(
 }
 
 function computeUpdateHash(systemId: number): string {
-  const db = getDb();
-  const updates = db
-    .select()
-    .from(updateCache)
-    .where(eq(updateCache.systemId, systemId))
-    .orderBy(updateCache.packageName)
-    .all();
+  const updates = hiddenUpdateService.getVisibleCachedUpdates(systemId);
 
   if (updates.length === 0) return "empty";
 

@@ -93,6 +93,53 @@ export function useUpgradePackage() {
   });
 }
 
+export function useHideUpdate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      systemId,
+      pkgManager,
+      packageName,
+      newVersion,
+    }: {
+      systemId: number;
+      pkgManager: string;
+      packageName: string;
+      newVersion: string;
+    }) =>
+      apiFetch(`/systems/${systemId}/hidden-updates`, {
+        method: "POST",
+        body: JSON.stringify({ pkgManager, packageName, newVersion }),
+      }),
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useUnhideUpdate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      systemId,
+      hiddenUpdateId,
+    }: {
+      systemId: number;
+      hiddenUpdateId: number;
+    }) =>
+      apiFetch(`/systems/${systemId}/hidden-updates/${hiddenUpdateId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
 export function useRefreshCache() {
   const qc = useQueryClient();
   return useMutation({

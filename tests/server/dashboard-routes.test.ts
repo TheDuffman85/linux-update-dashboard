@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { systems, updateCache } from "../../server/db/schema";
+import { hiddenUpdates, systems, updateCache } from "../../server/db/schema";
 import dashboardRoutes from "../../server/routes/dashboard";
 import { initEncryptor } from "../../server/security";
 
@@ -100,5 +100,58 @@ describe("dashboard routes", () => {
     expect(systemsBody.systems).toHaveLength(1);
     expect(systemsBody.systems[0].updateCount).toBe(2);
     expect(systemsBody.systems[0].securityCount).toBe(1);
+  });
+
+  test("excludes active hidden updates from dashboard counts", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Visible",
+      hostname: "visible.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      hidden: 0,
+    }).returning({ id: systems.id }).get();
+
+    db.insert(updateCache).values([
+      {
+        systemId: inserted.id,
+        pkgManager: "apt",
+        packageName: "openssl",
+        newVersion: "1.2.3",
+        isSecurity: 1,
+      },
+      {
+        systemId: inserted.id,
+        pkgManager: "apt",
+        packageName: "bash",
+        newVersion: "5.2",
+        isSecurity: 0,
+      },
+    ]).run();
+
+    db.insert(hiddenUpdates).values({
+      systemId: inserted.id,
+      pkgManager: "apt",
+      packageName: "openssl",
+      newVersion: "1.2.3",
+      isSecurity: 1,
+      active: 1,
+      lastMatchedAt: "2026-01-01 00:00:00",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/dashboard", dashboardRoutes);
+
+    const statsRes = await app.request("/api/dashboard/stats");
+    const statsBody = await statsRes.json();
+    expect(statsBody.stats.totalUpdates).toBe(1);
+    expect(statsBody.stats.needsUpdates).toBe(1);
+
+    const systemsRes = await app.request("/api/dashboard/systems");
+    const systemsBody = await systemsRes.json();
+    expect(systemsBody.systems[0].updateCount).toBe(1);
+    expect(systemsBody.systems[0].securityCount).toBe(0);
   });
 });

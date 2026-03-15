@@ -25,6 +25,7 @@ import {
 import { getActiveOperation } from "./active-operation-store";
 import { getAppUpdateStatus } from "./app-update-service";
 import * as updateService from "./update-service";
+import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
 
 type NotificationRow = typeof notifications.$inferSelect;
@@ -386,17 +387,12 @@ async function buildEntitiesForChannel(
   const entities: DiscoveryEntity[] = [];
 
   if (config.publishAppEntity && notifyOn.includes("appUpdates")) {
-    entities.push(buildAppEntity(row, config, await getAppUpdateStatus()));
+      entities.push(buildAppEntity(row, config, await getAppUpdateStatus()));
   }
 
   if (notifyOn.includes("updates") || notifyOn.includes("unreachable")) {
     for (const system of selectedSystems) {
-      const updates = db
-        .select()
-        .from(updateCache)
-        .where(eq(updateCache.systemId, system.id))
-        .orderBy(updateCache.packageName)
-        .all();
+      const updates = hiddenUpdateService.getVisibleCachedUpdates(system.id);
       entities.push(buildSystemEntity(row, config, system, updates));
     }
   }

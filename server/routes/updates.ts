@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import * as updateService from "../services/update-service";
 import * as cacheService from "../services/cache-service";
+import * as hiddenUpdateService from "../services/hidden-update-service";
 import { validatePackageName } from "../ssh/parsers/types";
 import { logger } from "../logger";
 
@@ -50,8 +51,8 @@ updates.post("/systems/:id/check", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const jobId = startJob(async () => {
-    const result = await updateService.checkUpdates(id);
-    return { updateCount: result.length };
+    await updateService.checkUpdates(id);
+    return hiddenUpdateService.getVisibleUpdateSummary(id);
   });
   return c.json({ status: "started", jobId });
 });

@@ -5,12 +5,12 @@ import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSystem, useRebootSystem } from "../lib/systems";
-import { useCheckUpdates } from "../lib/updates";
+import { useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
-import type { CachedUpdate, HistoryEntry, ActiveOperation } from "../lib/systems";
+import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation } from "../lib/systems";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -32,10 +32,14 @@ function UpdatesTable({
   updates,
   systemId,
   busy,
+  onHide,
+  hideBusy,
 }: {
   updates: CachedUpdate[];
   systemId: number;
   busy?: boolean;
+  onHide: (update: CachedUpdate) => void;
+  hideBusy?: boolean;
 }) {
   const { upgradePackage, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
@@ -66,7 +70,7 @@ function UpdatesTable({
             <th className="px-2 sm:px-4 py-2">Available</th>
             <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
             <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
-            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Action</th>
+            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -91,22 +95,111 @@ function UpdatesTable({
                 {u.repository || "-"}
               </td>
               <td className="px-2 sm:px-4 py-2 text-right">
-                <button
-                  onClick={() => handleUpgrade(u.packageName)}
-                  disabled={upgrading}
-                  className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 transition-colors disabled:opacity-50"
-                  title={`Upgrade ${u.packageName}`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                </button>
+                <div className="inline-flex items-center gap-1">
+                  <button
+                    onClick={() => onHide(u)}
+                    disabled={upgrading || hideBusy}
+                    className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors disabled:opacity-50"
+                    title={`Hide ${u.packageName} ${u.newVersion || ""}`.trim()}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.584 10.587A2 2 0 0013.412 13.4" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.363 5.365A9.466 9.466 0 0112 5c4.478 0 8.268 2.943 9.543 7a9.97 9.97 0 01-4.132 5.411M6.228 6.228A9.965 9.965 0 002.458 12c1.274 4.057 5.064 7 9.542 7a9.46 9.46 0 005.057-1.47" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => handleUpgrade(u.packageName)}
+                    disabled={upgrading}
+                    className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 transition-colors disabled:opacity-50"
+                    title={`Upgrade ${u.packageName}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function HiddenUpdatesSection({
+  hiddenUpdates,
+  busy,
+  onUnhide,
+}: {
+  hiddenUpdates: HiddenUpdate[];
+  busy?: boolean;
+  onUnhide: (hiddenUpdate: HiddenUpdate) => void;
+}) {
+  if (hiddenUpdates.length === 0) return null;
+
+  return (
+    <details className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
+      <summary className="px-4 py-3 border-b border-border flex items-center justify-between cursor-pointer select-none">
+        <span className="text-sm font-semibold">
+          Hidden Updates
+          <Badge variant="muted" small>{hiddenUpdates.length}</Badge>
+        </span>
+        <span className="text-xs text-slate-400">Hidden until this exact update disappears</span>
+      </summary>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
+              <th className="px-2 sm:px-4 py-2">Package</th>
+              <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">Current</th>
+              <th className="px-2 sm:px-4 py-2">Hidden Version</th>
+              <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
+              <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
+              <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hiddenUpdates.map((update) => (
+              <tr key={update.id} className="border-b border-border last:border-0">
+                <td className="px-2 sm:px-4 py-2 break-all">
+                  {update.packageName}
+                  {update.isSecurity ? (
+                    <Badge variant="danger" small>security</Badge>
+                  ) : null}
+                </td>
+                <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
+                  {update.currentVersion || "-"}
+                </td>
+                <td className="px-2 sm:px-4 py-2 font-mono text-xs font-medium break-all">
+                  {update.newVersion || "-"}
+                </td>
+                <td className="px-2 sm:px-4 py-2 hidden md:table-cell text-slate-500">
+                  {update.pkgManager}
+                </td>
+                <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500 truncate max-w-[150px]">
+                  {update.repository || "-"}
+                </td>
+                <td className="px-2 sm:px-4 py-2 text-right">
+                  <button
+                    onClick={() => onUnhide(update)}
+                    disabled={busy}
+                    className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors disabled:opacity-50"
+                    title={`Unhide ${update.packageName} ${update.newVersion || ""}`.trim()}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.522 5 12 5s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S3.732 16.057 2.458 12z" />
+                      <circle cx="12" cy="12" r="3" strokeWidth={2} />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
 
@@ -461,12 +554,15 @@ export default function SystemDetail() {
   const systemId = parseInt(id!, 10);
   const { data, isLoading } = useSystem(systemId);
   const checkUpdates = useCheckUpdates();
+  const hideUpdate = useHideUpdate();
+  const unhideUpdate = useUnhideUpdate();
   const { upgradeAll, fullUpgradeAll, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
   const rebootSystem = useRebootSystem();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const commandOutput = useCommandOutput(systemId);
@@ -508,7 +604,7 @@ export default function SystemDetail() {
     );
   }
 
-  const { system, updates, history } = data;
+  const { system, updates, hiddenUpdates, history } = data;
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton;
 
@@ -559,6 +655,45 @@ export default function SystemDetail() {
         addToast(d.success ? "Reboot command sent" : d.message, d.success ? "success" : "danger"),
       onError: (err) => addToast(err.message, "danger"),
     });
+  };
+
+  const handleHideUpdate = () => {
+    if (!pendingHideUpdate?.newVersion) return;
+    hideUpdate.mutate(
+      {
+        systemId,
+        pkgManager: pendingHideUpdate.pkgManager,
+        packageName: pendingHideUpdate.packageName,
+        newVersion: pendingHideUpdate.newVersion,
+      },
+      {
+        onSuccess: () => {
+          addToast(
+            `Hidden ${pendingHideUpdate.packageName} ${pendingHideUpdate.newVersion}`,
+            "success",
+          );
+          setPendingHideUpdate(null);
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
+
+  const handleUnhideUpdate = (hiddenUpdateRow: HiddenUpdate) => {
+    unhideUpdate.mutate(
+      {
+        systemId,
+        hiddenUpdateId: hiddenUpdateRow.id,
+      },
+      {
+        onSuccess: () =>
+          addToast(
+            `Unhid ${hiddenUpdateRow.packageName} ${hiddenUpdateRow.newVersion || ""}`.trim(),
+            "success",
+          ),
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
   };
 
   return (
@@ -764,8 +899,16 @@ export default function SystemDetail() {
           updates={updates}
           systemId={systemId}
           busy={upgrading || checking}
+          hideBusy={hideUpdate.isPending}
+          onHide={setPendingHideUpdate}
         />
       </div>
+
+      <HiddenUpdatesSection
+        hiddenUpdates={hiddenUpdates}
+        busy={unhideUpdate.isPending || hideUpdate.isPending || upgrading || checking}
+        onUnhide={handleUnhideUpdate}
+      />
 
       {/* History */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-border">
@@ -808,6 +951,19 @@ export default function SystemDetail() {
         confirmLabel="Reboot"
         danger
         loading={rebooting}
+      />
+      <ConfirmDialog
+        open={pendingHideUpdate !== null}
+        onClose={() => setPendingHideUpdate(null)}
+        onConfirm={handleHideUpdate}
+        title="Hide Update"
+        message={
+          pendingHideUpdate
+            ? `Hide ${pendingHideUpdate.packageName} ${pendingHideUpdate.newVersion || ""} from visible update lists and counts on ${system.name}? Upgrade commands will still install it if run.`
+            : ""
+        }
+        confirmLabel="Hide Update"
+        loading={hideUpdate.isPending}
       />
 
     </Layout>

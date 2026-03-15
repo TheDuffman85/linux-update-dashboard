@@ -246,4 +246,15 @@ describe("database startup cleanup", () => {
     expect(restarted[0].needsReboot).toBe(1);
     expect(restarted[0].isReachable).toBe(1);
   });
+
+  test("creates the hidden_updates table on startup", () => {
+    const sqlite = new Database(dbPath, { readonly: true });
+    const tables = sqlite
+      .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hidden_updates'")
+      .all() as Array<{ name?: string }>;
+    sqlite.close();
+
+    expect(tables).toHaveLength(1);
+    expect(tables[0].name).toBe("hidden_updates");
+  });
 });

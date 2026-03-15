@@ -1,9 +1,10 @@
-import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { systems, updateCache } from "../db/schema";
+import { systems } from "../db/schema";
 import { getEncryptor } from "../security";
 import { resolveSystemCredential } from "./credential-service";
 import * as cacheService from "./cache-service";
+import * as hiddenUpdateService from "./hidden-update-service";
 import type { ApprovedHostKeyInput } from "./system-connection-validation";
 import {
   SYSTEM_INFO_CMD,
@@ -487,61 +488,49 @@ export function getSystemWithUpdateCount(systemId: number) {
   const system = getSystem(systemId);
   if (!system) return null;
 
-  const db = getDb();
-  const result = db
-    .select({
-      count: count(),
-      securityCount: sql<number>`coalesce(sum(case when ${updateCache.isSecurity} = 1 then 1 else 0 end), 0)`,
-    })
-    .from(updateCache)
-    .where(eq(updateCache.systemId, systemId))
-    .get();
+  const result = hiddenUpdateService.getVisibleUpdateSummary(systemId);
 
   return {
     ...system,
-    updateCount: result?.count ?? 0,
-    securityCount: result?.securityCount ?? 0,
+    updateCount: result.updateCount,
+    securityCount: result.securityCount,
   };
 }
 
 export function listSystemsWithUpdateCounts() {
   const allSystems = listSystems();
-  const db = getDb();
+  const summaries = hiddenUpdateService.getVisibleUpdateSummaries(
+    allSystems.map((system) => system.id),
+  );
 
   return allSystems.map((s) => {
-    const result = db
-      .select({
-        count: count(),
-        securityCount: sql<number>`coalesce(sum(case when ${updateCache.isSecurity} = 1 then 1 else 0 end), 0)`,
-      })
-      .from(updateCache)
-      .where(eq(updateCache.systemId, s.id))
-      .get();
+    const result = summaries.get(s.id) ?? {
+      updateCount: 0,
+      securityCount: 0,
+    };
     return {
       ...s,
-      updateCount: result?.count ?? 0,
-      securityCount: result?.securityCount ?? 0,
+      updateCount: result.updateCount,
+      securityCount: result.securityCount,
     };
   });
 }
 
 export function listVisibleSystemsWithUpdateCounts() {
   const allSystems = listVisibleSystems();
-  const db = getDb();
+  const summaries = hiddenUpdateService.getVisibleUpdateSummaries(
+    allSystems.map((system) => system.id),
+  );
 
   return allSystems.map((s) => {
-    const result = db
-      .select({
-        count: count(),
-        securityCount: sql<number>`coalesce(sum(case when ${updateCache.isSecurity} = 1 then 1 else 0 end), 0)`,
-      })
-      .from(updateCache)
-      .where(eq(updateCache.systemId, s.id))
-      .get();
+    const result = summaries.get(s.id) ?? {
+      updateCount: 0,
+      securityCount: 0,
+    };
     return {
       ...s,
-      updateCount: result?.count ?? 0,
-      securityCount: result?.securityCount ?? 0,
+      updateCount: result.updateCount,
+      securityCount: result.securityCount,
     };
   });
 }

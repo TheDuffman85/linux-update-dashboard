@@ -130,6 +130,42 @@ export const updateCache = sqliteTable(
   ]
 );
 
+export const hiddenUpdates = sqliteTable(
+  "hidden_updates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    pkgManager: text("pkg_manager").notNull(),
+    packageName: text("package_name").notNull(),
+    currentVersion: text("current_version"),
+    newVersion: text("new_version").notNull(),
+    architecture: text("architecture"),
+    repository: text("repository"),
+    isSecurity: integer("is_security").notNull().default(0),
+    active: integer("active").notNull().default(1),
+    lastMatchedAt: text("last_matched_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    inactiveSince: text("inactive_since"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    unique().on(
+      table.systemId,
+      table.pkgManager,
+      table.packageName,
+      table.newVersion,
+    ),
+  ]
+);
+
 export const updateHistory = sqliteTable("update_history", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   systemId: integer("system_id")

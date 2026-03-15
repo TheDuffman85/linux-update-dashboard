@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
+import * as hiddenUpdateService from "../services/hidden-update-service";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
 import { getSSHManager } from "../ssh/connection";
 import { detectPackageManagers } from "../ssh/detector";
+import { validatePackageName } from "../ssh/parsers/types";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
 import { resolveSystemCredential } from "../services/credential-service";
@@ -297,7 +299,8 @@ systems.get("/:id", (c) => {
   const system = systemService.getSystemWithUpdateCount(id);
   if (!system) return c.json({ error: "System not found" }, 404);
 
-  const updates = cacheService.getCachedUpdates(id);
+  const updates = hiddenUpdateService.getVisibleCachedUpdates(id);
+  const hiddenUpdates = hiddenUpdateService.listActiveHiddenUpdates(id);
   const history = updateService.getHistory(id, 20).map((h) => ({
     ...h,
     packagesList: h.packages ? JSON.parse(h.packages) : [],
@@ -312,8 +315,60 @@ systems.get("/:id", (c) => {
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
     },
     updates,
+    hiddenUpdates,
     history,
   });
+});
+
+systems.post("/:id/hidden-updates", async (c) => {
+  const systemId = parseId(c.req.param("id"));
+  if (!systemId) return c.json({ error: "Invalid system ID" }, 400);
+
+  const system = systemService.getSystem(systemId);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  const body = await c.req.json();
+  const pkgManager =
+    typeof body.pkgManager === "string" ? body.pkgManager.trim() : "";
+  const packageName =
+    typeof body.packageName === "string" ? body.packageName.trim() : "";
+  const newVersion =
+    typeof body.newVersion === "string" ? body.newVersion.trim() : "";
+
+  if (!pkgManager) return c.json({ error: "pkgManager is required" }, 400);
+  if (!newVersion) return c.json({ error: "newVersion is required" }, 400);
+
+  try {
+    validatePackageName(packageName);
+  } catch {
+    return c.json({ error: "Invalid package name" }, 400);
+  }
+
+  const hiddenUpdate = hiddenUpdateService.createHiddenUpdate(systemId, {
+    pkgManager,
+    packageName,
+    newVersion,
+  });
+  if (!hiddenUpdate) {
+    return c.json({ error: "Update not found" }, 404);
+  }
+
+  return c.json({ hiddenUpdate }, 201);
+});
+
+systems.delete("/:id/hidden-updates/:hiddenUpdateId", (c) => {
+  const systemId = parseId(c.req.param("id"));
+  const hiddenUpdateId = parseId(c.req.param("hiddenUpdateId"));
+  if (!systemId || !hiddenUpdateId) {
+    return c.json({ error: "Invalid hidden update ID" }, 400);
+  }
+
+  const deleted = hiddenUpdateService.deleteHiddenUpdate(systemId, hiddenUpdateId);
+  if (!deleted) {
+    return c.json({ error: "Hidden update not found" }, 404);
+  }
+
+  return c.json({ status: "ok" });
 });
 
 // Create system

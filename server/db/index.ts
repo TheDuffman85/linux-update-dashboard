@@ -154,6 +154,24 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     UNIQUE(system_id, pkg_manager, package_name)
   )`);
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS hidden_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    pkg_manager TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    current_version TEXT,
+    new_version TEXT NOT NULL,
+    architecture TEXT,
+    repository TEXT,
+    is_security INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    last_matched_at TEXT NOT NULL DEFAULT (datetime('now')),
+    inactive_since TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(system_id, pkg_manager, package_name, new_version)
+  )`);
+
   _db.run(sql`CREATE TABLE IF NOT EXISTS update_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,

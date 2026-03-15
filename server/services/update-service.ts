@@ -5,6 +5,7 @@ import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCo
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
+import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
 import { logger } from "../logger";
@@ -360,6 +361,7 @@ async function checkUpdatesUnlocked(
   const checkErrors: string[] = [];
   let checkOutput = "";
   let successfulChecks = 0;
+  const successfulPkgManagers: string[] = [];
 
   let conn;
   let pkgManagers: string[] = [];
@@ -434,6 +436,7 @@ async function checkUpdatesUnlocked(
         let updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode);
         allUpdates.push(...updates);
         successfulChecks++;
+        successfulPkgManagers.push(pmName);
       } catch (e) {
         const errorText = e instanceof Error ? e.message : String(e);
         checkErrors.push(`[${pmName}] ${errorText}`);
@@ -465,6 +468,17 @@ async function checkUpdatesUnlocked(
   // Store in cache
   cacheService.invalidateCache(systemId);
   storeUpdates(systemId, allUpdates);
+  if (successfulChecks > 0) {
+    hiddenUpdateService.syncHiddenUpdatesForCheck(
+      systemId,
+      allUpdates,
+      successfulPkgManagers,
+    );
+  }
+  const visibleSummary =
+    successfulChecks > 0
+      ? hiddenUpdateService.getVisibleUpdateSummary(systemId)
+      : { updateCount: 0, securityCount: 0 };
 
   const historyStatus =
     checkErrors.length === 0
@@ -485,7 +499,7 @@ async function checkUpdatesUnlocked(
         : pkgManagers.join(","),
       historyStatus,
       {
-        packageCount: allUpdates.length,
+        packageCount: visibleSummary.updateCount,
         command: allCommands.join(" && "),
         output: checkOutput.slice(0, 5000) || undefined,
         error: combinedErrors?.slice(0, 2000),

@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, systems, updateCache } from "../../server/db/schema";
+import { credentials, hiddenUpdates, systems, updateCache } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
@@ -685,5 +685,127 @@ describe("systems reorder route", () => {
       .where(eq(updateCache.systemId, systemId))
       .all();
     expect(cached).toHaveLength(0);
+  });
+
+  test("returns only visible updates and active hidden updates in system detail", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "Hidden Detail",
+      hostname: "hidden-detail.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateCache).values([
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "openssl",
+        currentVersion: "1.0",
+        newVersion: "1.1",
+        isSecurity: 1,
+      },
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+      },
+    ]).run();
+
+    db.insert(hiddenUpdates).values([
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "openssl",
+        currentVersion: "1.0",
+        newVersion: "1.1",
+        isSecurity: 1,
+        active: 1,
+        lastMatchedAt: "2026-01-01 00:00:00",
+      },
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "oldpkg",
+        currentVersion: "1.0",
+        newVersion: "1.1",
+        active: 0,
+        lastMatchedAt: "2026-01-01 00:00:00",
+        inactiveSince: "2026-01-10 00:00:00",
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.system.updateCount).toBe(1);
+    expect(body.system.securityCount).toBe(0);
+    expect(body.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["bash"]);
+    expect(body.hiddenUpdates).toHaveLength(1);
+    expect(body.hiddenUpdates[0].packageName).toBe("openssl");
+  });
+
+  test("creates and deletes hidden updates through the route", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "Hide Route",
+      hostname: "hide-route.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "openssl",
+      currentVersion: "1.0",
+      newVersion: "1.1",
+      isSecurity: 1,
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const createRes = await app.request(`/api/systems/${systemId}/hidden-updates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pkgManager: "apt",
+        packageName: "openssl",
+        newVersion: "1.1",
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const createBody = await createRes.json();
+    expect(createBody.hiddenUpdate.packageName).toBe("openssl");
+
+    const stored = db
+      .select()
+      .from(hiddenUpdates)
+      .where(eq(hiddenUpdates.systemId, systemId))
+      .get();
+    expect(stored?.active).toBe(1);
+
+    const deleteRes = await app.request(
+      `/api/systems/${systemId}/hidden-updates/${stored?.id}`,
+      { method: "DELETE" },
+    );
+    expect(deleteRes.status).toBe(200);
+
+    const remaining = db
+      .select()
+      .from(hiddenUpdates)
+      .where(eq(hiddenUpdates.systemId, systemId))
+      .all();
+    expect(remaining).toHaveLength(0);
   });
 });

@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../db";
-import { systems, updateCache } from "../db/schema";
+import { systems } from "../db/schema";
 import * as cacheService from "./cache-service";
+import * as hiddenUpdateService from "./hidden-update-service";
 import * as updateService from "./update-service";
 import * as notificationService from "./notification-service";
 import { logger } from "../logger";
@@ -66,17 +67,13 @@ async function runCheck(forceAll = false): Promise<void> {
           .where(eq(systems.id, id))
           .get();
 
-        const updates = db
-          .select({ isSecurity: updateCache.isSecurity })
-          .from(updateCache)
-          .where(eq(updateCache.systemId, id))
-          .all();
+        const updates = hiddenUpdateService.getVisibleUpdateSummary(id);
 
         checkResults.push({
           systemId: id,
           systemName: pre.name,
-          updateCount: updates.length,
-          securityCount: updates.filter((u) => u.isSecurity).length,
+          updateCount: updates.updateCount,
+          securityCount: updates.securityCount,
           previouslyReachable: pre.wasReachable,
           nowUnreachable: system?.isReachable === -1,
         });

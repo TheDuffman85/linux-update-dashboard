@@ -63,6 +63,23 @@ export interface CachedUpdate {
   cachedAt: string;
 }
 
+export interface HiddenUpdate {
+  id: number;
+  systemId: number;
+  pkgManager: string;
+  packageName: string;
+  currentVersion: string | null;
+  newVersion: string | null;
+  architecture: string | null;
+  repository: string | null;
+  isSecurity: number;
+  active: number;
+  lastMatchedAt: string;
+  inactiveSince: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HistoryEntry {
   id: number;
   systemId: number;
@@ -107,7 +124,12 @@ export function useSystem(id: number) {
   const query = useQuery({
     queryKey: ["system", id],
     queryFn: () =>
-      apiFetch<{ system: System; updates: CachedUpdate[]; history: HistoryEntry[] }>(
+      apiFetch<{
+        system: System;
+        updates: CachedUpdate[];
+        hiddenUpdates: HiddenUpdate[];
+        history: HistoryEntry[];
+      }>(
         `/systems/${id}`
       ),
     refetchInterval: (query) => {
