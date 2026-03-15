@@ -138,7 +138,7 @@ describe("checkUpdates", () => {
     expect(history?.error).toContain("[apt] sudo: a password is required");
     expect(JSON.parse(history?.steps || "[]")).toMatchObject([
       {
-        label: "Fetching package lists…",
+        label: "Fetching package lists",
         pkgManager: "apt",
         status: "failed",
       },
@@ -196,9 +196,9 @@ describe("checkUpdates", () => {
     const steps = JSON.parse(history?.steps || "[]");
     expect(steps).toHaveLength(3);
     expect(steps.map((step: { label: string }) => step.label)).toEqual([
-      "Fetching package lists…",
-      "Listing available updates…",
-      "Detecting kept-back packages…",
+      "Fetching package lists",
+      "Listing available updates",
+      "Detecting kept-back packages",
     ]);
     expect(steps[0]).toMatchObject({
       pkgManager: "apt",

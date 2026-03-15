@@ -2,6 +2,7 @@ import type { WsMessage } from "../hooks/useCommandOutput";
 import type { ActivityStep } from "./systems";
 
 const GLOBAL_PHASES = new Set(["reconnecting", "rechecking"]);
+const TRAILING_ELLIPSIS_PATTERN = /\s*(?:…|\.{3})\s*$/;
 
 function appendText(existing: string | null, next: string): string {
   return `${existing || ""}${next}`;
@@ -57,6 +58,6 @@ export function deriveLiveActivitySteps(messages: WsMessage[]): ActivityStep[] {
 }
 
 export function getActivityStepLabel(step: ActivityStep, index: number): string {
-  const label = step.label?.trim();
+  const label = step.label?.trim().replace(TRAILING_ELLIPSIS_PATTERN, "");
   return label || `Step ${index + 1}`;
 }

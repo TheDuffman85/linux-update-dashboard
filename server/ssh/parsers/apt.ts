@@ -62,9 +62,9 @@ export const aptParser: PackageParser = {
 
   getCheckCommandLabels() {
     return [
-      "Fetching package lists…",
-      "Listing available updates…",
-      "Detecting kept-back packages…",
+      "Fetching package lists",
+      "Listing available updates",
+      "Detecting kept-back packages",
     ];
   },
 

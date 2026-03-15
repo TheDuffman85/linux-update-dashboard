@@ -28,8 +28,8 @@ export const apkParser: PackageParser = {
 
   getCheckCommandLabels() {
     return [
-      "Refreshing package indexes…",
-      "Listing available updates…",
+      "Refreshing package indexes",
+      "Listing available updates",
     ];
   },
 
