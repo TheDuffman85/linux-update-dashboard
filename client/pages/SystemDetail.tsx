@@ -81,6 +81,9 @@ function UpdatesTable({
                 {u.isSecurity ? (
                   <Badge variant="danger" small>security</Badge>
                 ) : null}
+                {u.isKeptBack ? (
+                  <Badge variant="muted" small>kept back</Badge>
+                ) : null}
               </td>
               <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
                 {u.currentVersion || "-"}
@@ -167,6 +170,9 @@ function HiddenUpdatesSection({
                   {update.packageName}
                   {update.isSecurity ? (
                     <Badge variant="danger" small>security</Badge>
+                  ) : null}
+                  {update.isKeptBack ? (
+                    <Badge variant="muted" small>kept back</Badge>
                   ) : null}
                 </td>
                 <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
@@ -887,6 +893,12 @@ export default function SystemDetail() {
             Available Updates
             {updates.length > 0 && (
               <Badge variant="warning" small>{updates.length}</Badge>
+            )}
+            {system.securityCount > 0 && (
+              <Badge variant="danger" small>{system.securityCount} security</Badge>
+            )}
+            {system.keptBackCount > 0 && (
+              <Badge variant="muted" small>{system.keptBackCount} kept back</Badge>
             )}
           </h2>
           {system.cacheAge && (

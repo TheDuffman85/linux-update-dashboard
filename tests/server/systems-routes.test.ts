@@ -747,6 +747,7 @@ describe("systems reorder route", () => {
 
     expect(body.system.updateCount).toBe(1);
     expect(body.system.securityCount).toBe(0);
+    expect(body.system.keptBackCount).toBe(0);
     expect(body.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["bash"]);
     expect(body.hiddenUpdates).toHaveLength(1);
     expect(body.hiddenUpdates[0].packageName).toBe("openssl");

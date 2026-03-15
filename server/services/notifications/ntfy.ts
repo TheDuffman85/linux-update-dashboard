@@ -33,6 +33,15 @@ function resolvePriority(
   return payloadPriority || "default";
 }
 
+function sanitizeHeaderValue(value: string): string {
+  return value
+    .replaceAll("⏸️ ", "")
+    .replaceAll("⚠️ ", "")
+    .replace(/[^\t\x20-\x7e]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export const ntfyProvider = createFlatProvider({
   name: "ntfy",
   allowedKeys: [
@@ -75,7 +84,7 @@ export const ntfyProvider = createFlatProvider({
     const url = `${baseUrl}/${encodeURIComponent(config.ntfyTopic)}`;
 
     const headers: Record<string, string> = {
-      "Title": payload.title,
+      "Title": sanitizeHeaderValue(payload.title),
       "Priority": resolvePriority(payload.priority, config.ntfyPriorityOverride),
     };
 

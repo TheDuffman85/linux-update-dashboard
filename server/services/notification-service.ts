@@ -305,6 +305,7 @@ function buildTestPayload(name?: string): NotificationPayload {
       systemsWithUpdates: 0,
       totalUpdates: 0,
       totalSecurity: 0,
+      totalKeptBack: 0,
       unreachableSystems: 0,
     },
     updates: [],
@@ -378,9 +379,12 @@ function computeUpdateHash(systemId: number): string {
 
   if (updates.length === 0) return "empty";
 
-  const packageNames = updates.map((u) => u.packageName).sort();
+  const packageStates = updates
+    .map((u) => `${u.packageName}:${u.newVersion}:${u.isSecurity}:${u.isKeptBack}`)
+    .sort();
   const securityCount = updates.filter((u) => u.isSecurity).length;
-  const raw = `${updates.length}:${securityCount}:${packageNames.join(",")}`;
+  const keptBackCount = updates.filter((u) => u.isKeptBack).length;
+  const raw = `${updates.length}:${securityCount}:${keptBackCount}:${packageStates.join(",")}`;
   return createHash("sha256").update(raw).digest("hex").slice(0, 16);
 }
 
@@ -642,7 +646,12 @@ function mergeCheckResults(existing: CheckResult[], incoming: CheckResult[]): Ch
   for (const result of existing) map.set(result.systemId, result);
   for (const result of incoming) {
     const previous = map.get(result.systemId);
-    if (!previous || result.updateCount > previous.updateCount || result.securityCount > previous.securityCount) {
+    if (
+      !previous ||
+      result.updateCount > previous.updateCount ||
+      result.securityCount > previous.securityCount ||
+      result.keptBackCount > previous.keptBackCount
+    ) {
       map.set(result.systemId, result);
     }
   }
@@ -785,8 +794,12 @@ function buildEventTypes(
   return eventTypes;
 }
 
-function resolvePriority(totalSecurity: number): NotificationPriority {
-  return totalSecurity > 0 ? "high" : "default";
+function hasSpecialUpdateCounts(totalSecurity: number, totalKeptBack: number): boolean {
+  return totalSecurity > 0 || totalKeptBack > 0;
+}
+
+function resolvePriority(totalSecurity: number, totalKeptBack: number): NotificationPriority {
+  return hasSpecialUpdateCounts(totalSecurity, totalKeptBack) ? "high" : "default";
 }
 
 function buildBatchPayload(
@@ -796,6 +809,7 @@ function buildBatchPayload(
 ): NotificationPayload {
   const totalUpdates = updateResults.reduce((sum, result) => sum + result.updateCount, 0);
   const totalSecurity = updateResults.reduce((sum, result) => sum + result.securityCount, 0);
+  const totalKeptBack = updateResults.reduce((sum, result) => sum + result.keptBackCount, 0);
   const sentAt = nowIso();
 
   let title = "";
@@ -804,10 +818,20 @@ function buildBatchPayload(
 
   if (updateResults.length > 0) {
     title = `${totalUpdates} update${totalUpdates !== 1 ? "s" : ""} available`;
+    const titleDetails: string[] = [];
     if (totalSecurity > 0) {
-      title += ` (${totalSecurity} security)`;
+      titleDetails.push(`${totalSecurity} security`);
+    }
+    if (totalKeptBack > 0) {
+      titleDetails.push(`${totalKeptBack} kept back`);
+    }
+    if (hasSpecialUpdateCounts(totalSecurity, totalKeptBack)) {
       tags.push("warning");
-    } else {
+    }
+    if (titleDetails.length > 0) {
+      title += ` (${titleDetails.join(", ")})`;
+    }
+    if (!hasSpecialUpdateCounts(totalSecurity, totalKeptBack)) {
       tags.push("package");
     }
 
@@ -851,7 +875,7 @@ function buildBatchPayload(
   const event: NotificationEventData = {
     title,
     body,
-    priority: resolvePriority(totalSecurity),
+    priority: resolvePriority(totalSecurity, totalKeptBack),
     tags,
     sentAt,
     eventTypes: buildEventTypes(updateResults, unreachableResults, appUpdate),
@@ -859,6 +883,7 @@ function buildBatchPayload(
       systemsWithUpdates: updateResults.length,
       totalUpdates,
       totalSecurity,
+      totalKeptBack,
       unreachableSystems: unreachableResults.length,
     },
     updates: updateResults,

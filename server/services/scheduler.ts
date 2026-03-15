@@ -74,6 +74,7 @@ async function runCheck(forceAll = false): Promise<void> {
           systemName: pre.name,
           updateCount: updates.updateCount,
           securityCount: updates.securityCount,
+          keptBackCount: updates.keptBackCount,
           previouslyReachable: pre.wasReachable,
           nowUnreachable: system?.isReachable === -1,
         });

@@ -100,6 +100,7 @@ interface AllowedSystem {
   name: string;
   updateCount?: number;
   securityCount?: number;
+  keptBackCount?: number;
   isReachable?: number;
   supportsFullUpgrade?: boolean;
   excludeFromUpgradeAll?: number;
@@ -109,6 +110,7 @@ interface SystemUpdate {
   packageName: string;
   currentVersion?: string | null;
   newVersion?: string | null;
+  isKeptBack?: number;
 }
 
 type SystemAction = "check" | "upgrade" | "fullupgrade" | "pkgsys" | "pkglist";
@@ -530,7 +532,7 @@ async function fetchAllowedSystems(channel: NotificationRow): Promise<AllowedSys
   const commandToken = resolveTelegramCommandToken(parseConfig(channel.config));
   if (!commandToken) return [];
 
-  const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; securityCount?: number; isReachable: number; supportsFullUpgrade?: boolean; excludeFromUpgradeAll?: number }> }>(
+  const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; securityCount?: number; keptBackCount?: number; isReachable: number; supportsFullUpgrade?: boolean; excludeFromUpgradeAll?: number }> }>(
     commandToken,
     "/api/systems?scope=visible"
   );
@@ -624,16 +626,18 @@ function formatPackageUpdateEntry(update: SystemUpdate): string {
     ? update.newVersion
     : null;
 
+  let text = `- ${update.packageName}`;
   if (currentVersion && newVersion) {
-    return `- ${update.packageName}: ${currentVersion} -> ${newVersion}`;
+    text = `- ${update.packageName}: ${currentVersion} -> ${newVersion}`;
+  } else if (newVersion) {
+    text = `- ${update.packageName}: -> ${newVersion}`;
+  } else if (currentVersion) {
+    text = `- ${update.packageName}: ${currentVersion}`;
   }
-  if (newVersion) {
-    return `- ${update.packageName}: -> ${newVersion}`;
+  if (Number(update.isKeptBack ?? 0) > 0) {
+    text += " (kept back)";
   }
-  if (currentVersion) {
-    return `- ${update.packageName}: ${currentVersion}`;
-  }
-  return `- ${update.packageName}`;
+  return text;
 }
 
 function formatReachabilityDot(isReachable?: number): string {
@@ -933,12 +937,16 @@ async function sendStatus(botToken: string, chatId: string, channel: Notificatio
   const visibleSystems = allowedSystems.slice(0, 25);
   const pendingUpdateSystems = allowedSystems.filter((system) => Number(system.updateCount ?? 0) > 0).length;
   const totalSecurityUpdates = allowedSystems.reduce((sum, system) => sum + Number(system.securityCount ?? 0), 0);
-  const summaryIcon = totalSecurityUpdates > 0 ? "⚠️" : "📦";
-  const summaryText = totalSecurityUpdates > 0
-    ? `Pending updates on ${formatCount(pendingUpdateSystems, "system")} (${totalSecurityUpdates} security)`
+  const totalKeptBackUpdates = allowedSystems.reduce((sum, system) => sum + Number(system.keptBackCount ?? 0), 0);
+  const summaryIcon = totalSecurityUpdates > 0 || totalKeptBackUpdates > 0 ? "⚠️" : "📦";
+  const summaryDetails: string[] = [];
+  if (totalSecurityUpdates > 0) summaryDetails.push(`${totalSecurityUpdates} security`);
+  if (totalKeptBackUpdates > 0) summaryDetails.push(`${totalKeptBackUpdates} kept back`);
+  const summaryText = summaryDetails.length > 0
+    ? `Pending updates on ${formatCount(pendingUpdateSystems, "system")} (${summaryDetails.join(", ")})`
     : `Pending updates on ${formatCount(pendingUpdateSystems, "system")}`;
   const lines = visibleSystems.map((system) =>
-    `<code>#${system.id}</code> ${formatReachabilityDot(system.isReachable)} <b>${escapeTelegramHtml(system.name)}</b>: ${escapeTelegramHtml(formatUpdateCounts(Number(system.updateCount ?? 0), Number(system.securityCount ?? 0)))}`
+    `<code>#${system.id}</code> ${formatReachabilityDot(system.isReachable)} <b>${escapeTelegramHtml(system.name)}</b>: ${escapeTelegramHtml(formatUpdateCounts(Number(system.updateCount ?? 0), Number(system.securityCount ?? 0), Number(system.keptBackCount ?? 0)))}`
   );
   const suffix = allowedSystems.length > visibleSystems.length
     ? `\n\n<i>...and ${allowedSystems.length - visibleSystems.length} more systems.</i>`

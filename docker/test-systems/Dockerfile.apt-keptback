@@ -1,0 +1,65 @@
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build a self-contained APT repo with:
+# - normal-app 1.0 -> 2.0: a regular upgrade
+# - keptback-app 1.0 -> 2.0: requires a new dependency, so apt upgrade keeps it back
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      openssh-server sudo dpkg-dev ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd /opt/localrepo/pool /opt/localrepo/dists/stable/main/binary-amd64 /tmp/pkgbuild
+
+RUN set -eux; \
+    build_pkg() { \
+      pkg_name="$1"; \
+      pkg_version="$2"; \
+      pkg_depends="${3:-}"; \
+      workdir="/tmp/pkgbuild/${pkg_name}_${pkg_version}"; \
+      mkdir -p "${workdir}/DEBIAN" "${workdir}/usr/share/doc/${pkg_name}"; \
+      printf 'Package: %s\nVersion: %s\nSection: misc\nPriority: optional\nArchitecture: amd64\nMaintainer: Linux Update Dashboard <devnull@example.invalid>\nDescription: Test package for kept-back behavior\n' "${pkg_name}" "${pkg_version}" > "${workdir}/DEBIAN/control"; \
+      if [ -n "${pkg_depends}" ]; then \
+        printf 'Depends: %s\n' "${pkg_depends}" >> "${workdir}/DEBIAN/control"; \
+      fi; \
+      printf '%s %s\n' "${pkg_name}" "${pkg_version}" > "${workdir}/usr/share/doc/${pkg_name}/version.txt"; \
+      dpkg-deb --build "${workdir}" "/opt/localrepo/pool/${pkg_name}_${pkg_version}_amd64.deb" >/dev/null; \
+      rm -rf "${workdir}"; \
+    }; \
+    build_pkg normal-app 1.0; \
+    build_pkg normal-app 2.0; \
+    build_pkg keptback-app 1.0; \
+    build_pkg keptback-helper 1.0; \
+    build_pkg keptback-app 2.0 'keptback-helper (>= 1.0)'; \
+    dpkg -i \
+      /opt/localrepo/pool/normal-app_1.0_amd64.deb \
+      /opt/localrepo/pool/keptback-app_1.0_amd64.deb; \
+    rm -f \
+      /opt/localrepo/pool/normal-app_1.0_amd64.deb \
+      /opt/localrepo/pool/keptback-app_1.0_amd64.deb; \
+    cd /opt/localrepo; \
+    dpkg-scanpackages --arch amd64 pool > dists/stable/main/binary-amd64/Packages; \
+    gzip -kf dists/stable/main/binary-amd64/Packages; \
+    rm -f /etc/apt/sources.list; \
+    rm -f /etc/apt/sources.list.d/*; \
+    printf '%s\n' 'deb [trusted=yes] file:/opt/localrepo stable main' > /etc/apt/sources.list.d/local-keptback.list; \
+    apt-get update
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Create test user with passwordless sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+RUN su - testuser -c "sudo -n true"
+
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

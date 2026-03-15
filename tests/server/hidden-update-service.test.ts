@@ -75,7 +75,7 @@ describe("hidden update service", () => {
     const summary = getVisibleUpdateSummary(systemId);
 
     expect(visible.map((update) => update.packageName)).toEqual(["curl"]);
-    expect(summary).toEqual({ updateCount: 1, securityCount: 0 });
+    expect(summary).toEqual({ updateCount: 1, securityCount: 0, keptBackCount: 0 });
     expect(listActiveHiddenUpdates(systemId)).toHaveLength(1);
   });
 

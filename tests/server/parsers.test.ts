@@ -31,6 +31,33 @@ describe("AptParser", () => {
     expect(updates[0].isSecurity).toBe(true);
   });
 
+  test("marks kept-back packages from simulation output", () => {
+    const listStdout = [
+      "curl/jammy-updates 7.81.0-1ubuntu1.18 amd64 [upgradable from: 7.81.0-1ubuntu1.16]",
+      "libcamera-ipa/jammy-updates 1.0 amd64 [upgradable from: 0.9]",
+    ].join("\n");
+    const updates = aptParser.parseCheckOutput("", "", 0, {
+      commandResults: [
+        {
+          command: "DEBIAN_FRONTEND=noninteractive apt list --upgradable 2>/dev/null | tail -n +2",
+          stdout: listStdout,
+          stderr: "",
+          exitCode: 0,
+        },
+        {
+          command: "DEBIAN_FRONTEND=noninteractive apt-get -s -o Debug::NoLocking=1 upgrade 2>&1",
+          stdout: "Inst curl [7.81.0-1ubuntu1.16] (7.81.0-1ubuntu1.18 Ubuntu:22.04/jammy-updates [amd64])",
+          stderr: "",
+          exitCode: 0,
+        },
+      ],
+    });
+
+    expect(updates).toHaveLength(2);
+    expect(updates.find((update) => update.packageName === "curl")?.isKeptBack).toBe(false);
+    expect(updates.find((update) => update.packageName === "libcamera-ipa")?.isKeptBack).toBe(true);
+  });
+
   test("parse empty output", () => {
     const updates = aptParser.parseCheckOutput("", "", 0);
     expect(updates).toHaveLength(0);
@@ -46,9 +73,10 @@ describe("AptParser", () => {
 
   test("get commands", () => {
     const cmds = aptParser.getCheckCommands();
-    expect(cmds).toHaveLength(2);
+    expect(cmds).toHaveLength(3);
     expect(cmds[0]).toContain("apt-get");
     expect(cmds[0]).toContain("update");
+    expect(cmds[2]).toContain("Debug::NoLocking=1");
   });
 
   test("upgrade commands", () => {

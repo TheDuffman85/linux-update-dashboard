@@ -22,6 +22,7 @@ interface UpdateShape extends UpdateIdentity {
   architecture?: string | null;
   repository?: string | null;
   isSecurity?: boolean | number;
+  isKeptBack?: boolean | number;
 }
 
 function nowSql(): string {
@@ -53,6 +54,7 @@ function toHiddenUpdateValues(
     architecture: update.architecture ?? null,
     repository: update.repository ?? null,
     isSecurity: update.isSecurity ? 1 : 0,
+    isKeptBack: update.isKeptBack ? 1 : 0,
     active: 1,
     lastMatchedAt: timestamp,
     inactiveSince: null,
@@ -106,23 +108,26 @@ export function getVisibleCachedUpdates(systemId: number): CachedUpdateRow[] {
 export function getVisibleUpdateSummary(systemId: number): {
   updateCount: number;
   securityCount: number;
+  keptBackCount: number;
 } {
   const visibleUpdates = getVisibleCachedUpdates(systemId);
   return {
     updateCount: visibleUpdates.length,
     securityCount: visibleUpdates.filter((update) => update.isSecurity === 1).length,
+    keptBackCount: visibleUpdates.filter((update) => update.isKeptBack === 1).length,
   };
 }
 
 export function getVisibleUpdateSummaries(systemIds: number[]): Map<number, {
   updateCount: number;
   securityCount: number;
+  keptBackCount: number;
 }> {
   const uniqueIds = Array.from(new Set(systemIds.filter((id) => Number.isInteger(id) && id > 0)));
-  const summaries = new Map<number, { updateCount: number; securityCount: number }>();
+  const summaries = new Map<number, { updateCount: number; securityCount: number; keptBackCount: number }>();
 
   for (const systemId of uniqueIds) {
-    summaries.set(systemId, { updateCount: 0, securityCount: 0 });
+    summaries.set(systemId, { updateCount: 0, securityCount: 0, keptBackCount: 0 });
   }
   if (uniqueIds.length === 0) return summaries;
 
@@ -157,10 +162,14 @@ export function getVisibleUpdateSummaries(systemIds: number[]): Map<number, {
     const current = summaries.get(update.systemId) ?? {
       updateCount: 0,
       securityCount: 0,
+      keptBackCount: 0,
     };
     current.updateCount += 1;
     if (update.isSecurity === 1) {
       current.securityCount += 1;
+    }
+    if (update.isKeptBack === 1) {
+      current.keptBackCount += 1;
     }
     summaries.set(update.systemId, current);
   }
@@ -203,6 +212,7 @@ export function createHiddenUpdate(
         architecture: cached.architecture,
         repository: cached.repository,
         isSecurity: cached.isSecurity,
+        isKeptBack: cached.isKeptBack,
         active: 1,
         lastMatchedAt: now,
         inactiveSince: null,
@@ -286,6 +296,7 @@ export function syncHiddenUpdatesForCheck(
           architecture: match.architecture,
           repository: match.repository,
           isSecurity: match.isSecurity ? 1 : 0,
+          isKeptBack: match.isKeptBack ? 1 : 0,
           active: 1,
           lastMatchedAt: now,
           inactiveSince: null,

@@ -3,6 +3,7 @@ import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
 import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCommandInfo } from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
+import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
@@ -240,6 +241,7 @@ function storeUpdates(systemId: number, updates: ParsedUpdate[]): void {
         architecture: u.architecture,
         repository: u.repository,
         isSecurity: u.isSecurity ? 1 : 0,
+        isKeptBack: u.isKeptBack ? 1 : 0,
         cachedAt: now,
       })
       .onConflictDoUpdate({
@@ -254,6 +256,7 @@ function storeUpdates(systemId: number, updates: ParsedUpdate[]): void {
           architecture: u.architecture,
           repository: u.repository,
           isSecurity: u.isSecurity ? 1 : 0,
+          isKeptBack: u.isKeptBack ? 1 : 0,
           cachedAt: now,
         },
       })
@@ -406,6 +409,7 @@ async function checkUpdatesUnlocked(
         let lastStdout = "";
         let lastStderr = "";
         let lastExitCode = 0;
+        const commandResults: CheckCommandResult[] = [];
 
         for (let i = 0; i < commands.length; i++) {
           const label = labels[i] ?? (commands.length > 1 ? `Step ${i + 1}/${commands.length}…` : "Checking for updates…");
@@ -425,6 +429,12 @@ async function checkUpdatesUnlocked(
           lastStdout = result.stdout;
           lastStderr = result.stderr;
           lastExitCode = result.exitCode;
+          commandResults.push({
+            command: commands[i],
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          });
 
           if (result.exitCode !== 0) {
             throw new Error(
@@ -433,7 +443,9 @@ async function checkUpdatesUnlocked(
           }
         }
 
-        let updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode);
+        let updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode, {
+          commandResults,
+        });
         allUpdates.push(...updates);
         successfulChecks++;
         successfulPkgManagers.push(pmName);
@@ -478,7 +490,7 @@ async function checkUpdatesUnlocked(
   const visibleSummary =
     successfulChecks > 0
       ? hiddenUpdateService.getVisibleUpdateSummary(systemId)
-      : { updateCount: 0, securityCount: 0 };
+      : { updateCount: 0, securityCount: 0, keptBackCount: 0 };
 
   const historyStatus =
     checkErrors.length === 0

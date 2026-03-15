@@ -269,7 +269,15 @@ export default function SystemsList() {
                         </span>
                       </Badge>
                     ) : s.updateCount > 0 ? (
-                      <Badge variant="warning" small>{s.updateCount}</Badge>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="warning" small>{s.updateCount}</Badge>
+                        {s.securityCount > 0 && (
+                          <Badge variant="danger" small>{s.securityCount} security</Badge>
+                        )}
+                        {s.keptBackCount > 0 && (
+                          <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
+                        )}
+                      </div>
                     ) : s.isReachable === 1 ? (
                       <span className="text-green-600 text-xs">0</span>
                     ) : (

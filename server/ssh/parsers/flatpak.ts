@@ -64,6 +64,7 @@ export const flatpakParser: PackageParser = {
           architecture: null,
           repository: origin,
           isSecurity: false,
+          isKeptBack: false,
           pkgManager: "flatpak",
         });
       }

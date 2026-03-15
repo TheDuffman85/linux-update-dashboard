@@ -54,6 +54,7 @@ export const apkParser: PackageParser = {
         architecture: match[2],
         repository: match[3],
         isSecurity: false,
+        isKeptBack: false,
         pkgManager: "apk",
       });
     }

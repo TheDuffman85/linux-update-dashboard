@@ -121,6 +121,7 @@ export const updateCache = sqliteTable(
     architecture: text("architecture"),
     repository: text("repository"),
     isSecurity: integer("is_security").notNull().default(0),
+    isKeptBack: integer("is_kept_back").notNull().default(0),
     cachedAt: text("cached_at")
       .notNull()
       .default(sql`(datetime('now'))`),
@@ -144,6 +145,7 @@ export const hiddenUpdates = sqliteTable(
     architecture: text("architecture"),
     repository: text("repository"),
     isSecurity: integer("is_security").notNull().default(0),
+    isKeptBack: integer("is_kept_back").notNull().default(0),
     active: integer("active").notNull().default(1),
     lastMatchedAt: text("last_matched_at")
       .notNull()

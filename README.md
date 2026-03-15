@@ -715,10 +715,17 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-debian-fish` | 2008 | APT | `fish` | Debian 12 |
 | `ludash-test-debian-fish-sudo` | 2009 | APT (sudo password) | `fish` | Debian 12 |
 | `ludash-test-alpine` | 2010 | APK | `bash` | Alpine 3.16 |
+| `ludash-test-apt-keptback` | 2011 | APT (kept-back fixture) | `bash` | Debian 12 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
 Each container is built with **older package versions** pinned from archived repositories, while current repos remain active. This means `apt list --upgradable`, `dnf check-update`, `pacman -Qu`, `apk list -u`, etc. will always report pending updates — giving you realistic data to work with in the dashboard.
+
+`ludash-test-apt-keptback` is a special fixture with a self-contained local APT repo. It intentionally exposes:
+- one normal upgrade: `normal-app`
+- one kept-back upgrade: `keptback-app`
+
+That makes it useful for verifying the dashboard’s `isKeptBack` badge/count behavior without depending on upstream repository state.
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 

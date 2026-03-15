@@ -150,6 +150,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     architecture TEXT,
     repository TEXT,
     is_security INTEGER NOT NULL DEFAULT 0,
+    is_kept_back INTEGER NOT NULL DEFAULT 0,
     cached_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(system_id, pkg_manager, package_name)
   )`);
@@ -164,6 +165,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     architecture TEXT,
     repository TEXT,
     is_security INTEGER NOT NULL DEFAULT 0,
+    is_kept_back INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     last_matched_at TEXT NOT NULL DEFAULT (datetime('now')),
     inactive_since TEXT,
@@ -411,6 +413,17 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   }
   try {
     _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_message TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  try {
+    _db.run(sql`ALTER TABLE update_cache ADD COLUMN is_kept_back INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE hidden_updates ADD COLUMN is_kept_back INTEGER NOT NULL DEFAULT 0`);
   } catch {
     // Column already exists
   }

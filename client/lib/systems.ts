@@ -44,6 +44,8 @@ export interface System {
   createdAt: string;
   updatedAt: string;
   updateCount: number;
+  securityCount: number;
+  keptBackCount: number;
   cacheAge: string | null;
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
@@ -60,6 +62,7 @@ export interface CachedUpdate {
   architecture: string | null;
   repository: string | null;
   isSecurity: number;
+  isKeptBack: number;
   cachedAt: string;
 }
 
@@ -73,6 +76,7 @@ export interface HiddenUpdate {
   architecture: string | null;
   repository: string | null;
   isSecurity: number;
+  isKeptBack: number;
   active: number;
   lastMatchedAt: string;
   inactiveSince: string | null;

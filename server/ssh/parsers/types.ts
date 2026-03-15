@@ -5,7 +5,15 @@ export interface ParsedUpdate {
   architecture: string | null;
   repository: string | null;
   isSecurity: boolean;
+  isKeptBack: boolean;
   pkgManager: string;
+}
+
+export interface CheckCommandResult {
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
 }
 
 export interface PackageParser {
@@ -13,7 +21,10 @@ export interface PackageParser {
   parseCheckOutput(
     stdout: string,
     stderr: string,
-    exitCode: number
+    exitCode: number,
+    context?: {
+      commandResults?: CheckCommandResult[];
+    }
   ): ParsedUpdate[];
   getCheckCommands(): string[];
   /** Human-readable label for each check command step, shown in live output. */

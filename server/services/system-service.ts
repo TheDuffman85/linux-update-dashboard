@@ -494,6 +494,7 @@ export function getSystemWithUpdateCount(systemId: number) {
     ...system,
     updateCount: result.updateCount,
     securityCount: result.securityCount,
+    keptBackCount: result.keptBackCount,
   };
 }
 
@@ -507,11 +508,13 @@ export function listSystemsWithUpdateCounts() {
     const result = summaries.get(s.id) ?? {
       updateCount: 0,
       securityCount: 0,
+      keptBackCount: 0,
     };
     return {
       ...s,
       updateCount: result.updateCount,
       securityCount: result.securityCount,
+      keptBackCount: result.keptBackCount,
     };
   });
 }
@@ -526,11 +529,13 @@ export function listVisibleSystemsWithUpdateCounts() {
     const result = summaries.get(s.id) ?? {
       updateCount: 0,
       securityCount: 0,
+      keptBackCount: 0,
     };
     return {
       ...s,
       updateCount: result.updateCount,
       securityCount: result.securityCount,
+      keptBackCount: result.keptBackCount,
     };
   });
 }

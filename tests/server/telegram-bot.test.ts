@@ -175,7 +175,7 @@ describe("telegram bot commands", () => {
         return new Response(JSON.stringify({
           system: { id: 1, name: "alpha" },
           updates: [
-            { packageName: "bash", currentVersion: "5.2.15", newVersion: "5.2.21" },
+            { packageName: "bash", currentVersion: "5.2.15", newVersion: "5.2.21", isKeptBack: 1 },
             { packageName: "openssl", currentVersion: "3.0.2", newVersion: "3.0.3" },
           ],
           history: [],
@@ -206,7 +206,7 @@ describe("telegram bot commands", () => {
     const packageMessage = sentBodies.find((body) => body.includes("Package updates for alpha (#1): 2 packages"));
     expect(packageMessage).toBeTruthy();
     const parsedBody = JSON.parse(packageMessage || "{}") as { text?: string };
-    expect(parsedBody.text).toContain("- bash: 5.2.15 -> 5.2.21");
+    expect(parsedBody.text).toContain("- bash: 5.2.15 -> 5.2.21 (kept back)");
     expect(parsedBody.text).toContain("- openssl: 3.0.2 -> 3.0.3");
   });
 
@@ -232,8 +232,8 @@ describe("telegram bot commands", () => {
       if (url.includes("/api/systems")) {
         return new Response(JSON.stringify({
           systems: [
-            { id: 1, name: "alpha & beta", updateCount: 3, securityCount: 2, isReachable: 1 },
-            { id: 2, name: "gamma <prod>", updateCount: 0, securityCount: 0, isReachable: 0 },
+            { id: 1, name: "alpha & beta", updateCount: 3, securityCount: 2, keptBackCount: 1, isReachable: 1 },
+            { id: 2, name: "gamma <prod>", updateCount: 0, securityCount: 0, keptBackCount: 0, isReachable: 0 },
           ],
         }), { status: 200 });
       }
@@ -258,10 +258,60 @@ describe("telegram bot commands", () => {
     const parsedBody = JSON.parse(sentBodies[0]) as { text: string; parse_mode?: string };
 
     expect(parsedBody.parse_mode).toBe("HTML");
-    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system (2 security)");
-    expect(parsedBody.text).toContain("<code>#1</code> 🟢 <b>alpha &amp; beta</b>: 3 updates (⚠️ 2 security)");
+    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system (2 security, 1 kept back)");
+    expect(parsedBody.text).toContain("<code>#1</code> 🟢 <b>alpha &amp; beta</b>: 3 updates (2 security, 1 kept back)");
     expect(parsedBody.text).toContain("<code>#2</code> 🟠 <b>gamma &lt;prod&gt;</b>: 0 updates");
     expect(parsedBody.text.indexOf("alpha &amp; beta")).toBeLessThan(parsedBody.text.indexOf("gamma &lt;prod&gt;"));
+  });
+
+  test("renders kept-back-only /status systems with the same alert icon", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentBodies: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems")) {
+        return new Response(JSON.stringify({
+          systems: [
+            { id: 1, name: "held pkg", updateCount: 1, securityCount: 0, keptBackCount: 1, isReachable: 1 },
+          ],
+        }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentBodies.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        text: "/status",
+        chat: { id: 55, type: "private", first_name: "Alice" },
+        from: { id: 55, first_name: "Alice" },
+      },
+    });
+
+    expect(sentBodies).toHaveLength(1);
+    const parsedBody = JSON.parse(sentBodies[0]) as { text: string; parse_mode?: string };
+
+    expect(parsedBody.parse_mode).toBe("HTML");
+    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system (1 kept back)");
+    expect(parsedBody.text).toContain("<code>#1</code> 🟢 <b>held pkg</b>: 1 update (1 kept back)");
   });
 
   test("requires confirmation before package upgrades", async () => {

@@ -161,24 +161,33 @@ describe("checkUpdates", () => {
           exitCode: 0,
         };
       }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 -s upgrade")) {
+      if (command.includes("apt-get -s -o Debug::NoLocking=1 upgrade")) {
         simulationAttempted = true;
+        return {
+          stdout: "Inst curl [7.0] (8.0 stable [amd64])\n",
+          stderr: "",
+          exitCode: 0,
+        };
       }
       throw new Error(`Unexpected command: ${command}`);
     };
 
     const result = await checkUpdates(systemId);
     expect(result.map((entry) => entry.packageName)).toEqual(["curl", "libcamera-ipa"]);
-    expect(simulationAttempted).toBe(false);
+    expect(result.find((entry) => entry.packageName === "curl")?.isKeptBack).toBe(false);
+    expect(result.find((entry) => entry.packageName === "libcamera-ipa")?.isKeptBack).toBe(true);
+    expect(simulationAttempted).toBe(true);
 
     const cached = getDb()
-      .select({ packageName: updateCache.packageName })
+      .select({ packageName: updateCache.packageName, isKeptBack: updateCache.isKeptBack })
       .from(updateCache)
       .where(eq(updateCache.systemId, systemId))
       .all()
-      .map((entry) => entry.packageName)
-      .sort();
+      .sort((left, right) => left.packageName.localeCompare(right.packageName));
 
-    expect(cached).toEqual(["curl", "libcamera-ipa"]);
+    expect(cached).toEqual([
+      { packageName: "curl", isKeptBack: 0 },
+      { packageName: "libcamera-ipa", isKeptBack: 1 },
+    ]);
   });
 });

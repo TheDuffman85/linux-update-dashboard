@@ -59,6 +59,7 @@ export const snapParser: PackageParser = {
           architecture: null,
           repository: "snap",
           isSecurity: false,
+          isKeptBack: false,
           pkgManager: "snap",
         });
       }

@@ -61,7 +61,7 @@ describe("dashboard routes", () => {
     expect(systemsBody.systems[0].name).toBe("Visible");
   });
 
-  test("includes securityCount in dashboard systems list", async () => {
+  test("includes securityCount and keptBackCount in dashboard systems list", async () => {
     const db = getDb();
     const inserted = db.insert(systems).values({
       name: "Visible",
@@ -87,6 +87,7 @@ describe("dashboard routes", () => {
         packageName: "bash",
         newVersion: "5.2",
         isSecurity: 0,
+        isKeptBack: 1,
       },
     ]).run();
 
@@ -100,6 +101,7 @@ describe("dashboard routes", () => {
     expect(systemsBody.systems).toHaveLength(1);
     expect(systemsBody.systems[0].updateCount).toBe(2);
     expect(systemsBody.systems[0].securityCount).toBe(1);
+    expect(systemsBody.systems[0].keptBackCount).toBe(1);
   });
 
   test("excludes active hidden updates from dashboard counts", async () => {
@@ -153,5 +155,6 @@ describe("dashboard routes", () => {
     const systemsBody = await systemsRes.json();
     expect(systemsBody.systems[0].updateCount).toBe(1);
     expect(systemsBody.systems[0].securityCount).toBe(0);
+    expect(systemsBody.systems[0].keptBackCount).toBe(0);
   });
 });

@@ -272,7 +272,7 @@ describe("mqtt notifications", () => {
 
     getDb().insert(updateCache).values([
       { systemId: systemRow.id, pkgManager: "apt", packageName: "bash", newVersion: "1", isSecurity: 0 },
-      { systemId: systemRow.id, pkgManager: "apt", packageName: "curl", newVersion: "1", isSecurity: 0 },
+      { systemId: systemRow.id, pkgManager: "apt", packageName: "curl", newVersion: "1", isSecurity: 0, isKeptBack: 1 },
       { systemId: systemRow.id, pkgManager: "apt", packageName: "openssl", newVersion: "1", isSecurity: 1 },
     ]).run();
 
@@ -328,7 +328,7 @@ describe("mqtt notifications", () => {
     const statePayload = JSON.parse(state!.payload);
     expect(statePayload.installed_version).toBe("current");
     expect(statePayload.latest_version).toMatch(/^pending-[0-9a-f]{12}$/);
-    expect(statePayload.release_summary).toContain("3 updates, 1 security");
+    expect(statePayload.release_summary).toContain("3 updates, 1 security, 1 kept back");
     expect(statePayload.release_summary).toContain("bash");
     expect(statePayload.in_progress).toBe(false);
     expect(statePayload.entity_picture).toBeUndefined();
@@ -340,9 +340,11 @@ describe("mqtt notifications", () => {
     expect(attributes).toBeTruthy();
     const attributesPayload = JSON.parse(attributes!.payload);
     expect(attributesPayload.needs_reboot).toBe(false);
+    expect(attributesPayload.kept_back_update_count).toBe(1);
     expect(attributesPayload.system.os_name).toBe("Ubuntu");
     expect(attributesPayload.packages).toHaveLength(3);
     expect(attributesPayload.packages[0].package_name).toBe("bash");
+    expect(attributesPayload.packages[1].is_kept_back).toBe(true);
     expect(attributesPayload.packages[2].is_security).toBe(true);
 
     expect(runtimeClient.subscriptions.some((entry) => entry.topics.some((topic) => topic.endsWith("/system_1/command")))).toBe(true);
