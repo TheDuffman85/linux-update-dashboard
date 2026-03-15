@@ -127,4 +127,28 @@ describe("ntfy provider sending", () => {
     expect(headers.get("Priority")).toBe("urgent");
     expect(headers.get("Tags")).toBe("package");
   });
+
+  test("sanitizes non-ascii title text for HTTP headers", async () => {
+    let requestHeaders: Headers | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestHeaders = init?.headers as Headers;
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+
+    const result = await ntfyProvider.send(
+      {
+        title: "2 updates available (⏸️ 1 kept back)",
+        body: "hello",
+        priority: "default",
+      },
+      {
+        ntfyUrl: "https://ntfy.sh",
+        ntfyTopic: "updates",
+        ntfyPriorityOverride: "auto",
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(new Headers(requestHeaders).get("Title")).toBe("2 updates available (1 kept back)");
+  });
 });

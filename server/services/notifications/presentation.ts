@@ -21,14 +21,27 @@ export function decorateNotificationTitle(
   return payload.title;
 }
 
-export function formatUpdateCounts(updateCount: number, securityCount: number): string {
+export function formatUpdateCounts(
+  updateCount: number,
+  securityCount: number,
+  keptBackCount: number,
+): string {
   let text = `${updateCount} update${updateCount !== 1 ? "s" : ""}`;
+  const details: string[] = [];
   if (securityCount > 0) {
-    text += ` (⚠️ ${securityCount} security)`;
+    details.push(`${securityCount} security`);
+  }
+  if (keptBackCount > 0) {
+    details.push(`${keptBackCount} kept back`);
+  }
+  if (details.length > 0) {
+    text += ` (${details.join(", ")})`;
   }
   return text;
 }
 
-export function formatUpdateLine(result: Pick<CheckResult, "systemName" | "updateCount" | "securityCount">): string {
-  return `${result.systemName}: ${formatUpdateCounts(result.updateCount, result.securityCount)}`;
+export function formatUpdateLine(
+  result: Pick<CheckResult, "systemName" | "updateCount" | "securityCount" | "keptBackCount">,
+): string {
+  return `${result.systemName}: ${formatUpdateCounts(result.updateCount, result.securityCount, result.keptBackCount)}`;
 }

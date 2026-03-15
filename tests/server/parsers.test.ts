@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { aptParser, parseAptKeptBackPackages } from "../../server/ssh/parsers/apt";
+import { aptParser } from "../../server/ssh/parsers/apt";
 import { dnfParser } from "../../server/ssh/parsers/dnf";
 import { yumParser } from "../../server/ssh/parsers/yum";
 import { pacmanParser } from "../../server/ssh/parsers/pacman";
@@ -31,6 +31,33 @@ describe("AptParser", () => {
     expect(updates[0].isSecurity).toBe(true);
   });
 
+  test("marks kept-back packages from simulation output", () => {
+    const listStdout = [
+      "curl/jammy-updates 7.81.0-1ubuntu1.18 amd64 [upgradable from: 7.81.0-1ubuntu1.16]",
+      "libcamera-ipa/jammy-updates 1.0 amd64 [upgradable from: 0.9]",
+    ].join("\n");
+    const updates = aptParser.parseCheckOutput("", "", 0, {
+      commandResults: [
+        {
+          command: "DEBIAN_FRONTEND=noninteractive apt list --upgradable 2>/dev/null | tail -n +2",
+          stdout: listStdout,
+          stderr: "",
+          exitCode: 0,
+        },
+        {
+          command: "DEBIAN_FRONTEND=noninteractive apt-get -s -o Debug::NoLocking=1 upgrade 2>&1",
+          stdout: "Inst curl [7.81.0-1ubuntu1.16] (7.81.0-1ubuntu1.18 Ubuntu:22.04/jammy-updates [amd64])",
+          stderr: "",
+          exitCode: 0,
+        },
+      ],
+    });
+
+    expect(updates).toHaveLength(2);
+    expect(updates.find((update) => update.packageName === "curl")?.isKeptBack).toBe(false);
+    expect(updates.find((update) => update.packageName === "libcamera-ipa")?.isKeptBack).toBe(true);
+  });
+
   test("parse empty output", () => {
     const updates = aptParser.parseCheckOutput("", "", 0);
     expect(updates).toHaveLength(0);
@@ -46,9 +73,10 @@ describe("AptParser", () => {
 
   test("get commands", () => {
     const cmds = aptParser.getCheckCommands();
-    expect(cmds).toHaveLength(2);
+    expect(cmds).toHaveLength(3);
     expect(cmds[0]).toContain("apt-get");
     expect(cmds[0]).toContain("update");
+    expect(cmds[2]).toContain("Debug::NoLocking=1");
   });
 
   test("upgrade commands", () => {
@@ -62,54 +90,6 @@ describe("AptParser", () => {
     expect(cmd).not.toBeNull();
     expect(cmd).toContain("full-upgrade");
     expect(cmd).toContain("apt-get");
-  });
-
-  test("parse kept-back packages on a single line", () => {
-    const output = [
-      "Reading package lists...",
-      "The following packages have been kept back:",
-      "  libcamera-ipa librpicam-app1 rpicam-apps-core",
-      "0 upgraded, 0 newly installed, 0 to remove and 3 not upgraded.",
-    ].join("\n");
-
-    expect(parseAptKeptBackPackages(output)).toEqual([
-      "libcamera-ipa",
-      "librpicam-app1",
-      "rpicam-apps-core",
-    ]);
-  });
-
-  test("parse kept-back packages across wrapped lines", () => {
-    const output = [
-      "The following packages have been kept back:",
-      "  proxmox-kernel-6.17 zfs-initramfs zfs-zed",
-      "  zfsutils-linux",
-      "0 upgraded, 0 newly installed, 0 to remove and 4 not upgraded.",
-    ].join("\n");
-
-    expect(parseAptKeptBackPackages(output)).toEqual([
-      "proxmox-kernel-6.17",
-      "zfs-initramfs",
-      "zfs-zed",
-      "zfsutils-linux",
-    ]);
-  });
-
-  test("parse kept-back packages returns empty list when block is absent", () => {
-    expect(parseAptKeptBackPackages("0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded."))
-      .toEqual([]);
-  });
-
-  test("parse kept-back packages ignores unrelated apt output noise", () => {
-    const output = [
-      "Reading package lists...",
-      "Building dependency tree...",
-      "The following packages have been kept back:",
-      "  linux-image-amd64",
-      "Calculating upgrade...",
-    ].join("\n");
-
-    expect(parseAptKeptBackPackages(output)).toEqual(["linux-image-amd64"]);
   });
 });
 

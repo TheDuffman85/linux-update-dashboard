@@ -18,6 +18,7 @@
 #   Debian  (APT+fish shell) → localhost:2008
 #   Debian  (APT+fish shell+sudo password) → localhost:2009
 #   Alpine  (APK)     → localhost:2010
+#   Debian  (APT kept-back fixture) → localhost:2011
 #
 # SSH examples:
 #   ssh testuser@localhost -p 2001   # Ubuntu  (APT)
@@ -30,6 +31,7 @@
 #   ssh testuser@localhost -p 2008   # Debian  (APT + fish shell)
 #   ssh testuser@localhost -p 2009   # Debian  (APT + fish shell + sudo password)
 #   ssh testuser@localhost -p 2010   # Alpine  (APK)
+#   ssh testuser@localhost -p 2011   # Debian  (APT kept-back fixture)
 #
 # Note: Flatpak needs --privileged for bubblewrap (used during install/update).
 # Snap needs systemd as PID 1 + --privileged for snapd to function.
@@ -141,4 +143,14 @@ services:
     hostname: alpine-test
     ports:
       - "2010:22"
+    restart: unless-stopped
+
+  apt-keptback:
+    build:
+      context: .
+      dockerfile: Dockerfile.apt-keptback
+    container_name: ludash-test-apt-keptback
+    hostname: apt-keptback-test
+    ports:
+      - "2011:22"
     restart: unless-stopped

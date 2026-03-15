@@ -17,7 +17,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean; checking: boolean }) {
+function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; securityCount: number; keptBackCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean; checking: boolean }) {
   const borderColor = upgrading
     ? "border-l-blue-500"
     : checking
@@ -72,6 +72,12 @@ function SystemCard({ system, upgrading, checking }: { system: { id: number; nam
             <Badge variant="success" small>Up to date</Badge>
           ) : (
             <Badge variant="muted" small>Unchecked</Badge>
+          )}
+          {system.securityCount > 0 && (
+            <Badge variant="danger" small>{system.securityCount} security</Badge>
+          )}
+          {system.keptBackCount > 0 && (
+            <Badge variant="muted" small>{system.keptBackCount} kept back</Badge>
           )}
           {system.needsReboot === 1 && (
             <span className="text-amber-500" title="Reboot required">
@@ -271,6 +277,12 @@ export default function Dashboard() {
                         <Badge variant="muted" small>Excluded by default</Badge>
                       )}
                       <Badge variant="warning" small>{s.updateCount} updates</Badge>
+                      {s.securityCount > 0 && (
+                        <Badge variant="danger" small>{s.securityCount} security</Badge>
+                      )}
+                      {s.keptBackCount > 0 && (
+                        <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
+                      )}
                     </div>
                   </li>
                 );

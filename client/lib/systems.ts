@@ -27,6 +27,7 @@ export interface System {
   pkgManager: string | null;
   detectedPkgManagers: string[] | null;
   disabledPkgManagers: string[] | null;
+  autoHideKeptBackUpdates: number;
   osName: string | null;
   osVersion: string | null;
   kernel: string | null;
@@ -36,7 +37,6 @@ export interface System {
   cpuCores: string | null;
   memory: string | null;
   disk: string | null;
-  ignoreKeptBackPackages: number;
   excludeFromUpgradeAll: number;
   hidden: number;
   needsReboot: number;
@@ -45,6 +45,8 @@ export interface System {
   createdAt: string;
   updatedAt: string;
   updateCount: number;
+  securityCount: number;
+  keptBackCount: number;
   cacheAge: string | null;
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
@@ -61,7 +63,37 @@ export interface CachedUpdate {
   architecture: string | null;
   repository: string | null;
   isSecurity: number;
+  isKeptBack: number;
   cachedAt: string;
+}
+
+export interface HiddenUpdate {
+  id: number;
+  systemId: number;
+  pkgManager: string;
+  packageName: string;
+  currentVersion: string | null;
+  newVersion: string | null;
+  architecture: string | null;
+  repository: string | null;
+  isSecurity: number;
+  isKeptBack: number;
+  active: number;
+  lastMatchedAt: string;
+  inactiveSince: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ActivityStepStatus = "success" | "warning" | "failed" | "started";
+
+export interface ActivityStep {
+  label: string | null;
+  pkgManager: string;
+  command: string;
+  output: string | null;
+  error: string | null;
+  status: ActivityStepStatus;
 }
 
 export interface HistoryEntry {
@@ -73,6 +105,7 @@ export interface HistoryEntry {
   packages: string | null;
   packagesList: string[];
   command: string | null;
+  steps: ActivityStep[] | null;
   status: string;
   output: string | null;
   error: string | null;
@@ -108,7 +141,12 @@ export function useSystem(id: number) {
   const query = useQuery({
     queryKey: ["system", id],
     queryFn: () =>
-      apiFetch<{ system: System; updates: CachedUpdate[]; history: HistoryEntry[] }>(
+      apiFetch<{
+        system: System;
+        updates: CachedUpdate[];
+        hiddenUpdates: HiddenUpdate[];
+        history: HistoryEntry[];
+      }>(
         `/systems/${id}`
       ),
     refetchInterval: (query) => {
@@ -132,7 +170,7 @@ export function useCreateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
-      ignoreKeptBackPackages?: boolean;
+      autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
       sourceSystemId?: number;
@@ -158,7 +196,7 @@ export function useUpdateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
-      ignoreKeptBackPackages?: boolean;
+      autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),

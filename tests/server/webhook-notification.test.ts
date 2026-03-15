@@ -29,6 +29,7 @@ function buildPayload(): NotificationPayload {
       systemsWithUpdates: 1,
       totalUpdates: 3,
       totalSecurity: 0,
+      totalKeptBack: 0,
       unreachableSystems: 0,
     },
     updates: [
@@ -37,6 +38,7 @@ function buildPayload(): NotificationPayload {
         systemName: "web-1",
         updateCount: 3,
         securityCount: 0,
+        keptBackCount: 0,
         previouslyReachable: true,
         nowUnreachable: false,
       },
@@ -252,6 +254,46 @@ describe("webhook provider sending", () => {
     }
   });
 
+  test("sanitizes non-ascii header values before sending", async () => {
+    const requestMock = mockHttpRequest(200, "ok");
+
+    try {
+      const result = await webhookProvider.send(
+        {
+          ...buildPayload(),
+          title: "2 updates available (⏸️ 1 kept back)",
+          event: {
+            ...buildPayload().event,
+            title: "2 updates available (⏸️ 1 kept back)",
+          },
+        },
+        webhookProvider.prepareConfigForStorage({
+          preset: "custom",
+          method: "POST",
+          url: "http://example.com/hook",
+          query: [],
+          headers: [{ name: "X-Title", value: "{{event.title}}", sensitive: false }],
+          auth: { mode: "none" },
+          body: {
+            mode: "text",
+            template: "{{event.body}}",
+          },
+          timeoutMs: 10000,
+          retryAttempts: 0,
+          retryDelayMs: 0,
+          allowInsecureTls: false,
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const options = requestMock.getRequestOptions();
+      const headers = options?.headers as Record<string, string>;
+      expect(headers["X-Title"]).toBe("2 updates available (1 kept back)");
+    } finally {
+      requestMock.restore();
+    }
+  });
+
   test("skips hidden systems for immediate update notifications", async () => {
     const requestMock = mockHttpRequest(200, "ok");
 
@@ -301,6 +343,7 @@ describe("webhook provider sending", () => {
           systemName: "hidden-web",
           updateCount: 1,
           securityCount: 1,
+          keptBackCount: 0,
           previouslyReachable: true,
           nowUnreachable: false,
         },
@@ -314,6 +357,68 @@ describe("webhook provider sending", () => {
 
       expect(requestMock.getRequestBody()).toBe("");
       expect(row?.lastDeliveryStatus).toBeNull();
+    } finally {
+      requestMock.restore();
+    }
+  });
+
+  test("treats kept-back-only scheduled updates like security alerts", async () => {
+    const requestMock = mockHttpRequest(200, "ok");
+
+    try {
+      const db = getDb();
+      const insertedSystem = db.insert(systems).values({
+        name: "kept-back-web",
+        hostname: "kept-back-web.local",
+        port: 22,
+        credentialId: null,
+        authType: "password",
+        username: "root",
+        hidden: 0,
+      }).returning({ id: systems.id }).get();
+
+      db.insert(updateCache).values({
+        systemId: insertedSystem.id,
+        pkgManager: "apt",
+        packageName: "bash",
+        newVersion: "1.2.3",
+        isSecurity: 0,
+        isKeptBack: 1,
+      }).run();
+
+      db.insert(notifications).values({
+        name: "Webhook kept back",
+        type: "webhook",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify(webhookProvider.prepareConfigForStorage({
+          preset: "custom",
+          method: "POST",
+          url: "http://example.com/hook",
+          query: [],
+          headers: [],
+          auth: { mode: "none" },
+          body: { mode: "text", template: "{{event.decoratedTitle}}|{{event.priority}}|{{event.tagsCsv}}" },
+          timeoutMs: 10000,
+          retryAttempts: 0,
+          retryDelayMs: 0,
+          allowInsecureTls: false,
+        })),
+      }).run();
+
+      await processScheduledResults([
+        {
+          systemId: insertedSystem.id,
+          systemName: "kept-back-web",
+          updateCount: 1,
+          securityCount: 0,
+          keptBackCount: 1,
+          previouslyReachable: true,
+          nowUnreachable: false,
+        },
+      ]);
+
+      expect(requestMock.getRequestBody()).toBe("⚠️ 1 update available (1 kept back)|high|warning");
     } finally {
       requestMock.restore();
     }
@@ -370,6 +475,7 @@ describe("webhook provider sending", () => {
           systemName: "digest-web",
           updateCount: 1,
           securityCount: 1,
+          keptBackCount: 0,
           previouslyReachable: true,
           nowUnreachable: false,
         },
@@ -604,6 +710,7 @@ describe("webhook delivery diagnostics", () => {
           systemName: "web-1",
           updateCount: 1,
           securityCount: 1,
+          keptBackCount: 1,
           previouslyReachable: true,
           nowUnreachable: false,
         },
@@ -615,7 +722,7 @@ describe("webhook delivery diagnostics", () => {
         .where(eq(notifications.id, insertedNotification.id))
         .get();
 
-      expect(requestMock.getRequestBody()).toBe("web-1: 1 update (⚠️ 1 security)");
+      expect(requestMock.getRequestBody()).toBe("web-1: 1 update (1 security, 1 kept back)");
       expect(row?.lastDeliveryStatus).toBe("success");
       expect(row?.lastDeliveryCode).toBe(200);
       expect(row?.lastDeliveryMessage).toContain("accepted");

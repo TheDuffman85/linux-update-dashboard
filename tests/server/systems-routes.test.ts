@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, systems, updateCache } from "../../server/db/schema";
+import { credentials, hiddenUpdates, systems, updateCache } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
@@ -258,7 +258,7 @@ describe("systems reorder route", () => {
     expect(created?.proxyJumpSystemId).toBe(inserted[1].id);
   });
 
-  test("persists the hidden flag on create and update", async () => {
+  test("persists per-system visibility flags on create and update", async () => {
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
     const credentialId = createSystemCredential("root");
@@ -271,12 +271,14 @@ describe("systems reorder route", () => {
         hostname: "hidden.local",
         port: 22,
         credentialId,
+        autoHideKeptBackUpdates: true,
         hidden: true,
       }),
     });
 
     expect(createRes.status).toBe(201);
     const created = listSystems().find((system) => system.name === "Hidden System");
+    expect(created?.autoHideKeptBackUpdates).toBe(1);
     expect(created?.hidden).toBe(1);
 
     const updateRes = await app.request(`/api/systems/${created!.id}`, {
@@ -287,12 +289,14 @@ describe("systems reorder route", () => {
         hostname: "hidden.local",
         port: 22,
         credentialId,
+        autoHideKeptBackUpdates: false,
         hidden: false,
       }),
     });
 
     expect(updateRes.status).toBe(200);
     const updated = listSystems().find((system) => system.id === created!.id);
+    expect(updated?.autoHideKeptBackUpdates).toBe(0);
     expect(updated?.hidden).toBe(0);
   });
 
@@ -328,7 +332,7 @@ describe("systems reorder route", () => {
     expect(body.systems[0].name).toBe("Visible");
   });
 
-  test("persists and serializes the ignore kept-back flag", async () => {
+  test("serializes the per-system kept-back flag without the removed legacy field", async () => {
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
     const credentialId = createSystemCredential("root");
@@ -337,42 +341,29 @@ describe("systems reorder route", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "APT Filter",
-        hostname: "apt-filter.local",
+        name: "APT System",
+        hostname: "apt-system.local",
         port: 22,
         credentialId,
-        ignoreKeptBackPackages: true,
+        autoHideKeptBackUpdates: true,
       }),
     });
 
     expect(createRes.status).toBe(201);
-    const created = listSystems().find((system) => system.name === "APT Filter");
-    expect(created?.ignoreKeptBackPackages).toBe(1);
+    const created = listSystems().find((system) => system.name === "APT System");
 
     const listRes = await app.request("/api/systems");
     expect(listRes.status).toBe(200);
     const listBody = await listRes.json();
     const listed = listBody.systems.find((system: { id: number }) => system.id === created!.id);
-    expect(listed.ignoreKeptBackPackages).toBe(1);
-
-    const updateRes = await app.request(`/api/systems/${created!.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "APT Filter",
-        hostname: "apt-filter.local",
-        port: 22,
-        credentialId,
-        ignoreKeptBackPackages: false,
-      }),
-    });
-
-    expect(updateRes.status).toBe(200);
+    expect(listed.autoHideKeptBackUpdates).toBe(1);
+    expect("ignoreKeptBackPackages" in listed).toBe(false);
 
     const detailRes = await app.request(`/api/systems/${created!.id}`);
     expect(detailRes.status).toBe(200);
     const detailBody = await detailRes.json();
-    expect(detailBody.system.ignoreKeptBackPackages).toBe(0);
+    expect(detailBody.system.autoHideKeptBackUpdates).toBe(1);
+    expect("ignoreKeptBackPackages" in detailBody.system).toBe(false);
   });
 
   test("returns 409 when updating a system to match another connection tuple", async () => {
@@ -701,5 +692,186 @@ describe("systems reorder route", () => {
       .where(eq(updateCache.systemId, systemId))
       .all();
     expect(cached).toHaveLength(0);
+  });
+
+  test("returns only visible updates and active hidden updates in system detail", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "Hidden Detail",
+      hostname: "hidden-detail.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateCache).values([
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "openssl",
+        currentVersion: "1.0",
+        newVersion: "1.1",
+        isSecurity: 1,
+      },
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+      },
+    ]).run();
+
+    db.insert(hiddenUpdates).values([
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "openssl",
+        currentVersion: "1.0",
+        newVersion: "1.1",
+        isSecurity: 1,
+        active: 1,
+        lastMatchedAt: "2026-01-01 00:00:00",
+      },
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "oldpkg",
+        currentVersion: "1.0",
+        newVersion: "1.1",
+        active: 0,
+        lastMatchedAt: "2026-01-01 00:00:00",
+        inactiveSince: "2026-01-10 00:00:00",
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.system.updateCount).toBe(1);
+    expect(body.system.securityCount).toBe(0);
+    expect(body.system.keptBackCount).toBe(0);
+    expect(body.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["bash"]);
+    expect(body.hiddenUpdates).toHaveLength(1);
+    expect(body.hiddenUpdates[0].packageName).toBe("openssl");
+  });
+
+  test("enabling per-system kept-back auto-hide immediately hides cached kept-back updates", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Kept Back Toggle",
+      hostname: "kept-back-toggle.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+      autoHideKeptBackUpdates: 0,
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateCache).values([
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "keptback-app",
+        currentVersion: "1.0",
+        newVersion: "1.1",
+        isKeptBack: 1,
+      },
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "normal-app",
+        currentVersion: "2.0",
+        newVersion: "2.1",
+        isKeptBack: 0,
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Kept Back Toggle",
+        hostname: "kept-back-toggle.local",
+        port: 22,
+        credentialId,
+        autoHideKeptBackUpdates: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+
+    expect(detailBody.system.autoHideKeptBackUpdates).toBe(1);
+    expect(detailBody.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["normal-app"]);
+    expect(detailBody.hiddenUpdates.map((row: { packageName: string }) => row.packageName)).toEqual(["keptback-app"]);
+  });
+
+  test("creates and deletes hidden updates through the route", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "Hide Route",
+      hostname: "hide-route.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "openssl",
+      currentVersion: "1.0",
+      newVersion: "1.1",
+      isSecurity: 1,
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const createRes = await app.request(`/api/systems/${systemId}/hidden-updates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pkgManager: "apt",
+        packageName: "openssl",
+        newVersion: "1.1",
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const createBody = await createRes.json();
+    expect(createBody.hiddenUpdate.packageName).toBe("openssl");
+
+    const stored = db
+      .select()
+      .from(hiddenUpdates)
+      .where(eq(hiddenUpdates.systemId, systemId))
+      .get();
+    expect(stored?.active).toBe(1);
+
+    const deleteRes = await app.request(
+      `/api/systems/${systemId}/hidden-updates/${stored?.id}`,
+      { method: "DELETE" },
+    );
+    expect(deleteRes.status).toBe(200);
+
+    const remaining = db
+      .select()
+      .from(hiddenUpdates)
+      .where(eq(hiddenUpdates.systemId, systemId))
+      .all();
+    expect(remaining).toHaveLength(0);
   });
 });

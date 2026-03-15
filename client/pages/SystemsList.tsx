@@ -269,7 +269,15 @@ export default function SystemsList() {
                         </span>
                       </Badge>
                     ) : s.updateCount > 0 ? (
-                      <Badge variant="warning" small>{s.updateCount}</Badge>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="warning" small>{s.updateCount}</Badge>
+                        {s.securityCount > 0 && (
+                          <Badge variant="danger" small>{s.securityCount} security</Badge>
+                        )}
+                        {s.keptBackCount > 0 && (
+                          <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
+                        )}
+                      </div>
                     ) : s.isReachable === 1 ? (
                       <span className="text-green-600 text-xs">0</span>
                     ) : (
@@ -352,7 +360,7 @@ export default function SystemsList() {
               duplicateSource.trustedHostKeyFingerprintSha256,
             detectedPkgManagers: duplicateSource.detectedPkgManagers ?? undefined,
             disabledPkgManagers: duplicateSource.disabledPkgManagers ?? undefined,
-            ignoreKeptBackPackages: duplicateSource.ignoreKeptBackPackages,
+            autoHideKeptBackUpdates: duplicateSource.autoHideKeptBackUpdates,
             excludeFromUpgradeAll: duplicateSource.excludeFromUpgradeAll,
             hidden: duplicateSource.hidden === 1,
             hostKeyStatus: duplicateSource.hostKeyStatus,
@@ -380,7 +388,7 @@ export default function SystemsList() {
                 editSystem.trustedHostKeyFingerprintSha256,
               detectedPkgManagers: editSystem.detectedPkgManagers ?? undefined,
               disabledPkgManagers: editSystem.disabledPkgManagers ?? undefined,
-              ignoreKeptBackPackages: editSystem.ignoreKeptBackPackages,
+              autoHideKeptBackUpdates: editSystem.autoHideKeptBackUpdates,
               excludeFromUpgradeAll: editSystem.excludeFromUpgradeAll,
               hidden: editSystem.hidden === 1,
               hostKeyStatus: editSystem.hostKeyStatus,

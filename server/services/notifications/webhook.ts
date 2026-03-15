@@ -503,7 +503,19 @@ function applyAuth(headers: Record<string, string>, auth: WebhookAuthConfig): vo
   }
 }
 
+function sanitizeHttpHeaderValue(value: string): string {
+  return value
+    .replaceAll("⏸️ ", "")
+    .replaceAll("⚠️ ", "")
+    .replace(/[^\t\x20-\x7e]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function sendHttpRequest(config: WebhookConfig, url: URL, headers: Record<string, string>, body: string): Promise<NotificationResult> {
+  const sanitizedHeaders = Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => [name, sanitizeHttpHeaderValue(value)]),
+  );
   const requestLib = url.protocol === "https:" ? https : http;
   const options: https.RequestOptions = {
     method: config.method,
@@ -511,7 +523,7 @@ function sendHttpRequest(config: WebhookConfig, url: URL, headers: Record<string
     hostname: url.hostname,
     port: url.port || undefined,
     path: `${url.pathname}${url.search}`,
-    headers,
+    headers: sanitizedHeaders,
     rejectUnauthorized: url.protocol === "https:" ? !config.allowInsecureTls : undefined,
   };
 

@@ -5,12 +5,13 @@ import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSystem, useRebootSystem } from "../lib/systems";
-import { useCheckUpdates } from "../lib/updates";
+import { useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
-import type { CachedUpdate, HistoryEntry, ActiveOperation } from "../lib/systems";
+import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
+import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -32,10 +33,14 @@ function UpdatesTable({
   updates,
   systemId,
   busy,
+  onHide,
+  hideBusy,
 }: {
   updates: CachedUpdate[];
   systemId: number;
   busy?: boolean;
+  onHide: (update: CachedUpdate) => void;
+  hideBusy?: boolean;
 }) {
   const { upgradePackage, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
@@ -66,7 +71,7 @@ function UpdatesTable({
             <th className="px-2 sm:px-4 py-2">Available</th>
             <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
             <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
-            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Action</th>
+            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -76,6 +81,9 @@ function UpdatesTable({
                 {u.packageName}
                 {u.isSecurity ? (
                   <Badge variant="danger" small>security</Badge>
+                ) : null}
+                {u.isKeptBack ? (
+                  <Badge variant="muted" small>kept back</Badge>
                 ) : null}
               </td>
               <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
@@ -91,22 +99,114 @@ function UpdatesTable({
                 {u.repository || "-"}
               </td>
               <td className="px-2 sm:px-4 py-2 text-right">
-                <button
-                  onClick={() => handleUpgrade(u.packageName)}
-                  disabled={upgrading}
-                  className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 transition-colors disabled:opacity-50"
-                  title={`Upgrade ${u.packageName}`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                </button>
+                <div className="inline-flex items-center gap-1">
+                  <button
+                    onClick={() => onHide(u)}
+                    disabled={upgrading || hideBusy}
+                    className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors disabled:opacity-50"
+                    title={`Hide ${u.packageName} ${u.newVersion || ""}`.trim()}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.584 10.587A2 2 0 0013.412 13.4" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.363 5.365A9.466 9.466 0 0112 5c4.478 0 8.268 2.943 9.543 7a9.97 9.97 0 01-4.132 5.411M6.228 6.228A9.965 9.965 0 002.458 12c1.274 4.057 5.064 7 9.542 7a9.46 9.46 0 005.057-1.47" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => handleUpgrade(u.packageName)}
+                    disabled={upgrading}
+                    className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 transition-colors disabled:opacity-50"
+                    title={`Upgrade ${u.packageName}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function HiddenUpdatesSection({
+  hiddenUpdates,
+  busy,
+  onUnhide,
+}: {
+  hiddenUpdates: HiddenUpdate[];
+  busy?: boolean;
+  onUnhide: (hiddenUpdate: HiddenUpdate) => void;
+}) {
+  if (hiddenUpdates.length === 0) return null;
+
+  return (
+    <details className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
+      <summary className="px-4 py-3 border-b border-border flex items-center justify-between cursor-pointer select-none">
+        <span className="text-sm font-semibold">
+          Hidden Updates
+          <Badge variant="muted" small>{hiddenUpdates.length}</Badge>
+        </span>
+        <span className="text-xs text-slate-400">Hidden until this exact update disappears</span>
+      </summary>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
+              <th className="px-2 sm:px-4 py-2">Package</th>
+              <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">Current</th>
+              <th className="px-2 sm:px-4 py-2">Hidden Version</th>
+              <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
+              <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
+              <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hiddenUpdates.map((update) => (
+              <tr key={update.id} className="border-b border-border last:border-0">
+                <td className="px-2 sm:px-4 py-2 break-all">
+                  {update.packageName}
+                  {update.isSecurity ? (
+                    <Badge variant="danger" small>security</Badge>
+                  ) : null}
+                  {update.isKeptBack ? (
+                    <Badge variant="muted" small>kept back</Badge>
+                  ) : null}
+                </td>
+                <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
+                  {update.currentVersion || "-"}
+                </td>
+                <td className="px-2 sm:px-4 py-2 font-mono text-xs font-medium break-all">
+                  {update.newVersion || "-"}
+                </td>
+                <td className="px-2 sm:px-4 py-2 hidden md:table-cell text-slate-500">
+                  {update.pkgManager}
+                </td>
+                <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500 truncate max-w-[150px]">
+                  {update.repository || "-"}
+                </td>
+                <td className="px-2 sm:px-4 py-2 text-right">
+                  <button
+                    onClick={() => onUnhide(update)}
+                    disabled={busy}
+                    className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors disabled:opacity-50"
+                    title={`Unhide ${update.packageName} ${update.newVersion || ""}`.trim()}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.522 5 12 5s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S3.732 16.057 2.458 12z" />
+                      <circle cx="12" cy="12" r="3" strokeWidth={2} />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
 
@@ -137,72 +237,205 @@ function formatExactDateTime(dateStr: string): string {
   });
 }
 
-function LiveOutput({ messages, isActive }: { messages: WsMessage[]; isActive: boolean }) {
-  const containerRef = useRef<HTMLPreElement>(null);
-  const isScrolledToBottom = useRef(true);
+function getStatusVariant(status: string): "success" | "warning" | "danger" | "muted" {
+  if (status === "success") return "success";
+  if (status === "warning") return "warning";
+  if (status === "failed") return "danger";
+  return "muted";
+}
 
-  const handleScroll = () => {
-    const el = containerRef.current;
-    if (!el) return;
-    isScrolledToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-  };
-
-  useEffect(() => {
-    if (isScrolledToBottom.current && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [messages]);
-
+function StepPanel({
+  title,
+  children,
+  className,
+}: {
+  title: string;
+  children: React.ReactNode;
+  className: string;
+}) {
   return (
     <div>
-      <div className="flex items-center gap-2 mb-1">
-        <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 font-semibold">Output</p>
-        {isActive && (
+      <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">{title}</p>
+      <pre className={className}>{children}</pre>
+    </div>
+  );
+}
+
+function LegacyActivityDetails({
+  command,
+  output,
+  error,
+}: {
+  command: string | null;
+  output: string | null;
+  error: string | null;
+}) {
+  return (
+    <>
+      {command && (
+        <StepPanel
+          title="Command"
+          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
+        >
+          {command}
+        </StepPanel>
+      )}
+      {(command || output) && (
+        <StepPanel
+          title="Output"
+          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+        >
+          {output || <span className="text-slate-500 italic">No output</span>}
+        </StepPanel>
+      )}
+      {error && (
+        <StepPanel
+          title="Error"
+          className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+        >
+          {error}
+        </StepPanel>
+      )}
+    </>
+  );
+}
+
+function ActivityStepViewer({
+  viewerId,
+  steps,
+  defaultToLastStep = false,
+  isLive = false,
+  phase = null,
+}: {
+  viewerId: string;
+  steps: ActivityStep[];
+  defaultToLastStep?: boolean;
+  isLive?: boolean;
+  phase?: string | null;
+}) {
+  const [selectedIndex, setSelectedIndex] = useState(() =>
+    defaultToLastStep && steps.length > 0 ? steps.length - 1 : 0
+  );
+  const prevStepCountRef = useRef(steps.length);
+
+  useEffect(() => {
+    const prevCount = prevStepCountRef.current;
+    const shouldFollowNewest =
+      defaultToLastStep &&
+      prevCount > 0 &&
+      selectedIndex === prevCount - 1 &&
+      steps.length > prevCount;
+
+    if (steps.length === 0) {
+      setSelectedIndex(0);
+    } else if (shouldFollowNewest) {
+      setSelectedIndex(steps.length - 1);
+    } else if (selectedIndex >= steps.length) {
+      setSelectedIndex(steps.length - 1);
+    }
+
+    prevStepCountRef.current = steps.length;
+  }, [defaultToLastStep, selectedIndex, steps.length]);
+
+  const selectedStep = steps[selectedIndex];
+  if (!selectedStep) {
+    return (
+      <div className="text-xs text-slate-500 italic">
+        Waiting for output…
+      </div>
+    );
+  }
+
+  const isGlobalPhase = phase === "reconnecting" || phase === "rechecking";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        {isLive && (
           <span className="flex items-center gap-1 text-[10px] text-green-500">
             <span className="spinner spinner-sm !w-2.5 !h-2.5" />
             live
           </span>
         )}
-      </div>
-      <pre
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-      >
-        {!messages.some((m) => m.type === "output" || m.type === "error") && (
-          <span className="text-slate-500 italic">Waiting for output…</span>
+        {isGlobalPhase && (
+          <Badge variant={phase === "reconnecting" ? "warning" : "muted"} small>
+            {phase === "reconnecting" ? "reconnecting" : "rechecking"}
+          </Badge>
         )}
-        {messages.map((msg, i) => {
-          switch (msg.type) {
-            case "started":
-              return null;
-            case "output":
-              return (
-                <span key={i} className={msg.stream === "stderr" ? "text-red-400" : undefined}>
-                  {msg.data}
-                </span>
-              );
-            case "phase":
-              return null;
-            case "done":
-              return null;
-            case "error":
-              return (
-                <span key={i} className="text-red-400">
-                  Error: {msg.message}
-                </span>
-              );
-            case "warning":
-              return (
-                <span key={i} className="text-amber-400 font-semibold">
-                  {"\n"}Warning: {msg.message}{"\n"}
-                </span>
-              );
-            default:
-              return null;
-          }
+      </div>
+
+      <div
+        className="flex gap-2 overflow-x-auto pb-1"
+        role="tablist"
+        aria-label="Activity steps"
+      >
+        {steps.map((step, index) => {
+          const isSelected = index === selectedIndex;
+          return (
+            <button
+              key={`${viewerId}-step-${index}`}
+              id={`${viewerId}-tab-${index}`}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              aria-controls={`${viewerId}-panel-${index}`}
+              tabIndex={isSelected ? 0 : -1}
+              onClick={() => setSelectedIndex(index)}
+              className={`shrink-0 rounded-lg border px-3 py-2 text-left transition-colors ${
+                isSelected
+                  ? "border-blue-400 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100"
+                  : "border-border bg-white/80 text-slate-600 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+              }`}
+            >
+              <span className="block text-[10px] uppercase tracking-wide opacity-70">
+                {index + 1}/{steps.length} {step.pkgManager}
+              </span>
+              <span className="block text-xs font-medium">
+                {getActivityStepLabel(step, index)}
+              </span>
+            </button>
+          );
         })}
-      </pre>
+      </div>
+
+      <div
+        id={`${viewerId}-panel-${selectedIndex}`}
+        role="tabpanel"
+        aria-labelledby={`${viewerId}-tab-${selectedIndex}`}
+        className="space-y-2"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={getStatusVariant(selectedStep.status)} small>
+            {selectedStep.status}
+          </Badge>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {selectedStep.pkgManager}
+          </span>
+        </div>
+
+        <StepPanel
+          title="Command"
+          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
+        >
+          {selectedStep.command}
+        </StepPanel>
+
+        <StepPanel
+          title="Output"
+          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+        >
+          {selectedStep.output || <span className="text-slate-500 italic">No output</span>}
+        </StepPanel>
+
+        {selectedStep.error && (
+          <StepPanel
+            title="Error"
+            className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          >
+            {selectedStep.error}
+          </StepPanel>
+        )}
+      </div>
     </div>
   );
 }
@@ -278,17 +511,31 @@ function HistoryList({
   // Fallback label for the synthetic placeholder (before DB entry arrives)
   const syntheticStartedMsg = commandOutput.messages
     .findLast((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
+  const liveSteps = deriveLiveActivitySteps(commandOutput.messages);
   const syntheticLabel = (() => {
     if (activeOp) {
       if (activeOp.type === "check") return "Checking for updates";
       if (activeOp.type === "upgrade_all") return "Upgrading all packages";
       if (activeOp.type === "full_upgrade_all") return "Full upgrading all packages";
       if (activeOp.type === "reboot") return "Rebooting system";
-      return `Upgrading ${activeOp.packageName || "package"}`;
+        return `Upgrading ${activeOp.packageName || "package"}`;
     }
     if (syntheticStartedMsg) return `Running ${syntheticStartedMsg.pkgManager} command`;
     return "Running…";
   })();
+  const syntheticSteps =
+    liveSteps.length > 0
+      ? liveSteps
+      : syntheticStartedMsg?.command
+        ? [{
+            label: null,
+            pkgManager: syntheticStartedMsg.pkgManager,
+            command: syntheticStartedMsg.command,
+            output: null,
+            error: null,
+            status: "started" as const,
+          }]
+        : [];
 
   if (!hasOutput && !history.length) {
     return (
@@ -328,21 +575,38 @@ function HistoryList({
             </div>
           </div>
           <div className="ml-10 mr-2 mb-2 space-y-2">
-            {syntheticStartedMsg?.command && (
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Command</p>
-                <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{syntheticStartedMsg.command}</pre>
-              </div>
+            {syntheticSteps.length > 0 ? (
+              <ActivityStepViewer
+                viewerId="activity-synthetic"
+                steps={syntheticSteps}
+                defaultToLastStep
+                isLive
+                phase={commandOutput.phase}
+              />
+            ) : (
+              <div className="text-xs text-slate-500 italic">Waiting for output…</div>
             )}
-            <LiveOutput messages={commandOutput.messages} isActive={commandOutput.isActive} />
           </div>
         </div>
       )}
       {history.map((h) => {
         const isRunningEntry = h.id === startedEntry?.id;
         // A running entry has the command set; treat it as expandable even without output/error yet
-        const hasDetails = !!(h.command || h.output || h.error) || isRunningEntry;
+        const hasDetails = !!(h.steps?.length || h.command || h.output || h.error) || isRunningEntry;
         const isOpen = expanded.has(h.id);
+        const runningSteps =
+          isRunningEntry && liveSteps.length > 0
+            ? liveSteps
+            : isRunningEntry && h.command
+              ? [{
+                  label: null,
+                  pkgManager: h.pkgManager,
+                  command: h.command,
+                  output: null,
+                  error: null,
+                  status: "started" as const,
+                }]
+              : [];
 
         return (
           <div key={h.id}>
@@ -420,31 +684,25 @@ function HistoryList({
 
             {isOpen && hasDetails && (
               <div className="ml-10 mr-2 mb-2 space-y-2">
-                {h.command && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Command</p>
-                    <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{h.command}</pre>
-                  </div>
-                )}
                 {isRunningEntry ? (
-                  <LiveOutput messages={commandOutput.messages} isActive={commandOutput.isActive} />
+                  <ActivityStepViewer
+                    viewerId={`activity-live-${h.id}`}
+                    steps={runningSteps}
+                    defaultToLastStep
+                    isLive
+                    phase={commandOutput.phase}
+                  />
+                ) : h.steps?.length ? (
+                  <ActivityStepViewer
+                    viewerId={`activity-history-${h.id}`}
+                    steps={h.steps}
+                  />
                 ) : (
-                  <>
-                    {(h.command || h.output) && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Output</p>
-                        <pre className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">
-                          {h.output || <span className="text-slate-500 italic">No output</span>}
-                        </pre>
-                      </div>
-                    )}
-                    {h.error && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wide text-red-500 mb-1 font-semibold">Error</p>
-                        <pre className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">{h.error}</pre>
-                      </div>
-                    )}
-                  </>
+                  <LegacyActivityDetails
+                    command={h.command}
+                    output={h.output}
+                    error={h.error}
+                  />
                 )}
               </div>
             )}
@@ -461,12 +719,15 @@ export default function SystemDetail() {
   const systemId = parseInt(id!, 10);
   const { data, isLoading } = useSystem(systemId);
   const checkUpdates = useCheckUpdates();
+  const hideUpdate = useHideUpdate();
+  const unhideUpdate = useUnhideUpdate();
   const { upgradeAll, fullUpgradeAll, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
   const rebootSystem = useRebootSystem();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const commandOutput = useCommandOutput(systemId);
@@ -508,11 +769,9 @@ export default function SystemDetail() {
     );
   }
 
-  const { system, updates, history } = data;
-  const canOfferIgnoredKeptBackFullUpgrade =
-    system.supportsFullUpgrade === true && system.ignoreKeptBackPackages === 1;
+  const { system, updates, hiddenUpdates, history } = data;
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
-  const showUpgradeActions = showUpgradeAllButton || canOfferIgnoredKeptBackFullUpgrade;
+  const showUpgradeActions = showUpgradeAllButton;
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -561,6 +820,45 @@ export default function SystemDetail() {
         addToast(d.success ? "Reboot command sent" : d.message, d.success ? "success" : "danger"),
       onError: (err) => addToast(err.message, "danger"),
     });
+  };
+
+  const handleHideUpdate = () => {
+    if (!pendingHideUpdate?.newVersion) return;
+    hideUpdate.mutate(
+      {
+        systemId,
+        pkgManager: pendingHideUpdate.pkgManager,
+        packageName: pendingHideUpdate.packageName,
+        newVersion: pendingHideUpdate.newVersion,
+      },
+      {
+        onSuccess: () => {
+          addToast(
+            `Hidden ${pendingHideUpdate.packageName} ${pendingHideUpdate.newVersion}`,
+            "success",
+          );
+          setPendingHideUpdate(null);
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
+
+  const handleUnhideUpdate = (hiddenUpdateRow: HiddenUpdate) => {
+    unhideUpdate.mutate(
+      {
+        systemId,
+        hiddenUpdateId: hiddenUpdateRow.id,
+      },
+      {
+        onSuccess: () =>
+          addToast(
+            `Unhid ${hiddenUpdateRow.packageName} ${hiddenUpdateRow.newVersion || ""}`.trim(),
+            "success",
+          ),
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
   };
 
   return (
@@ -755,6 +1053,12 @@ export default function SystemDetail() {
             {updates.length > 0 && (
               <Badge variant="warning" small>{updates.length}</Badge>
             )}
+            {system.securityCount > 0 && (
+              <Badge variant="danger" small>{system.securityCount} security</Badge>
+            )}
+            {system.keptBackCount > 0 && (
+              <Badge variant="muted" small>{system.keptBackCount} kept back</Badge>
+            )}
           </h2>
           {system.cacheAge && (
             <span className={`text-xs ${system.isStale ? "text-amber-500" : "text-slate-400"}`}>
@@ -766,8 +1070,16 @@ export default function SystemDetail() {
           updates={updates}
           systemId={systemId}
           busy={upgrading || checking}
+          hideBusy={hideUpdate.isPending}
+          onHide={setPendingHideUpdate}
         />
       </div>
+
+      <HiddenUpdatesSection
+        hiddenUpdates={hiddenUpdates}
+        busy={unhideUpdate.isPending || hideUpdate.isPending || upgrading || checking}
+        onUnhide={handleUnhideUpdate}
+      />
 
       {/* History */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-border">
@@ -795,9 +1107,7 @@ export default function SystemDetail() {
         onConfirm={handleFullUpgradeAll}
         title="Full Upgrade All Packages"
         message={
-          system.updateCount > 0
-            ? `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`
-            : `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages, including kept-back packages hidden from the normal update count.`
+          `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`
         }
         confirmLabel="Full Upgrade"
         danger
@@ -812,6 +1122,19 @@ export default function SystemDetail() {
         confirmLabel="Reboot"
         danger
         loading={rebooting}
+      />
+      <ConfirmDialog
+        open={pendingHideUpdate !== null}
+        onClose={() => setPendingHideUpdate(null)}
+        onConfirm={handleHideUpdate}
+        title="Hide Update"
+        message={
+          pendingHideUpdate
+            ? `Hide ${pendingHideUpdate.packageName} ${pendingHideUpdate.newVersion || ""} from visible update lists and counts on ${system.name}? Upgrade commands will still install it if run.`
+            : ""
+        }
+        confirmLabel="Hide Update"
+        loading={hideUpdate.isPending}
       />
 
     </Layout>

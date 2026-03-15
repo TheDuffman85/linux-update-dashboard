@@ -79,6 +79,9 @@ export const systems = sqliteTable(
     pkgManager: text("pkg_manager"),
     detectedPkgManagers: text("detected_pkg_managers"),
     disabledPkgManagers: text("disabled_pkg_managers"),
+    autoHideKeptBackUpdates: integer("auto_hide_kept_back_updates")
+      .notNull()
+      .default(0),
     osName: text("os_name"),
     osVersion: text("os_version"),
     kernel: text("kernel"),
@@ -88,9 +91,6 @@ export const systems = sqliteTable(
     cpuCores: text("cpu_cores"),
     memory: text("memory"),
     disk: text("disk"),
-    ignoreKeptBackPackages: integer("ignore_kept_back_packages")
-      .notNull()
-      .default(0),
     bootId: text("boot_id"),
     excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
       .notNull()
@@ -124,12 +124,50 @@ export const updateCache = sqliteTable(
     architecture: text("architecture"),
     repository: text("repository"),
     isSecurity: integer("is_security").notNull().default(0),
+    isKeptBack: integer("is_kept_back").notNull().default(0),
     cachedAt: text("cached_at")
       .notNull()
       .default(sql`(datetime('now'))`),
   },
   (table) => [
     unique().on(table.systemId, table.pkgManager, table.packageName),
+  ]
+);
+
+export const hiddenUpdates = sqliteTable(
+  "hidden_updates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    pkgManager: text("pkg_manager").notNull(),
+    packageName: text("package_name").notNull(),
+    currentVersion: text("current_version"),
+    newVersion: text("new_version").notNull(),
+    architecture: text("architecture"),
+    repository: text("repository"),
+    isSecurity: integer("is_security").notNull().default(0),
+    isKeptBack: integer("is_kept_back").notNull().default(0),
+    active: integer("active").notNull().default(1),
+    lastMatchedAt: text("last_matched_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    inactiveSince: text("inactive_since"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    unique().on(
+      table.systemId,
+      table.pkgManager,
+      table.packageName,
+      table.newVersion,
+    ),
   ]
 );
 
@@ -143,6 +181,7 @@ export const updateHistory = sqliteTable("update_history", {
   packageCount: integer("package_count"),
   packages: text("packages"),
   command: text("command"),
+  steps: text("steps"),
   status: text("status").notNull(),
   output: text("output"),
   error: text("error"),

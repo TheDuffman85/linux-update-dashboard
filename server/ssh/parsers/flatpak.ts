@@ -15,7 +15,7 @@ export const flatpakParser: PackageParser = {
   },
 
   getCheckCommandLabels() {
-    return ["Refreshing appstream data…", "Checking for updates…"];
+    return ["Refreshing appstream data", "Checking for updates"];
   },
 
   parseCheckOutput(stdout, _stderr, _exitCode) {
@@ -64,6 +64,7 @@ export const flatpakParser: PackageParser = {
           architecture: null,
           repository: origin,
           isSecurity: false,
+          isKeptBack: false,
           pkgManager: "flatpak",
         });
       }

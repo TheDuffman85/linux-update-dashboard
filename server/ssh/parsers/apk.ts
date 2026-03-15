@@ -28,8 +28,8 @@ export const apkParser: PackageParser = {
 
   getCheckCommandLabels() {
     return [
-      "Refreshing package indexes…",
-      "Listing available updates…",
+      "Refreshing package indexes",
+      "Listing available updates",
     ];
   },
 
@@ -54,6 +54,7 @@ export const apkParser: PackageParser = {
         architecture: match[2],
         repository: match[3],
         isSecurity: false,
+        isKeptBack: false,
         pkgManager: "apk",
       });
     }

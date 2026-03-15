@@ -28,6 +28,7 @@ export const pacmanParser: PackageParser = {
           architecture: null,
           repository: null,
           isSecurity: false,
+          isKeptBack: false,
           pkgManager: "pacman",
         });
       }

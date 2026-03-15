@@ -34,6 +34,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date with a configurable scheduler interval and cache duration
+- **Per-system kept-back auto-hide:** optionally move kept-back packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
 - **Home Assistant MQTT update entities:** publish one Linux Update Dashboard app update entity plus per-system package update entities with discovery, icons/images, rich JSON attributes, and optional install commands
 - **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
@@ -455,7 +456,7 @@ The `system` JSON attribute object contains the detected host metadata that the 
 - system ID/name/hostname/port/username
 - package manager and detected/disabled package managers
 - OS name/version, kernel, uptime, architecture, CPU, memory, disk, boot ID
-- flags such as `ignore_kept_back_packages`, `exclude_from_upgrade_all`, `needs_reboot`, and reachability
+- flags such as `exclude_from_upgrade_all`, `needs_reboot`, and reachability
 - timestamps such as `last_seen_at`, `system_info_updated_at`, `created_at`, and `updated_at`
 
 The `packages` JSON attribute array contains one object per pending update with:
@@ -715,10 +716,17 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-debian-fish` | 2008 | APT | `fish` | Debian 12 |
 | `ludash-test-debian-fish-sudo` | 2009 | APT (sudo password) | `fish` | Debian 12 |
 | `ludash-test-alpine` | 2010 | APK | `bash` | Alpine 3.16 |
+| `ludash-test-apt-keptback` | 2011 | APT (kept-back fixture) | `bash` | Debian 12 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
 Each container is built with **older package versions** pinned from archived repositories, while current repos remain active. This means `apt list --upgradable`, `dnf check-update`, `pacman -Qu`, `apk list -u`, etc. will always report pending updates — giving you realistic data to work with in the dashboard.
+
+`ludash-test-apt-keptback` is a special fixture with a self-contained local APT repo. It intentionally exposes:
+- one normal upgrade: `normal-app`
+- one kept-back upgrade: `keptback-app`
+
+That makes it useful for verifying the dashboard’s `isKeptBack` badge/count behavior without depending on upstream repository state.
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 

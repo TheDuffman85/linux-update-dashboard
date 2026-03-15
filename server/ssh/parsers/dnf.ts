@@ -87,6 +87,7 @@ export const dnfParser: PackageParser = {
           architecture: m[2],
           repository: m[4],
           isSecurity: false,
+          isKeptBack: false,
           pkgManager: "dnf",
         });
       }

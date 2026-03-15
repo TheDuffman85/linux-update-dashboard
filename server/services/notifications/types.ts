@@ -7,6 +7,7 @@ export interface CheckResult {
   systemName: string;
   updateCount: number;
   securityCount: number;
+  keptBackCount: number;
   previouslyReachable: boolean;
   nowUnreachable: boolean;
 }
@@ -23,6 +24,7 @@ export interface NotificationEventTotals {
   systemsWithUpdates: number;
   totalUpdates: number;
   totalSecurity: number;
+  totalKeptBack: number;
   unreachableSystems: number;
 }
 

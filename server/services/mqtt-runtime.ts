@@ -25,6 +25,7 @@ import {
 import { getActiveOperation } from "./active-operation-store";
 import { getAppUpdateStatus } from "./app-update-service";
 import * as updateService from "./update-service";
+import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
 
 type NotificationRow = typeof notifications.$inferSelect;
@@ -121,6 +122,7 @@ function isMutatingOperation(type: string | undefined): boolean {
 function buildSystemReleaseSummary(
   updateCount: number,
   securityCount: number,
+  keptBackCount: number,
   packageNames: string[],
 ): string {
   if (updateCount === 0) return "System up to date";
@@ -129,6 +131,9 @@ function buildSystemReleaseSummary(
   if (securityCount > 0) {
     summary += `, ${securityCount} security`;
   }
+  if (keptBackCount > 0) {
+    summary += `, ${keptBackCount} kept back`;
+  }
   if (packageNames.length > 0) {
     summary += `: ${packageNames.join(", ")}`;
   }
@@ -136,12 +141,12 @@ function buildSystemReleaseSummary(
 }
 
 function buildSyntheticUpdateFingerprintVersion(
-  updates: Array<{ packageName: string; isSecurity: number; newVersion?: string | null }>,
+  updates: Array<{ packageName: string; isSecurity: number; isKeptBack: number; newVersion?: string | null }>,
 ): string {
   if (updates.length === 0) return "current";
 
   const raw = updates
-    .map((entry) => `${entry.packageName}:${entry.newVersion || ""}:${entry.isSecurity}`)
+    .map((entry) => `${entry.packageName}:${entry.newVersion || ""}:${entry.isSecurity}:${entry.isKeptBack}`)
     .sort((left, right) => left.localeCompare(right))
     .join("|");
   const hash = createHash("sha256").update(raw).digest("hex");
@@ -191,6 +196,7 @@ function buildSafeSystemAttributes(
   return {
     update_count: updates.length,
     security_update_count: updates.filter((entry) => entry.isSecurity === 1).length,
+    kept_back_update_count: updates.filter((entry) => entry.isKeptBack === 1).length,
     needs_reboot: system.needsReboot === 1,
     reachable: system.isReachable === 1,
     active_operation: activeOperation
@@ -220,7 +226,6 @@ function buildSafeSystemAttributes(
       memory: system.memory,
       disk: system.disk,
       boot_id: system.bootId,
-      ignore_kept_back_packages: system.ignoreKeptBackPackages === 1,
       exclude_from_upgrade_all: system.excludeFromUpgradeAll === 1,
       hidden: system.hidden === 1,
       needs_reboot: system.needsReboot === 1,
@@ -241,6 +246,7 @@ function buildSafeSystemAttributes(
         architecture: entry.architecture,
         repository: entry.repository,
         is_security: entry.isSecurity === 1,
+        is_kept_back: entry.isKeptBack === 1,
         cached_at: entry.cachedAt,
       })),
   };
@@ -317,6 +323,7 @@ function buildSystemEntity(
   const topicBase = buildEntityBaseTopic(config, row.id, componentId);
   const updateCount = updates.length;
   const securityCount = updates.filter((entry) => entry.isSecurity === 1).length;
+  const keptBackCount = updates.filter((entry) => entry.isKeptBack === 1).length;
   const packageNames = updates
     .map((entry) => entry.packageName)
     .sort((left, right) => left.localeCompare(right))
@@ -354,7 +361,7 @@ function buildSystemEntity(
       installed_version: "current",
       latest_version: buildSyntheticUpdateFingerprintVersion(updates),
       title: "Package updates",
-      release_summary: buildSystemReleaseSummary(updateCount, securityCount, packageNames),
+      release_summary: buildSystemReleaseSummary(updateCount, securityCount, keptBackCount, packageNames),
       in_progress: isMutatingOperation(activeOperation?.type),
     }),
     attributesTopic: `${topicBase}/attributes`,
@@ -387,17 +394,12 @@ async function buildEntitiesForChannel(
   const entities: DiscoveryEntity[] = [];
 
   if (config.publishAppEntity && notifyOn.includes("appUpdates")) {
-    entities.push(buildAppEntity(row, config, await getAppUpdateStatus()));
+      entities.push(buildAppEntity(row, config, await getAppUpdateStatus()));
   }
 
   if (notifyOn.includes("updates") || notifyOn.includes("unreachable")) {
     for (const system of selectedSystems) {
-      const updates = db
-        .select()
-        .from(updateCache)
-        .where(eq(updateCache.systemId, system.id))
-        .orderBy(updateCache.packageName)
-        .all();
+      const updates = hiddenUpdateService.getVisibleCachedUpdates(system.id);
       entities.push(buildSystemEntity(row, config, system, updates));
     }
   }
