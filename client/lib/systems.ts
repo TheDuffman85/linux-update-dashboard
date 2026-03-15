@@ -85,6 +85,17 @@ export interface HiddenUpdate {
   updatedAt: string;
 }
 
+export type ActivityStepStatus = "success" | "warning" | "failed" | "started";
+
+export interface ActivityStep {
+  label: string | null;
+  pkgManager: string;
+  command: string;
+  output: string | null;
+  error: string | null;
+  status: ActivityStepStatus;
+}
+
 export interface HistoryEntry {
   id: number;
   systemId: number;
@@ -94,6 +105,7 @@ export interface HistoryEntry {
   packages: string | null;
   packagesList: string[];
   command: string | null;
+  steps: ActivityStep[] | null;
   status: string;
   output: string | null;
   error: string | null;

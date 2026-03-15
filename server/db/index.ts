@@ -183,6 +183,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     package_count INTEGER,
     packages TEXT,
     command TEXT,
+    steps TEXT,
     status TEXT NOT NULL,
     output TEXT,
     error TEXT,
@@ -232,6 +233,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   // Migration: add command column to existing databases
   try {
     _db.run(sql`ALTER TABLE update_history ADD COLUMN command TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE update_history ADD COLUMN steps TEXT`);
   } catch {
     // Column already exists
   }

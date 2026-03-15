@@ -136,6 +136,83 @@ describe("checkUpdates", () => {
     expect(history?.status).toBe("failed");
     expect(history?.packageCount).toBe(0);
     expect(history?.error).toContain("[apt] sudo: a password is required");
+    expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      {
+        label: "Fetching package lists…",
+        pkgManager: "apt",
+        status: "failed",
+      },
+    ]);
+  });
+
+  test("stores ordered per-step check history with labels and streamed output", async () => {
+    const db = getDb();
+    const systemId = createAptSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (
+      _conn: unknown,
+      command: string,
+      _timeout?: number,
+      _sudoPassword?: string,
+      onData?: (chunk: string, stream: "stdout" | "stderr") => void,
+    ) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        onData?.("Hit:1 https://deb.debian.org stable InRelease\n", "stdout");
+        return { stdout: "ignored-refresh", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt list --upgradable")) {
+        onData?.("curl/stable 8.0 amd64 [upgradable from: 7.0]\n", "stdout");
+        return {
+          stdout: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      if (command.includes("apt-get -s -o Debug::NoLocking=1 upgrade")) {
+        onData?.("Inst curl [7.0] (8.0 stable [amd64])\n", "stdout");
+        return {
+          stdout: "Inst curl [7.0] (8.0 stable [amd64])\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await checkUpdates(systemId);
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, systemId))
+      .all()
+      .at(-1);
+
+    const steps = JSON.parse(history?.steps || "[]");
+    expect(steps).toHaveLength(3);
+    expect(steps.map((step: { label: string }) => step.label)).toEqual([
+      "Fetching package lists…",
+      "Listing available updates…",
+      "Detecting kept-back packages…",
+    ]);
+    expect(steps[0]).toMatchObject({
+      pkgManager: "apt",
+      status: "success",
+      output: "Hit:1 https://deb.debian.org stable InRelease\n",
+    });
+    expect(steps[1]).toMatchObject({
+      command: expect.stringContaining("apt list --upgradable"),
+      output: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n",
+    });
+    expect(steps[2]).toMatchObject({
+      command: expect.stringContaining("apt-get -s -o Debug::NoLocking=1 upgrade"),
+      output: "Inst curl [7.0] (8.0 stable [amd64])\n",
+    });
   });
 
   test("keeps kept-back apt packages when filtering is disabled", async () => {

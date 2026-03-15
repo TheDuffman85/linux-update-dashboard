@@ -181,6 +181,7 @@ export const updateHistory = sqliteTable("update_history", {
   packageCount: integer("package_count"),
   packages: text("packages"),
   command: text("command"),
+  steps: text("steps"),
   status: text("status").notNull(),
   output: text("output"),
   error: text("error"),

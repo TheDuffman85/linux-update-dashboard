@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { systems } from "../../server/db/schema";
+import { systems, updateHistory } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import { rebootSystem } from "../../server/services/update-service";
@@ -51,5 +51,19 @@ describe("rebootSystem", () => {
 
     const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
     expect(system?.isReachable).toBe(0);
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, inserted.id))
+      .all()
+      .at(-1);
+    expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      {
+        pkgManager: "system",
+        status: "failed",
+        command: expect.stringContaining("reboot"),
+        error: "Failed to talk to init daemon.\n",
+      },
+    ]);
   });
 });

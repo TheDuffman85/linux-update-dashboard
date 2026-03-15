@@ -65,6 +65,55 @@ interface ReconnectionResult {
   serverRebooted: boolean;
 }
 
+export type ActivityStepStatus = "success" | "warning" | "failed" | "started";
+
+export interface ActivityStep {
+  label: string | null;
+  pkgManager: string;
+  command: string;
+  output: string | null;
+  error: string | null;
+  status: ActivityStepStatus;
+}
+
+const STEP_OUTPUT_LIMIT = 5000;
+const STEP_ERROR_LIMIT = 2000;
+
+function trimSanitizedOutput(value: string | null | undefined, limit: number): string | null {
+  if (!value) return null;
+  const sanitized = sanitizeOutput(value).slice(0, limit);
+  return sanitized || null;
+}
+
+function serializeActivitySteps(steps: ActivityStep[] | undefined): string | null {
+  if (!steps?.length) return null;
+  return JSON.stringify(
+    steps.map((step) => ({
+      label: step.label ?? null,
+      pkgManager: step.pkgManager,
+      command: sanitizeCommand(step.command),
+      output: trimSanitizedOutput(step.output, STEP_OUTPUT_LIMIT),
+      error: trimSanitizedOutput(step.error, STEP_ERROR_LIMIT),
+      status: step.status,
+    }))
+  );
+}
+
+function createActivityStep(step: ActivityStep): ActivityStep {
+  return {
+    label: step.label ?? null,
+    pkgManager: step.pkgManager,
+    command: step.command,
+    output: step.output ?? null,
+    error: step.error ?? null,
+    status: step.status,
+  };
+}
+
+function createSingleStepHistory(step: ActivityStep): ActivityStep[] {
+  return [createActivityStep(step)];
+}
+
 /**
  * When SSH monitoring is lost during an upgrade (e.g. server rebooted),
  * attempt to reconnect and determine the actual result.
@@ -273,6 +322,7 @@ function logHistory(
     packageCount?: number;
     packages?: string;
     command?: string;
+    steps?: ActivityStep[];
     output?: string;
     error?: string;
   }
@@ -291,6 +341,7 @@ function logHistory(
       packageCount: opts?.packageCount ?? null,
       packages: opts?.packages ?? null,
       command: opts?.command ? sanitizeCommand(opts.command) : null,
+      steps: serializeActivitySteps(opts?.steps),
       output: opts?.output ? sanitizeOutput(opts.output) : null,
       error: opts?.error ? sanitizeOutput(opts.error) : null,
       completedAt,
@@ -328,6 +379,7 @@ function finishEntry(
   opts?: {
     packageCount?: number;
     packages?: string;
+    steps?: ActivityStep[];
     output?: string;
     error?: string;
   }
@@ -339,6 +391,7 @@ function finishEntry(
       status,
       packageCount: opts?.packageCount ?? null,
       packages: opts?.packages ?? null,
+      steps: serializeActivitySteps(opts?.steps),
       output: opts?.output ? sanitizeOutput(opts.output) : null,
       error: opts?.error ? sanitizeOutput(opts.error) : null,
       completedAt: now,
@@ -361,6 +414,7 @@ async function checkUpdatesUnlocked(
   const sshManager = getSSHManager();
   const allUpdates: ParsedUpdate[] = [];
   const allCommands: string[] = [];
+  const allSteps: ActivityStep[] = [];
   const checkErrors: string[] = [];
   let checkOutput = "";
   let successfulChecks = 0;
@@ -412,7 +466,8 @@ async function checkUpdatesUnlocked(
         const commandResults: CheckCommandResult[] = [];
 
         for (let i = 0; i < commands.length; i++) {
-          const label = labels[i] ?? (commands.length > 1 ? `Step ${i + 1}/${commands.length}…` : "Checking for updates…");
+          const label = labels[i] ?? `Step ${i + 1}`;
+          let streamedOutput = "";
           pub({ type: "started", command: commands[i], pkgManager: pmName });
           pub({ type: "phase", phase: label });
           const result = await sshManager.runCommand(
@@ -421,11 +476,12 @@ async function checkUpdatesUnlocked(
             undefined,
             sudoPassword,
             (chunk, stream) => {
+              streamedOutput += chunk;
               pub({ type: "output", data: chunk, stream });
             }
           );
-          checkOutput += result.stdout;
-          checkOutput += result.stderr;
+          const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
+          checkOutput += combinedOutput;
           lastStdout = result.stdout;
           lastStderr = result.stderr;
           lastExitCode = result.exitCode;
@@ -435,6 +491,19 @@ async function checkUpdatesUnlocked(
             stderr: result.stderr,
             exitCode: result.exitCode,
           });
+          allSteps.push(
+            createActivityStep({
+              label,
+              pkgManager: pmName,
+              command: commands[i],
+              output: combinedOutput,
+              error:
+                result.exitCode === 0
+                  ? null
+                  : result.stderr || result.stdout || combinedOutput || `Command exited with code ${result.exitCode}`,
+              status: result.exitCode === 0 ? "success" : "failed",
+            })
+          );
 
           if (result.exitCode !== 0) {
             throw new Error(
@@ -518,6 +587,7 @@ async function checkUpdatesUnlocked(
       {
         packageCount: visibleSummary.updateCount,
         command: allCommands.join(" && "),
+        steps: allSteps,
         output: checkOutput.slice(0, 5000) || undefined,
         error: combinedErrors?.slice(0, 2000),
       }
@@ -604,8 +674,10 @@ export async function applyUpgradeAll(
         allCommands.push(cmd);
         const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
+        let streamedOutput = "";
 
         const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
+          streamedOutput += chunk;
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
         };
 
@@ -645,11 +717,20 @@ export async function applyUpgradeAll(
 
         const success = exitCode === 0;
         if (!success) overallSuccess = false;
+        const combinedOutput = streamedOutput || stdout || stderr;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
         const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
         finishEntry(histId, histStatus, {
-          output: stdout.slice(0, 5000),
+          steps: createSingleStepHistory({
+            label: null,
+            pkgManager: pmName,
+            command: cmd,
+            output: combinedOutput,
+            error: success ? null : stderr || stdout || combinedOutput,
+            status: histStatus,
+          }),
+          output: stdout.slice(0, STEP_OUTPUT_LIMIT),
           error: success ? undefined : (stderr || stdout).slice(0, 2000),
         });
 
@@ -678,6 +759,16 @@ export async function applyUpgradeAll(
         "failed",
         {
           command: allCommands.join(" && "),
+          steps: allCommands.length
+            ? createSingleStepHistory({
+                label: null,
+                pkgManager: pkgManagers[0] || "unknown",
+                command: allCommands[allCommands.length - 1] || allCommands[0],
+                output: null,
+                error: String(e),
+                status: "failed",
+              })
+            : undefined,
           error: String(e),
         }
       );
@@ -758,8 +849,10 @@ export async function applyFullUpgradeAll(
         allCommands.push(cmd);
         const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
+        let streamedOutput = "";
 
         const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
+          streamedOutput += chunk;
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
         };
 
@@ -798,11 +891,20 @@ export async function applyFullUpgradeAll(
 
         const success = exitCode === 0;
         if (!success) overallSuccess = false;
+        const combinedOutput = streamedOutput || stdout || stderr;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
         const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
         finishEntry(histId, histStatus, {
-          output: stdout.slice(0, 5000),
+          steps: createSingleStepHistory({
+            label: null,
+            pkgManager: pmName,
+            command: cmd,
+            output: combinedOutput,
+            error: success ? null : stderr || stdout || combinedOutput,
+            status: histStatus,
+          }),
+          output: stdout.slice(0, STEP_OUTPUT_LIMIT),
           error: success ? undefined : (stderr || stdout).slice(0, 2000),
         });
 
@@ -830,6 +932,16 @@ export async function applyFullUpgradeAll(
         "failed",
         {
           command: allCommands.join(" && "),
+          steps: allCommands.length
+            ? createSingleStepHistory({
+                label: null,
+                pkgManager: pkgManagers[0] || "unknown",
+                command: allCommands[allCommands.length - 1] || allCommands[0],
+                output: null,
+                error: String(e),
+                status: "failed",
+              })
+            : undefined,
           error: String(e),
         }
       );
@@ -892,7 +1004,9 @@ export async function applyUpgradePackage(
       conn = await sshManager.connect(system as Record<string, unknown>, {
         systemId,
       });
+      let streamedOutput = "";
       const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
+        streamedOutput += chunk;
         outputStream.publish(systemId, { type: "output", data: chunk, stream });
       };
 
@@ -929,7 +1043,15 @@ export async function applyUpgradePackage(
       finishEntry(histId, histStatus, {
         packageCount: 1,
         packages: JSON.stringify([packageName]),
-        output: stdout.slice(0, 5000),
+        steps: createSingleStepHistory({
+          label: null,
+          pkgManager: pmName,
+          command: cmd,
+          output: streamedOutput || stdout || stderr,
+          error: success ? null : stderr || stdout || streamedOutput,
+          status: histStatus,
+        }),
+        output: stdout.slice(0, STEP_OUTPUT_LIMIT),
         error: success ? undefined : (stderr || stdout).slice(0, 2000),
       });
 
@@ -950,6 +1072,14 @@ export async function applyUpgradePackage(
       return { success, output: success ? stdout : stderr || stdout, warning: reconnectionUsed && success };
     } catch (e) {
       finishEntry(histId, "failed", {
+        steps: createSingleStepHistory({
+          label: null,
+          pkgManager: pmName,
+          command: cmd,
+          output: null,
+          error: String(e),
+          status: "failed",
+        }),
         error: String(e),
       });
       outputStream.publish(systemId, { type: "error", message: String(e) });
@@ -988,13 +1118,25 @@ export async function rebootSystem(
         conn = await sshManager.connect(system as Record<string, unknown>, {
           systemId,
         });
+        let streamedOutput = "";
         const result = await sshManager.runCommand(conn, cmd, 30, sudoPassword, (chunk, stream) => {
+          streamedOutput += chunk;
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
         });
 
         if (result.exitCode !== 0) {
           const errorText = result.stderr || result.stdout || `reboot exited with code ${result.exitCode}`;
-          finishEntry(histId, "failed", { error: errorText });
+          finishEntry(histId, "failed", {
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: "system",
+              command: cmd,
+              output: streamedOutput || result.stdout || result.stderr,
+              error: errorText,
+              status: "failed",
+            }),
+            error: errorText,
+          });
           outputStream.publish(systemId, { type: "error", message: errorText });
           outputStream.publish(systemId, { type: "done", success: false });
           return { success: false, message: `Reboot failed: ${errorText}` };
@@ -1002,7 +1144,17 @@ export async function rebootSystem(
 
         // Reboot succeeded or the connection was dropped (expected)
         systemService.markUnreachable(systemId);
-        finishEntry(histId, "success", { output: result.stdout || "Reboot command sent" });
+        finishEntry(histId, "success", {
+          steps: createSingleStepHistory({
+            label: null,
+            pkgManager: "system",
+            command: cmd,
+            output: streamedOutput || result.stdout || "Reboot command sent",
+            error: null,
+            status: "success",
+          }),
+          output: result.stdout || "Reboot command sent",
+        });
         outputStream.publish(systemId, { type: "done", success: true });
         return { success: true, message: "Reboot command sent" };
       } catch (e) {
@@ -1010,11 +1162,31 @@ export async function rebootSystem(
         // A closed connection after reboot is expected
         if (errMsg.includes("ECONNRESET") || errMsg.includes("closed") || errMsg.includes("end")) {
           systemService.markUnreachable(systemId);
-          finishEntry(histId, "success", { output: "Reboot command sent (connection closed)" });
+          finishEntry(histId, "success", {
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: "system",
+              command: cmd,
+              output: "Reboot command sent (connection closed)",
+              error: null,
+              status: "success",
+            }),
+            output: "Reboot command sent (connection closed)",
+          });
           outputStream.publish(systemId, { type: "done", success: true });
           return { success: true, message: "Reboot command sent" };
         }
-        finishEntry(histId, "failed", { error: errMsg });
+        finishEntry(histId, "failed", {
+          steps: createSingleStepHistory({
+            label: null,
+            pkgManager: "system",
+            command: cmd,
+            output: null,
+            error: errMsg,
+            status: "failed",
+          }),
+          error: errMsg,
+        });
         outputStream.publish(systemId, { type: "error", message: errMsg });
         outputStream.publish(systemId, { type: "done", success: false });
         return { success: false, message: `Reboot failed: ${errMsg}` };

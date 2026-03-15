@@ -80,6 +80,15 @@ function parseJsonArrayField(value: string | null): string[] | null {
   try { return JSON.parse(value); } catch { return null; }
 }
 
+function parseJsonField<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
 function parseSystemIdList(value: unknown): number[] | null {
   if (!Array.isArray(value)) return null;
 
@@ -310,6 +319,7 @@ systems.get("/:id", (c) => {
   const history = updateService.getHistory(id, 20).map((h) => ({
     ...h,
     packagesList: h.packages ? JSON.parse(h.packages) : [],
+    steps: parseJsonField(h.steps),
   }));
 
   return c.json({
@@ -690,6 +700,7 @@ systems.get("/:id/history", (c) => {
   const history = updateService.getHistory(id).map((h) => ({
     ...h,
     packagesList: h.packages ? JSON.parse(h.packages) : [],
+    steps: parseJsonField(h.steps),
   }));
   return c.json({ history });
 });

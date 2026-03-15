@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateHistory } from "../../server/db/schema";
 import { listSystems } from "../../server/services/system-service";
@@ -89,6 +89,44 @@ describe("database startup cleanup", () => {
     expect(row?.output).toBeNull();
     expect(row?.error).toBe("Server restarted while operation was in progress");
     expect(row?.completedAt).not.toBeNull();
+  });
+
+  test("adds the steps column for legacy update history tables", () => {
+    closeDatabase();
+    unlinkSync(dbPath);
+
+    const sqlite = new Database(dbPath);
+    sqlite.exec(`
+      CREATE TABLE update_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        system_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        pkg_manager TEXT NOT NULL,
+        package_count INTEGER,
+        packages TEXT,
+        command TEXT,
+        status TEXT NOT NULL,
+        output TEXT,
+        error TEXT,
+        started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
+    `);
+    sqlite.exec(`
+      INSERT INTO update_history (system_id, action, pkg_manager, command, status, output)
+      VALUES (1, 'check', 'apt', 'apt-get update', 'success', 'ok')
+    `);
+    sqlite.close();
+
+    initDatabase(dbPath);
+
+    const restartedDb = getDb();
+    const columns = restartedDb.all(sql`PRAGMA table_info(update_history)`) as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === "steps")).toBe(true);
+
+    const row = restartedDb.select().from(updateHistory).get();
+    expect(row?.command).toBe("apt-get update");
+    expect(row?.steps).toBeNull();
   });
 
   test("assigns alphabetical sort order when existing systems all use the default order", () => {

@@ -10,7 +10,8 @@ import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
-import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation } from "../lib/systems";
+import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
+import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -236,72 +237,205 @@ function formatExactDateTime(dateStr: string): string {
   });
 }
 
-function LiveOutput({ messages, isActive }: { messages: WsMessage[]; isActive: boolean }) {
-  const containerRef = useRef<HTMLPreElement>(null);
-  const isScrolledToBottom = useRef(true);
+function getStatusVariant(status: string): "success" | "warning" | "danger" | "muted" {
+  if (status === "success") return "success";
+  if (status === "warning") return "warning";
+  if (status === "failed") return "danger";
+  return "muted";
+}
 
-  const handleScroll = () => {
-    const el = containerRef.current;
-    if (!el) return;
-    isScrolledToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-  };
-
-  useEffect(() => {
-    if (isScrolledToBottom.current && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [messages]);
-
+function StepPanel({
+  title,
+  children,
+  className,
+}: {
+  title: string;
+  children: React.ReactNode;
+  className: string;
+}) {
   return (
     <div>
-      <div className="flex items-center gap-2 mb-1">
-        <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 font-semibold">Output</p>
-        {isActive && (
+      <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">{title}</p>
+      <pre className={className}>{children}</pre>
+    </div>
+  );
+}
+
+function LegacyActivityDetails({
+  command,
+  output,
+  error,
+}: {
+  command: string | null;
+  output: string | null;
+  error: string | null;
+}) {
+  return (
+    <>
+      {command && (
+        <StepPanel
+          title="Command"
+          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
+        >
+          {command}
+        </StepPanel>
+      )}
+      {(command || output) && (
+        <StepPanel
+          title="Output"
+          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+        >
+          {output || <span className="text-slate-500 italic">No output</span>}
+        </StepPanel>
+      )}
+      {error && (
+        <StepPanel
+          title="Error"
+          className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+        >
+          {error}
+        </StepPanel>
+      )}
+    </>
+  );
+}
+
+function ActivityStepViewer({
+  viewerId,
+  steps,
+  defaultToLastStep = false,
+  isLive = false,
+  phase = null,
+}: {
+  viewerId: string;
+  steps: ActivityStep[];
+  defaultToLastStep?: boolean;
+  isLive?: boolean;
+  phase?: string | null;
+}) {
+  const [selectedIndex, setSelectedIndex] = useState(() =>
+    defaultToLastStep && steps.length > 0 ? steps.length - 1 : 0
+  );
+  const prevStepCountRef = useRef(steps.length);
+
+  useEffect(() => {
+    const prevCount = prevStepCountRef.current;
+    const shouldFollowNewest =
+      defaultToLastStep &&
+      prevCount > 0 &&
+      selectedIndex === prevCount - 1 &&
+      steps.length > prevCount;
+
+    if (steps.length === 0) {
+      setSelectedIndex(0);
+    } else if (shouldFollowNewest) {
+      setSelectedIndex(steps.length - 1);
+    } else if (selectedIndex >= steps.length) {
+      setSelectedIndex(steps.length - 1);
+    }
+
+    prevStepCountRef.current = steps.length;
+  }, [defaultToLastStep, selectedIndex, steps.length]);
+
+  const selectedStep = steps[selectedIndex];
+  if (!selectedStep) {
+    return (
+      <div className="text-xs text-slate-500 italic">
+        Waiting for output…
+      </div>
+    );
+  }
+
+  const isGlobalPhase = phase === "reconnecting" || phase === "rechecking";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        {isLive && (
           <span className="flex items-center gap-1 text-[10px] text-green-500">
             <span className="spinner spinner-sm !w-2.5 !h-2.5" />
             live
           </span>
         )}
-      </div>
-      <pre
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-      >
-        {!messages.some((m) => m.type === "output" || m.type === "error") && (
-          <span className="text-slate-500 italic">Waiting for output…</span>
+        {isGlobalPhase && (
+          <Badge variant={phase === "reconnecting" ? "warning" : "muted"} small>
+            {phase === "reconnecting" ? "reconnecting" : "rechecking"}
+          </Badge>
         )}
-        {messages.map((msg, i) => {
-          switch (msg.type) {
-            case "started":
-              return null;
-            case "output":
-              return (
-                <span key={i} className={msg.stream === "stderr" ? "text-red-400" : undefined}>
-                  {msg.data}
-                </span>
-              );
-            case "phase":
-              return null;
-            case "done":
-              return null;
-            case "error":
-              return (
-                <span key={i} className="text-red-400">
-                  Error: {msg.message}
-                </span>
-              );
-            case "warning":
-              return (
-                <span key={i} className="text-amber-400 font-semibold">
-                  {"\n"}Warning: {msg.message}{"\n"}
-                </span>
-              );
-            default:
-              return null;
-          }
+      </div>
+
+      <div
+        className="flex gap-2 overflow-x-auto pb-1"
+        role="tablist"
+        aria-label="Activity steps"
+      >
+        {steps.map((step, index) => {
+          const isSelected = index === selectedIndex;
+          return (
+            <button
+              key={`${viewerId}-step-${index}`}
+              id={`${viewerId}-tab-${index}`}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              aria-controls={`${viewerId}-panel-${index}`}
+              tabIndex={isSelected ? 0 : -1}
+              onClick={() => setSelectedIndex(index)}
+              className={`shrink-0 rounded-lg border px-3 py-2 text-left transition-colors ${
+                isSelected
+                  ? "border-blue-400 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100"
+                  : "border-border bg-white/80 text-slate-600 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+              }`}
+            >
+              <span className="block text-[10px] uppercase tracking-wide opacity-70">
+                {index + 1}/{steps.length} {step.pkgManager}
+              </span>
+              <span className="block text-xs font-medium">
+                {getActivityStepLabel(step, index)}
+              </span>
+            </button>
+          );
         })}
-      </pre>
+      </div>
+
+      <div
+        id={`${viewerId}-panel-${selectedIndex}`}
+        role="tabpanel"
+        aria-labelledby={`${viewerId}-tab-${selectedIndex}`}
+        className="space-y-2"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={getStatusVariant(selectedStep.status)} small>
+            {selectedStep.status}
+          </Badge>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {selectedStep.pkgManager}
+          </span>
+        </div>
+
+        <StepPanel
+          title="Command"
+          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
+        >
+          {selectedStep.command}
+        </StepPanel>
+
+        <StepPanel
+          title="Output"
+          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+        >
+          {selectedStep.output || <span className="text-slate-500 italic">No output</span>}
+        </StepPanel>
+
+        {selectedStep.error && (
+          <StepPanel
+            title="Error"
+            className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          >
+            {selectedStep.error}
+          </StepPanel>
+        )}
+      </div>
     </div>
   );
 }
@@ -377,17 +511,31 @@ function HistoryList({
   // Fallback label for the synthetic placeholder (before DB entry arrives)
   const syntheticStartedMsg = commandOutput.messages
     .findLast((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
+  const liveSteps = deriveLiveActivitySteps(commandOutput.messages);
   const syntheticLabel = (() => {
     if (activeOp) {
       if (activeOp.type === "check") return "Checking for updates";
       if (activeOp.type === "upgrade_all") return "Upgrading all packages";
       if (activeOp.type === "full_upgrade_all") return "Full upgrading all packages";
       if (activeOp.type === "reboot") return "Rebooting system";
-      return `Upgrading ${activeOp.packageName || "package"}`;
+        return `Upgrading ${activeOp.packageName || "package"}`;
     }
     if (syntheticStartedMsg) return `Running ${syntheticStartedMsg.pkgManager} command`;
     return "Running…";
   })();
+  const syntheticSteps =
+    liveSteps.length > 0
+      ? liveSteps
+      : syntheticStartedMsg?.command
+        ? [{
+            label: null,
+            pkgManager: syntheticStartedMsg.pkgManager,
+            command: syntheticStartedMsg.command,
+            output: null,
+            error: null,
+            status: "started" as const,
+          }]
+        : [];
 
   if (!hasOutput && !history.length) {
     return (
@@ -427,21 +575,38 @@ function HistoryList({
             </div>
           </div>
           <div className="ml-10 mr-2 mb-2 space-y-2">
-            {syntheticStartedMsg?.command && (
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Command</p>
-                <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{syntheticStartedMsg.command}</pre>
-              </div>
+            {syntheticSteps.length > 0 ? (
+              <ActivityStepViewer
+                viewerId="activity-synthetic"
+                steps={syntheticSteps}
+                defaultToLastStep
+                isLive
+                phase={commandOutput.phase}
+              />
+            ) : (
+              <div className="text-xs text-slate-500 italic">Waiting for output…</div>
             )}
-            <LiveOutput messages={commandOutput.messages} isActive={commandOutput.isActive} />
           </div>
         </div>
       )}
       {history.map((h) => {
         const isRunningEntry = h.id === startedEntry?.id;
         // A running entry has the command set; treat it as expandable even without output/error yet
-        const hasDetails = !!(h.command || h.output || h.error) || isRunningEntry;
+        const hasDetails = !!(h.steps?.length || h.command || h.output || h.error) || isRunningEntry;
         const isOpen = expanded.has(h.id);
+        const runningSteps =
+          isRunningEntry && liveSteps.length > 0
+            ? liveSteps
+            : isRunningEntry && h.command
+              ? [{
+                  label: null,
+                  pkgManager: h.pkgManager,
+                  command: h.command,
+                  output: null,
+                  error: null,
+                  status: "started" as const,
+                }]
+              : [];
 
         return (
           <div key={h.id}>
@@ -519,31 +684,25 @@ function HistoryList({
 
             {isOpen && hasDetails && (
               <div className="ml-10 mr-2 mb-2 space-y-2">
-                {h.command && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Command</p>
-                    <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{h.command}</pre>
-                  </div>
-                )}
                 {isRunningEntry ? (
-                  <LiveOutput messages={commandOutput.messages} isActive={commandOutput.isActive} />
+                  <ActivityStepViewer
+                    viewerId={`activity-live-${h.id}`}
+                    steps={runningSteps}
+                    defaultToLastStep
+                    isLive
+                    phase={commandOutput.phase}
+                  />
+                ) : h.steps?.length ? (
+                  <ActivityStepViewer
+                    viewerId={`activity-history-${h.id}`}
+                    steps={h.steps}
+                  />
                 ) : (
-                  <>
-                    {(h.command || h.output) && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">Output</p>
-                        <pre className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">
-                          {h.output || <span className="text-slate-500 italic">No output</span>}
-                        </pre>
-                      </div>
-                    )}
-                    {h.error && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wide text-red-500 mb-1 font-semibold">Error</p>
-                        <pre className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">{h.error}</pre>
-                      </div>
-                    )}
-                  </>
+                  <LegacyActivityDetails
+                    command={h.command}
+                    output={h.output}
+                    error={h.error}
+                  />
                 )}
               </div>
             )}
