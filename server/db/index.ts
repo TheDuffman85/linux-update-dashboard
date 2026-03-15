@@ -119,6 +119,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     pkg_manager TEXT,
     detected_pkg_managers TEXT,
     disabled_pkg_managers TEXT,
+    auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
     os_name TEXT,
     os_version TEXT,
     kernel TEXT,
@@ -270,6 +271,9 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   const hasIgnoreKeptBackPackages = systemColumns.some(
     (column) => column.name === "ignore_kept_back_packages"
   );
+  const hasAutoHideKeptBackUpdates = systemColumns.some(
+    (column) => column.name === "auto_hide_kept_back_updates"
+  );
 
   if (!hasProxyJumpSystemId) {
     _db.run(sql`ALTER TABLE systems ADD COLUMN proxy_jump_system_id INTEGER REFERENCES systems(id) ON DELETE RESTRICT`);
@@ -337,6 +341,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   }
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN disk TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0`);
   } catch {
     // Column already exists
   }
@@ -481,7 +490,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
-  migrateSystemsTableShape(hasIgnoreKeptBackPackages);
+  migrateSystemsTableShape(hasIgnoreKeptBackPackages, hasAutoHideKeptBackUpdates);
   _db.run(sql`
     WITH ordered AS (
       SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
@@ -557,7 +566,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     WHERE status = 'started'`);
 
   // Cleanup: remove obsolete settings
-  _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap')`);
+  _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap', 'auto_hide_kept_back_updates')`);
 
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
@@ -580,7 +589,10 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   return _db;
 }
 
-function migrateSystemsTableShape(hasIgnoreKeptBackPackages: boolean): void {
+function migrateSystemsTableShape(
+  hasIgnoreKeptBackPackages: boolean,
+  hasAutoHideKeptBackUpdates: boolean,
+): void {
   if (!_sqlite) return;
 
   const tableDefinition = _sqlite
@@ -591,7 +603,10 @@ function migrateSystemsTableShape(hasIgnoreKeptBackPackages: boolean): void {
     /UNIQUE\s*\(\s*hostname\s*,\s*port\s*,\s*username\s*\)/i.test(tableDefinition.sql);
 
   if (hasLegacyConstraint || hasIgnoreKeptBackPackages) {
-    rebuildSystemsTable(_sqlite);
+    rebuildSystemsTable(_sqlite, {
+      hasIgnoreKeptBackPackages,
+      hasAutoHideKeptBackUpdates,
+    });
   }
 
   _sqlite.exec(
@@ -600,7 +615,13 @@ function migrateSystemsTableShape(hasIgnoreKeptBackPackages: boolean): void {
   );
 }
 
-function rebuildSystemsTable(sqlite: Database): void {
+function rebuildSystemsTable(
+  sqlite: Database,
+  opts: {
+    hasIgnoreKeptBackPackages: boolean;
+    hasAutoHideKeptBackUpdates: boolean;
+  },
+): void {
   const systemsTableSql = `
     CREATE TABLE systems__new (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -624,6 +645,7 @@ function rebuildSystemsTable(sqlite: Database): void {
       pkg_manager TEXT,
       detected_pkg_managers TEXT,
       disabled_pkg_managers TEXT,
+      auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
       os_name TEXT,
       os_version TEXT,
       kernel TEXT,
@@ -645,7 +667,7 @@ function rebuildSystemsTable(sqlite: Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `;
-  const copiedColumns = [
+  const insertColumns = [
     "id",
     "sort_order",
     "name",
@@ -667,6 +689,7 @@ function rebuildSystemsTable(sqlite: Database): void {
     "pkg_manager",
     "detected_pkg_managers",
     "disabled_pkg_managers",
+    "auto_hide_kept_back_updates",
     "os_name",
     "os_version",
     "kernel",
@@ -686,15 +709,62 @@ function rebuildSystemsTable(sqlite: Database): void {
     "created_at",
     "last_notified_hash",
     "updated_at",
-  ].join(", ");
+  ];
+  const selectColumns = [
+    "id",
+    "sort_order",
+    "name",
+    "hostname",
+    "port",
+    "credential_id",
+    "proxy_jump_system_id",
+    "auth_type",
+    "username",
+    "encrypted_password",
+    "encrypted_private_key",
+    "encrypted_key_passphrase",
+    "encrypted_sudo_password",
+    "host_key_verification_enabled",
+    "trusted_host_key",
+    "trusted_host_key_algorithm",
+    "trusted_host_key_fingerprint_sha256",
+    "host_key_trusted_at",
+    "pkg_manager",
+    "detected_pkg_managers",
+    "disabled_pkg_managers",
+    opts.hasAutoHideKeptBackUpdates
+      ? "auto_hide_kept_back_updates"
+      : opts.hasIgnoreKeptBackPackages
+        ? "ignore_kept_back_packages AS auto_hide_kept_back_updates"
+        : "0 AS auto_hide_kept_back_updates",
+    "os_name",
+    "os_version",
+    "kernel",
+    "hostname_remote",
+    "uptime",
+    "arch",
+    "cpu_cores",
+    "memory",
+    "disk",
+    "exclude_from_upgrade_all",
+    "hidden",
+    "needs_reboot",
+    "boot_id",
+    "system_info_updated_at",
+    "is_reachable",
+    "last_seen_at",
+    "created_at",
+    "last_notified_hash",
+    "updated_at",
+  ];
 
   sqlite.exec("PRAGMA foreign_keys=OFF");
   try {
     sqlite.exec("BEGIN");
     sqlite.exec(systemsTableSql);
     sqlite.exec(
-      `INSERT INTO systems__new (${copiedColumns})
-       SELECT ${copiedColumns} FROM systems`
+      `INSERT INTO systems__new (${insertColumns.join(", ")})
+       SELECT ${selectColumns.join(", ")} FROM systems`
     );
     sqlite.exec("DROP TABLE systems");
     sqlite.exec("ALTER TABLE systems__new RENAME TO systems");

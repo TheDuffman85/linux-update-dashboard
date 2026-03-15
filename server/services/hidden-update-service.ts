@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db";
-import { hiddenUpdates, updateCache } from "../db/schema";
+import { hiddenUpdates, systems, updateCache } from "../db/schema";
 import type { ParsedUpdate } from "../ssh/parsers";
 
 type CachedUpdateRow = typeof updateCache.$inferSelect;
@@ -103,6 +103,15 @@ export function getVisibleCachedUpdates(systemId: number): CachedUpdateRow[] {
 
   if (updates.length === 0) return [];
   return filterVisibleUpdates(updates, listActiveHiddenUpdates(systemId));
+}
+
+export function shouldAutoHideKeptBackUpdates(systemId: number): boolean {
+  const row = getDb()
+    .select({ autoHideKeptBackUpdates: systems.autoHideKeptBackUpdates })
+    .from(systems)
+    .where(eq(systems.id, systemId))
+    .get();
+  return row?.autoHideKeptBackUpdates === 1;
 }
 
 export function getVisibleUpdateSummary(systemId: number): {
@@ -233,6 +242,47 @@ export function createHiddenUpdate(
       ),
     )
     .get() ?? null;
+}
+
+export function autoHideKeptBackUpdatesForCheck(
+  systemId: number,
+  updates: ParsedUpdate[],
+  successfulPkgManagers: string[],
+): void {
+  if (!shouldAutoHideKeptBackUpdates(systemId)) return;
+
+  const checkedManagers = new Set(
+    successfulPkgManagers.filter((manager) => manager.length > 0),
+  );
+  if (checkedManagers.size === 0) return;
+
+  for (const update of updates) {
+    if (!update.isKeptBack || !checkedManagers.has(update.pkgManager)) continue;
+    createHiddenUpdate(systemId, update);
+  }
+}
+
+export function autoHideCachedKeptBackUpdates(systemId: number): void {
+  if (!shouldAutoHideKeptBackUpdates(systemId)) return;
+
+  const keptBackUpdates = getDb()
+    .select({
+      pkgManager: updateCache.pkgManager,
+      packageName: updateCache.packageName,
+      newVersion: updateCache.newVersion,
+    })
+    .from(updateCache)
+    .where(
+      and(
+        eq(updateCache.systemId, systemId),
+        eq(updateCache.isKeptBack, 1),
+      ),
+    )
+    .all();
+
+  for (const update of keptBackUpdates) {
+    createHiddenUpdate(systemId, update);
+  }
 }
 
 export function deleteHiddenUpdate(

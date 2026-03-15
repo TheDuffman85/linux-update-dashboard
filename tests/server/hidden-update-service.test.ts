@@ -9,6 +9,7 @@ import { hiddenUpdates, systems, updateCache } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
   HIDDEN_UPDATE_RETENTION_DAYS,
+  autoHideCachedKeptBackUpdates,
   createHiddenUpdate,
   getVisibleCachedUpdates,
   getVisibleUpdateSummary,
@@ -181,5 +182,44 @@ describe("hidden update service", () => {
       .where(eq(hiddenUpdates.systemId, systemId))
       .all();
     expect(remaining).toHaveLength(0);
+  });
+
+  test("can auto-hide kept-back updates already in cache for one enabled system", () => {
+    const db = getDb();
+    const systemId = createSystem();
+
+    db.update(systems)
+      .set({ autoHideKeptBackUpdates: 1 })
+      .where(eq(systems.id, systemId))
+      .run();
+
+    db.insert(updateCache).values([
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+        isKeptBack: 1,
+      },
+      {
+        systemId,
+        pkgManager: "apt",
+        packageName: "curl",
+        currentVersion: "8.0",
+        newVersion: "8.1",
+        isKeptBack: 0,
+      },
+    ]).run();
+
+    autoHideCachedKeptBackUpdates(systemId);
+
+    expect(getVisibleCachedUpdates(systemId).map((update) => update.packageName)).toEqual(["curl"]);
+    expect(getVisibleUpdateSummary(systemId)).toEqual({
+      updateCount: 1,
+      securityCount: 0,
+      keptBackCount: 0,
+    });
+    expect(listActiveHiddenUpdates(systemId).map((update) => update.packageName)).toEqual(["bash"]);
   });
 });

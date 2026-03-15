@@ -61,6 +61,12 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     return "hidden must be a boolean";
   }
   if (
+    body.autoHideKeptBackUpdates !== undefined &&
+    typeof body.autoHideKeptBackUpdates !== "boolean"
+  ) {
+    return "autoHideKeptBackUpdates must be a boolean";
+  }
+  if (
     body.validatedConfigToken !== undefined &&
     typeof body.validatedConfigToken !== "string"
   ) {
@@ -411,6 +417,7 @@ systems.post("/", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers ?? undefined,
+      autoHideKeptBackUpdates: body.autoHideKeptBackUpdates,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
       hidden: body.hidden,
       sourceSystemId,
@@ -486,6 +493,7 @@ systems.put("/:id", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers ?? undefined,
+      autoHideKeptBackUpdates: body.autoHideKeptBackUpdates,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
       hidden: body.hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
@@ -494,6 +502,10 @@ systems.put("/:id", async (c) => {
     const response = getSystemWriteErrorResponse(error);
     if (response) return response;
     throw error;
+  }
+
+  if (body.autoHideKeptBackUpdates === true) {
+    hiddenUpdateService.autoHideCachedKeptBackUpdates(id);
   }
 
   await notificationRuntime.syncSystemState(id);

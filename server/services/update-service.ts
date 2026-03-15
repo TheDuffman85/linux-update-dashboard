@@ -486,6 +486,11 @@ async function checkUpdatesUnlocked(
       allUpdates,
       successfulPkgManagers,
     );
+    hiddenUpdateService.autoHideKeptBackUpdatesForCheck(
+      systemId,
+      allUpdates,
+      successfulPkgManagers,
+    );
   }
   const visibleSummary =
     successfulChecks > 0

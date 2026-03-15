@@ -5,10 +5,11 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, systems, updateCache, updateHistory } from "../../server/db/schema";
+import { credentials, hiddenUpdates, systems, updateCache, updateHistory } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import { checkUpdates } from "../../server/services/update-service";
+import { getVisibleCachedUpdates, getVisibleUpdateSummary } from "../../server/services/hidden-update-service";
 import { createSystem } from "../../server/services/system-service";
 import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
 
@@ -188,6 +189,70 @@ describe("checkUpdates", () => {
     expect(cached).toEqual([
       { packageName: "curl", isKeptBack: 0 },
       { packageName: "libcamera-ipa", isKeptBack: 1 },
+    ]);
+  });
+
+  test("auto-hides kept-back apt packages when the system setting is enabled", async () => {
+    const db = getDb();
+    const systemId = createAptSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+
+    db.update(systems)
+      .set({ autoHideKeptBackUpdates: 1 })
+      .where(eq(systems.id, systemId))
+      .run();
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt list --upgradable")) {
+        return {
+          stdout: [
+            "curl/stable 8.0 amd64 [upgradable from: 7.0]",
+            "libcamera-ipa/stable 1.0 amd64 [upgradable from: 0.9]",
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      if (command.includes("apt-get -s -o Debug::NoLocking=1 upgrade")) {
+        return {
+          stdout: "Inst curl [7.0] (8.0 stable [amd64])\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await checkUpdates(systemId);
+
+    expect(result.map((entry) => entry.packageName)).toEqual(["curl", "libcamera-ipa"]);
+    expect(getVisibleCachedUpdates(systemId).map((entry) => entry.packageName)).toEqual(["curl"]);
+    expect(getVisibleUpdateSummary(systemId)).toEqual({
+      updateCount: 1,
+      securityCount: 0,
+      keptBackCount: 0,
+    });
+
+    const hidden = db
+      .select({
+        packageName: hiddenUpdates.packageName,
+        isKeptBack: hiddenUpdates.isKeptBack,
+        active: hiddenUpdates.active,
+      })
+      .from(hiddenUpdates)
+      .where(eq(hiddenUpdates.systemId, systemId))
+      .all();
+
+    expect(hidden).toEqual([
+      { packageName: "libcamera-ipa", isKeptBack: 1, active: 1 },
     ]);
   });
 });

@@ -166,7 +166,7 @@ describe("database startup cleanup", () => {
     ]);
   });
 
-  test("drops the legacy ignore_kept_back_packages column on restart and preserves system data", () => {
+  test("migrates the legacy kept-back column into the per-system auto-hide flag", () => {
     closeDatabase();
     unlinkSync(dbPath);
 
@@ -237,11 +237,13 @@ describe("database startup cleanup", () => {
       .all() as Array<{ name?: string }>;
     restartedSqlite.close();
     expect(columns.some((column) => column.name === "ignore_kept_back_packages")).toBe(false);
+    expect(columns.some((column) => column.name === "auto_hide_kept_back_updates")).toBe(true);
 
     const restarted = listSystems();
     expect(restarted).toHaveLength(1);
     expect(restarted[0].name).toBe("Legacy Debian");
     expect(restarted[0].pkgManager).toBe("apt");
+    expect(restarted[0].autoHideKeptBackUpdates).toBe(1);
     expect(restarted[0].excludeFromUpgradeAll).toBe(1);
     expect(restarted[0].needsReboot).toBe(1);
     expect(restarted[0].isReachable).toBe(1);

@@ -14,6 +14,7 @@ interface SystemFormData {
   validatedConfigToken?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
   sourceSystemId?: number;
@@ -33,9 +34,10 @@ export function SystemForm({
   onCancel,
   loading = false,
 }: {
-  initial?: Omit<Partial<SystemFormData>, "excludeFromUpgradeAll"> & {
+  initial?: Omit<Partial<SystemFormData>, "autoHideKeptBackUpdates" | "excludeFromUpgradeAll"> & {
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
+    autoHideKeptBackUpdates?: number;
     excludeFromUpgradeAll?: number;
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
@@ -83,6 +85,9 @@ export function SystemForm({
   );
   const [disabledManagers, setDisabledManagers] = useState<Set<string>>(
     new Set(initial?.disabledPkgManagers ?? [])
+  );
+  const [autoHideKeptBackUpdates, setAutoHideKeptBackUpdates] = useState(
+    initial?.autoHideKeptBackUpdates === 1
   );
   const [excludeFromUpgradeAll, setExcludeFromUpgradeAll] = useState(
     initial?.excludeFromUpgradeAll === 1
@@ -158,6 +163,7 @@ export function SystemForm({
       validatedConfigToken: validatedConfigToken || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: [...disabledManagers],
+      autoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,
       sourceSystemId,
@@ -407,6 +413,23 @@ export function SystemForm({
           />
           <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH credential password</p>
         </div>
+
+        <label className="flex items-start gap-3 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoHideKeptBackUpdates}
+            onChange={(e) => setAutoHideKeptBackUpdates(e.target.checked)}
+            className="rounded mt-0.5"
+          />
+          <span className="min-w-0">
+            <span className="block text-slate-700 dark:text-slate-200">
+              Auto-hide kept-back packages
+            </span>
+            <span className="block text-xs text-slate-400 mt-0.5">
+              Automatically move kept-back updates for this system into the hidden-updates list after refreshes.
+            </span>
+          </span>
+        </label>
 
         <label className="flex items-start gap-3 text-sm cursor-pointer">
           <input

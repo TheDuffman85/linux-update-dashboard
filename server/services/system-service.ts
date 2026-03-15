@@ -172,6 +172,7 @@ export function createSystem(data: {
   hostKeyVerificationEnabled?: boolean;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
   sourceSystemId?: number;
@@ -218,6 +219,9 @@ export function createSystem(data: {
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
+  if (data.autoHideKeptBackUpdates !== undefined) {
+    values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
+  }
   if (data.excludeFromUpgradeAll !== undefined) {
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
   }
@@ -257,6 +261,7 @@ export function updateSystem(
     hostKeyVerificationEnabled?: boolean;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
+    autoHideKeptBackUpdates?: boolean;
     excludeFromUpgradeAll?: boolean;
     hidden?: boolean;
     trustedHostKeyData?: ApprovedHostKeyInput;
@@ -301,6 +306,9 @@ export function updateSystem(
   }
   if (data.disabledPkgManagers !== undefined) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
+  }
+  if (data.autoHideKeptBackUpdates !== undefined) {
+    values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
   }
   if (data.excludeFromUpgradeAll !== undefined) {
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;

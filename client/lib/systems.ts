@@ -27,6 +27,7 @@ export interface System {
   pkgManager: string | null;
   detectedPkgManagers: string[] | null;
   disabledPkgManagers: string[] | null;
+  autoHideKeptBackUpdates: number;
   osName: string | null;
   osVersion: string | null;
   kernel: string | null;
@@ -157,6 +158,7 @@ export function useCreateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
       sourceSystemId?: number;
@@ -182,6 +184,7 @@ export function useUpdateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
