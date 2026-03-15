@@ -509,10 +509,8 @@ export default function SystemDetail() {
   }
 
   const { system, updates, history } = data;
-  const canOfferIgnoredKeptBackFullUpgrade =
-    system.supportsFullUpgrade === true && system.ignoreKeptBackPackages === 1;
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
-  const showUpgradeActions = showUpgradeAllButton || canOfferIgnoredKeptBackFullUpgrade;
+  const showUpgradeActions = showUpgradeAllButton;
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -795,9 +793,7 @@ export default function SystemDetail() {
         onConfirm={handleFullUpgradeAll}
         title="Full Upgrade All Packages"
         message={
-          system.updateCount > 0
-            ? `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`
-            : `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages, including kept-back packages hidden from the normal update count.`
+          `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`
         }
         confirmLabel="Full Upgrade"
         danger

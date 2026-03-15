@@ -128,7 +128,6 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     cpu_cores TEXT,
     memory TEXT,
     disk TEXT,
-    ignore_kept_back_packages INTEGER NOT NULL DEFAULT 0,
     exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
@@ -248,6 +247,9 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   const hasTrustedHostKeyAlgorithm = systemColumns.some((column) => column.name === "trusted_host_key_algorithm");
   const hasTrustedHostKeyFingerprintSha256 = systemColumns.some((column) => column.name === "trusted_host_key_fingerprint_sha256");
   const hasHostKeyTrustedAt = systemColumns.some((column) => column.name === "host_key_trusted_at");
+  const hasIgnoreKeptBackPackages = systemColumns.some(
+    (column) => column.name === "ignore_kept_back_packages"
+  );
 
   if (!hasProxyJumpSystemId) {
     _db.run(sql`ALTER TABLE systems ADD COLUMN proxy_jump_system_id INTEGER REFERENCES systems(id) ON DELETE RESTRICT`);
@@ -441,11 +443,6 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
-  try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN ignore_kept_back_packages INTEGER NOT NULL DEFAULT 0`);
-  } catch {
-    // Column already exists
-  }
 
   // Migration: add persisted system ordering
   try {
@@ -453,7 +450,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   } catch {
     // Column already exists
   }
-  migrateSystemsConnectionUniqueness();
+  migrateSystemsTableShape(hasIgnoreKeptBackPackages);
   _db.run(sql`
     WITH ordered AS (
       SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
@@ -552,7 +549,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   return _db;
 }
 
-function migrateSystemsConnectionUniqueness(): void {
+function migrateSystemsTableShape(hasIgnoreKeptBackPackages: boolean): void {
   if (!_sqlite) return;
 
   const tableDefinition = _sqlite
@@ -562,8 +559,8 @@ function migrateSystemsConnectionUniqueness(): void {
     typeof tableDefinition?.sql === "string" &&
     /UNIQUE\s*\(\s*hostname\s*,\s*port\s*,\s*username\s*\)/i.test(tableDefinition.sql);
 
-  if (hasLegacyConstraint) {
-    rebuildSystemsTableWithoutLegacyConstraint(_sqlite);
+  if (hasLegacyConstraint || hasIgnoreKeptBackPackages) {
+    rebuildSystemsTable(_sqlite);
   }
 
   _sqlite.exec(
@@ -572,7 +569,7 @@ function migrateSystemsConnectionUniqueness(): void {
   );
 }
 
-function rebuildSystemsTableWithoutLegacyConstraint(sqlite: Database): void {
+function rebuildSystemsTable(sqlite: Database): void {
   const systemsTableSql = `
     CREATE TABLE systems__new (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -605,7 +602,6 @@ function rebuildSystemsTableWithoutLegacyConstraint(sqlite: Database): void {
       cpu_cores TEXT,
       memory TEXT,
       disk TEXT,
-      ignore_kept_back_packages INTEGER NOT NULL DEFAULT 0,
       exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
@@ -649,7 +645,6 @@ function rebuildSystemsTableWithoutLegacyConstraint(sqlite: Database): void {
     "cpu_cores",
     "memory",
     "disk",
-    "ignore_kept_back_packages",
     "exclude_from_upgrade_all",
     "hidden",
     "needs_reboot",

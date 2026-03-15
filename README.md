@@ -455,7 +455,7 @@ The `system` JSON attribute object contains the detected host metadata that the 
 - system ID/name/hostname/port/username
 - package manager and detected/disabled package managers
 - OS name/version, kernel, uptime, architecture, CPU, memory, disk, boot ID
-- flags such as `ignore_kept_back_packages`, `exclude_from_upgrade_all`, `needs_reboot`, and reachability
+- flags such as `exclude_from_upgrade_all`, `needs_reboot`, and reachability
 - timestamps such as `last_seen_at`, `system_info_updated_at`, `created_at`, and `updated_at`
 
 The `packages` JSON attribute array contains one object per pending update with:

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { aptParser, parseAptKeptBackPackages } from "../../server/ssh/parsers/apt";
+import { aptParser } from "../../server/ssh/parsers/apt";
 import { dnfParser } from "../../server/ssh/parsers/dnf";
 import { yumParser } from "../../server/ssh/parsers/yum";
 import { pacmanParser } from "../../server/ssh/parsers/pacman";
@@ -62,54 +62,6 @@ describe("AptParser", () => {
     expect(cmd).not.toBeNull();
     expect(cmd).toContain("full-upgrade");
     expect(cmd).toContain("apt-get");
-  });
-
-  test("parse kept-back packages on a single line", () => {
-    const output = [
-      "Reading package lists...",
-      "The following packages have been kept back:",
-      "  libcamera-ipa librpicam-app1 rpicam-apps-core",
-      "0 upgraded, 0 newly installed, 0 to remove and 3 not upgraded.",
-    ].join("\n");
-
-    expect(parseAptKeptBackPackages(output)).toEqual([
-      "libcamera-ipa",
-      "librpicam-app1",
-      "rpicam-apps-core",
-    ]);
-  });
-
-  test("parse kept-back packages across wrapped lines", () => {
-    const output = [
-      "The following packages have been kept back:",
-      "  proxmox-kernel-6.17 zfs-initramfs zfs-zed",
-      "  zfsutils-linux",
-      "0 upgraded, 0 newly installed, 0 to remove and 4 not upgraded.",
-    ].join("\n");
-
-    expect(parseAptKeptBackPackages(output)).toEqual([
-      "proxmox-kernel-6.17",
-      "zfs-initramfs",
-      "zfs-zed",
-      "zfsutils-linux",
-    ]);
-  });
-
-  test("parse kept-back packages returns empty list when block is absent", () => {
-    expect(parseAptKeptBackPackages("0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded."))
-      .toEqual([]);
-  });
-
-  test("parse kept-back packages ignores unrelated apt output noise", () => {
-    const output = [
-      "Reading package lists...",
-      "Building dependency tree...",
-      "The following packages have been kept back:",
-      "  linux-image-amd64",
-      "Calculating upgrade...",
-    ].join("\n");
-
-    expect(parseAptKeptBackPackages(output)).toEqual(["linux-image-amd64"]);
   });
 });
 

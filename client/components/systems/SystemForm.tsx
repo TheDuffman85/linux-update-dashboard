@@ -14,7 +14,6 @@ interface SystemFormData {
   validatedConfigToken?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
-  ignoreKeptBackPackages?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
   sourceSystemId?: number;
@@ -34,10 +33,9 @@ export function SystemForm({
   onCancel,
   loading = false,
 }: {
-  initial?: Omit<Partial<SystemFormData>, "excludeFromUpgradeAll" | "ignoreKeptBackPackages"> & {
+  initial?: Omit<Partial<SystemFormData>, "excludeFromUpgradeAll"> & {
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
-    ignoreKeptBackPackages?: number;
     excludeFromUpgradeAll?: number;
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
@@ -85,9 +83,6 @@ export function SystemForm({
   );
   const [disabledManagers, setDisabledManagers] = useState<Set<string>>(
     new Set(initial?.disabledPkgManagers ?? [])
-  );
-  const [ignoreKeptBackPackages, setIgnoreKeptBackPackages] = useState(
-    initial?.ignoreKeptBackPackages === 1
   );
   const [excludeFromUpgradeAll, setExcludeFromUpgradeAll] = useState(
     initial?.excludeFromUpgradeAll === 1
@@ -163,7 +158,6 @@ export function SystemForm({
       validatedConfigToken: validatedConfigToken || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: [...disabledManagers],
-      ignoreKeptBackPackages,
       excludeFromUpgradeAll,
       hidden,
       sourceSystemId,
@@ -413,23 +407,6 @@ export function SystemForm({
           />
           <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH credential password</p>
         </div>
-
-        <label className="flex items-start gap-3 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={ignoreKeptBackPackages}
-            onChange={(e) => setIgnoreKeptBackPackages(e.target.checked)}
-            className="rounded mt-0.5"
-          />
-          <span className="min-w-0">
-            <span className="block text-slate-700 dark:text-slate-200">
-              Ignore APT kept-back packages
-            </span>
-            <span className="block text-xs text-slate-400 mt-0.5">
-              Debian/Ubuntu only. Excludes packages that normal `apt-get upgrade` would keep back from update counts and scheduled checks.
-            </span>
-          </span>
-        </label>
 
         <label className="flex items-start gap-3 text-sm cursor-pointer">
           <input

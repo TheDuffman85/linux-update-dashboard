@@ -6,7 +6,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { credentials, systems, updateCache, updateHistory } from "../../server/db/schema";
-import { logger } from "../../server/logger";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import { checkUpdates } from "../../server/services/update-service";
@@ -43,24 +42,20 @@ ABSENT
 
 describe("checkUpdates", () => {
   let tempDir: string;
-  let originalWarn: typeof logger.warn;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "ludash-check-updates-"));
     initEncryptor(randomBytes(32).toString("base64"));
     initDatabase(join(tempDir, "dashboard.db"));
-    originalWarn = logger.warn;
   });
 
   afterEach(() => {
-    logger.warn = originalWarn;
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
   function createAptSystem(options?: {
     sudoPassword?: string;
-    ignoreKeptBackPackages?: boolean;
   }): number {
     const db = getDb();
     const encryptor = getEncryptor();
@@ -74,20 +69,18 @@ describe("checkUpdates", () => {
     }).returning({ id: credentials.id }).get().id;
 
     const systemId = createSystem({
-      name: options?.ignoreKeptBackPackages ? "Debian Filtered" : "Debian",
+      name: "Debian",
       hostname: "127.0.0.1",
       port: 22,
       credentialId,
       sudoPassword: options?.sudoPassword ?? "testpass",
       hostKeyVerificationEnabled: false,
-      ignoreKeptBackPackages: options?.ignoreKeptBackPackages ?? false,
     });
 
     db.update(systems)
       .set({
         pkgManager: "apt",
         detectedPkgManagers: JSON.stringify(["apt"]),
-        ignoreKeptBackPackages: options?.ignoreKeptBackPackages ? 1 : 0,
       })
       .where(eq(systems.id, systemId))
       .run();
@@ -147,6 +140,7 @@ describe("checkUpdates", () => {
   test("keeps kept-back apt packages when filtering is disabled", async () => {
     const systemId = createAptSystem();
     const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    let simulationAttempted = false;
 
     (sshManager as any).connect = async () => ({});
     (sshManager as any).disconnect = () => {};
@@ -167,11 +161,15 @@ describe("checkUpdates", () => {
           exitCode: 0,
         };
       }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 -s upgrade")) {
+        simulationAttempted = true;
+      }
       throw new Error(`Unexpected command: ${command}`);
     };
 
     const result = await checkUpdates(systemId);
     expect(result.map((entry) => entry.packageName)).toEqual(["curl", "libcamera-ipa"]);
+    expect(simulationAttempted).toBe(false);
 
     const cached = getDb()
       .select({ packageName: updateCache.packageName })
@@ -182,98 +180,5 @@ describe("checkUpdates", () => {
       .sort();
 
     expect(cached).toEqual(["curl", "libcamera-ipa"]);
-  });
-
-  test("filters kept-back apt packages when enabled", async () => {
-    const systemId = createAptSystem({ ignoreKeptBackPackages: true });
-    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
-
-    (sshManager as any).connect = async () => ({});
-    (sshManager as any).disconnect = () => {};
-    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
-      if (command === SYSTEM_INFO_CMD) {
-        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
-      }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
-        return { stdout: "", stderr: "", exitCode: 0 };
-      }
-      if (command.includes("apt list --upgradable")) {
-        return {
-          stdout: [
-            "curl/stable 8.0 amd64 [upgradable from: 7.0]",
-            "libcamera-ipa/stable 1.0 amd64 [upgradable from: 0.9]",
-          ].join("\n"),
-          stderr: "",
-          exitCode: 0,
-        };
-      }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 -s upgrade")) {
-        return {
-          stdout: [
-            "Reading package lists...",
-            "The following packages have been kept back:",
-            "  libcamera-ipa",
-            "1 upgraded, 0 newly installed, 0 to remove and 1 not upgraded.",
-          ].join("\n"),
-          stderr: "",
-          exitCode: 0,
-        };
-      }
-      throw new Error(`Unexpected command: ${command}`);
-    };
-
-    const result = await checkUpdates(systemId);
-    expect(result.map((entry) => entry.packageName)).toEqual(["curl"]);
-
-    const cached = getDb()
-      .select({ packageName: updateCache.packageName })
-      .from(updateCache)
-      .where(eq(updateCache.systemId, systemId))
-      .all()
-      .map((entry) => entry.packageName);
-
-    expect(cached).toEqual(["curl"]);
-  });
-
-  test("keeps unfiltered apt packages when kept-back detection fails", async () => {
-    const systemId = createAptSystem({ ignoreKeptBackPackages: true });
-    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
-    const warnings: string[] = [];
-    logger.warn = (msg: string) => {
-      warnings.push(msg);
-    };
-
-    (sshManager as any).connect = async () => ({});
-    (sshManager as any).disconnect = () => {};
-    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
-      if (command === SYSTEM_INFO_CMD) {
-        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
-      }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
-        return { stdout: "", stderr: "", exitCode: 0 };
-      }
-      if (command.includes("apt list --upgradable")) {
-        return {
-          stdout: [
-            "curl/stable 8.0 amd64 [upgradable from: 7.0]",
-            "libcamera-ipa/stable 1.0 amd64 [upgradable from: 0.9]",
-          ].join("\n"),
-          stderr: "",
-          exitCode: 0,
-        };
-      }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 -s upgrade")) {
-        return {
-          stdout: "E: Could not get lock",
-          stderr: "",
-          exitCode: 100,
-        };
-      }
-      throw new Error(`Unexpected command: ${command}`);
-    };
-
-    const result = await checkUpdates(systemId);
-    expect(result.map((entry) => entry.packageName)).toEqual(["curl", "libcamera-ipa"]);
-    expect(warnings).toContain("APT kept-back detection failed");
   });
 });

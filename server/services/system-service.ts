@@ -171,7 +171,6 @@ export function createSystem(data: {
   hostKeyVerificationEnabled?: boolean;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
-  ignoreKeptBackPackages?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
   sourceSystemId?: number;
@@ -218,9 +217,6 @@ export function createSystem(data: {
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
-  if (data.ignoreKeptBackPackages !== undefined) {
-    values.ignoreKeptBackPackages = data.ignoreKeptBackPackages ? 1 : 0;
-  }
   if (data.excludeFromUpgradeAll !== undefined) {
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
   }
@@ -260,7 +256,6 @@ export function updateSystem(
     hostKeyVerificationEnabled?: boolean;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
-    ignoreKeptBackPackages?: boolean;
     excludeFromUpgradeAll?: boolean;
     hidden?: boolean;
     trustedHostKeyData?: ApprovedHostKeyInput;
@@ -288,9 +283,6 @@ export function updateSystem(
     data.disabledPkgManagers !== undefined &&
     JSON.stringify(data.disabledPkgManagers) !==
       (existing.disabledPkgManagers ?? null);
-  const ignoreKeptBackPackagesChanged =
-    data.ignoreKeptBackPackages !== undefined &&
-    (data.ignoreKeptBackPackages ? 1 : 0) !== existing.ignoreKeptBackPackages;
 
   const values: Record<string, unknown> = {
     name: data.name,
@@ -308,9 +300,6 @@ export function updateSystem(
   }
   if (data.disabledPkgManagers !== undefined) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
-  }
-  if (data.ignoreKeptBackPackages !== undefined) {
-    values.ignoreKeptBackPackages = data.ignoreKeptBackPackages ? 1 : 0;
   }
   if (data.excludeFromUpgradeAll !== undefined) {
     values.excludeFromUpgradeAll = data.excludeFromUpgradeAll ? 1 : 0;
@@ -341,7 +330,7 @@ export function updateSystem(
       .set(values as Partial<typeof systems.$inferInsert>)
       .where(eq(systems.id, systemId))
       .run();
-    if (disabledPkgManagersChanged || ignoreKeptBackPackagesChanged) {
+    if (disabledPkgManagersChanged) {
       cacheService.invalidateCache(systemId);
     }
   } catch (error) {

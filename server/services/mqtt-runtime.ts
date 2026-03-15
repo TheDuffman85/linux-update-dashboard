@@ -220,7 +220,6 @@ function buildSafeSystemAttributes(
       memory: system.memory,
       disk: system.disk,
       boot_id: system.bootId,
-      ignore_kept_back_packages: system.ignoreKeptBackPackages === 1,
       exclude_from_upgrade_all: system.excludeFromUpgradeAll === 1,
       hidden: system.hidden === 1,
       needs_reboot: system.needsReboot === 1,

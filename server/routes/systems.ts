@@ -59,12 +59,6 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     return "hidden must be a boolean";
   }
   if (
-    body.ignoreKeptBackPackages !== undefined &&
-    typeof body.ignoreKeptBackPackages !== "boolean"
-  ) {
-    return "ignoreKeptBackPackages must be a boolean";
-  }
-  if (
     body.validatedConfigToken !== undefined &&
     typeof body.validatedConfigToken !== "string"
   ) {
@@ -362,7 +356,6 @@ systems.post("/", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers ?? undefined,
-      ignoreKeptBackPackages: body.ignoreKeptBackPackages,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
       hidden: body.hidden,
       sourceSystemId,
@@ -438,7 +431,6 @@ systems.put("/:id", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword: body.sudoPassword || undefined,
       disabledPkgManagers: body.disabledPkgManagers ?? undefined,
-      ignoreKeptBackPackages: body.ignoreKeptBackPackages,
       excludeFromUpgradeAll: body.excludeFromUpgradeAll,
       hidden: body.hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,

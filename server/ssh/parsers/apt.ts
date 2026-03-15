@@ -7,52 +7,6 @@ const PATTERN =
 
 export const APT_LOCK_WAIT = "-o DPkg::Lock::Timeout=60";
 
-export function getAptKeptBackSimulationCommand(): string {
-  return (
-    "export DEBIAN_FRONTEND=noninteractive; " +
-    sudo(`apt-get ${APT_LOCK_WAIT} -s upgrade`) +
-    " 2>&1"
-  );
-}
-
-export function parseAptKeptBackPackages(output: string): string[] | null {
-  const lines = output.split("\n");
-  const heading = "The following packages have been kept back:";
-
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() !== heading) continue;
-
-    const packages: string[] = [];
-    let sawPackageLine = false;
-
-    for (let j = i + 1; j < lines.length; j++) {
-      const raw = lines[j];
-      const trimmed = raw.trim();
-
-      if (!trimmed) {
-        if (sawPackageLine) break;
-        continue;
-      }
-
-      if (!/^\s+/.test(raw)) break;
-
-      sawPackageLine = true;
-      for (const token of trimmed.split(/\s+/)) {
-        try {
-          packages.push(validatePackageName(token));
-        } catch {
-          return null;
-        }
-      }
-    }
-
-    if (!sawPackageLine) return null;
-    return [...new Set(packages)];
-  }
-
-  return [];
-}
-
 export const aptParser: PackageParser = {
   name: "apt",
 
