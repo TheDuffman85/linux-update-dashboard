@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
+import { useToast } from "../../context/ToastContext";
+import { CredentialForm } from "../credentials/CredentialForm";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Modal } from "../Modal";
-import { useCredentials } from "../../lib/credentials";
+import {
+  useCreateCredential,
+  useCredentials,
+  type CredentialKind,
+} from "../../lib/credentials";
+import { SSH_CREDENTIAL_KINDS } from "../../lib/credential-form";
 import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/systems";
 
 interface SystemFormData {
@@ -51,13 +58,13 @@ export function SystemForm({
 }) {
   const testConnection = useTestConnection();
   const revokeHostKey = useRevokeHostKey();
+  const createCredential = useCreateCredential();
   const { data: allCredentials } = useCredentials();
   const { data: allSystems } = useSystems();
+  const { addToast } = useToast();
   const credentials =
     allCredentials?.filter((credential) =>
-      credential.kind === "usernamePassword" ||
-      credential.kind === "sshKey" ||
-      credential.kind === "certificate"
+      SSH_CREDENTIAL_KINDS.includes(credential.kind)
     ) || [];
   const availableSystems =
     allSystems?.filter((system) => system.id !== systemId) || [];
@@ -118,6 +125,7 @@ export function SystemForm({
     initial?.trustedHostKeyFingerprintSha256 ?? null
   );
   const [showUnapprovedSaveWarning, setShowUnapprovedSaveWarning] = useState(false);
+  const [showCreateCredential, setShowCreateCredential] = useState(false);
 
   const resetValidatedState = () => {
     setValidatedConfigToken(null);
@@ -261,6 +269,21 @@ export function SystemForm({
     );
   };
 
+  const handleCreateCredential = (data: {
+    name: string;
+    kind: CredentialKind;
+    payload: Record<string, string>;
+  }) => {
+    createCredential.mutate(data, {
+      onSuccess: (result) => {
+        setCredentialId(result.id);
+        setShowCreateCredential(false);
+        addToast("Credential created", "success");
+      },
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -282,21 +305,37 @@ export function SystemForm({
 
         <div>
           <label className={labelClass}>SSH Credential</label>
-          <select
-            value={credentialId || ""}
-            onChange={(e) => setCredentialId(Number(e.target.value))}
-            required
-            className={inputClass}
-          >
-            <option value="" disabled>
-              Select a credential
-            </option>
-            {credentials.map((credential) => (
-              <option key={credential.id} value={credential.id}>
-                {credential.name}
+          <div className="flex items-center gap-3">
+            <select
+              value={credentialId || ""}
+              onChange={(e) => setCredentialId(Number(e.target.value))}
+              required
+              className={`${inputClass} flex-1`}
+            >
+              <option value="" disabled>
+                {credentials.length > 0
+                  ? "Select a credential"
+                  : "Create a credential to continue"}
               </option>
-            ))}
-          </select>
+              {credentials.map((credential) => (
+                <option key={credential.id} value={credential.id}>
+                  {credential.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setShowCreateCredential(true)}
+              className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
+            >
+              New Credential
+            </button>
+          </div>
+          {credentials.length === 0 && (
+            <div className="mt-2 rounded-lg border border-dashed border-border bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
+              No SSH credentials are available yet. Create one here without leaving this dialog.
+            </div>
+          )}
         </div>
 
         <div>
@@ -594,6 +633,19 @@ export function SystemForm({
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={showCreateCredential}
+        onClose={() => setShowCreateCredential(false)}
+        title="Add Credential"
+        dismissible={!createCredential.isPending}
+      >
+        <CredentialForm
+          onSubmit={handleCreateCredential}
+          onCancel={() => setShowCreateCredential(false)}
+          loading={createCredential.isPending}
+        />
       </Modal>
 
       <ConfirmDialog
