@@ -9,6 +9,10 @@ export const yumParser: PackageParser = {
     return [buildCheckCommand("yum")];
   },
 
+  getCheckCommandLabels() {
+    return ["Checking for updates"];
+  },
+
   // Same output format as DNF
   parseCheckOutput(stdout, stderr, exitCode) {
     const updates = dnfParser.parseCheckOutput(stdout, stderr, exitCode);

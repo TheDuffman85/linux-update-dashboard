@@ -115,6 +115,21 @@ function availabilityForSystem(system: SystemRow): "online" | "offline" {
   return system.isReachable === 1 ? "online" : "offline";
 }
 
+function formatHomeAssistantAppVersion(version: string | null, branch: string): string | null {
+  if (!version) return null;
+
+  const trimmed = version.trim();
+  if (!trimmed) return null;
+
+  if (branch === "dev") {
+    if (/^dev-\d{12}$/.test(trimmed)) return trimmed;
+    if (/^\d{12}$/.test(trimmed)) return `dev-${trimmed}`;
+    return trimmed;
+  }
+
+  return trimmed.replace(/^v/i, "");
+}
+
 function isMutatingOperation(type: string | undefined): boolean {
   return type === "upgrade_all" || type === "full_upgrade_all" || type === "upgrade_package";
 }
@@ -259,8 +274,11 @@ function buildAppEntity(
 ): DiscoveryEntity {
   const componentId = "app_update";
   const topicBase = buildEntityBaseTopic(config, row.id, componentId);
-  const installedVersion = status.currentVersion || "unknown";
-  const latestVersion = status.remoteVersion || installedVersion;
+  const installedVersion =
+    formatHomeAssistantAppVersion(status.currentVersion, status.currentBranch) || "unknown";
+  const latestVersion = status.updateAvailable
+    ? formatHomeAssistantAppVersion(status.remoteVersion, status.currentBranch) || installedVersion
+    : installedVersion;
   const releaseSummary = status.updateAvailable
     ? `Linux Update Dashboard: ${installedVersion} -> ${latestVersion}`
     : "Linux Update Dashboard is up to date";

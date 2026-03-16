@@ -7,7 +7,7 @@ import { randomBytes } from "crypto";
 import nodemailer from "nodemailer";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { notifications } from "../../server/db/schema";
+import { notificationDeliveredUpdates, notifications, systems } from "../../server/db/schema";
 import notificationsRoutes from "../../server/routes/notifications";
 import { getEncryptor, initEncryptor } from "../../server/security";
 
@@ -69,7 +69,8 @@ describe("notifications routes validation", () => {
         config: {
           smtpHost: "smtp.example.com",
           smtpPort: "587",
-          smtpSecure: "true",
+          smtpTlsMode: "starttls",
+          allowInsecureTls: "false",
           smtpUser: "mailer",
           smtpPassword: "smtp-secret",
           smtpFrom: "dashboard@example.com",
@@ -80,6 +81,8 @@ describe("notifications routes validation", () => {
 
     expect(res.status).toBe(201);
     const stored = getDb().select().from(notifications).get();
+    expect(stored?.config).toContain('"smtpTlsMode":"starttls"');
+    expect(stored?.config).toContain('"allowInsecureTls":"false"');
     expect(stored?.config).toContain('"smtpUser":"mailer"');
     expect(stored?.config).toContain('"smtpPassword":"');
     expect(stored?.config).not.toContain("smtp-secret");
@@ -97,7 +100,8 @@ describe("notifications routes validation", () => {
         config: {
           smtpHost: "smtp.example.com",
           smtpPort: "587",
-          smtpSecure: "true",
+          smtpTlsMode: "starttls",
+          allowInsecureTls: "false",
           smtpUser: "mailer",
           smtpPassword: "smtp-secret",
           smtpFrom: "dashboard@example.com",
@@ -172,6 +176,7 @@ describe("notifications routes validation", () => {
       config: JSON.stringify({
         smtpHost: "smtp.example.com",
         smtpPort: "587",
+        smtpTlsMode: "starttls",
         smtpFrom: "dashboard@example.com",
         emailTo: "admin@example.com",
       }),
@@ -190,6 +195,31 @@ describe("notifications routes validation", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain("email importance override");
+  });
+
+  test("rejects email notifications with invalid tls modes", async () => {
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops email",
+        type: "email",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        config: {
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpTlsMode: "bogus",
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("smtp TLS mode");
   });
 
   test("rejects inline test requests with invalid ntfy priority overrides", async () => {
@@ -233,6 +263,56 @@ describe("notifications routes validation", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe("MQTT topic is required");
+  });
+
+  test("resets update dedupe state for a notification channel", async () => {
+    const db = getDb();
+    const system = db.insert(systems).values({
+      name: "Alpha",
+      hostname: "alpha.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get();
+    const inserted = db.insert(notifications).values({
+      name: "Ops webhook",
+      type: "webhook",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      config: JSON.stringify({
+        preset: "custom",
+        method: "POST",
+        url: "http://example.com/hook",
+        query: [],
+        headers: [],
+        auth: { mode: "none" },
+        body: { mode: "text", template: "{{event.body}}" },
+        timeoutMs: 10000,
+        retryAttempts: 0,
+        retryDelayMs: 0,
+        allowInsecureTls: false,
+      }),
+    }).returning({ id: notifications.id }).get();
+
+    db.insert(notificationDeliveredUpdates).values({
+      notificationId: inserted.id,
+      systemId: system.id,
+      pkgManager: "apt",
+      packageName: "bash",
+      newVersion: "1.1",
+    }).run();
+
+    const res = await app.request(`/api/notifications/${inserted.id}/reset-update-dedupe`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(200);
+
+    const delivered = db.select()
+      .from(notificationDeliveredUpdates)
+      .where(eq(notificationDeliveredUpdates.notificationId, inserted.id))
+      .all();
+    expect(delivered).toHaveLength(0);
   });
 
   test("rejects gotify notifications with invalid priority overrides", async () => {
@@ -408,6 +488,8 @@ describe("notifications routes validation", () => {
       expect(listRes.status).toBe(200);
       const listBody = await listRes.json();
       expect(listBody.notifications[0].config.smtpPassword).toBe("(stored)");
+      expect(listBody.notifications[0].config.smtpTlsMode).toBe("starttls");
+      expect(listBody.notifications[0].config.smtpSecure).toBeUndefined();
 
       const updateRes = await app.request(`/api/notifications/${inserted.id}`, {
         method: "PUT",
@@ -427,6 +509,8 @@ describe("notifications routes validation", () => {
         .where(eq(notifications.id, inserted.id))
         .get();
       expect(stored?.config).toContain(encryptedPassword);
+      expect(stored?.config).toContain('"smtpTlsMode":"starttls"');
+      expect(stored?.config).not.toContain('"smtpSecure"');
       expect(stored?.config).not.toContain('"(stored)"');
 
       const testRes = await app.request("/api/notifications/test", {
@@ -439,7 +523,8 @@ describe("notifications routes validation", () => {
           config: {
             smtpHost: "smtp.example.com",
             smtpPort: "587",
-            smtpSecure: "true",
+            smtpTlsMode: "starttls",
+            allowInsecureTls: "false",
             smtpUser: "mailer",
             smtpPassword: "(stored)",
             smtpFrom: "dashboard@example.com",

@@ -215,23 +215,51 @@ export class SSHConnectionManager {
     this.encryptor = encryptor;
   }
 
+  getRuntimeConfig(): {
+    maxConcurrent: number;
+    defaultTimeout: number;
+    defaultCmdTimeout: number;
+  } {
+    return {
+      maxConcurrent: this.maxConcurrent,
+      defaultTimeout: this.defaultTimeout,
+      defaultCmdTimeout: this.defaultCmdTimeout,
+    };
+  }
+
+  updateRuntimeConfig(
+    maxConcurrent: number,
+    defaultTimeout: number,
+    defaultCmdTimeout: number
+  ): void {
+    this.maxConcurrent = maxConcurrent;
+    this.defaultTimeout = defaultTimeout;
+    this.defaultCmdTimeout = defaultCmdTimeout;
+    this.drainQueue();
+  }
+
+  private drainQueue(): void {
+    while (this.currentConnections < this.maxConcurrent) {
+      const next = this.queue.shift();
+      if (!next) break;
+      this.currentConnections++;
+      next();
+    }
+  }
+
   private async acquireSemaphore(): Promise<void> {
     if (this.currentConnections < this.maxConcurrent) {
       this.currentConnections++;
       return;
     }
     return new Promise<void>((resolve) => {
-      this.queue.push(() => {
-        this.currentConnections++;
-        resolve();
-      });
+      this.queue.push(resolve);
     });
   }
 
   private releaseSemaphore(): void {
     this.currentConnections--;
-    const next = this.queue.shift();
-    if (next) next();
+    this.drainQueue();
   }
 
   async connect(
@@ -946,6 +974,24 @@ export function initSSHManager(
     defaultTimeout,
     defaultCmdTimeout,
     encryptor
+  );
+  return _sshManager;
+}
+
+export function hasSSHManager(): boolean {
+  return _sshManager !== null;
+}
+
+export function reconfigureSSHManager(
+  maxConcurrent: number,
+  defaultTimeout: number,
+  defaultCmdTimeout: number
+): SSHConnectionManager {
+  if (!_sshManager) throw new Error("SSH manager not initialized");
+  _sshManager.updateRuntimeConfig(
+    maxConcurrent,
+    defaultTimeout,
+    defaultCmdTimeout
   );
   return _sshManager;
 }

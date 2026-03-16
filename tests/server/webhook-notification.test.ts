@@ -9,13 +9,16 @@ import { join } from "path";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { notifications, systems, updateCache } from "../../server/db/schema";
-import { initEncryptor } from "../../server/security";
+import { getEncryptor, initEncryptor } from "../../server/security";
 import {
   processScheduledDigests,
   processScheduledResults,
 } from "../../server/services/notification-service";
 import { webhookProvider } from "../../server/services/notifications/webhook";
 import type { NotificationPayload } from "../../server/services/notifications";
+import { initSSHManager } from "../../server/ssh/connection";
+import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
+import { applyUpgradePackage } from "../../server/services/update-service";
 
 function buildPayload(): NotificationPayload {
   const event = {
@@ -58,11 +61,12 @@ function buildPayload(): NotificationPayload {
 
 function mockHttpRequest(responseStatus: number, responseBody = "") {
   const originalRequest = http.request;
-  let requestBody = "";
+  const requestBodies: string[] = [];
   let requestOptions: Record<string, unknown> | undefined;
 
   (http as any).request = ((options: Record<string, unknown>, callback: (res: IncomingMessage) => void) => {
     requestOptions = options;
+    let requestBody = "";
 
     const req = new EventEmitter() as EventEmitter & {
       write: (chunk: string) => void;
@@ -80,6 +84,7 @@ function mockHttpRequest(responseStatus: number, responseBody = "") {
     };
     req.end = () => {
       queueMicrotask(() => {
+        requestBodies.push(requestBody);
         const res = new EventEmitter() as IncomingMessage;
         (res as any).statusCode = responseStatus;
         (res as any).setEncoding = () => res;
@@ -95,7 +100,8 @@ function mockHttpRequest(responseStatus: number, responseBody = "") {
   }) as typeof http.request;
 
   return {
-    getRequestBody: () => requestBody,
+    getRequestBody: () => requestBodies.at(-1) ?? "",
+    getRequestCount: () => requestBodies.length,
     getRequestOptions: () => requestOptions,
     restore: () => {
       (http as any).request = originalRequest;
@@ -209,6 +215,172 @@ describe("webhook provider sending", () => {
   afterEach(() => {
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("does not resend update notifications after a manual package upgrade shrinks the update set", async () => {
+    const requestMock = mockHttpRequest(200, "ok");
+
+    try {
+      const db = getDb();
+      const encryptor = getEncryptor();
+      const insertedSystem = db.insert(systems).values({
+        name: "manual-web",
+        hostname: "manual-web.local",
+        port: 22,
+        credentialId: null,
+        authType: "password",
+        username: "root",
+        encryptedPassword: encryptor.encrypt("testpass"),
+        encryptedSudoPassword: encryptor.encrypt("testpass"),
+        pkgManager: "apt",
+        detectedPkgManagers: '["apt"]',
+        hidden: 0,
+        isReachable: 1,
+      }).returning({ id: systems.id }).get();
+
+      db.insert(updateCache).values([
+        {
+          systemId: insertedSystem.id,
+          pkgManager: "apt",
+          packageName: "bash",
+          currentVersion: "1.0",
+          newVersion: "1.1",
+          isSecurity: 0,
+        },
+        {
+          systemId: insertedSystem.id,
+          pkgManager: "apt",
+          packageName: "curl",
+          currentVersion: "8.0",
+          newVersion: "8.1",
+          isSecurity: 1,
+        },
+      ]).run();
+
+      db.insert(notifications).values({
+        name: "Webhook",
+        type: "webhook",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify(webhookProvider.prepareConfigForStorage({
+          preset: "custom",
+          method: "POST",
+          url: "http://example.com/hook",
+          query: [],
+          headers: [],
+          auth: { mode: "none" },
+          body: { mode: "text", template: "{{event.body}}" },
+          timeoutMs: 10000,
+          retryAttempts: 0,
+          retryDelayMs: 0,
+          allowInsecureTls: false,
+        })),
+      }).run();
+
+      await processScheduledResults([
+        {
+          systemId: insertedSystem.id,
+          systemName: "manual-web",
+          updateCount: 2,
+          securityCount: 1,
+          keptBackCount: 0,
+          previouslyReachable: true,
+          nowUnreachable: false,
+        },
+      ]);
+
+      expect(requestMock.getRequestCount()).toBe(1);
+
+      const sshManager = initSSHManager(1, 1, 1, encryptor);
+      (sshManager as any).connect = async () => ({});
+      (sshManager as any).disconnect = () => {};
+      (sshManager as any).runPersistentCommand = async (_conn: unknown, command: string) => {
+        if (command.includes("install --only-upgrade -y curl")) {
+          return {
+            stdout: "curl upgraded\n",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        throw new Error(`Unexpected persistent command: ${command}`);
+      };
+      (sshManager as any).runCommand = async (
+        _conn: unknown,
+        command: string,
+      ) => {
+        if (command === SYSTEM_INFO_CMD) {
+          return {
+            stdout: `===OS===
+NAME="Ubuntu"
+PRETTY_NAME="Ubuntu 24.04"
+VERSION_ID="24.04"
+===KERNEL===
+6.8.0
+===HOSTNAME===
+manual-web
+===UPTIME===
+up 1 day
+===ARCH===
+x86_64
+===CPU===
+2
+===MEM===
+Mem: 2Gi
+===DISK===
+/dev/root 20G 5G 15G 25% /
+===BOOT_ID===
+boot-id
+===REBOOT_FILE===
+ABSENT
+===NEEDS_RESTARTING===
+0
+===INSTALLED_KERNELS===
+6.8.0
+`,
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command.includes("apt list --upgradable")) {
+          return {
+            stdout: "bash/noble-updates 1.1 amd64 [upgradable from: 1.0]\n",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        if (command.includes("apt-get -s -o Debug::NoLocking=1 upgrade")) {
+          return {
+            stdout: "Inst bash [1.0] (1.1 noble-updates [amd64])\n",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      };
+
+      const upgradeResult = await applyUpgradePackage(insertedSystem.id, "curl");
+      expect(upgradeResult.success).toBe(true);
+
+      await processScheduledResults([
+        {
+          systemId: insertedSystem.id,
+          systemName: "manual-web",
+          updateCount: 1,
+          securityCount: 0,
+          keptBackCount: 0,
+          previouslyReachable: true,
+          nowUnreachable: false,
+        },
+      ]);
+
+      expect(requestMock.getRequestCount()).toBe(1);
+      expect(requestMock.getRequestBody()).toBe("manual-web: 2 updates (1 security)");
+    } finally {
+      requestMock.restore();
+    }
   });
 
   test("renders templated JSON bodies and bearer auth", async () => {
@@ -682,6 +854,8 @@ describe("webhook delivery diagnostics", () => {
         pkgManager: "apt",
         packageName: "openssl",
         newVersion: "1.2.3",
+        isSecurity: 1,
+        isKeptBack: 1,
       }).run();
 
       const insertedNotification = db.insert(notifications).values({

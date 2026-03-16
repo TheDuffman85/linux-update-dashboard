@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { hiddenUpdates, systems, updateCache } from "../../server/db/schema";
+import { hiddenUpdates, systems, updateCache, updateHistory } from "../../server/db/schema";
 import dashboardRoutes from "../../server/routes/dashboard";
 import { initEncryptor } from "../../server/security";
 
@@ -156,5 +156,95 @@ describe("dashboard routes", () => {
     expect(systemsBody.systems[0].updateCount).toBe(1);
     expect(systemsBody.systems[0].securityCount).toBe(0);
     expect(systemsBody.systems[0].keptBackCount).toBe(0);
+  });
+
+  test("exposes lastCheck and counts failed checks separately from up to date", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Failed Check",
+      hostname: "failed-check.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      hidden: 0,
+    }).returning({ id: systems.id }).get();
+
+    db.insert(updateHistory).values({
+      systemId: inserted.id,
+      action: "check",
+      pkgManager: "apt",
+      status: "failed",
+      error: "[apt] sudo: a password is required",
+      startedAt: "2026-01-01 10:00:00",
+      completedAt: "2026-01-01 10:01:00",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/dashboard", dashboardRoutes);
+
+    const statsRes = await app.request("/api/dashboard/stats");
+    expect(statsRes.status).toBe(200);
+    const statsBody = await statsRes.json();
+    expect(statsBody.stats.upToDate).toBe(0);
+    expect(statsBody.stats.needsUpdates).toBe(0);
+    expect(statsBody.stats.checkIssues).toBe(1);
+
+    const systemsRes = await app.request("/api/dashboard/systems");
+    expect(systemsRes.status).toBe(200);
+    const systemsBody = await systemsRes.json();
+    expect(systemsBody.systems[0].lastCheck).toMatchObject({
+      status: "failed",
+      error: "[apt] sudo: a password is required",
+    });
+  });
+
+  test("keeps warning checks out of needs updates while preserving total update counts", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Warning Check",
+      hostname: "warning-check.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      hidden: 0,
+    }).returning({ id: systems.id }).get();
+
+    db.insert(updateCache).values({
+      systemId: inserted.id,
+      pkgManager: "apt",
+      packageName: "bash",
+      newVersion: "5.3",
+    }).run();
+
+    db.insert(updateHistory).values({
+      systemId: inserted.id,
+      action: "check",
+      pkgManager: "apt,flatpak",
+      status: "warning",
+      error: "[flatpak] Command exited with code 1",
+      startedAt: "2026-01-01 11:00:00",
+      completedAt: "2026-01-01 11:01:00",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/dashboard", dashboardRoutes);
+
+    const statsRes = await app.request("/api/dashboard/stats");
+    expect(statsRes.status).toBe(200);
+    const statsBody = await statsRes.json();
+    expect(statsBody.stats.needsUpdates).toBe(0);
+    expect(statsBody.stats.checkIssues).toBe(1);
+    expect(statsBody.stats.totalUpdates).toBe(1);
+
+    const systemsRes = await app.request("/api/dashboard/systems");
+    expect(systemsRes.status).toBe(200);
+    const systemsBody = await systemsRes.json();
+    expect(systemsBody.systems[0].lastCheck).toMatchObject({
+      status: "warning",
+      error: "[flatpak] Command exited with code 1",
+    });
+    expect(systemsBody.systems[0].updateCount).toBe(1);
   });
 });

@@ -258,7 +258,7 @@ describe("telegram bot commands", () => {
     const parsedBody = JSON.parse(sentBodies[0]) as { text: string; parse_mode?: string };
 
     expect(parsedBody.parse_mode).toBe("HTML");
-    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system (2 security, 1 kept back)");
+    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system: 3 updates (2 security, 1 kept back)");
     expect(parsedBody.text).toContain("<code>#1</code> 🟢 <b>alpha &amp; beta</b>: 3 updates (2 security, 1 kept back)");
     expect(parsedBody.text).toContain("<code>#2</code> 🟠 <b>gamma &lt;prod&gt;</b>: 0 updates");
     expect(parsedBody.text.indexOf("alpha &amp; beta")).toBeLessThan(parsedBody.text.indexOf("gamma &lt;prod&gt;"));
@@ -310,8 +310,63 @@ describe("telegram bot commands", () => {
     const parsedBody = JSON.parse(sentBodies[0]) as { text: string; parse_mode?: string };
 
     expect(parsedBody.parse_mode).toBe("HTML");
-    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system (1 kept back)");
+    expect(parsedBody.text).toContain("⚠️ Pending updates on 1 system: 1 update (1 kept back)");
     expect(parsedBody.text).toContain("<code>#1</code> 🟢 <b>held pkg</b>: 1 update (1 kept back)");
+  });
+
+  test("reports the running app version through /version", async () => {
+    const previousVersion = process.env.LUDASH_APP_VERSION;
+    const previousBranch = process.env.LUDASH_APP_BRANCH;
+    process.env.LUDASH_APP_VERSION = "2026.3.16";
+    process.env.LUDASH_APP_BRANCH = "main";
+
+    try {
+      getDb().insert(notifications).values({
+        name: "Ops Telegram",
+        type: "telegram",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        systemIds: "[1]",
+        config: JSON.stringify(prepareTelegramConfigForStorage({
+          telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+          chatId: "55",
+          chatBindingStatus: "bound",
+          commandsEnabled: true,
+          commandApiTokenEncrypted: "ludash_command_token",
+        })),
+      }).run();
+
+      const sentBodies: string[] = [];
+      globalThis.fetch = (async (input, init) => {
+        const url = String(input);
+        if (url.includes("/sendMessage")) {
+          sentBodies.push(String(init?.body || ""));
+          return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }) as typeof fetch;
+
+      await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+        update_id: 1,
+        message: {
+          message_id: 10,
+          text: "/version",
+          chat: { id: 55, type: "private", first_name: "Alice" },
+          from: { id: 55, first_name: "Alice" },
+        },
+      });
+
+      const versionMessage = sentBodies.find((body) => body.includes("Linux Update Dashboard version:"));
+      expect(versionMessage).toBeTruthy();
+      const parsedBody = JSON.parse(versionMessage || "{}") as { text?: string };
+      expect(parsedBody.text).toContain("Linux Update Dashboard version: 2026.3.16");
+      expect(parsedBody.text).toContain("Branch: main");
+    } finally {
+      if (previousVersion === undefined) delete process.env.LUDASH_APP_VERSION;
+      else process.env.LUDASH_APP_VERSION = previousVersion;
+      if (previousBranch === undefined) delete process.env.LUDASH_APP_BRANCH;
+      else process.env.LUDASH_APP_BRANCH = previousBranch;
+    }
   });
 
   test("requires confirmation before package upgrades", async () => {
@@ -902,6 +957,8 @@ describe("telegram bot commands", () => {
 
     const rootMenu = sentBodies.find((body) => body.includes("Telegram command menu"));
     expect(rootMenu).toBeTruthy();
+    expect(rootMenu).toContain('"text":"Version"');
+    expect(rootMenu).toContain('"callback_data":"menu:version"');
 
     await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
       update_id: 2,
@@ -1695,6 +1752,7 @@ describe("telegram bot commands", () => {
 
     expect(setMyCommandsBody).toContain('"command":"help"');
     expect(setMyCommandsBody).toContain('"command":"menu"');
+    expect(setMyCommandsBody).toContain('"command":"version"');
     expect(setMyCommandsBody).not.toContain('"command":"check"');
     expect(setMyCommandsBody).not.toContain('"command":"refresh"');
     expect(setMyCommandsBody).not.toContain('"command":"packages"');

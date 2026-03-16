@@ -370,6 +370,16 @@ notificationsRouter.delete("/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+notificationsRouter.post("/:id/reset-update-dedupe", (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid ID" }, 400);
+
+  const ok = notificationService.resetNotificationUpdateDedupe(id);
+  if (!ok) return c.json({ error: "Not found" }, 404);
+
+  return c.json({ ok: true });
+});
+
 // Test notification config inline (no saved notification required)
 notificationsRouter.post("/test", async (c) => {
   const body = await c.req.json().catch(() => null);

@@ -258,7 +258,12 @@ export default function Credentials() {
         </div>
       )}
 
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Add Credential" dismissible={false}>
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="Add Credential"
+        dismissible={!createCredential.isPending}
+      >
         <CredentialForm
           onSubmit={handleCreate}
           onCancel={() => setShowCreate(false)}
@@ -266,7 +271,12 @@ export default function Credentials() {
         />
       </Modal>
 
-      <Modal open={editId !== null} onClose={() => setEditId(null)} title="Edit Credential" dismissible={false}>
+      <Modal
+        open={editId !== null}
+        onClose={() => setEditId(null)}
+        title="Edit Credential"
+        dismissible={!updateCredential.isPending}
+      >
         {editId !== null && editCredential && (
           <CredentialForm
             initial={editCredential}

@@ -32,6 +32,10 @@ export const dnfParser: PackageParser = {
     return [buildCheckCommand("dnf")];
   },
 
+  getCheckCommandLabels() {
+    return ["Checking for updates"];
+  },
+
   parseCheckOutput(stdout, _stderr, exitCode) {
     const updates: ParsedUpdate[] = [];
 

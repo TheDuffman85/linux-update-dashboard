@@ -549,4 +549,124 @@ describe("mqtt notifications", () => {
     const attributesPayload = JSON.parse(attributes!.payload);
     expect(attributesPayload.origin_url).toBe("http://localhost:3001");
   });
+
+  test("runtime keeps dev app entity versions aligned when already up to date", async () => {
+    process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
+    process.env.LUDASH_APP_BRANCH = "dev";
+    process.env.LUDASH_APP_VERSION = "dev-202603161640";
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://ghcr.io/token")) {
+        return new Response(JSON.stringify({ token: "ghcr-token" }), {
+          status: 200,
+        });
+      }
+      if (url.startsWith("https://ghcr.io/v2/")) {
+        return new Response(
+          JSON.stringify({
+            tags: ["latest", "dev", "dev-202603161640"],
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    getDb().insert(notifications).values({
+      name: "HA Dev App MQTT",
+      type: "mqtt",
+      enabled: 1,
+      notifyOn: '["appUpdates"]',
+      systemIds: null,
+      config: JSON.stringify({
+        brokerUrl: "mqtt://broker.example.com:1883",
+        publishEvents: false,
+        homeAssistantEnabled: true,
+        discoveryPrefix: "homeassistant",
+        baseTopic: "ludash",
+        publishAppEntity: true,
+        commandsEnabled: false,
+        qos: 1,
+      }),
+    }).run();
+
+    await notificationRuntime.start();
+    await flush();
+    await flush();
+
+    const runtimeClient = clients[0];
+    const state = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/state"));
+    expect(state).toBeTruthy();
+    const payload = JSON.parse(state!.payload);
+    expect(payload.installed_version).toBe("dev-202603161640");
+    expect(payload.latest_version).toBe("dev-202603161640");
+    expect(payload.release_summary).toBe("Linux Update Dashboard is up to date");
+
+    const attributes = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/attributes"));
+    expect(attributes).toBeTruthy();
+    const attributesPayload = JSON.parse(attributes!.payload);
+    expect(attributesPayload.update_available).toBe(false);
+    expect(attributesPayload.current_branch).toBe("dev");
+  });
+
+  test("runtime does not expose a false dev update when current version is not a dev build tag", async () => {
+    process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
+    process.env.LUDASH_APP_BRANCH = "dev";
+    process.env.LUDASH_APP_VERSION = "2026.3.22";
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://ghcr.io/token")) {
+        return new Response(JSON.stringify({ token: "ghcr-token" }), {
+          status: 200,
+        });
+      }
+      if (url.startsWith("https://ghcr.io/v2/")) {
+        return new Response(
+          JSON.stringify({
+            tags: ["latest", "dev", "dev-202603161640"],
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    getDb().insert(notifications).values({
+      name: "HA Dev App MQTT",
+      type: "mqtt",
+      enabled: 1,
+      notifyOn: '["appUpdates"]',
+      systemIds: null,
+      config: JSON.stringify({
+        brokerUrl: "mqtt://broker.example.com:1883",
+        publishEvents: false,
+        homeAssistantEnabled: true,
+        discoveryPrefix: "homeassistant",
+        baseTopic: "ludash",
+        publishAppEntity: true,
+        commandsEnabled: false,
+        qos: 1,
+      }),
+    }).run();
+
+    await notificationRuntime.start();
+    await flush();
+    await flush();
+
+    const runtimeClient = clients[0];
+    const state = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/state"));
+    expect(state).toBeTruthy();
+    const payload = JSON.parse(state!.payload);
+    expect(payload.installed_version).toBe("2026.3.22");
+    expect(payload.latest_version).toBe("2026.3.22");
+    expect(payload.release_summary).toBe("Linux Update Dashboard is up to date");
+
+    const attributes = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/attributes"));
+    expect(attributes).toBeTruthy();
+    const attributesPayload = JSON.parse(attributes!.payload);
+    expect(attributesPayload.update_available).toBe(false);
+    expect(attributesPayload.current_branch).toBe("dev");
+  });
 });

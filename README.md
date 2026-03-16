@@ -406,6 +406,18 @@ Digest schedules buffer matching events until the next cron run. Immediate chann
 | `Telegram` | chat notifications and optional remote actions | private-chat only |
 | `Webhook` | integrations with automation tools, chat ops, and custom receivers | supports templates, auth, retries, and a Discord preset |
 
+### Email / SMTP
+
+Email channels support three SMTP security modes:
+
+- `Plain SMTP` for unencrypted relays such as local port `25`
+- `STARTTLS` for upgraded TLS on ports like `587`
+- `SMTPS / Implicit TLS` for direct TLS on port `465`
+
+If your SMTP server uses a trusted private or self-signed CA, prefer mounting that CA and setting `NODE_EXTRA_CA_CERTS` so certificate verification stays enabled. The advanced `Allow insecure TLS` toggle is only a fallback for exceptional internal endpoints you explicitly trust.
+
+If you truly need no TLS at all, select `Plain SMTP`. Disabling certificate verification is not the same thing as disabling TLS negotiation.
+
 ### MQTT
 
 MQTT channels support two related behaviors:
@@ -517,6 +529,7 @@ If the backing API token is deleted manually, commands stop working by design un
 Supported commands:
 
 - `/help`
+- `/version`
 - `/menu`
 - `/status`
 - `/refresh <system-id|all>`
@@ -527,10 +540,11 @@ Supported commands:
 
 Behavior:
 
-- Telegram registers `/help` and `/menu` in Telegram's native command picker
+- Telegram registers `/help`, `/version`, and `/menu` in Telegram's native command picker
 - `/status`, `/refresh`, and `/packages` remain available as typed commands and through `/menu`
-- `/menu` opens an inline menu with `Status`, `Refresh`, `Upgrade`, `Full upgrade`, `Upgrade package`, and `Show packages`
-- `/status` shows the current status for the systems this channel is allowed to control
+- `/menu` opens an inline menu with `Status`, `Refresh`, `Upgrade`, `Full upgrade`, `Upgrade package`, `Show packages`, and `Version`
+- `/version` shows the currently running app version and branch
+- `/status` shows the current status for the systems this channel is allowed to control, including the total available update count across allowed systems
 - `/refresh`, `/upgrade`, and `/fullupgrade` also accept `all` to target every allowed system that matches that action
 - `/packages` lists the currently cached package updates for one allowed system, including current and target versions
 - the system picker in `/menu` includes an `All` button for refresh, upgrade, and full-upgrade flows
@@ -692,7 +706,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 
 This will:
 1. Stop any running dev/production services
-2. Build and start 10 Docker containers (including Alpine, fish-shell, and sudo-password APT fixtures)
+2. Build and start 12 Docker containers (including Alpine, fish-shell, sudo-password APT, and partial multi-manager fixtures)
 3. Build the frontend in production mode
 4. Start the production server on `:3001`
 
@@ -717,6 +731,7 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-debian-fish-sudo` | 2009 | APT (sudo password) | `fish` | Debian 12 |
 | `ludash-test-alpine` | 2010 | APK | `bash` | Alpine 3.16 |
 | `ludash-test-apt-keptback` | 2011 | APT (kept-back fixture) | `bash` | Debian 12 |
+| `ludash-test-apt-snap-partial` | 2012 | APT + Snap (Snap check fails) | `bash` | Ubuntu 24.04 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -727,6 +742,12 @@ Each container is built with **older package versions** pinned from archived rep
 - one kept-back upgrade: `keptback-app`
 
 That makes it useful for verifying the dashboard’s `isKeptBack` badge/count behavior without depending on upstream repository state.
+
+`ludash-test-apt-snap-partial` is a special multi-manager fixture. It intentionally exposes:
+- a working APT refresh with pending package updates
+- a detected Snap installation whose checks fail because `snapd` is not running inside the container
+
+That makes it useful for verifying the dashboard’s semi-working warning state where one package manager succeeds and another fails in the same check run.
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 

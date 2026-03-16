@@ -17,6 +17,7 @@ import { useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
+import { deriveSystemUpdateState } from "../lib/system-status";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -189,11 +190,16 @@ export default function SystemsList() {
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedSystems.map((s) => (
-                <tr
-                  key={s.id}
-                  className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
-                >
+              {orderedSystems.map((s) => {
+                const upgrading = isUpgrading(s.id) || !!s.activeOperation?.type?.startsWith("upgrade");
+                const checking = s.activeOperation?.type === "check";
+                const updateState = deriveSystemUpdateState(s, { upgrading, checking });
+
+                return (
+                  <tr
+                    key={s.id}
+                    className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  >
                   <td className="px-2 sm:px-4 py-3">
                     <div className="flex items-center gap-2 min-w-0">
                       <span
@@ -254,21 +260,36 @@ export default function SystemsList() {
                     </div>
                   </td>
                   <td className="px-2 sm:px-4 py-3">
-                    {(isUpgrading(s.id) || s.activeOperation?.type?.startsWith("upgrade")) ? (
+                    {updateState === "upgrading" ? (
                       <Badge variant="info" small>
                         <span className="flex items-center gap-1">
                           <span className="spinner spinner-sm !w-2.5 !h-2.5" />
                           Upgrading...
                         </span>
                       </Badge>
-                    ) : s.activeOperation?.type === "check" ? (
+                    ) : updateState === "checking" ? (
                       <Badge variant="info" small>
                         <span className="flex items-center gap-1">
                           <span className="spinner spinner-sm !w-2.5 !h-2.5" />
                           Checking...
                         </span>
                       </Badge>
-                    ) : s.updateCount > 0 ? (
+                    ) : updateState === "check_failed" ? (
+                      <Badge variant="danger" small>Check failed</Badge>
+                    ) : updateState === "check_warning" ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="warning" small>Check warning</Badge>
+                        {s.updateCount > 0 && (
+                          <Badge variant="warning" small>{s.updateCount}</Badge>
+                        )}
+                        {s.securityCount > 0 && (
+                          <Badge variant="danger" small>{s.securityCount} security</Badge>
+                        )}
+                        {s.keptBackCount > 0 && (
+                          <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
+                        )}
+                      </div>
+                    ) : updateState === "updates_available" ? (
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <Badge variant="warning" small>{s.updateCount}</Badge>
                         {s.securityCount > 0 && (
@@ -278,7 +299,7 @@ export default function SystemsList() {
                           <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
                         )}
                       </div>
-                    ) : s.isReachable === 1 ? (
+                    ) : updateState === "up_to_date" ? (
                       <span className="text-green-600 text-xs">0</span>
                     ) : (
                       <span className="text-slate-400 text-xs">-</span>
@@ -327,8 +348,9 @@ export default function SystemsList() {
                       </button>
                     </div>
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -344,7 +366,15 @@ export default function SystemsList() {
         </div>
       )}
 
-      <Modal open={showForm} onClose={() => { setShowForm(false); setDuplicateSource(null); }} title={duplicateSource ? "Duplicate System" : "Add System"} dismissible={false}>
+      <Modal
+        open={showForm}
+        onClose={() => {
+          setShowForm(false);
+          setDuplicateSource(null);
+        }}
+        title={duplicateSource ? "Duplicate System" : "Add System"}
+        dismissible={!createSystem.isPending}
+      >
         <SystemForm
           key={duplicateSource?.id ?? "new"}
           initial={duplicateSource ? {
@@ -372,7 +402,12 @@ export default function SystemsList() {
         />
       </Modal>
 
-      <Modal open={editSystem !== null} onClose={() => setEditSystem(null)} title="Edit System" dismissible={false}>
+      <Modal
+        open={editSystem !== null}
+        onClose={() => setEditSystem(null)}
+        title="Edit System"
+        dismissible={!updateSystem.isPending}
+      >
         {editSystem && (
           <SystemForm
             initial={{

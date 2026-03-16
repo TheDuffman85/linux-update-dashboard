@@ -17,6 +17,7 @@ import {
   type TelegramConfig,
 } from "./notifications/telegram";
 import { formatUpdateCounts } from "./notifications/presentation";
+import { getCurrentAppVersionInfo } from "./app-update-service";
 
 const TELEGRAM_TYPE = "telegram";
 const LINK_TTL_MS = 10 * 60_000;
@@ -30,6 +31,7 @@ const PACKAGE_MENU_PAGE_SIZE = 8;
 const TELEGRAM_PROFILE_PHOTO_FILENAME = "telegram-bot-avatar.jpg";
 const TELEGRAM_COMMANDS = [
   { command: "help", description: "Show supported commands" },
+  { command: "version", description: "Show the app version" },
   { command: "menu", description: "Open the action menu" },
 ] as const;
 
@@ -793,6 +795,7 @@ function helpText(): string {
   return [
     "Supported commands:",
     "/help",
+    "/version",
     "/menu",
     "/status",
     "/refresh <system-id|all>",
@@ -914,6 +917,9 @@ function buildRootMenuKeyboard() {
         { text: "Upgrade package", callback_data: "menu:list:pkgsys:0" },
         { text: "Show packages", callback_data: "menu:list:pkglist:0" },
       ],
+      [
+        { text: "Version", callback_data: "menu:version" },
+      ],
     ],
   };
 }
@@ -927,6 +933,16 @@ async function sendMenuRoot(botToken: string, chatId: string): Promise<void> {
   );
 }
 
+async function sendVersion(botToken: string, chatId: string): Promise<void> {
+  const { currentVersion, currentBranch } = getCurrentAppVersionInfo();
+  const versionLabel = currentVersion || "unknown";
+  await sendTelegramText(
+    botToken,
+    chatId,
+    `Linux Update Dashboard version: ${versionLabel}\nBranch: ${currentBranch}`,
+  );
+}
+
 async function sendStatus(botToken: string, chatId: string, channel: NotificationRow): Promise<void> {
   const allowedSystems = await fetchAllowedSystems(channel);
   if (allowedSystems.length === 0) {
@@ -935,6 +951,7 @@ async function sendStatus(botToken: string, chatId: string, channel: Notificatio
   }
 
   const visibleSystems = allowedSystems.slice(0, 25);
+  const totalAvailableUpdates = allowedSystems.reduce((sum, system) => sum + Number(system.updateCount ?? 0), 0);
   const pendingUpdateSystems = allowedSystems.filter((system) => Number(system.updateCount ?? 0) > 0).length;
   const totalSecurityUpdates = allowedSystems.reduce((sum, system) => sum + Number(system.securityCount ?? 0), 0);
   const totalKeptBackUpdates = allowedSystems.reduce((sum, system) => sum + Number(system.keptBackCount ?? 0), 0);
@@ -943,8 +960,8 @@ async function sendStatus(botToken: string, chatId: string, channel: Notificatio
   if (totalSecurityUpdates > 0) summaryDetails.push(`${totalSecurityUpdates} security`);
   if (totalKeptBackUpdates > 0) summaryDetails.push(`${totalKeptBackUpdates} kept back`);
   const summaryText = summaryDetails.length > 0
-    ? `Pending updates on ${formatCount(pendingUpdateSystems, "system")} (${summaryDetails.join(", ")})`
-    : `Pending updates on ${formatCount(pendingUpdateSystems, "system")}`;
+    ? `Pending updates on ${formatCount(pendingUpdateSystems, "system")}: ${formatCount(totalAvailableUpdates, "update")} (${summaryDetails.join(", ")})`
+    : `Pending updates on ${formatCount(pendingUpdateSystems, "system")}: ${formatCount(totalAvailableUpdates, "update")}`;
   const lines = visibleSystems.map((system) =>
     `<code>#${system.id}</code> ${formatReachabilityDot(system.isReachable)} <b>${escapeTelegramHtml(system.name)}</b>: ${escapeTelegramHtml(formatUpdateCounts(Number(system.updateCount ?? 0), Number(system.securityCount ?? 0), Number(system.keptBackCount ?? 0)))}`
   );
@@ -1324,6 +1341,11 @@ async function handleCommandMessage(
   }
 
   try {
+    if (parsed.command === "version") {
+      await sendVersion(botToken, chatId);
+      return;
+    }
+
     if (parsed.command === "status") {
       await sendStatus(botToken, chatId, channel);
       return;
@@ -1469,6 +1491,11 @@ async function handleCallbackQuery(botToken: string, callback: TelegramCallbackQ
 
       if (menuAction === "status") {
         await sendStatus(botToken, chatId, channel);
+        return;
+      }
+
+      if (menuAction === "version") {
+        await sendVersion(botToken, chatId);
         return;
       }
 

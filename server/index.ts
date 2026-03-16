@@ -4,8 +4,7 @@ import { eq } from "drizzle-orm";
 import { config, getEncryptionSalt } from "./config";
 import { initDatabase, closeDatabase, getDb } from "./db";
 import { settings } from "./db/schema";
-import { initEncryptor, getEncryptor } from "./security";
-import { initSSHManager } from "./ssh/connection";
+import { getEncryptor, initEncryptor } from "./security";
 import { initSession } from "./auth/session";
 import { configureOidc } from "./auth/oidc";
 import * as scheduler from "./services/scheduler";
@@ -14,6 +13,7 @@ import { setRequestIp } from "./request-ip-store";
 import { logger } from "./logger";
 import * as notificationRuntime from "./services/notification-runtime";
 import { migrateEncryptionSalt, migrateLegacyAuthTags } from "./encryption-migration";
+import { syncSSHManagerWithSettings } from "./services/settings-service";
 
 // Ensure data directory exists with restrictive permissions
 mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -34,12 +34,7 @@ logger.info("Initializing session management");
 initSession(config.secretKey);
 
 logger.info("Initializing SSH connection manager");
-initSSHManager(
-  config.maxConcurrentConnections,
-  config.defaultSshTimeout,
-  config.defaultCmdTimeout,
-  getEncryptor()
-);
+syncSSHManagerWithSettings();
 
 // Initialize OIDC from database settings
 {

@@ -5,6 +5,11 @@ import { settings, webauthnCredentials } from "../db/schema";
 import { configureOidc } from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as scheduler from "../services/scheduler";
+import {
+  isNumericSettingKey,
+  normalizeNumericSetting,
+  syncSSHManagerWithSettings,
+} from "../services/settings-service";
 import type { SessionData } from "../auth/session";
 
 type AuthEnv = {
@@ -35,10 +40,20 @@ settingsRouter.get("/", (c) => {
 // Update settings
 settingsRouter.put("/", async (c) => {
   const body = await c.req.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
   const db = getDb();
+  const normalizedBody = Object.fromEntries(
+    Object.entries(body).map(([key, value]) => [
+      key,
+      isNumericSettingKey(key) ? normalizeNumericSetting(key, value) : value,
+    ]),
+  );
 
   // Prevent disabling password login without an alternative auth method
-  if (body.disable_password_login === "true") {
+  if (normalizedBody.disable_password_login === "true") {
     const user = c.get("user");
 
     // Check if user has at least one passkey
@@ -62,7 +77,7 @@ settingsRouter.put("/", async (c) => {
   }
 
   const encryptor = getEncryptor();
-  for (const [key, value] of Object.entries(body)) {
+  for (const [key, value] of Object.entries(normalizedBody)) {
     const strValue = String(value);
 
     // Skip sensitive fields that haven't been changed
@@ -84,13 +99,21 @@ settingsRouter.put("/", async (c) => {
   }
 
   // Restart scheduler if check interval was changed
-  if ("check_interval_minutes" in body) {
+  if ("check_interval_minutes" in normalizedBody) {
     scheduler.restart();
+  }
+
+  if (
+    "ssh_timeout_seconds" in normalizedBody ||
+    "cmd_timeout_seconds" in normalizedBody ||
+    "concurrent_connections" in normalizedBody
+  ) {
+    syncSSHManagerWithSettings();
   }
 
   // Reconfigure OIDC if any OIDC settings were changed
   const oidcKeys = ["oidc_issuer", "oidc_client_id", "oidc_client_secret"];
-  if (oidcKeys.some((k) => k in body)) {
+  if (oidcKeys.some((k) => k in normalizedBody)) {
     const issuer = db.select().from(settings).where(eq(settings.key, "oidc_issuer")).get();
     const clientId = db.select().from(settings).where(eq(settings.key, "oidc_client_id")).get();
     const clientSecret = db.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();

@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, hiddenUpdates, systems, updateCache } from "../../server/db/schema";
+import { credentials, hiddenUpdates, systems, updateCache, updateHistory } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
@@ -200,6 +200,62 @@ describe("systems reorder route", () => {
     expect(created?.trustedHostKey).toBeNull();
   });
 
+  test("rejects non-boolean excludeFromUpgradeAll values", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad Flags",
+        hostname: "bad-flags.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        excludeFromUpgradeAll: "true",
+        validatedConfigToken: createValidatedConfigToken({
+          hostname: "bad-flags.local",
+          port: 22,
+          credentialId,
+        }),
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("excludeFromUpgradeAll must be a boolean");
+  });
+
+  test("rejects invalid disabled package manager lists", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad Managers",
+        hostname: "bad-managers.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        disabledPkgManagers: ["apt", 123],
+        validatedConfigToken: createValidatedConfigToken({
+          hostname: "bad-managers.local",
+          port: 22,
+          credentialId,
+        }),
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("disabledPkgManagers must be an array of strings");
+  });
+
   test("allows creating the same connection tuple behind a different ProxyJump host", async () => {
     const db = getDb();
     const jumpCredentialId = createSystemCredential("jump");
@@ -364,6 +420,81 @@ describe("systems reorder route", () => {
     const detailBody = await detailRes.json();
     expect(detailBody.system.autoHideKeptBackUpdates).toBe(1);
     expect("ignoreKeptBackPackages" in detailBody.system).toBe(false);
+  });
+
+  test("includes the latest completed check summary on list and detail payloads", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Check Summary",
+      hostname: "check-summary.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateHistory).values([
+      {
+        systemId,
+        action: "upgrade_all",
+        pkgManager: "apt",
+        status: "failed",
+        error: "ignore this upgrade failure",
+        startedAt: "2026-01-01 08:00:00",
+        completedAt: "2026-01-01 08:01:00",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "started",
+        startedAt: "2026-01-01 09:00:00",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "warning",
+        error: "[apt] partial failure",
+        startedAt: "2026-01-01 09:30:00",
+        completedAt: "2026-01-01 09:31:00",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "failed",
+        error: "[apt] older failure",
+        startedAt: "2026-01-01 07:30:00",
+        completedAt: "2026-01-01 07:31:00",
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const listRes = await app.request("/api/systems");
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === systemId);
+    expect(listed.lastCheck).toMatchObject({
+      status: "warning",
+      error: "[apt] partial failure",
+      startedAt: "2026-01-01 09:30:00",
+      completedAt: "2026-01-01 09:31:00",
+    });
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.lastCheck).toMatchObject({
+      status: "warning",
+      error: "[apt] partial failure",
+      startedAt: "2026-01-01 09:30:00",
+      completedAt: "2026-01-01 09:31:00",
+    });
   });
 
   test("returns 409 when updating a system to match another connection tuple", async () => {

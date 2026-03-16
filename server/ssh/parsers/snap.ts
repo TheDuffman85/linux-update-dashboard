@@ -13,6 +13,10 @@ export const snapParser: PackageParser = {
     ];
   },
 
+  getCheckCommandLabels() {
+    return ["Checking for updates"];
+  },
+
   parseCheckOutput(stdout, _stderr, _exitCode) {
     const installedIdx = stdout.indexOf(INSTALLED_MARKER);
     const updatesIdx = stdout.indexOf(UPDATES_MARKER);

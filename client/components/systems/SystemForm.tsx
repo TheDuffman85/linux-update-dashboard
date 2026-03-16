@@ -9,6 +9,7 @@ import {
   type CredentialKind,
 } from "../../lib/credentials";
 import { SSH_CREDENTIAL_KINDS } from "../../lib/credential-form";
+import { validateSystemForm } from "../../lib/system-form-validation";
 import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/systems";
 
 interface SystemFormData {
@@ -161,6 +162,18 @@ export function SystemForm({
   };
 
   const submitForm = () => {
+    const validationError = validateSystemForm({
+      name,
+      hostname,
+      port,
+      credentialId,
+      proxyJumpSystemId,
+    });
+    if (validationError) {
+      addToast(validationError, "danger");
+      return;
+    }
+
     onSubmit({
       name,
       hostname,
@@ -206,6 +219,18 @@ export function SystemForm({
       rawKey: string;
     }>;
   }) => {
+    const validationError = validateSystemForm({
+      name,
+      hostname,
+      port,
+      credentialId,
+      proxyJumpSystemId,
+    });
+    if (validationError) {
+      setTestResult({ success: false, message: validationError });
+      return;
+    }
+
     setTestResult(null);
     testConnection.mutate(
       {
@@ -299,7 +324,15 @@ export function SystemForm({
           </div>
           <div>
             <label className={labelClass}>SSH Port</label>
-            <input type="number" value={port} onChange={(e) => setPort(parseInt(e.target.value, 10))} required className={inputClass} />
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={port}
+              onChange={(e) => setPort(parseInt(e.target.value, 10))}
+              required
+              className={inputClass}
+            />
           </div>
         </div>
 

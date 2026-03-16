@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCredentialPayload } from "../../client/lib/credential-form";
+import { buildCredentialPayload, validateCredentialForm } from "../../client/lib/credential-form";
 import type { CredentialDetail } from "../../client/lib/credentials";
 
 function makeInitial(
@@ -77,5 +77,43 @@ describe("buildCredentialPayload", () => {
       privateKeyPem: "(stored)",
       privateKeyPassword: "(stored)",
     });
+  });
+});
+
+describe("validateCredentialForm", () => {
+  test("requires a password for new username/password credentials", () => {
+    expect(
+      validateCredentialForm("Ops", "usernamePassword", {
+        username: "root",
+        password: "",
+        privateKey: "",
+        passphrase: "",
+        certificatePem: "",
+        privateKeyPem: "",
+        privateKeyPassword: "",
+      }),
+    ).toBe("Password is required");
+  });
+
+  test("allows stored secrets to stay unchanged while editing", () => {
+    expect(
+      validateCredentialForm(
+        "Ops",
+        "sshKey",
+        {
+          username: "root",
+          password: "",
+          privateKey: "",
+          passphrase: "",
+          certificatePem: "",
+          privateKeyPem: "",
+          privateKeyPassword: "",
+        },
+        makeInitial({
+          username: "root",
+          privateKey: "(stored)",
+        }),
+      ),
+    ).toBeNull();
   });
 });

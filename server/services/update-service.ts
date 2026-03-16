@@ -1,4 +1,4 @@
-import { eq, desc, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
 import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCommandInfo } from "../ssh/connection";
@@ -19,6 +19,7 @@ import {
   type ActiveOperation,
 } from "./active-operation-store";
 import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
+import { syncSystemNotificationHash } from "./notification-service";
 
 export function getActiveOperation(systemId: number): ActiveOperation | null {
   return getStoredActiveOperation(systemId);
@@ -26,6 +27,58 @@ export function getActiveOperation(systemId: number): ActiveOperation | null {
 
 export function getAllActiveOperations(): ReadonlyMap<number, ActiveOperation> {
   return getStoredActiveOperations();
+}
+
+export interface LastCheckSummary {
+  status: "success" | "warning" | "failed";
+  error: string | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export function getLatestCompletedChecks(systemIds: number[]): Map<number, LastCheckSummary> {
+  const uniqueIds = Array.from(
+    new Set(systemIds.filter((systemId) => Number.isInteger(systemId) && systemId > 0)),
+  );
+  if (uniqueIds.length === 0) return new Map();
+
+  const rows = getDb()
+    .select({
+      systemId: updateHistory.systemId,
+      status: updateHistory.status,
+      error: updateHistory.error,
+      startedAt: updateHistory.startedAt,
+      completedAt: updateHistory.completedAt,
+      id: updateHistory.id,
+    })
+    .from(updateHistory)
+    .where(
+      and(
+        inArray(updateHistory.systemId, uniqueIds),
+        eq(updateHistory.action, "check"),
+        ne(updateHistory.status, "started"),
+      ),
+    )
+    .orderBy(desc(updateHistory.startedAt), desc(updateHistory.id))
+    .all();
+
+  const latestChecks = new Map<number, LastCheckSummary>();
+  for (const row of rows) {
+    if (latestChecks.has(row.systemId)) continue;
+    if (row.status !== "success" && row.status !== "warning" && row.status !== "failed") continue;
+    latestChecks.set(row.systemId, {
+      status: row.status,
+      error: row.error,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+    });
+  }
+
+  return latestChecks;
+}
+
+export function getLatestCompletedCheck(systemId: number): LastCheckSummary | null {
+  return getLatestCompletedChecks([systemId]).get(systemId) ?? null;
 }
 
 // Per-system locks using a simple promise-based mutex
@@ -747,6 +800,7 @@ export async function applyUpgradeAll(
         outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
         await checkUpdatesUnlocked(systemId, true);
       }
+      syncSystemNotificationHash(systemId);
 
       const combinedOutput = allOutputs.join("\n\n");
       outputStream.publish(systemId, { type: "done", success: overallSuccess });
@@ -920,6 +974,7 @@ export async function applyFullUpgradeAll(
         outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
         await checkUpdatesUnlocked(systemId, true);
       }
+      syncSystemNotificationHash(systemId);
 
       const combinedOutput = allOutputs.join("\n\n");
       outputStream.publish(systemId, { type: "done", success: overallSuccess });
@@ -1067,6 +1122,7 @@ export async function applyUpgradePackage(
         outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
         await checkUpdatesUnlocked(systemId, true);
       }
+      syncSystemNotificationHash(systemId);
 
       outputStream.publish(systemId, { type: "done", success });
       return { success, output: success ? stdout : stderr || stdout, warning: reconnectionUsed && success };

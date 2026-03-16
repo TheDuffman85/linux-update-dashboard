@@ -219,6 +219,17 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS notification_delivered_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+    system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    pkg_manager TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    new_version TEXT NOT NULL,
+    delivered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(notification_id, system_id, pkg_manager, package_name, new_version)
+  )`);
+
   _db.run(sql`CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -576,6 +587,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
+  migrateLegacyEmailNotificationConfigs(_db);
   migrateLegacyCredentials(_db);
 
   // Seed default settings
@@ -591,6 +603,8 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password', 'smtp_from', 'notification_email_to',
     'ntfy_url', 'ntfy_topic', 'ntfy_token', 'ntfy_priority'
   )`);
+
+  migrateNotificationUpdateDedupeState(_db);
 
   return _db;
 }
@@ -820,10 +834,16 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
 
   // Migrate email config if it was configured
   if (methods.includes("email") && s.smtp_host) {
+    const smtpTlsMode = s.smtp_secure === "false"
+      ? "plain"
+      : (s.smtp_port || "587") === "465"
+        ? "tls"
+        : "starttls";
     const config = JSON.stringify({
       smtpHost: s.smtp_host || "",
       smtpPort: s.smtp_port || "587",
-      smtpSecure: s.smtp_secure || "true",
+      smtpTlsMode,
+      allowInsecureTls: "false",
       smtpUser: s.smtp_user || "",
       smtpPassword: s.smtp_password || "",
       smtpFrom: s.smtp_from || "",
@@ -842,6 +862,56 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
     });
     db.run(sql`INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config)
       VALUES ('ntfy', 'ntfy', ${enabled ? 1 : 0}, ${notifyOnJson}, NULL, ${config})`);
+  }
+}
+
+function migrateLegacyEmailNotificationConfigs(db: BunSQLiteDatabase<typeof schema>): void {
+  const rows = db
+    .select({ id: schema.notifications.id, config: schema.notifications.config })
+    .from(schema.notifications)
+    .where(eq(schema.notifications.type, "email"))
+    .all();
+
+  for (const row of rows) {
+    let parsed: Record<string, unknown>;
+    try {
+      const value = JSON.parse(row.config);
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      parsed = { ...value };
+    } catch {
+      continue;
+    }
+
+    let changed = false;
+    const smtpPort = typeof parsed.smtpPort === "string" && parsed.smtpPort ? parsed.smtpPort : "587";
+    const currentTlsMode = parsed.smtpTlsMode;
+
+    if (currentTlsMode !== "plain" && currentTlsMode !== "starttls" && currentTlsMode !== "tls") {
+      const legacySecure = parsed.smtpSecure;
+      parsed.smtpTlsMode = legacySecure === "false"
+        ? "plain"
+        : smtpPort === "465"
+          ? "tls"
+          : "starttls";
+      changed = true;
+    }
+
+    if ("smtpSecure" in parsed) {
+      delete parsed.smtpSecure;
+      changed = true;
+    }
+
+    if (parsed.allowInsecureTls !== "true" && parsed.allowInsecureTls !== "false") {
+      parsed.allowInsecureTls = "false";
+      changed = true;
+    }
+
+    if (!changed) continue;
+
+    db.update(schema.notifications)
+      .set({ config: JSON.stringify(parsed) })
+      .where(eq(schema.notifications.id, row.id))
+      .run();
   }
 }
 
@@ -931,6 +1001,211 @@ function migrateCredentialsTable(): void {
   _sqlite.exec("DROP TABLE credentials");
   _sqlite.exec("ALTER TABLE credentials_new RENAME TO credentials");
   _sqlite.exec("PRAGMA foreign_keys=ON");
+}
+
+const NOTIFICATION_UPDATE_DEDUPE_MIGRATION_KEY = "notification_update_dedupe_migrated";
+
+interface DeliveredUpdateSeed {
+  systemId: number;
+  pkgManager: string;
+  packageName: string;
+  newVersion: string;
+}
+
+function parseNotifyOnForMigration(raw: string | null): string[] {
+  if (!raw) return ["updates", "appUpdates"];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String) : ["updates", "appUpdates"];
+  } catch {
+    return ["updates", "appUpdates"];
+  }
+}
+
+function parseSystemIdsForMigration(raw: string | null): number[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((value) => Number(value)).filter(Number.isInteger);
+  } catch {
+    return null;
+  }
+}
+
+function deliveredUpdateSeedKey(
+  update: Pick<DeliveredUpdateSeed, "systemId" | "pkgManager" | "packageName" | "newVersion">,
+): string {
+  return `${update.systemId}\u0000${update.pkgManager}\u0000${update.packageName}\u0000${update.newVersion}`;
+}
+
+function buildVisibleDeliveredUpdatesBySystem(
+  db: BunSQLiteDatabase<typeof schema>,
+): Map<number, DeliveredUpdateSeed[]> {
+  const visibleSystems = db
+    .select({ id: schema.systems.id })
+    .from(schema.systems)
+    .where(eq(schema.systems.hidden, 0))
+    .all()
+    .map((row) => row.id);
+
+  const visibleSystemSet = new Set(visibleSystems);
+  const hiddenRows = db
+    .select({
+      systemId: schema.hiddenUpdates.systemId,
+      pkgManager: schema.hiddenUpdates.pkgManager,
+      packageName: schema.hiddenUpdates.packageName,
+      newVersion: schema.hiddenUpdates.newVersion,
+      active: schema.hiddenUpdates.active,
+    })
+    .from(schema.hiddenUpdates)
+    .all();
+  const hiddenKeysBySystem = new Map<number, Set<string>>();
+
+  for (const row of hiddenRows) {
+    if (row.active !== 1 || !visibleSystemSet.has(row.systemId)) continue;
+    const keys = hiddenKeysBySystem.get(row.systemId) ?? new Set<string>();
+    keys.add(`${row.pkgManager}\u0000${row.packageName}\u0000${row.newVersion}`);
+    hiddenKeysBySystem.set(row.systemId, keys);
+  }
+
+  const updatesBySystem = new Map<number, DeliveredUpdateSeed[]>();
+  const updateRows = db
+    .select({
+      systemId: schema.updateCache.systemId,
+      pkgManager: schema.updateCache.pkgManager,
+      packageName: schema.updateCache.packageName,
+      newVersion: schema.updateCache.newVersion,
+    })
+    .from(schema.updateCache)
+    .all();
+
+  for (const row of updateRows) {
+    if (!visibleSystemSet.has(row.systemId)) continue;
+    const hiddenKey = `${row.pkgManager}\u0000${row.packageName}\u0000${row.newVersion}`;
+    if (hiddenKeysBySystem.get(row.systemId)?.has(hiddenKey)) continue;
+
+    const updates = updatesBySystem.get(row.systemId) ?? [];
+    updates.push({
+      systemId: row.systemId,
+      pkgManager: row.pkgManager,
+      packageName: row.packageName,
+      newVersion: row.newVersion,
+    });
+    updatesBySystem.set(row.systemId, updates);
+  }
+
+  return updatesBySystem;
+}
+
+function stripPendingUpdateEntries(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw);
+    const next = {
+      updates: [],
+      unreachable: Array.isArray(parsed?.unreachable) ? parsed.unreachable : [],
+      appUpdate:
+        parsed?.appUpdate &&
+        typeof parsed.appUpdate === "object" &&
+        typeof parsed.appUpdate.remoteVersion === "string"
+          ? parsed.appUpdate
+          : null,
+    };
+
+    return next.unreachable.length > 0 || next.appUpdate
+      ? JSON.stringify(next)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function migrateNotificationUpdateDedupeState(
+  db: BunSQLiteDatabase<typeof schema>,
+): void {
+  const status = db
+    .select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, NOTIFICATION_UPDATE_DEDUPE_MIGRATION_KEY))
+    .get();
+
+  if (status?.value === "true") return;
+
+  const visibleUpdatesBySystem = buildVisibleDeliveredUpdatesBySystem(db);
+  const visibleSystemIds = new Set(visibleUpdatesBySystem.keys());
+  const notificationRows = db
+    .select({
+      id: schema.notifications.id,
+      notifyOn: schema.notifications.notifyOn,
+      systemIds: schema.notifications.systemIds,
+      pendingEvents: schema.notifications.pendingEvents,
+    })
+    .from(schema.notifications)
+    .all();
+
+  for (const row of notificationRows) {
+    if (!parseNotifyOnForMigration(row.notifyOn).includes("updates")) {
+      continue;
+    }
+
+    const scopedSystemIds = parseSystemIdsForMigration(row.systemIds);
+    const deliveredRows: Array<typeof schema.notificationDeliveredUpdates.$inferInsert> = [];
+    const deliveredKeys = new Set<string>();
+    const candidateSystemIds =
+      scopedSystemIds === null
+        ? Array.from(visibleSystemIds)
+        : scopedSystemIds.filter((systemId) => visibleSystemIds.has(systemId));
+
+    for (const systemId of candidateSystemIds) {
+      for (const update of visibleUpdatesBySystem.get(systemId) ?? []) {
+        const key = deliveredUpdateSeedKey(update);
+        if (deliveredKeys.has(key)) continue;
+        deliveredKeys.add(key);
+        deliveredRows.push({
+          notificationId: row.id,
+          systemId: update.systemId,
+          pkgManager: update.pkgManager,
+          packageName: update.packageName,
+          newVersion: update.newVersion,
+        });
+      }
+    }
+
+    if (deliveredRows.length > 0) {
+      db.insert(schema.notificationDeliveredUpdates)
+        .values(deliveredRows)
+        .onConflictDoNothing({
+          target: [
+            schema.notificationDeliveredUpdates.notificationId,
+            schema.notificationDeliveredUpdates.systemId,
+            schema.notificationDeliveredUpdates.pkgManager,
+            schema.notificationDeliveredUpdates.packageName,
+            schema.notificationDeliveredUpdates.newVersion,
+          ],
+        })
+        .run();
+    }
+
+    if (row.pendingEvents) {
+      db.update(schema.notifications)
+        .set({ pendingEvents: stripPendingUpdateEntries(row.pendingEvents) })
+        .where(eq(schema.notifications.id, row.id))
+        .run();
+    }
+  }
+
+  db.run(sql`
+    INSERT INTO settings (key, value, description)
+    VALUES (
+      ${NOTIFICATION_UPDATE_DEDUPE_MIGRATION_KEY},
+      'true',
+      'Internal flag for channel-scoped package-version notification dedupe migration'
+    )
+    ON CONFLICT(key) DO UPDATE SET
+      value = 'true',
+      description = excluded.description,
+      updated_at = datetime('now')
+  `);
 }
 
 export function getDb(): BunSQLiteDatabase<typeof schema> {

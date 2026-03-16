@@ -5,6 +5,12 @@ const UPDATE_CHECK_CACHE_MS = 60 * 60 * 1000;
 const DEV_TAG_PATTERN = /^dev-\d{12}$/;
 const USER_AGENT = "linux-update-dashboard-update-check";
 
+function formatDevBuildVersion(date: Date = new Date()): string {
+  return `dev-${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}${String(date.getUTCHours()).padStart(2, "0")}${String(date.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+const LOCAL_DEV_BUILD_VERSION = formatDevBuildVersion();
+
 export interface AppUpdateStatus {
   updateAvailable: boolean;
   currentVersion: string | null;
@@ -100,14 +106,33 @@ function readPackageVersion(): string | null {
 }
 
 function getCurrentVersion(): string | null {
+  const explicitVersion = process.env.LUDASH_APP_VERSION || process.env.VITE_APP_VERSION;
+  if (explicitVersion && explicitVersion.trim()) {
+    return explicitVersion.trim();
+  }
+
+  const exactTag = git("describe --tags --exact-match");
+  if (exactTag) {
+    return exactTag.trim();
+  }
+
+  const currentBranch = getCurrentBranch();
+  if (currentBranch === "dev") {
+    return LOCAL_DEV_BUILD_VERSION;
+  }
+
   const version =
-    process.env.LUDASH_APP_VERSION ||
-    process.env.VITE_APP_VERSION ||
-    git("describe --tags --exact-match") ||
     git("describe --tags --abbrev=0") ||
     readPackageVersion() ||
     null;
   return version && version.trim() ? version.trim() : null;
+}
+
+export function getCurrentAppVersionInfo(): { currentVersion: string | null; currentBranch: string } {
+  return {
+    currentVersion: getCurrentVersion(),
+    currentBranch: getCurrentBranch(),
+  };
 }
 
 async function fetchJson(url: string, headers?: HeadersInit): Promise<any> {

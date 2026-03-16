@@ -7,6 +7,7 @@ import { useDashboardStats, useDashboardSystems } from "../lib/dashboard";
 import { useRefreshCache } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
+import { deriveSystemUpdateState } from "../lib/system-status";
 
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
@@ -17,18 +18,26 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; securityCount: number; keptBackCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean }; upgrading: boolean; checking: boolean }) {
-  const borderColor = upgrading
+function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; securityCount: number; keptBackCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean; lastCheck: { status: "success" | "warning" | "failed"; error: string | null; startedAt: string; completedAt: string | null } | null; activeOperation?: { type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot"; startedAt: string; packageName?: string } | null }; upgrading: boolean; checking: boolean }) {
+  const updateState = deriveSystemUpdateState(system, { upgrading, checking });
+  const borderColor = updateState === "upgrading"
     ? "border-l-blue-500"
-    : checking
+    : updateState === "checking"
       ? "border-l-sky-400"
-      : system.isReachable === -1
-      ? "border-l-red-500"
-      : system.updateCount > 0
-        ? "border-l-amber-500"
-        : system.isReachable === 1
-          ? "border-l-green-500"
-          : "border-l-slate-300 dark:border-l-slate-600";
+      : updateState === "unreachable" || updateState === "check_failed"
+        ? "border-l-red-500"
+        : updateState === "check_warning" || updateState === "updates_available"
+          ? "border-l-amber-500"
+          : updateState === "up_to_date"
+            ? "border-l-green-500"
+            : "border-l-slate-300 dark:border-l-slate-600";
+  const dotColor = updateState === "check_failed" || updateState === "unreachable"
+    ? "bg-red-500"
+    : updateState === "check_warning" || updateState === "updates_available"
+      ? "bg-amber-500"
+      : updateState === "up_to_date"
+        ? "bg-green-500"
+        : "bg-slate-400";
 
   return (
     <Link
@@ -40,15 +49,7 @@ function SystemCard({ system, upgrading, checking }: { system: { id: number; nam
         {upgrading || checking ? (
           <span className={`spinner spinner-sm !w-2.5 !h-2.5 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
         ) : (
-          <span
-            className={`w-2 h-2 rounded-full ${
-              system.isReachable === 1
-                ? "bg-green-500"
-                : system.isReachable === -1
-                  ? "bg-red-500"
-                  : "bg-slate-400"
-            }`}
-          />
+          <span className={`w-2 h-2 rounded-full ${dotColor}`} />
         )}
       </div>
       <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
@@ -60,18 +61,25 @@ function SystemCard({ system, upgrading, checking }: { system: { id: number; nam
       )}
       <div className="flex items-center justify-between mt-3">
         <div className="flex items-center gap-1.5 flex-wrap">
-          {upgrading ? (
+          {updateState === "upgrading" ? (
             <Badge variant="info" small>Upgrading...</Badge>
-          ) : checking ? (
+          ) : updateState === "checking" ? (
             <Badge variant="muted" small>Checking...</Badge>
-          ) : system.isReachable === -1 ? (
+          ) : updateState === "unreachable" ? (
             <Badge variant="danger" small>Unreachable</Badge>
-          ) : system.updateCount > 0 ? (
+          ) : updateState === "check_failed" ? (
+            <Badge variant="danger" small>Check failed</Badge>
+          ) : updateState === "check_warning" ? (
+            <Badge variant="warning" small>Check warning</Badge>
+          ) : updateState === "updates_available" ? (
             <Badge variant="warning" small>{system.updateCount} updates</Badge>
-          ) : system.isReachable === 1 ? (
+          ) : updateState === "up_to_date" ? (
             <Badge variant="success" small>Up to date</Badge>
           ) : (
             <Badge variant="muted" small>Unchecked</Badge>
+          )}
+          {updateState === "check_warning" && system.updateCount > 0 && (
+            <Badge variant="warning" small>{system.updateCount} updates</Badge>
           )}
           {system.securityCount > 0 && (
             <Badge variant="danger" small>{system.securityCount} security</Badge>
@@ -210,11 +218,12 @@ export default function Dashboard() {
     >
       {/* Stats */}
       {stats && (
-        <div className={`grid grid-cols-2 sm:grid-cols-3 ${stats.needsReboot > 0 ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-3 mb-6`}>
+        <div className={`grid grid-cols-2 sm:grid-cols-3 ${stats.needsReboot > 0 ? "lg:grid-cols-7" : "lg:grid-cols-6"} gap-3 mb-6`}>
           <StatCard label="Total Systems" value={stats.total} color="text-slate-700 dark:text-slate-200" />
           <StatCard label="Up to Date" value={stats.upToDate} color="text-green-600" />
           <StatCard label="Need Updates" value={stats.needsUpdates} color="text-amber-600" />
           <StatCard label="Unreachable" value={stats.unreachable} color="text-red-600" />
+          <StatCard label="Check Issues" value={stats.checkIssues} color="text-amber-500" />
           <StatCard label="Total Updates" value={stats.totalUpdates} color="text-blue-600" />
           {stats.needsReboot > 0 && (
             <StatCard label="Needs Reboot" value={stats.needsReboot} color="text-amber-500" />

@@ -86,6 +86,42 @@ describe("app update service", () => {
     expect(result.releaseUrl).toBeNull();
   });
 
+  test("uses a local dev identifier when running on dev without an injected app version", async () => {
+    process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
+    process.env.LUDASH_APP_BRANCH = "dev";
+    delete process.env.LUDASH_APP_VERSION;
+    delete process.env.VITE_APP_VERSION;
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://ghcr.io/token")) {
+        return new Response(JSON.stringify({ token: "ghcr-token" }), {
+          status: 200,
+        });
+      }
+      if (url.startsWith("https://ghcr.io/v2/")) {
+        return new Response(
+          JSON.stringify({
+            tags: ["latest", "dev", "dev-200001010000"],
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { getAppUpdateStatus, getCurrentAppVersionInfo } = await importFreshAppUpdateService();
+    const versionInfo = getCurrentAppVersionInfo();
+    const result = await getAppUpdateStatus(true);
+
+    expect(versionInfo.currentBranch).toBe("dev");
+    expect(versionInfo.currentVersion).toMatch(/^dev-\d{12}$/);
+    expect(result.currentVersion).toMatch(/^dev-\d{12}$/);
+    expect(result.currentBranch).toBe("dev");
+    expect(result.remoteVersion).toBe("200001010000");
+    expect(result.updateAvailable).toBe(false);
+  });
+
   test("still resolves release metadata when app version env is missing", async () => {
     process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
     process.env.LUDASH_APP_BRANCH = "main";

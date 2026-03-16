@@ -15,6 +15,12 @@ const MAX_TOKENS_PER_USER = 25;
 
 const tokens = new Hono<AuthEnv>();
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id) || id <= 0) return null;
@@ -56,11 +62,10 @@ tokens.post("/", async (c) => {
     return c.json({ error: `Maximum of ${MAX_TOKENS_PER_USER} tokens allowed` }, 400);
   }
 
-  const body = await c.req.json<{
-    name?: string;
-    expiresInDays?: number;
-    readOnly?: boolean;
-  }>();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
 
   // Validate name
   const name =
@@ -70,7 +75,9 @@ tokens.post("/", async (c) => {
 
   // Validate expiry (default 30 days, 0 = never)
   const expiresInDays =
-    typeof body.expiresInDays === "number" && body.expiresInDays >= 0
+    typeof body.expiresInDays === "number" &&
+    Number.isInteger(body.expiresInDays) &&
+    body.expiresInDays >= 0
       ? body.expiresInDays
       : 30;
 
@@ -107,7 +114,12 @@ tokens.patch("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid ID" }, 400);
 
-  const { name } = await c.req.json<{ name: string }>();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  const name = body.name;
   if (typeof name !== "string" || name.trim().length === 0) {
     return c.json({ error: "Name is required" }, 400);
   }

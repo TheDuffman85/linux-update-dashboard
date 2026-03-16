@@ -35,6 +35,7 @@ interface FlatProviderOptions {
   name: string;
   allowedKeys: readonly string[];
   sensitiveKeys?: readonly string[];
+  normalizeConfig?(config: Record<string, string>): Record<string, string>;
   validateConfig(config: Record<string, string>): string | null;
   send(payload: NotificationPayload, config: Record<string, string>): Promise<NotificationResult>;
 }
@@ -42,16 +43,20 @@ interface FlatProviderOptions {
 export function createFlatProvider(options: FlatProviderOptions): NotificationProvider {
   const allowedKeys = [...options.allowedKeys];
   const sensitiveKeys = new Set(options.sensitiveKeys ?? []);
+  const sanitize = (config: NotificationConfig): Record<string, string> => {
+    const raw = readFlatConfig(config, allowedKeys);
+    return options.normalizeConfig ? options.normalizeConfig(raw) : raw;
+  };
 
   return {
     name: options.name,
 
     sanitizeConfig(config) {
-      return readFlatConfig(config, allowedKeys);
+      return sanitize(config);
     },
 
     maskConfig(config) {
-      const sanitized = readFlatConfig(config, allowedKeys);
+      const sanitized = sanitize(config);
       for (const key of sensitiveKeys) {
         if (sanitized[key]) sanitized[key] = "(stored)";
       }
@@ -59,8 +64,8 @@ export function createFlatProvider(options: FlatProviderOptions): NotificationPr
     },
 
     mergeConfig(storedConfig, incomingConfig) {
-      const stored = readFlatConfig(storedConfig, allowedKeys);
-      const incoming = readFlatConfig(incomingConfig, allowedKeys);
+      const stored = sanitize(storedConfig);
+      const incoming = sanitize(incomingConfig);
       const merged = { ...stored, ...incoming };
 
       for (const key of sensitiveKeys) {
@@ -73,7 +78,7 @@ export function createFlatProvider(options: FlatProviderOptions): NotificationPr
     },
 
     prepareConfigForStorage(config) {
-      const sanitized = readFlatConfig(config, allowedKeys);
+      const sanitized = sanitize(config);
       const encryptor = getEncryptor();
 
       for (const key of sensitiveKeys) {
@@ -91,11 +96,11 @@ export function createFlatProvider(options: FlatProviderOptions): NotificationPr
           return `Unsupported ${options.name} config key: ${key}`;
         }
       }
-      return options.validateConfig(readFlatConfig(config, allowedKeys));
+      return options.validateConfig(sanitize(config));
     },
 
     async send(payload, config) {
-      return options.send(payload, readFlatConfig(config, allowedKeys));
+      return options.send(payload, sanitize(config));
     },
   };
 }

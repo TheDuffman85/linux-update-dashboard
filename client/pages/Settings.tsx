@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { Layout } from "../components/Layout";
 import { useSettings, useUpdateSettings } from "../lib/settings";
+import { validatePassword, validateRequiredText } from "../lib/form-validation";
+import { normalizeSettingsUpdate } from "../lib/settings-validation";
 import { usePasskeys, useDeletePasskey, useRegisterPasskey, useRenamePasskey } from "../lib/passkeys";
 import { useApiTokens, useCreateApiToken, useRenameApiToken, useDeleteApiToken } from "../lib/api-tokens";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -87,7 +89,10 @@ export default function Settings() {
         data[k] = form[k] ?? "";
       }
     }
-    updateSettings.mutate(data, {
+    const normalizedData = normalizeSettingsUpdate(data);
+    setForm((prev) => ({ ...prev, ...normalizedData }));
+
+    updateSettings.mutate(normalizedData, {
       onSuccess: (res) => {
         if (res.oidcError) {
           addToast(`Settings saved, but OIDC configuration failed: ${res.oidcError}`, "danger");
@@ -106,8 +111,9 @@ export default function Settings() {
       setPwError("Passwords do not match");
       return;
     }
-    if (newPassword.length < 8) {
-      setPwError("Password must be at least 8 characters");
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      setPwError(passwordError);
       return;
     }
     setPwLoading(true);
@@ -369,7 +375,12 @@ export default function Settings() {
                         onChange={(e) => setEditingName(e.target.value)}
                         onBlur={() => {
                           const trimmed = editingName.trim();
-                          if (trimmed && trimmed !== (pk.name ?? "")) {
+                          const nameError = trimmed
+                            ? validateRequiredText(trimmed, "Passkey name", 50)
+                            : null;
+                          if (nameError) {
+                            addToast(nameError, "danger");
+                          } else if (trimmed && trimmed !== (pk.name ?? "")) {
                             renamePasskey.mutate(
                               { id: pk.id, name: trimmed },
                               {
@@ -599,7 +610,12 @@ export default function Settings() {
                         onChange={(e) => setTokenEditingName(e.target.value)}
                         onBlur={() => {
                           const trimmed = tokenEditingName.trim();
-                          if (trimmed && trimmed !== (tk.name ?? "")) {
+                          const nameError = trimmed
+                            ? validateRequiredText(trimmed, "Token name", 50)
+                            : null;
+                          if (nameError) {
+                            addToast(nameError, "danger");
+                          } else if (trimmed && trimmed !== (tk.name ?? "")) {
                             renameApiToken.mutate(
                               { id: tk.id, name: trimmed },
                               {
@@ -768,7 +784,6 @@ export default function Settings() {
           open={generatedToken !== null}
           onClose={() => setGeneratedToken(null)}
           title="API Token Created"
-          dismissible={false}
         >
           <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
             Copy this token now. It will not be shown again.

@@ -210,9 +210,9 @@ function normalizeBody(value: unknown): WebhookBodyConfig {
   };
 }
 
-function clampNumber(value: unknown, fallback: number, max: number): number {
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
   return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(0, Math.min(max, Math.trunc(value)))
+    ? Math.max(min, Math.min(max, Math.trunc(value)))
     : fallback;
 }
 
@@ -252,9 +252,9 @@ function sanitizeWebhookConfig(config: NotificationConfig): WebhookConfig {
       : defaults.headers,
     auth: normalizeAuth(raw.auth),
     body: normalizeBody(raw.body),
-    timeoutMs: clampNumber(raw.timeoutMs, defaults.timeoutMs, 30_000),
-    retryAttempts: clampNumber(raw.retryAttempts, defaults.retryAttempts, 5),
-    retryDelayMs: clampNumber(raw.retryDelayMs, defaults.retryDelayMs, 300_000),
+    timeoutMs: clampNumber(raw.timeoutMs, defaults.timeoutMs, 1_000, 30_000),
+    retryAttempts: clampNumber(raw.retryAttempts, defaults.retryAttempts, 0, 5),
+    retryDelayMs: clampNumber(raw.retryDelayMs, defaults.retryDelayMs, 0, 300_000),
     allowInsecureTls: raw.allowInsecureTls === true,
   };
 

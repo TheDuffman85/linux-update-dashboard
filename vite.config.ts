@@ -35,6 +35,14 @@ function resolveRepoUrl(input: string): string {
   }
 }
 
+function formatDevBuildVersion(date: Date = new Date()): string {
+  return `dev-${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}${String(date.getUTCHours()).padStart(2, "0")}${String(date.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+const APP_BRANCH =
+  process.env.VITE_APP_BRANCH || git("rev-parse --abbrev-ref HEAD");
+const APP_VERSION =
+  process.env.VITE_APP_VERSION || (APP_BRANCH === "dev" ? formatDevBuildVersion() : "");
 const REPO_URL = resolveRepoUrl(
   process.env.VITE_APP_REPO_URL ||
     process.env.VITE_APP_REPOSITORY ||
@@ -94,16 +102,14 @@ export default defineConfig({
     emptyOutDir: true,
   },
   define: {
-    __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || ""),
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
     __APP_BUILD_DATE__: JSON.stringify(
       process.env.VITE_APP_BUILD_DATE || new Date().toISOString().slice(0, 10)
     ),
     __APP_COMMIT_HASH__: JSON.stringify(
       process.env.VITE_APP_COMMIT_HASH || git("rev-parse --short=8 HEAD")
     ),
-    __APP_BRANCH__: JSON.stringify(
-      process.env.VITE_APP_BRANCH || git("rev-parse --abbrev-ref HEAD")
-    ),
+    __APP_BRANCH__: JSON.stringify(APP_BRANCH),
     __APP_REPO_URL__: JSON.stringify(REPO_URL),
   },
   server: {
