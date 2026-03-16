@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "bun@1.3.10",
   "scripts": {
-    "dev": "bun run dev:server & bun run dev:client",
+    "dev": "APP_VERSION=dev-$(date -u +'%Y%m%d%H%M'); VITE_APP_VERSION=\"$APP_VERSION\" LUDASH_APP_VERSION=\"$APP_VERSION\" bun run dev:server & VITE_APP_VERSION=\"$APP_VERSION\" LUDASH_APP_VERSION=\"$APP_VERSION\" bun run dev:client",
     "dev:server": "bun run --watch server/index.ts",
     "dev:client": "bunx --bun vite",
     "build": "vite build && bun build server/index.ts --outdir dist/server --target bun",
