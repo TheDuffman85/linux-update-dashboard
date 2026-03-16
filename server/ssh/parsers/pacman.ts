@@ -4,13 +4,26 @@ import { sudo, validatePackageName } from "./types";
 // Example: linux 6.7.4.arch1-1 -> 6.7.5.arch1-1
 const PATTERN = /^(\S+)\s+(\S+)\s+->\s+(\S+)/;
 
+function buildListUpdatesCommand() {
+  return [
+    'errfile="$(mktemp)"',
+    'updates="$(pacman -Qu 2>"$errfile")"',
+    "rc=$?",
+    'printf "%s\\n" "$updates"',
+    'cat "$errfile" >&2',
+    'if [ "$rc" -eq 1 ] && [ -z "$updates" ] && [ ! -s "$errfile" ]; then rc=0; fi',
+    'rm -f "$errfile"',
+    'exit "$rc"',
+  ].join("; ");
+}
+
 export const pacmanParser: PackageParser = {
   name: "pacman",
 
   getCheckCommands() {
     return [
       sudo("pacman -Sy --noconfirm") + " 2>&1",
-      "pacman -Qu 2>/dev/null",
+      buildListUpdatesCommand(),
     ];
   },
 

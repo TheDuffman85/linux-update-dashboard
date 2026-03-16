@@ -25,4 +25,4 @@ RUN useradd -m -s /bin/bash testuser && \
 RUN ssh-keygen -A
 
 EXPOSE 22
-CMD ["/usr/sbin/sshd", "-D"]
+CMD ["/bin/sh", "-lc", "test -s /etc/machine-id || systemd-machine-id-setup >/dev/null 2>&1 || true; exec /usr/sbin/sshd -D"]

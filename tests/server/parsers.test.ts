@@ -180,6 +180,7 @@ describe("PacmanParser", () => {
     expect(cmds).toHaveLength(2);
     expect(cmds[0]).toContain("pacman -Sy");
     expect(cmds[1]).toContain("pacman -Qu");
+    expect(cmds[1]).toContain('if [ "$rc" -eq 1 ]');
   });
 
   test("no full upgrade command", () => {
