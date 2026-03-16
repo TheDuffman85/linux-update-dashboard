@@ -7,6 +7,13 @@ export interface ActiveOperation {
   packageName?: string;
 }
 
+export interface LastCheckSummary {
+  status: "success" | "warning" | "failed";
+  error: string | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
 export interface System {
   id: number;
   sortOrder: number;
@@ -47,6 +54,7 @@ export interface System {
   updateCount: number;
   securityCount: number;
   keptBackCount: number;
+  lastCheck: LastCheckSummary | null;
   cacheAge: string | null;
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;

@@ -2,6 +2,27 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
 export type NotificationConfig = Record<string, unknown>;
+export type EmailTlsMode = "plain" | "starttls" | "tls";
+
+export function readEmailTlsMode(config: NotificationConfig): EmailTlsMode {
+  if (config.smtpTlsMode === "plain" || config.smtpTlsMode === "starttls" || config.smtpTlsMode === "tls") {
+    return config.smtpTlsMode;
+  }
+
+  if (config.smtpSecure === "false") {
+    return "plain";
+  }
+
+  if (config.smtpSecure === "true") {
+    return config.smtpPort === "465" ? "tls" : "starttls";
+  }
+
+  return "starttls";
+}
+
+export function readEmailAllowInsecureTls(config: NotificationConfig): boolean {
+  return config.allowInsecureTls === "true";
+}
 
 export interface WebhookField {
   name: string;
@@ -165,6 +186,19 @@ export function useDeleteNotification() {
   return useMutation({
     mutationFn: (id: number) =>
       apiFetch(`/notifications/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
+export function useResetNotificationUpdateDedupe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ ok: true }>(`/notifications/${id}/reset-update-dedupe`, {
+        method: "POST",
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
     },

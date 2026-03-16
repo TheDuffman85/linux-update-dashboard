@@ -27,6 +27,12 @@ function validatePassword(password: string): string | null {
   return null;
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 /** Derive WebAuthn origin and rpId from the incoming request headers. */
 function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
   const origin = getTrustedPublicOrigin(c);
@@ -89,8 +95,14 @@ auth.post("/setup", rateLimit(3, 60_000), async (c) => {
     return c.json({ error: "Setup already completed" }, 400);
   }
 
-  const { username, password } = await c.req.json();
-  if (!username || !password) {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  const username = typeof body.username === "string" ? body.username : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!username.trim() || !password) {
     return c.json({ error: "Username and password required" }, 400);
   }
   const pwError = validatePassword(password);
@@ -121,8 +133,14 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
     return c.json({ error: "Password login is disabled" }, 403);
   }
 
-  const { username, password } = await c.req.json();
-  if (!username || !password) {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  const username = typeof body.username === "string" ? body.username : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!username.trim() || !password) {
     return c.json({ error: "Username and password required" }, 400);
   }
 
@@ -167,7 +185,13 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
     return c.json({ error: "Not authenticated" }, 401);
   }
 
-  const { currentPassword, newPassword } = await c.req.json();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
+  const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
   if (!currentPassword || !newPassword) {
     return c.json({ error: "Current and new password required" }, 400);
   }
@@ -282,7 +306,8 @@ auth.post("/webauthn/register/verify", async (c) => {
 
 // --- WebAuthn Authentication ---
 auth.post("/webauthn/login/options", async (c) => {
-  const { username } = await c.req.json();
+  const body = asObject(await c.req.json().catch(() => null)) ?? {};
+  const username = typeof body.username === "string" ? body.username : "";
 
   let credentials: Array<{ credentialId: string }> = [];
   if (username) {

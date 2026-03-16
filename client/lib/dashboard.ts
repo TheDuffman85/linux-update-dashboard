@@ -7,6 +7,7 @@ export interface DashboardStats {
   upToDate: number;
   needsUpdates: number;
   unreachable: number;
+  checkIssues: number;
   totalUpdates: number;
   needsReboot: number;
 }

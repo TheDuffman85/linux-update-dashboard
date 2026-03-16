@@ -241,3 +241,31 @@ export const notifications = sqliteTable("notifications", {
     .notNull()
     .default(sql`(datetime('now'))`),
 });
+
+export const notificationDeliveredUpdates = sqliteTable(
+  "notification_delivered_updates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    notificationId: integer("notification_id")
+      .notNull()
+      .references(() => notifications.id, { onDelete: "cascade" }),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    pkgManager: text("pkg_manager").notNull(),
+    packageName: text("package_name").notNull(),
+    newVersion: text("new_version").notNull(),
+    deliveredAt: text("delivered_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    unique().on(
+      table.notificationId,
+      table.systemId,
+      table.pkgManager,
+      table.packageName,
+      table.newVersion,
+    ),
+  ]
+);

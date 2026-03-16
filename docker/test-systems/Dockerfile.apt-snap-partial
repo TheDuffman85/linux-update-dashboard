@@ -1,0 +1,46 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install snap alongside SSH so the dashboard detects two package managers.
+# We intentionally do not start systemd/snapd in this fixture, which keeps APT
+# working while Snap checks fail and exercise the partial-warning path.
+RUN apt-get update && \
+    apt-get install -y openssh-server sudo snapd && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd
+
+# Install older APT packages from an archive snapshot so the fixture always has
+# pending APT updates even though the current Ubuntu repos stay configured.
+RUN mv /etc/apt/sources.list.d/ubuntu.sources /tmp/ubuntu.sources.bak && \
+    printf '%s\n' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-updates main universe' \
+      'deb [trusted=yes] http://snapshot.ubuntu.com/ubuntu/20250601T000000Z/ noble-security main universe' \
+      > /etc/apt/sources.list && \
+    apt-get -o Acquire::Check-Valid-Until=false \
+            -o Acquire::https::Verify-Peer=false update && \
+    apt-get -o Acquire::https::Verify-Peer=false install -y \
+        curl wget vim-tiny openssl nano \
+        htop tree zip unzip jq && \
+    rm /etc/apt/sources.list && \
+    mv /tmp/ubuntu.sources.bak /etc/apt/sources.list.d/ubuntu.sources && \
+    rm -rf /var/lib/apt/lists/*
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Create test user with passwordless sudo.
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Generate host keys.
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

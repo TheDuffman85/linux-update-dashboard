@@ -10,10 +10,14 @@ import {
   useReissueTelegramCommandToken,
   useUpdateNotification,
   useDeleteNotification,
+  useResetNotificationUpdateDedupe,
   useReorderNotifications,
   useTestNotification,
   useTestNotificationConfig,
   useUnlinkTelegramChat,
+  readEmailAllowInsecureTls,
+  readEmailTlsMode,
+  type EmailTlsMode,
   type NotificationChannel,
   type NotificationConfig,
   type MqttConfig,
@@ -99,6 +103,12 @@ const EMAIL_IMPORTANCE_OPTIONS = [
   { value: "auto", label: "Automatic" },
   { value: "normal", label: "Normal" },
   { value: "important", label: "Important" },
+];
+
+const EMAIL_TLS_MODE_OPTIONS: Array<{ value: EmailTlsMode; label: string }> = [
+  { value: "plain", label: "Plain SMTP" },
+  { value: "starttls", label: "STARTTLS" },
+  { value: "tls", label: "SMTPS / Implicit TLS" },
 ];
 
 const EVENT_LABELS: Record<string, string> = {
@@ -551,9 +561,8 @@ function NotificationForm({
 
   const [smtpHost, setSmtpHost] = useState(readString(initial?.config || {}, "smtpHost"));
   const [smtpPort, setSmtpPort] = useState(readString(initial?.config || {}, "smtpPort", "587"));
-  const [smtpSecure, setSmtpSecure] = useState(
-    readString(initial?.config || {}, "smtpSecure", "true") !== "false"
-  );
+  const [smtpTlsMode, setSmtpTlsMode] = useState<EmailTlsMode>(readEmailTlsMode(initial?.config || {}));
+  const [smtpAllowInsecureTls, setSmtpAllowInsecureTls] = useState(readEmailAllowInsecureTls(initial?.config || {}));
   const [smtpUser, setSmtpUser] = useState(readString(initial?.config || {}, "smtpUser"));
   const [smtpPassword, setSmtpPassword] = useState("");
   const [smtpFrom, setSmtpFrom] = useState(readString(initial?.config || {}, "smtpFrom"));
@@ -662,7 +671,8 @@ function NotificationForm({
       return {
         smtpHost,
         smtpPort,
-        smtpSecure: smtpSecure ? "true" : "false",
+        smtpTlsMode,
+        allowInsecureTls: smtpAllowInsecureTls ? "true" : "false",
         smtpUser,
         smtpPassword:
           smtpPassword || (readString(initial?.config || {}, "smtpPassword") === MASKED_VALUE ? MASKED_VALUE : ""),
@@ -720,7 +730,7 @@ function NotificationForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const config = buildConfig();
-    const formError = validateNotificationFormAction(type, config);
+    const formError = validateNotificationFormAction(type, config, { name });
     if (formError) {
       addToast(formError, "danger");
       return;
@@ -739,7 +749,7 @@ function NotificationForm({
 
   const handleInlineTest = () => {
     const config = buildConfig();
-    const formError = validateNotificationFormAction(type, config);
+    const formError = validateNotificationFormAction(type, config, { name });
     if (formError) {
       addToast(formError, "danger");
       return;
@@ -969,6 +979,18 @@ function NotificationForm({
                 <label className={labelClass}>SMTP Port</label>
                 <input value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} className={inputClass} />
               </div>
+              <div>
+                <label className={labelClass}>SMTP Security</label>
+                <select
+                  value={smtpTlsMode}
+                  onChange={(e) => setSmtpTlsMode(e.target.value as EmailTlsMode)}
+                  className={inputClass}
+                >
+                  {EMAIL_TLS_MODE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="sm:col-span-2">
                 <label className={labelClass}>SMTP User</label>
                 <input value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} className={inputClass} />
@@ -1004,15 +1026,26 @@ function NotificationForm({
                 </select>
               </div>
             </div>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={smtpSecure}
-                onChange={(e) => setSmtpSecure(e.target.checked)}
-                className={checkboxClass}
-              />
-              <span className="text-sm">Use TLS</span>
-            </label>
+            <p className={mutedTextClass}>
+              Use `Plain SMTP` for unencrypted relays on port 25, `STARTTLS` for ports like 587, and
+              `SMTPS / Implicit TLS` for port 465. Prefer `NODE_EXTRA_CA_CERTS` for trusted private CAs.
+            </p>
+            {smtpTlsMode !== "plain" && (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={smtpAllowInsecureTls}
+                    onChange={(e) => setSmtpAllowInsecureTls(e.target.checked)}
+                    className={checkboxClass}
+                  />
+                  <span className="text-sm font-medium">Allow insecure TLS (advanced)</span>
+                </label>
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Disabled by default. Use this only for exceptional self-signed SMTP endpoints you explicitly trust.
+                </p>
+              </div>
+            )}
           </>
         )}
 
@@ -1714,12 +1747,14 @@ export default function Notifications() {
   const createNotification = useCreateNotification();
   const updateNotification = useUpdateNotification();
   const deleteNotification = useDeleteNotification();
+  const resetNotificationUpdateDedupe = useResetNotificationUpdateDedupe();
   const reorderNotifications = useReorderNotifications();
   const testNotification = useTestNotification();
   const { addToast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [resetDedupeId, setResetDedupeId] = useState<number | null>(null);
   const [orderedChannels, setOrderedChannels] = useState<NotificationChannel[]>([]);
   const orderedChannelsRef = useRef<NotificationChannel[]>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
@@ -1842,6 +1877,17 @@ export default function Notifications() {
     });
   };
 
+  const handleResetUpdateDedupe = () => {
+    if (resetDedupeId === null) return;
+    resetNotificationUpdateDedupe.mutate(resetDedupeId, {
+      onSuccess: () => {
+        setResetDedupeId(null);
+        addToast("Update dedupe reset for notification channel", "success");
+      },
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
   const handleTest = (id: number) => {
     testNotification.mutate(id, {
       onSuccess: (data) => {
@@ -1875,6 +1921,9 @@ export default function Notifications() {
     if (names.length <= 2) return names.join(", ");
     return `${names.length} systems`;
   };
+
+  const canResetUpdateDedupe = (channel: NotificationChannel): boolean =>
+    channel.notifyOn.includes("updates");
 
   return (
     <Layout
@@ -1976,6 +2025,29 @@ export default function Notifications() {
                         </svg>
                       </button>
                       <button
+                        onClick={() => setResetDedupeId(channel.id)}
+                        disabled={!canResetUpdateDedupe(channel) || resetNotificationUpdateDedupe.isPending}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                          canResetUpdateDedupe(channel)
+                            ? "text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+                            : "text-slate-400"
+                        }`}
+                        title={
+                          canResetUpdateDedupe(channel)
+                            ? "Reset update dedupe"
+                            : "Update dedupe reset is only available for channels subscribed to updates"
+                        }
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={1.8}
+                            d="M3 12a9 9 0 0115.3-6.364M18.3 5.636H14.5V1.8M21 12a9 9 0 01-15.3 6.364M5.7 18.364h3.8V22.2"
+                          />
+                        </svg>
+                      </button>
+                      <button
                         onClick={() => setEditChannel(channel)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                         title="Edit"
@@ -2018,7 +2090,7 @@ export default function Notifications() {
         open={showForm}
         onClose={() => setShowForm(false)}
         title="Add Notification"
-        dismissible={false}
+        dismissible={!createNotification.isPending}
       >
         <NotificationForm
           onSubmit={handleCreate}
@@ -2031,7 +2103,7 @@ export default function Notifications() {
         open={editChannel !== null}
         onClose={() => setEditChannel(null)}
         title="Edit Notification"
-        dismissible={false}
+        dismissible={!updateNotification.isPending}
       >
         {editChannel && (
           <NotificationForm
@@ -2052,6 +2124,16 @@ export default function Notifications() {
         confirmLabel="Delete"
         danger
         loading={deleteNotification.isPending}
+      />
+
+      <ConfirmDialog
+        open={resetDedupeId !== null}
+        onClose={() => setResetDedupeId(null)}
+        onConfirm={handleResetUpdateDedupe}
+        title="Reset Update Dedupe"
+        message="This clears the stored update-version dedupe state for this notification channel only. The next matching update check can notify again for currently available updates."
+        confirmLabel="Reset Dedupe"
+        loading={resetNotificationUpdateDedupe.isPending}
       />
     </Layout>
   );

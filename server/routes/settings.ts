@@ -14,8 +14,32 @@ type AuthEnv = {
 };
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
+const NUMERIC_SETTING_RULES = {
+  check_interval_minutes: { min: 5, max: 1440, fallback: 15 },
+  cache_duration_hours: { min: 0, max: 168, fallback: 12 },
+  ssh_timeout_seconds: { min: 5, max: 120, fallback: 30 },
+  cmd_timeout_seconds: { min: 10, max: 600, fallback: 120 },
+  concurrent_connections: { min: 1, max: 50, fallback: 5 },
+} as const;
 
 const settingsRouter = new Hono<AuthEnv>();
+
+type NumericSettingKey = keyof typeof NUMERIC_SETTING_RULES;
+
+function isNumericSettingKey(key: string): key is NumericSettingKey {
+  return key in NUMERIC_SETTING_RULES;
+}
+
+function normalizeNumericSetting(key: NumericSettingKey, value: unknown): string {
+  const { min, max, fallback } = NUMERIC_SETTING_RULES[key];
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+
+  if (!Number.isFinite(parsed)) {
+    return String(fallback);
+  }
+
+  return String(Math.min(max, Math.max(min, parsed)));
+}
 
 // Get all settings
 settingsRouter.get("/", (c) => {
@@ -35,10 +59,20 @@ settingsRouter.get("/", (c) => {
 // Update settings
 settingsRouter.put("/", async (c) => {
   const body = await c.req.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
   const db = getDb();
+  const normalizedBody = Object.fromEntries(
+    Object.entries(body).map(([key, value]) => [
+      key,
+      isNumericSettingKey(key) ? normalizeNumericSetting(key, value) : value,
+    ]),
+  );
 
   // Prevent disabling password login without an alternative auth method
-  if (body.disable_password_login === "true") {
+  if (normalizedBody.disable_password_login === "true") {
     const user = c.get("user");
 
     // Check if user has at least one passkey
@@ -62,7 +96,7 @@ settingsRouter.put("/", async (c) => {
   }
 
   const encryptor = getEncryptor();
-  for (const [key, value] of Object.entries(body)) {
+  for (const [key, value] of Object.entries(normalizedBody)) {
     const strValue = String(value);
 
     // Skip sensitive fields that haven't been changed
@@ -84,13 +118,13 @@ settingsRouter.put("/", async (c) => {
   }
 
   // Restart scheduler if check interval was changed
-  if ("check_interval_minutes" in body) {
+  if ("check_interval_minutes" in normalizedBody) {
     scheduler.restart();
   }
 
   // Reconfigure OIDC if any OIDC settings were changed
   const oidcKeys = ["oidc_issuer", "oidc_client_id", "oidc_client_secret"];
-  if (oidcKeys.some((k) => k in body)) {
+  if (oidcKeys.some((k) => k in normalizedBody)) {
     const issuer = db.select().from(settings).where(eq(settings.key, "oidc_issuer")).get();
     const clientId = db.select().from(settings).where(eq(settings.key, "oidc_client_id")).get();
     const clientSecret = db.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();

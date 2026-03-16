@@ -49,5 +49,8 @@ describe("legacy notification settings migration", () => {
     const migrated = getDb().select().from(notifications).get();
     expect(migrated).toBeTruthy();
     expect(migrated?.notifyOn).toBe('["updates","appUpdates"]');
+    expect(migrated?.config).toContain('"smtpTlsMode":"starttls"');
+    expect(migrated?.config).toContain('"allowInsecureTls":"false"');
+    expect(migrated?.config).not.toContain('"smtpSecure"');
   });
 });

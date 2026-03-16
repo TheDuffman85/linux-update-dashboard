@@ -14,6 +14,13 @@ export const pacmanParser: PackageParser = {
     ];
   },
 
+  getCheckCommandLabels() {
+    return [
+      "Refreshing package databases",
+      "Listing available updates",
+    ];
+  },
+
   parseCheckOutput(stdout, _stderr, _exitCode) {
     const updates: ParsedUpdate[] = [];
     for (const raw of stdout.trim().split("\n")) {

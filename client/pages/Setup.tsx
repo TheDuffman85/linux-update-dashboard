@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PenguinLogo } from "../components/PenguinLogo";
 import { useAuth } from "../context/AuthContext";
+import { validatePassword } from "../lib/form-validation";
 
 export default function Setup() {
   const { setup } = useAuth();
@@ -12,8 +13,9 @@ export default function Setup() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters");
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
     setLoading(true);
@@ -68,7 +70,9 @@ export default function Setup() {
               minLength={8}
               className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
-            <p className="mt-1 text-xs text-slate-400">Minimum 8 characters</p>
+            <p className="mt-1 text-xs text-slate-400">
+              Minimum 8 characters, with uppercase, lowercase, and a digit
+            </p>
           </div>
           <button
             type="submit"

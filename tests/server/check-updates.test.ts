@@ -89,6 +89,20 @@ describe("checkUpdates", () => {
     return systemId;
   }
 
+  function createAptAndSnapSystem(): number {
+    const db = getDb();
+    const systemId = createAptSystem();
+
+    db.update(systems)
+      .set({
+        detectedPkgManagers: JSON.stringify(["apt", "snap"]),
+      })
+      .where(eq(systems.id, systemId))
+      .run();
+
+    return systemId;
+  }
+
   test("fails the check when the sudo-backed refresh command exits non-zero", async () => {
     const db = getDb();
     const encryptor = getEncryptor();
@@ -213,6 +227,110 @@ describe("checkUpdates", () => {
       command: expect.stringContaining("apt-get -s -o Debug::NoLocking=1 upgrade"),
       output: "Inst curl [7.0] (8.0 stable [amd64])\n",
     });
+  });
+
+  test("keeps successful apt updates when a second package manager refresh fails", async () => {
+    const db = getDb();
+    const systemId = createAptAndSnapSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    let snapCheckAttempted = false;
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt list --upgradable")) {
+        return {
+          stdout: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      if (command.includes("apt-get -s -o Debug::NoLocking=1 upgrade")) {
+        return {
+          stdout: "Inst curl [7.0] (8.0 stable [amd64])\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      if (command.includes("snap refresh --list")) {
+        snapCheckAttempted = true;
+        return {
+          stdout: "",
+          stderr: "cannot communicate with snapd\n",
+          exitCode: 1,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await checkUpdates(systemId);
+
+    expect(snapCheckAttempted).toBe(true);
+    expect(result).toMatchObject([
+      {
+        packageName: "curl",
+        pkgManager: "apt",
+        isKeptBack: false,
+      },
+    ]);
+    expect(getVisibleCachedUpdates(systemId).map((entry) => entry.packageName)).toEqual(["curl"]);
+    expect(getVisibleUpdateSummary(systemId)).toEqual({
+      updateCount: 1,
+      securityCount: 0,
+      keptBackCount: 0,
+    });
+
+    const cached = db.select()
+      .from(updateCache)
+      .where(eq(updateCache.systemId, systemId))
+      .all();
+
+    expect(cached).toHaveLength(1);
+    expect(cached[0]).toMatchObject({
+      packageName: "curl",
+      pkgManager: "apt",
+    });
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, systemId))
+      .all()
+      .at(-1);
+
+    expect(history?.status).toBe("warning");
+    expect(history?.packageCount).toBe(1);
+    expect(history?.error).toContain("[snap] cannot communicate with snapd");
+
+    const steps = JSON.parse(history?.steps || "[]");
+    expect(steps).toMatchObject([
+      {
+        label: "Fetching package lists",
+        pkgManager: "apt",
+        status: "success",
+      },
+      {
+        label: "Listing available updates",
+        pkgManager: "apt",
+        status: "success",
+      },
+      {
+        label: "Detecting kept-back packages",
+        pkgManager: "apt",
+        status: "success",
+      },
+      {
+        label: "Checking for updates",
+        pkgManager: "snap",
+        command: expect.stringContaining("snap refresh --list"),
+        status: "failed",
+      },
+    ]);
   });
 
   test("keeps kept-back apt packages when filtering is disabled", async () => {

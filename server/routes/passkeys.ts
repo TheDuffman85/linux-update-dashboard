@@ -12,6 +12,12 @@ type AuthEnv = {
 
 const passkeys = new Hono<AuthEnv>();
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id) || id <= 0) return null;
@@ -42,7 +48,12 @@ passkeys.patch("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid ID" }, 400);
 
-  const { name } = await c.req.json<{ name: string }>();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  const name = body.name;
   if (typeof name !== "string" || name.trim().length === 0) {
     return c.json({ error: "Name is required" }, 400);
   }

@@ -3,6 +3,7 @@ import type { CredentialDetail, CredentialKind } from "../../lib/credentials";
 import {
   buildCredentialPayload,
   CREDENTIAL_KIND_LABELS,
+  validateCredentialForm,
 } from "../../lib/credential-form";
 
 const inputClass =
@@ -36,11 +37,32 @@ export function CredentialForm({
   const [certificatePem, setCertificatePem] = useState("");
   const [privateKeyPem, setPrivateKeyPem] = useState("");
   const [privateKeyPassword, setPrivateKeyPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
+        const validationError = validateCredentialForm(
+          name,
+          kind,
+          {
+            username,
+            password,
+            privateKey,
+            passphrase,
+            certificatePem,
+            privateKeyPem,
+            privateKeyPassword,
+          },
+          initial,
+        );
+        if (validationError) {
+          setError(validationError);
+          return;
+        }
+
+        setError(null);
         onSubmit({
           name,
           kind,
@@ -61,23 +83,36 @@ export function CredentialForm({
       }}
       className="space-y-4"
     >
+      {error && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelClass}>Name</label>
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (error) setError(null);
+            }}
             className={inputClass}
             placeholder="Ops SSH Key"
             required
+            maxLength={100}
           />
         </div>
         <div>
           <label className={labelClass}>Type</label>
           <select
             value={kind}
-            onChange={(e) => setKind(e.target.value as CredentialKind)}
+            onChange={(e) => {
+              setKind(e.target.value as CredentialKind);
+              if (error) setError(null);
+            }}
             className={inputClass}
             disabled={!!initial}
           >
@@ -97,7 +132,10 @@ export function CredentialForm({
         <input
           type="text"
           value={username}
-          onChange={(e) => setUsername(e.target.value)}
+          onChange={(e) => {
+            setUsername(e.target.value);
+            if (error) setError(null);
+          }}
           className={inputClass}
           placeholder="root"
           required
@@ -110,7 +148,10 @@ export function CredentialForm({
           <input
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (error) setError(null);
+            }}
             className={inputClass}
             placeholder={
               initial?.payload.password === "(stored)" ? "(unchanged)" : ""
@@ -125,7 +166,10 @@ export function CredentialForm({
             <label className={labelClass}>Private Key</label>
             <textarea
               value={privateKey}
-              onChange={(e) => setPrivateKey(e.target.value)}
+              onChange={(e) => {
+                setPrivateKey(e.target.value);
+                if (error) setError(null);
+              }}
               className={`${inputClass} h-32 resize-y font-mono text-xs`}
               placeholder={
                 initial?.payload.privateKey === "(stored)"
@@ -139,7 +183,10 @@ export function CredentialForm({
             <input
               type="password"
               value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
+              onChange={(e) => {
+                setPassphrase(e.target.value);
+                if (error) setError(null);
+              }}
               className={inputClass}
               placeholder={
                 initial?.payload.passphrase === "(stored)" ? "(unchanged)" : ""
@@ -155,7 +202,10 @@ export function CredentialForm({
             <label className={labelClass}>OpenSSH Certificate</label>
             <textarea
               value={certificatePem}
-              onChange={(e) => setCertificatePem(e.target.value)}
+              onChange={(e) => {
+                setCertificatePem(e.target.value);
+                if (error) setError(null);
+              }}
               className={`${inputClass} h-28 resize-y font-mono text-xs`}
               placeholder={
                 initial?.payload.certificatePem === "(stored)"
@@ -168,7 +218,10 @@ export function CredentialForm({
             <label className={labelClass}>Private Key</label>
             <textarea
               value={privateKeyPem}
-              onChange={(e) => setPrivateKeyPem(e.target.value)}
+              onChange={(e) => {
+                setPrivateKeyPem(e.target.value);
+                if (error) setError(null);
+              }}
               className={`${inputClass} h-28 resize-y font-mono text-xs`}
               placeholder={
                 initial?.payload.privateKeyPem === "(stored)"
@@ -182,7 +235,10 @@ export function CredentialForm({
             <input
               type="password"
               value={privateKeyPassword}
-              onChange={(e) => setPrivateKeyPassword(e.target.value)}
+              onChange={(e) => {
+                setPrivateKeyPassword(e.target.value);
+                if (error) setError(null);
+              }}
               className={inputClass}
               placeholder={
                 initial?.payload.privateKeyPassword === "(stored)"

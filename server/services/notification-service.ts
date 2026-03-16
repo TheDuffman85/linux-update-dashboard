@@ -2,7 +2,7 @@ import { eq, and, isNotNull, asc, inArray } from "drizzle-orm";
 import { createHash } from "crypto";
 import { Cron } from "croner";
 import { getDb } from "../db";
-import { notifications, systems, updateCache } from "../db/schema";
+import { notificationDeliveredUpdates, notifications, systems } from "../db/schema";
 import {
   getProvider,
   type AppUpdateEvent,
@@ -265,6 +265,18 @@ export function deleteNotification(id: number) {
   return true;
 }
 
+export function resetNotificationUpdateDedupe(id: number): boolean {
+  const db = getDb();
+  const existing = db.select({ id: notifications.id }).from(notifications).where(eq(notifications.id, id)).get();
+  if (!existing) return false;
+
+  db.delete(notificationDeliveredUpdates)
+    .where(eq(notificationDeliveredUpdates.notificationId, id))
+    .run();
+
+  return true;
+}
+
 export function reorderNotifications(notificationIds: number[]): void {
   const db = getDb();
   const existingNotifications = db
@@ -388,6 +400,185 @@ function computeUpdateHash(systemId: number): string {
   return createHash("sha256").update(raw).digest("hex").slice(0, 16);
 }
 
+export function syncSystemNotificationHash(systemId: number): void {
+  getDb().update(systems)
+    .set({ lastNotifiedHash: computeUpdateHash(systemId) })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
+interface DeliveredUpdateVersion {
+  systemId: number;
+  pkgManager: string;
+  packageName: string;
+  newVersion: string;
+}
+
+interface PendingUpdateResult extends CheckResult {
+  packageVersions: DeliveredUpdateVersion[];
+}
+
+interface PendingEvents {
+  updates: PendingUpdateResult[];
+  unreachable: CheckResult[];
+  appUpdate: AppUpdateEvent | null;
+}
+
+function deliveredUpdateVersionKey(
+  value: Pick<DeliveredUpdateVersion, "systemId" | "pkgManager" | "packageName" | "newVersion">,
+): string {
+  return `${value.systemId}\u0000${value.pkgManager}\u0000${value.packageName}\u0000${value.newVersion}`;
+}
+
+function listVisibleScopedSystems(scopedSystemIds: number[] | null): Array<{ id: number; name: string }> {
+  if (scopedSystemIds === null) {
+    return systemService.listVisibleSystems().map((system) => ({
+      id: system.id,
+      name: system.name,
+    }));
+  }
+
+  return systemService.filterVisibleSystemIds(scopedSystemIds)
+    .map((systemId) => systemService.getSystem(systemId))
+    .filter((system): system is NonNullable<typeof system> => !!system && system.hidden === 0)
+    .map((system) => ({
+      id: system.id,
+      name: system.name,
+    }));
+}
+
+function getVisibleDeliveredUpdateVersions(systemId: number): DeliveredUpdateVersion[] {
+  return hiddenUpdateService.getVisibleCachedUpdates(systemId).map((update) => ({
+    systemId,
+    pkgManager: update.pkgManager,
+    packageName: update.packageName,
+    newVersion: update.newVersion,
+  }));
+}
+
+function buildPendingUpdateResult(result: CheckResult): PendingUpdateResult {
+  return {
+    ...result,
+    packageVersions: getVisibleDeliveredUpdateVersions(result.systemId),
+  };
+}
+
+function getCurrentScopedUpdateResults(scopedSystemIds: number[] | null): PendingUpdateResult[] {
+  return listVisibleScopedSystems(scopedSystemIds)
+    .map((system) => {
+      const summary = hiddenUpdateService.getVisibleUpdateSummary(system.id);
+      return {
+        systemId: system.id,
+        systemName: system.name,
+        updateCount: summary.updateCount,
+        securityCount: summary.securityCount,
+        keptBackCount: summary.keptBackCount,
+        previouslyReachable: true,
+        nowUnreachable: false,
+        packageVersions: getVisibleDeliveredUpdateVersions(system.id),
+      };
+    })
+    .filter((result) => result.updateCount > 0 && result.packageVersions.length > 0);
+}
+
+function toCheckResult(result: PendingUpdateResult): CheckResult {
+  return {
+    systemId: result.systemId,
+    systemName: result.systemName,
+    updateCount: result.updateCount,
+    securityCount: result.securityCount,
+    keptBackCount: result.keptBackCount,
+    previouslyReachable: result.previouslyReachable,
+    nowUnreachable: result.nowUnreachable,
+  };
+}
+
+function flattenDeliveredUpdateVersions(updateResults: PendingUpdateResult[]): DeliveredUpdateVersion[] {
+  const seen = new Set<string>();
+  const values: DeliveredUpdateVersion[] = [];
+
+  for (const result of updateResults) {
+    for (const version of result.packageVersions) {
+      const key = deliveredUpdateVersionKey(version);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      values.push(version);
+    }
+  }
+
+  return values;
+}
+
+function loadDeliveredUpdateVersionKeys(channelId: number, systemIds: number[]): Set<string> {
+  const uniqueSystemIds = Array.from(new Set(systemIds.filter((systemId) => Number.isInteger(systemId) && systemId > 0)));
+  if (uniqueSystemIds.length === 0) return new Set();
+
+  const rows = getDb()
+    .select({
+      systemId: notificationDeliveredUpdates.systemId,
+      pkgManager: notificationDeliveredUpdates.pkgManager,
+      packageName: notificationDeliveredUpdates.packageName,
+      newVersion: notificationDeliveredUpdates.newVersion,
+    })
+    .from(notificationDeliveredUpdates)
+    .where(
+      and(
+        eq(notificationDeliveredUpdates.notificationId, channelId),
+        inArray(notificationDeliveredUpdates.systemId, uniqueSystemIds),
+      ),
+    )
+    .all();
+
+  return new Set(rows.map((row) => deliveredUpdateVersionKey(row)));
+}
+
+function hasUndeliveredUpdateVersions(
+  channelId: number,
+  updateResults: PendingUpdateResult[],
+): boolean {
+  if (updateResults.length === 0) return false;
+
+  const deliveredKeys = loadDeliveredUpdateVersionKeys(
+    channelId,
+    updateResults.map((result) => result.systemId),
+  );
+
+  return updateResults.some((result) =>
+    result.packageVersions.some((version) => !deliveredKeys.has(deliveredUpdateVersionKey(version))),
+  );
+}
+
+function markDeliveredUpdateVersions(
+  channelId: number,
+  updateResults: PendingUpdateResult[],
+): void {
+  const values = flattenDeliveredUpdateVersions(updateResults);
+  if (values.length === 0) return;
+
+  getDb()
+    .insert(notificationDeliveredUpdates)
+    .values(
+      values.map((value) => ({
+        notificationId: channelId,
+        systemId: value.systemId,
+        pkgManager: value.pkgManager,
+        packageName: value.packageName,
+        newVersion: value.newVersion,
+        deliveredAt: nowSql(),
+      })),
+    )
+    .onConflictDoNothing({
+      target: [
+        notificationDeliveredUpdates.notificationId,
+        notificationDeliveredUpdates.systemId,
+        notificationDeliveredUpdates.pkgManager,
+        notificationDeliveredUpdates.packageName,
+        notificationDeliveredUpdates.newVersion,
+      ],
+    })
+    .run();
+}
+
 export async function processScheduledResults(
   results: CheckResult[]
 ): Promise<void> {
@@ -403,45 +594,24 @@ export async function processScheduledResults(
   const visibleResults = systemService.filterVisibleSystemItems(results);
   if (visibleResults.length === 0) return;
 
-  const updatesChanged: CheckResult[] = [];
-  const unreachableChanged: CheckResult[] = [];
-
-  for (const result of visibleResults) {
-    if (result.updateCount > 0) {
-      const currentHash = computeUpdateHash(result.systemId);
-      const system = db
-        .select({ lastNotifiedHash: systems.lastNotifiedHash })
-        .from(systems)
-        .where(eq(systems.id, result.systemId))
-        .get();
-
-      if (currentHash !== system?.lastNotifiedHash) {
-        updatesChanged.push(result);
-        db.update(systems)
-          .set({ lastNotifiedHash: currentHash })
-          .where(eq(systems.id, result.systemId))
-          .run();
-      }
-    }
-
-    if (result.nowUnreachable && result.previouslyReachable) {
-      unreachableChanged.push(result);
-    }
-  }
-
-  if (updatesChanged.length === 0 && unreachableChanged.length === 0) return;
-
   for (const channel of channels) {
     const notifyOn = parseNotifyOn(channel.notifyOn);
     const scopedSystemIds = parseSystemIds(channel.systemIds);
     const filterByScope = (result: CheckResult) =>
       scopedSystemIds === null || scopedSystemIds.includes(result.systemId);
 
-    const channelUpdates = notifyOn.includes("updates")
-      ? updatesChanged.filter(filterByScope)
+    const scopedResults = visibleResults.filter(filterByScope);
+    const checkedUpdateResults = notifyOn.includes("updates")
+      ? scopedResults
+        .filter((result) => result.updateCount > 0)
+        .map(buildPendingUpdateResult)
+        .filter((result) => result.packageVersions.length > 0)
+      : [];
+    const channelUpdates = checkedUpdateResults.length > 0 && hasUndeliveredUpdateVersions(channel.id, checkedUpdateResults)
+      ? getCurrentScopedUpdateResults(scopedSystemIds)
       : [];
     const channelUnreachable = notifyOn.includes("unreachable")
-      ? unreachableChanged.filter(filterByScope)
+      ? scopedResults.filter((result) => result.nowUnreachable && result.previouslyReachable)
       : [];
 
     if (channelUpdates.length === 0 && channelUnreachable.length === 0) continue;
@@ -451,7 +621,14 @@ export async function processScheduledResults(
       continue;
     }
 
-    await sendChannelNotification(channel, channelUpdates, channelUnreachable);
+    const sent = await sendChannelNotification(
+      channel,
+      channelUpdates.map(toCheckResult),
+      channelUnreachable,
+    );
+    if (!sent) continue;
+
+    markDeliveredUpdateVersions(channel.id, channelUpdates);
   }
 }
 
@@ -616,18 +793,83 @@ async function sendChannelNotification(
   return false;
 }
 
-interface PendingEvents {
-  updates: CheckResult[];
-  unreachable: CheckResult[];
-  appUpdate: AppUpdateEvent | null;
-}
-
 function parsePendingEvents(json: string | null): PendingEvents {
   if (!json) return { updates: [], unreachable: [], appUpdate: null };
   try {
     const parsed = JSON.parse(json);
+    const updates = Array.isArray(parsed.updates)
+      ? parsed.updates
+        .map((value: unknown): PendingUpdateResult | null => {
+          if (!value || typeof value !== "object") return null;
+
+          const systemId = Number((value as { systemId?: unknown }).systemId);
+          if (!Number.isInteger(systemId) || systemId <= 0) return null;
+
+          const summary = hiddenUpdateService.getVisibleUpdateSummary(systemId);
+          const packageVersions = Array.isArray((value as { packageVersions?: unknown[] }).packageVersions)
+            ? (value as { packageVersions: unknown[] }).packageVersions
+              .map((entry): DeliveredUpdateVersion | null => {
+                if (!entry || typeof entry !== "object") return null;
+                const systemIdValue = Number((entry as { systemId?: unknown }).systemId ?? systemId);
+                const pkgManager = typeof (entry as { pkgManager?: unknown }).pkgManager === "string"
+                  ? (entry as { pkgManager: string }).pkgManager
+                  : null;
+                const packageName = typeof (entry as { packageName?: unknown }).packageName === "string"
+                  ? (entry as { packageName: string }).packageName
+                  : null;
+                const newVersion = typeof (entry as { newVersion?: unknown }).newVersion === "string"
+                  ? (entry as { newVersion: string }).newVersion
+                  : null;
+
+                if (!Number.isInteger(systemIdValue) || systemIdValue <= 0 || !pkgManager || !packageName || !newVersion) {
+                  return null;
+                }
+
+                return {
+                  systemId: systemIdValue,
+                  pkgManager,
+                  packageName,
+                  newVersion,
+                };
+              })
+              .filter((entry): entry is DeliveredUpdateVersion => entry !== null)
+            : getVisibleDeliveredUpdateVersions(systemId);
+
+          const system = systemService.getSystem(systemId);
+          return {
+            systemId,
+            systemName:
+              typeof (value as { systemName?: unknown }).systemName === "string"
+                ? (value as { systemName: string }).systemName
+                : system?.name || `System #${systemId}`,
+            updateCount:
+              typeof (value as { updateCount?: unknown }).updateCount === "number"
+                ? (value as { updateCount: number }).updateCount
+                : summary.updateCount,
+            securityCount:
+              typeof (value as { securityCount?: unknown }).securityCount === "number"
+                ? (value as { securityCount: number }).securityCount
+                : summary.securityCount,
+            keptBackCount:
+              typeof (value as { keptBackCount?: unknown }).keptBackCount === "number"
+                ? (value as { keptBackCount: number }).keptBackCount
+                : summary.keptBackCount,
+            previouslyReachable:
+              typeof (value as { previouslyReachable?: unknown }).previouslyReachable === "boolean"
+                ? (value as { previouslyReachable: boolean }).previouslyReachable
+                : true,
+            nowUnreachable:
+              typeof (value as { nowUnreachable?: unknown }).nowUnreachable === "boolean"
+                ? (value as { nowUnreachable: boolean }).nowUnreachable
+                : false,
+            packageVersions,
+          };
+        })
+        .filter((value: PendingUpdateResult | null): value is PendingUpdateResult => value !== null)
+      : [];
+
     return {
-      updates: Array.isArray(parsed.updates) ? parsed.updates : [],
+      updates,
       unreachable: Array.isArray(parsed.unreachable) ? parsed.unreachable : [],
       appUpdate:
         parsed.appUpdate &&
@@ -658,9 +900,55 @@ function mergeCheckResults(existing: CheckResult[], incoming: CheckResult[]): Ch
   return Array.from(map.values());
 }
 
+function mergePendingUpdateResults(
+  existing: PendingUpdateResult[],
+  incoming: PendingUpdateResult[],
+): PendingUpdateResult[] {
+  const map = new Map<number, PendingUpdateResult>();
+
+  for (const result of existing) {
+    map.set(result.systemId, {
+      ...result,
+      packageVersions: [...result.packageVersions],
+    });
+  }
+
+  for (const result of incoming) {
+    const previous = map.get(result.systemId);
+    if (!previous) {
+      map.set(result.systemId, {
+        ...result,
+        packageVersions: [...result.packageVersions],
+      });
+      continue;
+    }
+
+    const packageVersions = new Map<string, DeliveredUpdateVersion>();
+    for (const value of previous.packageVersions) {
+      packageVersions.set(deliveredUpdateVersionKey(value), value);
+    }
+    for (const value of result.packageVersions) {
+      packageVersions.set(deliveredUpdateVersionKey(value), value);
+    }
+
+    map.set(result.systemId, {
+      ...previous,
+      systemName: result.systemName,
+      updateCount: Math.max(previous.updateCount, result.updateCount),
+      securityCount: Math.max(previous.securityCount, result.securityCount),
+      keptBackCount: Math.max(previous.keptBackCount, result.keptBackCount),
+      previouslyReachable: previous.previouslyReachable || result.previouslyReachable,
+      nowUnreachable: previous.nowUnreachable || result.nowUnreachable,
+      packageVersions: Array.from(packageVersions.values()),
+    });
+  }
+
+  return Array.from(map.values());
+}
+
 function appendPendingEvents(
   channelId: number,
-  updateResults: CheckResult[],
+  updateResults: PendingUpdateResult[],
   unreachableResults: CheckResult[],
 ): void {
   const db = getDb();
@@ -671,7 +959,7 @@ function appendPendingEvents(
     .get();
 
   const pending = parsePendingEvents(row?.pendingEvents ?? null);
-  pending.updates = mergeCheckResults(pending.updates, updateResults);
+  pending.updates = mergePendingUpdateResults(pending.updates, updateResults);
   pending.unreachable = mergeCheckResults(pending.unreachable, unreachableResults);
 
   db.update(notifications)
@@ -732,20 +1020,24 @@ export async function processScheduledDigests(): Promise<void> {
     const pending = parsePendingEvents(channel.pendingEvents);
     const visibleUpdates = systemService.filterVisibleSystemItems(pending.updates);
     const visibleUnreachable = systemService.filterVisibleSystemItems(pending.unreachable);
+    const deliverableUpdates = hasUndeliveredUpdateVersions(channel.id, visibleUpdates)
+      ? visibleUpdates
+      : [];
 
     if (
       visibleUpdates.length !== pending.updates.length ||
+      deliverableUpdates.length !== visibleUpdates.length ||
       visibleUnreachable.length !== pending.unreachable.length
     ) {
       db.update(notifications)
         .set({
           pendingEvents:
-            visibleUpdates.length === 0 &&
+            deliverableUpdates.length === 0 &&
             visibleUnreachable.length === 0 &&
             !pending.appUpdate
               ? null
               : JSON.stringify({
-                  updates: visibleUpdates,
+                  updates: deliverableUpdates,
                   unreachable: visibleUnreachable,
                   appUpdate: pending.appUpdate,
                 }),
@@ -755,7 +1047,7 @@ export async function processScheduledDigests(): Promise<void> {
     }
 
     if (
-      visibleUpdates.length === 0 &&
+      deliverableUpdates.length === 0 &&
       visibleUnreachable.length === 0 &&
       !pending.appUpdate
     ) continue;
@@ -764,11 +1056,13 @@ export async function processScheduledDigests(): Promise<void> {
 
     const sent = await sendChannelNotification(
       channel,
-      visibleUpdates,
+      deliverableUpdates.map(toCheckResult),
       visibleUnreachable,
       pending.appUpdate
     );
     if (!sent) continue;
+
+    markDeliveredUpdateVersions(channel.id, deliverableUpdates);
 
     db.update(notifications)
       .set({

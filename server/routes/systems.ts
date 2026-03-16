@@ -22,6 +22,12 @@ import {
 
 const systems = new Hono();
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id) || id <= 0) return null;
@@ -65,6 +71,21 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     typeof body.autoHideKeptBackUpdates !== "boolean"
   ) {
     return "autoHideKeptBackUpdates must be a boolean";
+  }
+  if (
+    body.excludeFromUpgradeAll !== undefined &&
+    typeof body.excludeFromUpgradeAll !== "boolean"
+  ) {
+    return "excludeFromUpgradeAll must be a boolean";
+  }
+  if (
+    body.disabledPkgManagers !== undefined &&
+    (
+      !Array.isArray(body.disabledPkgManagers) ||
+      !body.disabledPkgManagers.every((value) => typeof value === "string")
+    )
+  ) {
+    return "disabledPkgManagers must be an array of strings";
   }
   if (
     body.validatedConfigToken !== undefined &&
@@ -292,14 +313,20 @@ function approvalsMatchChallenges(
   );
 }
 
+function getLastCheckMap(systemIds: number[]): Map<number, updateService.LastCheckSummary> {
+  return updateService.getLatestCompletedChecks(systemIds);
+}
+
 // List all systems
 systems.get("/", (c) => {
   const scope = c.req.query("scope");
   const allSystems = scope === "visible"
     ? systemService.listVisibleSystemsWithUpdateCounts()
     : systemService.listSystemsWithUpdateCounts();
+  const lastChecks = getLastCheckMap(allSystems.map((system) => system.id));
   const systemsWithMeta = allSystems.map((s) => ({
     ...serializeSystem(s as Record<string, unknown>),
+    lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
     activeOperation: updateService.getActiveOperation(s.id),
     supportsFullUpgrade: updateService.supportsFullUpgrade(s.id),
@@ -325,6 +352,7 @@ systems.get("/:id", (c) => {
   return c.json({
     system: {
       ...serializeSystem(system as Record<string, unknown>),
+      lastCheck: updateService.getLatestCompletedCheck(id),
       cacheAge: cacheService.getCacheAge(id),
       isStale: cacheService.isCacheStale(id),
       activeOperation: updateService.getActiveOperation(id),
@@ -343,7 +371,10 @@ systems.post("/:id/hidden-updates", async (c) => {
   const system = systemService.getSystem(systemId);
   if (!system) return c.json({ error: "System not found" }, 404);
 
-  const body = await c.req.json();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
   const pkgManager =
     typeof body.pkgManager === "string" ? body.pkgManager.trim() : "";
   const packageName =
@@ -389,7 +420,10 @@ systems.delete("/:id/hidden-updates/:hiddenUpdateId", (c) => {
 
 // Create system
 systems.post("/", async (c) => {
-  const body = await c.req.json();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const sourceIdCandidate =
@@ -418,18 +452,29 @@ systems.post("/", async (c) => {
 
   let systemId: number;
   try {
+    const name = body.name as string;
+    const sudoPassword = typeof body.sudoPassword === "string" ? body.sudoPassword : undefined;
+    const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
+      ? body.disabledPkgManagers as string[]
+      : undefined;
+    const autoHideKeptBackUpdates =
+      typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
+    const excludeFromUpgradeAll =
+      typeof body.excludeFromUpgradeAll === "boolean" ? body.excludeFromUpgradeAll : undefined;
+    const hidden = typeof body.hidden === "boolean" ? body.hidden : undefined;
+
     systemId = systemService.createSystem({
-      name: body.name,
+      name,
       hostname: parsedConfig.config.hostname,
       port: parsedConfig.config.port,
       credentialId: parsedConfig.config.credentialId,
       proxyJumpSystemId: parsedConfig.config.proxyJumpSystemId,
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
-      sudoPassword: body.sudoPassword || undefined,
-      disabledPkgManagers: body.disabledPkgManagers ?? undefined,
-      autoHideKeptBackUpdates: body.autoHideKeptBackUpdates,
-      excludeFromUpgradeAll: body.excludeFromUpgradeAll,
-      hidden: body.hidden,
+      sudoPassword,
+      disabledPkgManagers,
+      autoHideKeptBackUpdates,
+      excludeFromUpgradeAll,
+      hidden,
       sourceSystemId,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
@@ -453,7 +498,10 @@ systems.post("/", async (c) => {
 
 // Reorder systems
 systems.put("/reorder", async (c) => {
-  const body = await c.req.json();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
   const systemIds = parseSystemIdList(body.systemIds);
 
   if (!systemIds) {
@@ -474,7 +522,10 @@ systems.put("/reorder", async (c) => {
 systems.put("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
-  const body = await c.req.json();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const parsedConfig = parseConnectionConfig(body, id);
@@ -494,18 +545,29 @@ systems.put("/:id", async (c) => {
   }
 
   try {
+    const name = body.name as string;
+    const sudoPassword = typeof body.sudoPassword === "string" ? body.sudoPassword : undefined;
+    const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
+      ? body.disabledPkgManagers as string[]
+      : undefined;
+    const autoHideKeptBackUpdates =
+      typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
+    const excludeFromUpgradeAll =
+      typeof body.excludeFromUpgradeAll === "boolean" ? body.excludeFromUpgradeAll : undefined;
+    const hidden = typeof body.hidden === "boolean" ? body.hidden : undefined;
+
     systemService.updateSystem(id, {
-      name: body.name,
+      name,
       hostname: parsedConfig.config.hostname,
       port: parsedConfig.config.port,
       credentialId: parsedConfig.config.credentialId,
       proxyJumpSystemId: parsedConfig.config.proxyJumpSystemId,
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
-      sudoPassword: body.sudoPassword || undefined,
-      disabledPkgManagers: body.disabledPkgManagers ?? undefined,
-      autoHideKeptBackUpdates: body.autoHideKeptBackUpdates,
-      excludeFromUpgradeAll: body.excludeFromUpgradeAll,
-      hidden: body.hidden,
+      sudoPassword,
+      disabledPkgManagers,
+      autoHideKeptBackUpdates,
+      excludeFromUpgradeAll,
+      hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
   } catch (error) {
@@ -558,7 +620,10 @@ systems.delete("/:id", async (c) => {
 
 // Test connection with provided credentials
 systems.post("/test-connection", async (c) => {
-  const body = await c.req.json();
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
   const systemId =
     body.systemId === undefined || body.systemId === null
       ? null

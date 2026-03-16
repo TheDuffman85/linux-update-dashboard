@@ -110,6 +110,13 @@ function getCurrentVersion(): string | null {
   return version && version.trim() ? version.trim() : null;
 }
 
+export function getCurrentAppVersionInfo(): { currentVersion: string | null; currentBranch: string } {
+  return {
+    currentVersion: getCurrentVersion(),
+    currentBranch: getCurrentBranch(),
+  };
+}
+
 async function fetchJson(url: string, headers?: HeadersInit): Promise<any> {
   const res = await fetch(url, {
     headers: {

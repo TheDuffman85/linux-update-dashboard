@@ -7,6 +7,9 @@ import { decorateNotificationTitle } from "./presentation";
 // Basic email format check (RFC 5322 simplified)
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_IMPORTANCE_OVERRIDES = ["auto", "normal", "important"] as const;
+const VALID_TLS_MODES = ["plain", "starttls", "tls"] as const;
+
+export type EmailTlsMode = (typeof VALID_TLS_MODES)[number];
 
 function validateEmails(raw: string): string | null {
   const addresses = raw.split(",").map((e) => e.trim()).filter(Boolean);
@@ -44,11 +47,67 @@ function resolveEmailImportance(
   };
 }
 
+export function resolveEmailTlsMode(config: Record<string, string>): EmailTlsMode {
+  if (VALID_TLS_MODES.includes(config.smtpTlsMode as EmailTlsMode)) {
+    return config.smtpTlsMode as EmailTlsMode;
+  }
+
+  if (config.smtpSecure === "false") return "plain";
+  if (config.smtpSecure === "true") {
+    const port = parseInt(config.smtpPort || "587", 10);
+    return port === 465 ? "tls" : "starttls";
+  }
+
+  return "starttls";
+}
+
+export function shouldAllowInsecureTls(config: Record<string, string>): boolean {
+  return config.allowInsecureTls === "true";
+}
+
+function normalizeEmailConfig(config: Record<string, string>): Record<string, string> {
+  const normalized = { ...config };
+
+  if ("smtpSecure" in normalized) {
+    normalized.smtpTlsMode = resolveEmailTlsMode(normalized);
+    delete normalized.smtpSecure;
+  }
+
+  return normalized;
+}
+
+export function buildEmailTransportOptions(
+  config: Record<string, string>,
+  password?: string,
+): Record<string, unknown> {
+  const port = parseInt(config.smtpPort || "587", 10);
+  const tlsMode = resolveEmailTlsMode(config);
+  const allowInsecureTls = shouldAllowInsecureTls(config);
+
+  return {
+    host: config.smtpHost,
+    port,
+    secure: tlsMode === "tls",
+    ignoreTLS: tlsMode === "plain",
+    requireTLS: tlsMode === "starttls",
+    auth: config.smtpUser
+      ? { user: config.smtpUser, pass: password }
+      : undefined,
+    tls: tlsMode === "plain"
+      ? undefined
+      : { rejectUnauthorized: !allowInsecureTls },
+    connectionTimeout: 10_000,
+    socketTimeout: 10_000,
+  };
+}
+
 export const emailProvider = createFlatProvider({
   name: "email",
   allowedKeys: [
     "smtpHost",
     "smtpPort",
+    "smtpTlsMode",
+    "allowInsecureTls",
     "smtpSecure",
     "smtpUser",
     "smtpPassword",
@@ -57,6 +116,7 @@ export const emailProvider = createFlatProvider({
     "emailImportanceOverride",
   ],
   sensitiveKeys: ["smtpPassword"],
+  normalizeConfig: normalizeEmailConfig,
 
   validateConfig(config) {
     if (!config.smtpHost) return "SMTP host is required";
@@ -71,6 +131,21 @@ export const emailProvider = createFlatProvider({
     // Validate port range
     const port = parseInt(config.smtpPort || "587", 10);
     if (isNaN(port) || port < 1 || port > 65535) return "SMTP port must be between 1 and 65535";
+
+    if (
+      config.smtpTlsMode &&
+      !VALID_TLS_MODES.includes(config.smtpTlsMode as EmailTlsMode)
+    ) {
+      return `smtp TLS mode must be one of: ${VALID_TLS_MODES.join(", ")}`;
+    }
+
+    if (
+      config.allowInsecureTls &&
+      config.allowInsecureTls !== "true" &&
+      config.allowInsecureTls !== "false"
+    ) {
+      return "allowInsecureTls must be true or false";
+    }
 
     const importanceOverride = config.emailImportanceOverride || "auto";
     if (!VALID_IMPORTANCE_OVERRIDES.includes(importanceOverride as (typeof VALID_IMPORTANCE_OVERRIDES)[number])) {
@@ -90,20 +165,7 @@ export const emailProvider = createFlatProvider({
       }
     }
 
-    const port = parseInt(config.smtpPort || "587", 10);
-    const secure = config.smtpSecure !== "false";
-
-    const transport = nodemailer.createTransport({
-      host: config.smtpHost,
-      port,
-      secure: secure && port === 465,
-      auth: config.smtpUser
-        ? { user: config.smtpUser, pass: password }
-        : undefined,
-      tls: secure ? { rejectUnauthorized: true } : undefined,
-      connectionTimeout: 10_000,
-      socketTimeout: 10_000,
-    });
+    const transport = nodemailer.createTransport(buildEmailTransportOptions(config, password));
 
     const recipients = config.emailTo
       .split(",")

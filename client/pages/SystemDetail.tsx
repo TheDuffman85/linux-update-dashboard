@@ -12,6 +12,7 @@ import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
 import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
+import { getUpdatesPanelState } from "../lib/system-status";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -210,6 +211,40 @@ function HiddenUpdatesSection({
   );
 }
 
+function UpdateCheckNotice({
+  state,
+}: {
+  state: ReturnType<typeof getUpdatesPanelState>;
+}) {
+  if (state.kind !== "check_failed" && state.kind !== "check_warning") return null;
+
+  const tone = state.kind === "check_failed"
+    ? {
+        wrapper: "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20",
+        title: "text-red-700 dark:text-red-300",
+        body: "text-red-600 dark:text-red-400",
+        code: "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300",
+      }
+    : {
+        wrapper: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20",
+        title: "text-amber-700 dark:text-amber-300",
+        body: "text-amber-700 dark:text-amber-400",
+        code: "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
+      };
+
+  return (
+    <div className={`mx-4 mt-4 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
+      <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
+      <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
+      {state.error && (
+        <pre className={`mt-3 overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}>
+          {state.error}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function formatTimeAgo(dateStr: string): string {
   const date = new Date(dateStr + "Z");
   const now = Date.now();
@@ -300,7 +335,7 @@ function LegacyActivityDetails({
   );
 }
 
-function ActivityStepViewer({
+export function ActivityStepViewer({
   viewerId,
   steps,
   defaultToLastStep = false,
@@ -347,6 +382,7 @@ function ActivityStepViewer({
   }
 
   const isGlobalPhase = phase === "reconnecting" || phase === "rechecking";
+  const showStepTabs = steps.length > 1;
 
   return (
     <div className="space-y-2">
@@ -364,44 +400,46 @@ function ActivityStepViewer({
         )}
       </div>
 
-      <div
-        className="flex gap-2 overflow-x-auto pb-1"
-        role="tablist"
-        aria-label="Activity steps"
-      >
-        {steps.map((step, index) => {
-          const isSelected = index === selectedIndex;
-          return (
-            <button
-              key={`${viewerId}-step-${index}`}
-              id={`${viewerId}-tab-${index}`}
-              type="button"
-              role="tab"
-              aria-selected={isSelected}
-              aria-controls={`${viewerId}-panel-${index}`}
-              tabIndex={isSelected ? 0 : -1}
-              onClick={() => setSelectedIndex(index)}
-              className={`shrink-0 rounded-lg border px-3 py-2 text-left transition-colors ${
-                isSelected
-                  ? "border-blue-400 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100"
-                  : "border-border bg-white/80 text-slate-600 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-              }`}
-            >
-              <span className="block text-[10px] uppercase tracking-wide opacity-70">
-                {index + 1}/{steps.length} {step.pkgManager}
-              </span>
-              <span className="block text-xs font-medium">
-                {getActivityStepLabel(step, index)}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      {showStepTabs && (
+        <div
+          className="flex gap-2 overflow-x-auto pb-1"
+          role="tablist"
+          aria-label="Activity steps"
+        >
+          {steps.map((step, index) => {
+            const isSelected = index === selectedIndex;
+            return (
+              <button
+                key={`${viewerId}-step-${index}`}
+                id={`${viewerId}-tab-${index}`}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                aria-controls={`${viewerId}-panel-${index}`}
+                tabIndex={isSelected ? 0 : -1}
+                onClick={() => setSelectedIndex(index)}
+                className={`shrink-0 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  isSelected
+                    ? "border-blue-400 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100"
+                    : "border-border bg-white/80 text-slate-600 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                }`}
+              >
+                <span className="block text-[10px] uppercase tracking-wide opacity-70">
+                  {index + 1}/{steps.length} {step.pkgManager}
+                </span>
+                <span className="block text-xs font-medium">
+                  {getActivityStepLabel(step, index)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div
         id={`${viewerId}-panel-${selectedIndex}`}
-        role="tabpanel"
-        aria-labelledby={`${viewerId}-tab-${selectedIndex}`}
+        role={showStepTabs ? "tabpanel" : undefined}
+        aria-labelledby={showStepTabs ? `${viewerId}-tab-${selectedIndex}` : undefined}
         className="space-y-2"
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -770,6 +808,7 @@ export default function SystemDetail() {
   }
 
   const { system, updates, hiddenUpdates, history } = data;
+  const updatesPanelState = getUpdatesPanelState(system, updates.length);
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton;
 
@@ -1066,13 +1105,20 @@ export default function SystemDetail() {
             </span>
           )}
         </div>
-        <UpdatesTable
-          updates={updates}
-          systemId={systemId}
-          busy={upgrading || checking}
-          hideBusy={hideUpdate.isPending}
-          onHide={setPendingHideUpdate}
-        />
+        <UpdateCheckNotice state={updatesPanelState} />
+        {updates.length > 0 ? (
+          <UpdatesTable
+            updates={updates}
+            systemId={systemId}
+            busy={upgrading || checking}
+            hideBusy={hideUpdate.isPending}
+            onHide={setPendingHideUpdate}
+          />
+        ) : updatesPanelState.kind === "up_to_date" ? (
+          <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
+            No updates available
+          </div>
+        ) : null}
       </div>
 
       <HiddenUpdatesSection
