@@ -8,7 +8,8 @@ import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { settings } from "../../server/db/schema";
 import settingsRoutes from "../../server/routes/settings";
-import { initEncryptor } from "../../server/security";
+import { getEncryptor, initEncryptor } from "../../server/security";
+import { getSSHManager, initSSHManager } from "../../server/ssh/connection";
 
 describe("settings routes", () => {
   let tempDir: string;
@@ -90,5 +91,33 @@ describe("settings routes", () => {
     expect(
       db.select({ value: settings.value }).from(settings).where(eq(settings.key, "cache_duration_hours")).get()?.value,
     ).toBe("12");
+  });
+
+  test("applies SSH runtime setting changes immediately", async () => {
+    initSSHManager(5, 30, 120, getEncryptor());
+
+    const app = new Hono();
+    app.use("/api/settings/*", async (c, next) => {
+      c.set("user", { userId: 1, username: "admin", isAdmin: true });
+      await next();
+    });
+    app.route("/api/settings", settingsRoutes);
+
+    const res = await app.request("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ssh_timeout_seconds: "25",
+        cmd_timeout_seconds: "30",
+        concurrent_connections: "7",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(getSSHManager().getRuntimeConfig()).toEqual({
+      maxConcurrent: 7,
+      defaultTimeout: 25,
+      defaultCmdTimeout: 30,
+    });
   });
 });

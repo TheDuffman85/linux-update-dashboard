@@ -5,6 +5,11 @@ import { settings, webauthnCredentials } from "../db/schema";
 import { configureOidc } from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as scheduler from "../services/scheduler";
+import {
+  isNumericSettingKey,
+  normalizeNumericSetting,
+  syncSSHManagerWithSettings,
+} from "../services/settings-service";
 import type { SessionData } from "../auth/session";
 
 type AuthEnv = {
@@ -14,32 +19,8 @@ type AuthEnv = {
 };
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
-const NUMERIC_SETTING_RULES = {
-  check_interval_minutes: { min: 5, max: 1440, fallback: 15 },
-  cache_duration_hours: { min: 0, max: 168, fallback: 12 },
-  ssh_timeout_seconds: { min: 5, max: 120, fallback: 30 },
-  cmd_timeout_seconds: { min: 10, max: 600, fallback: 120 },
-  concurrent_connections: { min: 1, max: 50, fallback: 5 },
-} as const;
 
 const settingsRouter = new Hono<AuthEnv>();
-
-type NumericSettingKey = keyof typeof NUMERIC_SETTING_RULES;
-
-function isNumericSettingKey(key: string): key is NumericSettingKey {
-  return key in NUMERIC_SETTING_RULES;
-}
-
-function normalizeNumericSetting(key: NumericSettingKey, value: unknown): string {
-  const { min, max, fallback } = NUMERIC_SETTING_RULES[key];
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-
-  if (!Number.isFinite(parsed)) {
-    return String(fallback);
-  }
-
-  return String(Math.min(max, Math.max(min, parsed)));
-}
 
 // Get all settings
 settingsRouter.get("/", (c) => {
@@ -120,6 +101,14 @@ settingsRouter.put("/", async (c) => {
   // Restart scheduler if check interval was changed
   if ("check_interval_minutes" in normalizedBody) {
     scheduler.restart();
+  }
+
+  if (
+    "ssh_timeout_seconds" in normalizedBody ||
+    "cmd_timeout_seconds" in normalizedBody ||
+    "concurrent_connections" in normalizedBody
+  ) {
+    syncSSHManagerWithSettings();
   }
 
   // Reconfigure OIDC if any OIDC settings were changed
