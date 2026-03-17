@@ -14,6 +14,8 @@ import {
 import { detectPackageManagers } from "../ssh/detector";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
+import type { PackageManagerConfigs } from "../package-manager-configs";
+import { serializePackageManagerConfigs } from "../package-manager-configs";
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
@@ -57,6 +59,50 @@ export function deriveHostKeyStatus(system: {
     return "verification_disabled";
   }
   return system.trustedHostKey ? "verified" : "needs_approval";
+}
+
+export function deriveConnectionHostKeyStatus(system: {
+  id?: number;
+  hostKeyVerificationEnabled?: number | null;
+  trustedHostKey?: string | null;
+  proxyJumpSystemId?: number | null;
+}): "verified" | "verification_disabled" | "needs_approval" {
+  const ownStatus = deriveHostKeyStatus(system);
+  if (ownStatus === "needs_approval") {
+    return ownStatus;
+  }
+
+  let hasVerificationDisabled = ownStatus === "verification_disabled";
+  const seen = new Set<number>();
+  if (typeof system.id === "number") {
+    seen.add(system.id);
+  }
+
+  let currentProxyJumpId = system.proxyJumpSystemId ?? null;
+  let depth = 0;
+
+  while (currentProxyJumpId) {
+    if (seen.has(currentProxyJumpId) || depth >= MAX_PROXY_JUMP_DEPTH) {
+      break;
+    }
+    seen.add(currentProxyJumpId);
+    depth++;
+
+    const hop = getSystem(currentProxyJumpId);
+    if (!hop) break;
+
+    const hopStatus = deriveHostKeyStatus(hop);
+    if (hopStatus === "needs_approval") {
+      return hopStatus;
+    }
+    if (hopStatus === "verification_disabled") {
+      hasVerificationDisabled = true;
+    }
+
+    currentProxyJumpId = hop.proxyJumpSystemId ?? null;
+  }
+
+  return hasVerificationDisabled ? "verification_disabled" : "verified";
 }
 
 function isSystemConnectionUniqueConstraintError(error: unknown): boolean {
@@ -172,6 +218,7 @@ export function createSystem(data: {
   hostKeyVerificationEnabled?: boolean;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
@@ -219,6 +266,9 @@ export function createSystem(data: {
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
+  if (data.pkgManagerConfigs !== undefined) {
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
+  }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
   }
@@ -261,6 +311,7 @@ export function updateSystem(
     hostKeyVerificationEnabled?: boolean;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
+    pkgManagerConfigs?: PackageManagerConfigs | null;
     autoHideKeptBackUpdates?: boolean;
     excludeFromUpgradeAll?: boolean;
     hidden?: boolean;
@@ -306,6 +357,9 @@ export function updateSystem(
   }
   if (data.disabledPkgManagers !== undefined) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
+  }
+  if (data.pkgManagerConfigs !== undefined) {
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;

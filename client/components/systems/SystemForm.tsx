@@ -3,6 +3,7 @@ import { useToast } from "../../context/ToastContext";
 import { CredentialForm } from "../credentials/CredentialForm";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Modal } from "../Modal";
+import { Badge } from "../Badge";
 import {
   useCreateCredential,
   useCredentials,
@@ -11,6 +12,15 @@ import {
 import { SSH_CREDENTIAL_KINDS } from "../../lib/credential-form";
 import { validateSystemForm } from "../../lib/system-form-validation";
 import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/systems";
+import {
+  normalizePackageManagerConfigs,
+  SUPPORTED_PACKAGE_MANAGER_CONFIGS,
+  type PackageManagerConfigs,
+} from "../../lib/package-manager-configs";
+import {
+  getHostKeyStatusBadgeLabel,
+  type HostKeyStatus,
+} from "../../lib/host-key-status";
 
 interface SystemFormData {
   name: string;
@@ -22,6 +32,7 @@ interface SystemFormData {
   validatedConfigToken?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
@@ -29,9 +40,24 @@ interface SystemFormData {
 }
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const PACKAGE_MANAGER_LABELS: Record<string, string> = {
+  apt: "APT",
+  dnf: "DNF",
+  yum: "YUM",
+  pacman: "Pacman",
+  apk: "APK",
+  flatpak: "Flatpak",
+  snap: "Snap",
+};
 
 function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
+}
+
+function isHostKeyErrorMessage(message: string | null | undefined): boolean {
+  return /HostKeyVerificationError|SSH host key approval required|SSH host key verification failed/i.test(
+    message ?? ""
+  );
 }
 
 export function SystemForm({
@@ -45,11 +71,12 @@ export function SystemForm({
   initial?: Omit<Partial<SystemFormData>, "autoHideKeptBackUpdates" | "excludeFromUpgradeAll"> & {
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
+    pkgManagerConfigs?: PackageManagerConfigs | null;
     autoHideKeptBackUpdates?: number;
     excludeFromUpgradeAll?: number;
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
-    hostKeyStatus?: string;
+    hostKeyStatus?: HostKeyStatus;
   };
   systemId?: number;
   sourceSystemId?: number;
@@ -94,8 +121,11 @@ export function SystemForm({
   const [disabledManagers, setDisabledManagers] = useState<Set<string>>(
     new Set(initial?.disabledPkgManagers ?? [])
   );
-  const [autoHideKeptBackUpdates, setAutoHideKeptBackUpdates] = useState(
-    initial?.autoHideKeptBackUpdates === 1
+  const [pkgManagerConfigs, setPkgManagerConfigs] = useState<PackageManagerConfigs>(
+    initial?.pkgManagerConfigs
+      ?? (initial?.autoHideKeptBackUpdates === 1
+        ? { apt: { autoHideKeptBackUpdates: true } }
+        : {})
   );
   const [excludeFromUpgradeAll, setExcludeFromUpgradeAll] = useState(
     initial?.excludeFromUpgradeAll === 1
@@ -125,6 +155,9 @@ export function SystemForm({
   const [approvedHostKeyFingerprint, setApprovedHostKeyFingerprint] = useState<string | null>(
     initial?.trustedHostKeyFingerprintSha256 ?? null
   );
+  const [hostKeyStatus, setHostKeyStatus] = useState<HostKeyStatus>(
+    initial?.hostKeyStatus ?? (initial?.approvedHostKey ? "verified" : "needs_approval")
+  );
   const [showUnapprovedSaveWarning, setShowUnapprovedSaveWarning] = useState(false);
   const [showCreateCredential, setShowCreateCredential] = useState(false);
 
@@ -140,14 +173,28 @@ export function SystemForm({
   useEffect(() => {
     setApprovedHostKey(initial?.approvedHostKey ?? null);
     setApprovedHostKeyFingerprint(initial?.trustedHostKeyFingerprintSha256 ?? null);
-  }, [initial?.approvedHostKey, initial?.trustedHostKeyFingerprintSha256]);
+    setHostKeyStatus(
+      initial?.hostKeyStatus ?? (initial?.approvedHostKey ? "verified" : "needs_approval")
+    );
+  }, [initial?.approvedHostKey, initial?.trustedHostKeyFingerprintSha256, initial?.hostKeyStatus]);
 
   useEffect(() => {
     if (hostname !== (initial?.hostname || "") || port !== (initial?.port || 22)) {
       setApprovedHostKey(null);
       setApprovedHostKeyFingerprint(null);
+      setHostKeyStatus(hostKeyVerificationEnabled ? "needs_approval" : "verification_disabled");
     }
-  }, [hostname, port, initial?.hostname, initial?.port]);
+  }, [hostname, port, initial?.hostname, initial?.port, hostKeyVerificationEnabled]);
+
+  useEffect(() => {
+    setHostKeyStatus((prev) => {
+      if (!hostKeyVerificationEnabled) return "verification_disabled";
+      if (prev === "verification_disabled") {
+        return approvedHostKey ? "verified" : "needs_approval";
+      }
+      return prev;
+    });
+  }, [hostKeyVerificationEnabled, approvedHostKey]);
 
   const toggleManager = (manager: string) => {
     setDisabledManagers((prev) => {
@@ -156,6 +203,21 @@ export function SystemForm({
         next.delete(manager);
       } else {
         next.add(manager);
+      }
+      return next;
+    });
+  };
+
+  const setManagerConfig = <T extends keyof PackageManagerConfigs>(
+    manager: T,
+    value: PackageManagerConfigs[T] | undefined,
+  ) => {
+    setPkgManagerConfigs((prev) => {
+      const next = { ...prev };
+      if (!value || Object.keys(value).length === 0) {
+        delete next[manager];
+      } else {
+        next[manager] = value;
       }
       return next;
     });
@@ -184,7 +246,7 @@ export function SystemForm({
       validatedConfigToken: validatedConfigToken || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: [...disabledManagers],
-      autoHideKeptBackUpdates,
+      pkgManagerConfigs: normalizePackageManagerConfigs(pkgManagerConfigs) ?? {},
       excludeFromUpgradeAll,
       hidden,
       sourceSystemId,
@@ -206,6 +268,20 @@ export function SystemForm({
     "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
   const showsProxyJumpLoopbackWarning =
     proxyJumpSystemId !== null && isLoopbackHost(hostname);
+  const visiblePackageManagers = Array.from(
+    new Set([
+      ...detectedManagers,
+      ...Object.keys(pkgManagerConfigs),
+    ]),
+  ).sort((a, b) => {
+    const order = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
+    const leftIndex = order.indexOf(a);
+    const rightIndex = order.indexOf(b);
+    if (leftIndex === -1 && rightIndex === -1) return a.localeCompare(b);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
 
   const runConnectionTest = (extra?: {
     trustChallengeToken?: string;
@@ -245,13 +321,10 @@ export function SystemForm({
       },
       {
         onSuccess: (data) => {
-          setTestResult({
-            success: data.success,
-            message: data.message,
-            debugRef: data.debugRef,
-          });
           if (data.hostKeyChallenges?.length && data.trustChallengeToken) {
+            setTestResult(null);
             setValidatedConfigToken(null);
+            setHostKeyStatus("needs_approval");
             setPendingTrustChallenge({
               token: data.trustChallengeToken,
               challenges: data.hostKeyChallenges,
@@ -259,6 +332,11 @@ export function SystemForm({
             return;
           }
 
+          setTestResult({
+            success: data.success,
+            message: data.message,
+            debugRef: data.debugRef,
+          });
           setPendingTrustChallenge(null);
           if (data.success && data.validatedConfigToken) {
             setValidatedConfigToken(data.validatedConfigToken);
@@ -272,7 +350,13 @@ export function SystemForm({
                 `${targetApproval.algorithm} ${targetApproval.rawKey}`
               );
               setApprovedHostKeyFingerprint(targetApproval.fingerprintSha256);
+              setHostKeyStatus("verified");
             }
+          }
+          if (!data.success && isHostKeyErrorMessage(data.message)) {
+            setHostKeyStatus("needs_approval");
+          } else if (data.success && hostKeyVerificationEnabled) {
+            setHostKeyStatus(approvedHostKey || extra?.approvedHostKeys?.length ? "verified" : hostKeyStatus);
           }
           if (data.detectedManagers?.length) {
             setDetectedManagers(data.detectedManagers);
@@ -288,11 +372,60 @@ export function SystemForm({
         onError: (err) => {
           setValidatedConfigToken(null);
           setPendingTrustChallenge(null);
+          if (isHostKeyErrorMessage(err.message)) {
+            setHostKeyStatus("needs_approval");
+          }
           setTestResult({ success: false, message: err.message });
         },
       }
     );
   };
+
+  const storedHostKeyNeedsAttention =
+    hostKeyVerificationEnabled &&
+    approvedHostKey !== null &&
+    hostKeyStatus === "needs_approval";
+  const canRunConnectionTest = !testConnection.isPending && !!hostname && credentialId > 0;
+  const hasPendingHostKeyReview = pendingTrustChallenge !== null;
+  const needsHostKeyApproval =
+    hostKeyVerificationEnabled &&
+    (hostKeyStatus === "needs_approval" || !approvedHostKey);
+  const approvalFlowActive =
+    hostKeyVerificationEnabled && (hasPendingHostKeyReview || needsHostKeyApproval);
+  const showHostKeyFetchAction =
+    hostKeyVerificationEnabled && !hasPendingHostKeyReview && needsHostKeyApproval;
+  const hostKeyFetchActionLabel = "Approval";
+  const showRevokeHostKeyAction =
+    !!systemId && approvedHostKey !== null && !hasPendingHostKeyReview;
+  const pendingTargetChallenge = pendingTrustChallenge?.challenges.find(
+    (challenge) => challenge.role === "target"
+  ) ?? null;
+  const pendingReviewShowsMultipleHosts =
+    (pendingTrustChallenge?.challenges.length ?? 0) > 1;
+  const pendingChallengeCount = pendingTrustChallenge?.challenges.length ?? 0;
+  const pendingTargetFingerprint = pendingTargetChallenge?.fingerprintSha256 ?? null;
+  const fetchedHostKeyDiffersFromApproved =
+    storedHostKeyNeedsAttention &&
+    approvedHostKeyFingerprint !== null &&
+    pendingTargetFingerprint !== null &&
+    approvedHostKeyFingerprint !== pendingTargetFingerprint;
+  const footerConnectionTestDisabled =
+    !canRunConnectionTest || approvalFlowActive;
+  const footerConnectionTestTitle = approvalFlowActive
+    ? "Complete SSH host-key approval above before running a connection test."
+    : undefined;
+
+  const hostKeySummary = approvedHostKey
+    ? hasPendingHostKeyReview
+      ? ""
+      : storedHostKeyNeedsAttention
+        ? "Stored approval no longer matches this host."
+        : systemId
+          ? "Approved host key stored for this system."
+          : "Approved host key will be saved with this system."
+    : hasPendingHostKeyReview
+      ? ""
+      : "No approved host key stored.";
 
   const handleCreateCredential = (data: {
     name: string;
@@ -410,7 +543,7 @@ export function SystemForm({
               Verify SSH host key
             </span>
             <span className="block text-xs text-slate-400 mt-0.5">
-              Enabled by default for new systems. Disabling this weakens SSH trust checks for this system only.
+              Enabled by default for new systems. Disabling this weakens SSH host-key verification for this system only.
             </span>
           </span>
         </label>
@@ -421,18 +554,29 @@ export function SystemForm({
           </div>
         )}
 
-        {systemId && hostKeyVerificationEnabled && (
+        {hostKeyVerificationEnabled && (
           <div className="rounded-lg border border-border p-3 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Approved SSH Host Key
+                  SSH Host Key Approval
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">
-                  {approvedHostKey ? "Stored for this system" : "No approved key stored"}
+                  {hostKeySummary}
                 </div>
               </div>
-              {approvedHostKey && (
+              <div className="flex items-center gap-2">
+                {storedHostKeyNeedsAttention ? (
+                  <Badge variant="danger" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
+                ) : approvedHostKey ? (
+                  <Badge variant="success" small>{getHostKeyStatusBadgeLabel("verified")}</Badge>
+                ) : (
+                  <Badge variant="info" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
+                )}
+              {hasPendingHostKeyReview && pendingReviewShowsMultipleHosts && (
+                <Badge variant="muted" small>{`${pendingChallengeCount}\u00A0keys`}</Badge>
+              )}
+              {showRevokeHostKeyAction && (
                 <button
                   type="button"
                   onClick={() => {
@@ -440,6 +584,7 @@ export function SystemForm({
                       onSuccess: () => {
                         setApprovedHostKey(null);
                         setApprovedHostKeyFingerprint(null);
+                        setHostKeyStatus("needs_approval");
                         setValidatedConfigToken(null);
                       },
                       onError: (err) => {
@@ -456,8 +601,112 @@ export function SystemForm({
                   {revokeHostKey.isPending ? "Revoking..." : "Revoke"}
                 </button>
               )}
+              {showHostKeyFetchAction && (
+                <button
+                  type="button"
+                  onClick={() => runConnectionTest()}
+                  disabled={!canRunConnectionTest}
+                  className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                >
+                  {testConnection.isPending ? "Checking..." : hostKeyFetchActionLabel}
+                </button>
+              )}
+              </div>
             </div>
-            {approvedHostKey ? (
+            {storedHostKeyNeedsAttention && !hasPendingHostKeyReview && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+                The stored SSH host key no longer matches what this host presented during the latest check.
+                Review and re-approve the current host key before running SSH actions again.
+              </div>
+            )}
+            {hasPendingHostKeyReview ? (
+              <div className="space-y-4">
+                <div className="text-sm text-slate-600 dark:text-slate-300">
+                  {pendingReviewShowsMultipleHosts
+                    ? `Review all ${pendingChallengeCount} fetched host keys below. Each one must match what you expect before you approve.`
+                    : fetchedHostKeyDiffersFromApproved
+                    ? "The host presented a different key than the one currently approved. Approve it only if you expected this change."
+                    : "Review the fetched host key below and approve it only if these details match what you expect for this host."}
+                </div>
+                {fetchedHostKeyDiffersFromApproved && (
+                  <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+                    <div className="font-medium">The approved host key does not match the current host key.</div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">Approved fingerprint</div>
+                        <div className="mt-1 font-mono text-xs break-all">{approvedHostKeyFingerprint}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">Current fingerprint</div>
+                        <div className="mt-1 font-mono text-xs break-all">{pendingTargetFingerprint}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-3">
+                  {pendingTrustChallenge.challenges.map((challenge, index) => (
+                    <div key={`${challenge.role}-${challenge.host}-${challenge.port}-${challenge.fingerprintSha256}`} className="rounded-lg border border-border p-3 text-sm">
+                      {pendingReviewShowsMultipleHosts && (
+                        <>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                {index + 1} of {pendingChallengeCount}
+                              </div>
+                              <div className="mt-1 font-medium text-slate-800 dark:text-slate-100">
+                                {getChallengeSystemName(challenge.systemId) ?? `${challenge.host}:${challenge.port}`}
+                              </div>
+                            </div>
+                            <Badge variant={challenge.role === "target" ? "info" : "muted"} small>
+                              {challenge.role === "target" ? "Target" : "Jump"}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 text-slate-500 dark:text-slate-400">
+                            {challenge.host}:{challenge.port}
+                          </div>
+                        </>
+                      )}
+                      {!pendingReviewShowsMultipleHosts && (
+                        <div className="text-sm text-slate-600 dark:text-slate-300">
+                          Reviewing {challenge.role === "target" ? "target" : "jump"} host key
+                          {getChallengeSystemName(challenge.systemId) ? ` for ${getChallengeSystemName(challenge.systemId)}` : ""}
+                          <span className="text-slate-500 dark:text-slate-400"> ({challenge.host}:{challenge.port})</span>
+                        </div>
+                      )}
+                      <div className="mt-3 text-xs text-slate-500 dark:text-slate-400 break-all">
+                        Fingerprint: <span className="font-mono">{challenge.fingerprintSha256}</span>
+                      </div>
+                      <pre className="mt-3 text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                        {`${challenge.algorithm} ${challenge.rawKey}`}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPendingTrustChallenge(null)}
+                    disabled={testConnection.isPending}
+                    className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      runConnectionTest({
+                        trustChallengeToken: pendingTrustChallenge.token,
+                        approvedHostKeys: pendingTrustChallenge.challenges,
+                      })
+                    }
+                    disabled={testConnection.isPending}
+                    className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                  >
+                    {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Approve"}
+                  </button>
+                </div>
+              </div>
+            ) : approvedHostKey ? (
               <>
                 <div className="text-xs text-slate-500 dark:text-slate-400 break-all">
                   Fingerprint: <span className="font-mono">{approvedHostKeyFingerprint}</span>
@@ -467,8 +716,16 @@ export function SystemForm({
                 </pre>
               </>
             ) : (
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Use Test Connection to approve and store the host key from this dialog.
+              <div className="space-y-3">
+                <div className="text-xs text-slate-500 dark:text-slate-400 break-all">
+                  Approved fingerprint: <span className="font-mono">Not approved yet</span>
+                </div>
+                <div className="rounded-lg bg-slate-900 p-3 text-xs text-slate-400">
+                  <div className="font-mono">No approved SSH host key stored.</div>
+                  <div className="mt-2">
+                    Fetch the current host key to review and approve it here. Test Connection becomes available after host-key approval is complete.
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -485,23 +742,6 @@ export function SystemForm({
           />
           <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH credential password</p>
         </div>
-
-        <label className="flex items-start gap-3 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={autoHideKeptBackUpdates}
-            onChange={(e) => setAutoHideKeptBackUpdates(e.target.checked)}
-            className="rounded mt-0.5"
-          />
-          <span className="min-w-0">
-            <span className="block text-slate-700 dark:text-slate-200">
-              Auto-hide kept-back packages
-            </span>
-            <span className="block text-xs text-slate-400 mt-0.5">
-              Automatically move kept-back updates for this system into the hidden-updates list after refreshes.
-            </span>
-          </span>
-        </label>
 
         <label className="flex items-start gap-3 text-sm cursor-pointer">
           <input
@@ -537,6 +777,212 @@ export function SystemForm({
           </span>
         </label>
 
+        {visiblePackageManagers.length > 0 && (
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Package Managers
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Enable package managers for this system and adjust manager-specific behavior where it is useful.
+              </p>
+            </div>
+
+            {visiblePackageManagers.map((manager) => {
+              const enabled = !disabledManagers.has(manager);
+              const title = PACKAGE_MANAGER_LABELS[manager] ?? manager;
+              const hasExtraSettings = (SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager);
+
+              return (
+                <div key={manager} className="rounded-lg border border-border p-3 space-y-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      {title}
+                    </div>
+                    <label className="mt-2 inline-flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={() => toggleManager(manager)}
+                        className="rounded"
+                      />
+                      <span className={enabled ? "text-slate-700 dark:text-slate-200" : "text-slate-400"}>
+                        Enabled
+                      </span>
+                    </label>
+                    {!detectedManagers.includes(manager) && (
+                      <p className="mt-2 text-xs text-slate-400">
+                        Saved config is shown here even though this package manager is not currently detected.
+                      </p>
+                    )}
+                  </div>
+
+                  {manager === "apt" && (
+                    <>
+                      <div>
+                        <label className={labelClass}>Default Upgrade Mode</label>
+                        <select
+                          value={pkgManagerConfigs.apt?.defaultUpgradeMode ?? "upgrade"}
+                          onChange={(e) =>
+                            setManagerConfig("apt", {
+                              defaultUpgradeMode: e.target.value as "upgrade" | "full-upgrade",
+                            })
+                          }
+                          className={inputClass}
+                        >
+                          <option value="upgrade">Standard upgrade</option>
+                          <option value="full-upgrade">Full upgrade</option>
+                        </select>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        When set to full upgrade, the normal Upgrade action may install new dependencies or remove obsolete packages.
+                      </p>
+                      <label className="flex items-start gap-3 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pkgManagerConfigs.apt?.autoHideKeptBackUpdates === true}
+                          onChange={(e) =>
+                            setManagerConfig("apt", {
+                              ...pkgManagerConfigs.apt,
+                              autoHideKeptBackUpdates: e.target.checked,
+                            })
+                          }
+                          className="rounded mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-slate-700 dark:text-slate-200">
+                            Auto-hide kept-back packages
+                          </span>
+                          <span className="block text-xs text-slate-400 mt-0.5">
+                            Automatically move kept-back APT updates into the hidden-updates list after refreshes.
+                          </span>
+                        </span>
+                      </label>
+                    </>
+                  )}
+
+                  {manager === "dnf" && (
+                    <>
+                      <div>
+                        <label className={labelClass}>Default Upgrade Mode</label>
+                        <select
+                          value={pkgManagerConfigs.dnf?.defaultUpgradeMode ?? "upgrade"}
+                          onChange={(e) =>
+                            setManagerConfig("dnf", {
+                              ...pkgManagerConfigs.dnf,
+                              defaultUpgradeMode: e.target.value as "upgrade" | "distro-sync",
+                            })
+                          }
+                          className={inputClass}
+                        >
+                          <option value="upgrade">Standard upgrade</option>
+                          <option value="distro-sync">Distro sync</option>
+                        </select>
+                      </div>
+                      <label className="flex items-start gap-3 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pkgManagerConfigs.dnf?.refreshMetadataOnCheck === true}
+                          onChange={(e) =>
+                            setManagerConfig("dnf", {
+                              ...pkgManagerConfigs.dnf,
+                              refreshMetadataOnCheck: e.target.checked,
+                            })
+                          }
+                          className="rounded mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-slate-700 dark:text-slate-200">
+                            Refresh metadata during checks
+                          </span>
+                          <span className="block text-xs text-slate-400 mt-0.5">
+                            Uses `dnf check-update --refresh` to force a metadata refresh during update checks.
+                          </span>
+                        </span>
+                      </label>
+                    </>
+                  )}
+
+                  {manager === "pacman" && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pkgManagerConfigs.pacman?.refreshDatabasesOnCheck !== false}
+                        onChange={(e) =>
+                          setManagerConfig("pacman", {
+                            refreshDatabasesOnCheck: e.target.checked,
+                          })
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          Refresh package databases during checks
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          Disabling this skips the `pacman -Sy` refresh step and uses locally cached sync data only.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {manager === "apk" && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pkgManagerConfigs.apk?.refreshIndexesOnCheck !== false}
+                        onChange={(e) =>
+                          setManagerConfig("apk", {
+                            refreshIndexesOnCheck: e.target.checked,
+                          })
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          Refresh package indexes during checks
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          Disabling this skips `apk update` during checks and only lists updates from the current local index state.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {manager === "flatpak" && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pkgManagerConfigs.flatpak?.refreshAppstreamOnCheck !== false}
+                        onChange={(e) =>
+                          setManagerConfig("flatpak", {
+                            refreshAppstreamOnCheck: e.target.checked,
+                          })
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          Refresh appstream data during checks
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          Disabling this skips the appstream refresh step and only checks for updates with current local metadata.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {!hasExtraSettings && (
+                    <p className="text-xs text-slate-400">
+                      No additional settings for this package manager yet.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {testResult && (
           <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>
             <div>{testResult.message}</div>
@@ -548,43 +994,16 @@ export function SystemForm({
           </div>
         )}
 
-        {detectedManagers.length > 0 && (
-          <div>
-            <label className={labelClass}>Detected Package Managers</label>
-            <div className="flex flex-wrap gap-2 mt-1">
-              {detectedManagers.map((m) => (
-                <label
-                  key={m}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
-                    !disabledManagers.has(m)
-                      ? "border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                      : "border-border bg-slate-50 dark:bg-slate-800 text-slate-400"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={!disabledManagers.has(m)}
-                    onChange={() => toggleManager(m)}
-                    className="rounded"
-                  />
-                  {m}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
         <div className="flex items-center justify-between gap-3 pt-2">
           <button
             type="button"
-            disabled={testConnection.isPending || !hostname || credentialId <= 0}
+            disabled={footerConnectionTestDisabled}
+            title={footerConnectionTestTitle}
             onClick={() => runConnectionTest()}
             className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
           >
             {testConnection.isPending ? (
               <span className="spinner spinner-sm" />
-            ) : hostKeyVerificationEnabled && !approvedHostKey ? (
-              "Approve SSH Host Key"
             ) : (
               "Test Connection"
             )}
@@ -610,65 +1029,6 @@ export function SystemForm({
       </form>
 
       <Modal
-        open={pendingTrustChallenge !== null}
-        onClose={() => setPendingTrustChallenge(null)}
-        title="Approve SSH Host Key"
-        dismissible={!testConnection.isPending}
-      >
-        {pendingTrustChallenge && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              Approve the reported SSH host key before this connection can be trusted.
-            </p>
-            <div className="space-y-3">
-              {pendingTrustChallenge.challenges.map((challenge) => (
-                <div key={`${challenge.role}-${challenge.host}-${challenge.port}-${challenge.fingerprintSha256}`} className="rounded-lg border border-border p-3 text-sm">
-                  <div className="font-medium text-slate-800 dark:text-slate-100">
-                    {challenge.role === "target" ? "Target host" : "Jump host"}
-                  </div>
-                  {getChallengeSystemName(challenge.systemId) && (
-                    <div className="text-sm text-slate-200">
-                      {getChallengeSystemName(challenge.systemId)}
-                    </div>
-                  )}
-                  <div className="text-slate-500 dark:text-slate-400">
-                    {challenge.host}:{challenge.port}
-                  </div>
-                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    <div>Algorithm: <span className="font-mono">{challenge.algorithm}</span></div>
-                    <div>Fingerprint: <span className="font-mono break-all">{challenge.fingerprintSha256}</span></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setPendingTrustChallenge(null)}
-                disabled={testConnection.isPending}
-                className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  runConnectionTest({
-                    trustChallengeToken: pendingTrustChallenge.token,
-                    approvedHostKeys: pendingTrustChallenge.challenges,
-                  })
-                }
-                disabled={testConnection.isPending}
-                className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-              >
-                {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Approve and Continue"}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <Modal
         open={showCreateCredential}
         onClose={() => setShowCreateCredential(false)}
         title="Add Credential"
@@ -688,8 +1048,8 @@ export function SystemForm({
           setShowUnapprovedSaveWarning(false);
           submitForm();
         }}
-        title="Save Without Approved Host Key"
-        message="SSH host-key verification is enabled, but no host key has been approved yet. You can save now, but SSH actions will require approving the host key later from this dialog."
+        title="Save Without Host Key Approval"
+        message="SSH host-key verification is enabled, but no host key has been approved yet. You can save now, but SSH actions will require host-key approval later from this dialog."
         confirmLabel="Save Anyway"
       />
     </>

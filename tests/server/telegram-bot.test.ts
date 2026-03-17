@@ -720,6 +720,65 @@ describe("telegram bot commands", () => {
     expect(sentBodies.some((body) => body.includes("no longer allowed"))).toBe(true);
   });
 
+  test("upgrade confirmation mentions configured aggressive upgrade behavior", async () => {
+    getDb().insert(notifications).values({
+      name: "Ops Telegram",
+      type: "telegram",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: "[1]",
+      config: JSON.stringify(prepareTelegramConfigForStorage({
+        telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+        chatId: "55",
+        chatBindingStatus: "bound",
+        commandsEnabled: true,
+        commandApiTokenEncrypted: "ludash_command_token",
+      })),
+    }).run();
+
+    const sentBodies: string[] = [];
+
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/systems") && !url.includes("/upgrade")) {
+        return new Response(JSON.stringify({
+          systems: [{
+            id: 1,
+            name: "alpha",
+            pkgManager: "apt",
+            detectedPkgManagers: ["apt"],
+            disabledPkgManagers: [],
+            pkgManagerConfigs: {
+              apt: {
+                defaultUpgradeMode: "full-upgrade",
+              },
+            },
+            updateCount: 2,
+            isReachable: 1,
+          }],
+        }), { status: 200 });
+      }
+      if (url.includes("/sendMessage")) {
+        sentBodies.push(String(init?.body || ""));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await telegramTesting.processUpdate("123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345", {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        text: "/upgrade 1",
+        chat: { id: 55, type: "private", first_name: "Alice" },
+        from: { id: 55, first_name: "Alice" },
+      },
+    });
+
+    expect(sentBodies.some((body) => body.includes("Confirm upgrade for alpha"))).toBe(true);
+    expect(sentBodies.some((body) => body.includes("APT runs full-upgrade"))).toBe(true);
+  });
+
   test("bulk confirmation re-checks current channel scope before execution", async () => {
     const inserted = getDb().insert(notifications).values({
       name: "Ops Telegram",

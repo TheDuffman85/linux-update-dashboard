@@ -85,6 +85,12 @@ describe("AptParser", () => {
     expect(aptParser.getUpgradePackageCommand("curl")).toContain("curl");
   });
 
+  test("upgrade command uses configured full-upgrade mode", () => {
+    expect(
+      aptParser.getUpgradeAllCommand({ defaultUpgradeMode: "full-upgrade" }),
+    ).toContain("full-upgrade");
+  });
+
   test("full upgrade command", () => {
     const cmd = aptParser.getFullUpgradeAllCommand();
     expect(cmd).not.toBeNull();
@@ -138,6 +144,15 @@ describe("DnfParser", () => {
     expect(cmd).not.toBeNull();
     expect(cmd).toContain("distro-sync");
   });
+
+  test("uses configured upgrade defaults and refresh mode", () => {
+    expect(
+      dnfParser.getUpgradeAllCommand({ defaultUpgradeMode: "distro-sync" }),
+    ).toContain("distro-sync");
+    expect(
+      dnfParser.getCheckCommands({ refreshMetadataOnCheck: true })[0],
+    ).toContain("check-update --refresh --quiet");
+  });
 });
 
 describe("YumParser", () => {
@@ -181,6 +196,12 @@ describe("PacmanParser", () => {
     expect(cmds[0]).toContain("pacman -Sy");
     expect(cmds[1]).toContain("pacman -Qu");
     expect(cmds[1]).toContain('if [ "$rc" -eq 1 ]');
+  });
+
+  test("can skip database refresh on checks", () => {
+    const cmds = pacmanParser.getCheckCommands({ refreshDatabasesOnCheck: false });
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0]).toContain("pacman -Qu");
   });
 
   test("no full upgrade command", () => {
@@ -236,6 +257,12 @@ describe("ApkParser", () => {
     expect(apkParser.getUpgradePackageCommand("busybox")).toContain("apk upgrade busybox");
   });
 
+  test("can skip index refresh on checks", () => {
+    const cmds = apkParser.getCheckCommands({ refreshIndexesOnCheck: false });
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0]).toContain("apk list -u");
+  });
+
   test("no full upgrade command", () => {
     expect(apkParser.getFullUpgradeAllCommand()).toBeNull();
   });
@@ -272,6 +299,12 @@ describe("FlatpakParser", () => {
   test("empty", () => {
     const updates = flatpakParser.parseCheckOutput("", "", 0);
     expect(updates).toHaveLength(0);
+  });
+
+  test("can skip appstream refresh on checks", () => {
+    const cmds = flatpakParser.getCheckCommands({ refreshAppstreamOnCheck: false });
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0]).toContain("flatpak remote-ls --updates");
   });
 
   test("no full upgrade command", () => {

@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "crypto";
+import { getEncryptor, initEncryptor } from "../../server/security";
 import {
   buildPersistentSetupCommand,
   buildTestConnectionFailureMessage,
   buildTailMonitorCommand,
+  HostKeyVerificationError,
+  initSSHManager,
   preparePersistentSudoCommand,
   wrapRemoteCommand,
 } from "../../server/ssh/connection";
@@ -126,5 +130,104 @@ describe("buildTestConnectionFailureMessage", () => {
     );
 
     expect(message).toBe("Connection failed: (SSH) Channel open failure: Connection refused");
+  });
+});
+
+describe("SSHConnectionManager host-key aggregation", () => {
+  test("collects jump and target host-key challenges in one review flow", async () => {
+    initEncryptor(randomBytes(32).toString("base64"));
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+
+    const jumpChallenge = {
+      systemId: 1,
+      role: "jump" as const,
+      host: "jump.local",
+      port: 22,
+      algorithm: "ssh-ed25519",
+      fingerprintSha256: "SHA256:jump",
+      rawKey: "anVtcC1rZXk=",
+    };
+    const targetChallenge = {
+      systemId: 2,
+      role: "target" as const,
+      host: "target.local",
+      port: 22,
+      algorithm: "ssh-ed25519",
+      fingerprintSha256: "SHA256:target",
+      rawKey: "dGFyZ2V0LWtleQ==",
+    };
+
+    (manager as any).resolveChain = () => [
+      {
+        systemId: 1,
+        role: "jump",
+        hostname: "jump.local",
+        port: 22,
+        username: "root",
+        authType: "password",
+        hostKeyVerificationEnabled: true,
+        trustedHostKey: null,
+      },
+      {
+        systemId: 2,
+        role: "target",
+        hostname: "target.local",
+        port: 22,
+        username: "root",
+        authType: "password",
+        hostKeyVerificationEnabled: true,
+        trustedHostKey: null,
+      },
+    ];
+
+    (manager as any).openForwardStream = async () => ({});
+
+    (manager as any).connectSingleHop = async (
+      hop: { role: "jump" | "target" },
+      _hopIndex: number,
+      _hopCount: number,
+      context: { approvedHostKeys?: typeof jumpChallenge[] },
+    ) => {
+      const approved = context.approvedHostKeys ?? [];
+      const hasApproval = (challenge: typeof jumpChallenge) =>
+        approved.some((entry) => (
+          entry.role === challenge.role &&
+          entry.host === challenge.host &&
+          entry.port === challenge.port &&
+          (entry.systemId ?? null) === (challenge.systemId ?? null) &&
+          entry.rawKey === challenge.rawKey
+        ));
+
+      if (hop.role === "jump") {
+        if (!hasApproval(jumpChallenge)) {
+          throw new HostKeyVerificationError([jumpChallenge]);
+        }
+        return { end() {} };
+      }
+
+      if (!hasApproval(targetChallenge)) {
+        throw new HostKeyVerificationError([targetChallenge]);
+      }
+      return { end() {} };
+    };
+
+    (manager as any).runCommand = async () => ({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const result = await manager.testConnection(
+      {
+        hostname: "target.local",
+        port: 22,
+        proxyJumpSystemId: 1,
+      },
+      { systemId: 2 }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe("SSH host key approval required");
+    expect(result.hostKeyChallenges).toEqual([jumpChallenge, targetChallenge]);
   });
 });

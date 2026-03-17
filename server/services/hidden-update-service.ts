@@ -2,6 +2,10 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db";
 import { hiddenUpdates, systems, updateCache } from "../db/schema";
 import type { ParsedUpdate } from "../ssh/parsers";
+import {
+  getAptAutoHideKeptBackUpdates,
+  parsePackageManagerConfigs,
+} from "../package-manager-configs";
 
 type CachedUpdateRow = typeof updateCache.$inferSelect;
 type HiddenUpdateRow = typeof hiddenUpdates.$inferSelect;
@@ -107,10 +111,17 @@ export function getVisibleCachedUpdates(systemId: number): CachedUpdateRow[] {
 
 export function shouldAutoHideKeptBackUpdates(systemId: number): boolean {
   const row = getDb()
-    .select({ autoHideKeptBackUpdates: systems.autoHideKeptBackUpdates })
+    .select({
+      autoHideKeptBackUpdates: systems.autoHideKeptBackUpdates,
+      pkgManagerConfigs: systems.pkgManagerConfigs,
+    })
     .from(systems)
     .where(eq(systems.id, systemId))
     .get();
+  const configValue = getAptAutoHideKeptBackUpdates(
+    parsePackageManagerConfigs(row?.pkgManagerConfigs ?? null),
+  );
+  if (configValue !== undefined) return configValue;
   return row?.autoHideKeptBackUpdates === 1;
 }
 

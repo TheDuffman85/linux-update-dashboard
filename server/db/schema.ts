@@ -79,6 +79,7 @@ export const systems = sqliteTable(
     pkgManager: text("pkg_manager"),
     detectedPkgManagers: text("detected_pkg_managers"),
     disabledPkgManagers: text("disabled_pkg_managers"),
+    pkgManagerConfigs: text("pkg_manager_configs"),
     autoHideKeptBackUpdates: integer("auto_hide_kept_back_updates")
       .notNull()
       .default(0),

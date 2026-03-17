@@ -1,5 +1,6 @@
 import type { PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName } from "./types";
+import type { PacmanPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: linux 6.7.4.arch1-1 -> 6.7.5.arch1-1
 const PATTERN = /^(\S+)\s+(\S+)\s+->\s+(\S+)/;
@@ -20,18 +21,22 @@ function buildListUpdatesCommand() {
 export const pacmanParser: PackageParser = {
   name: "pacman",
 
-  getCheckCommands() {
-    return [
-      sudo("pacman -Sy --noconfirm") + " 2>&1",
-      buildListUpdatesCommand(),
-    ];
+  getCheckCommands(config) {
+    const pacmanConfig = config as PacmanPackageManagerConfig | undefined;
+    const commands: string[] = [];
+    if (pacmanConfig?.refreshDatabasesOnCheck !== false) {
+      commands.push(sudo("pacman -Sy --noconfirm") + " 2>&1");
+    }
+    commands.push(buildListUpdatesCommand());
+    return commands;
   },
 
-  getCheckCommandLabels() {
-    return [
-      "Refreshing package databases",
-      "Listing available updates",
-    ];
+  getCheckCommandLabels(config) {
+    const pacmanConfig = config as PacmanPackageManagerConfig | undefined;
+    if (pacmanConfig?.refreshDatabasesOnCheck === false) {
+      return ["Listing available updates"];
+    }
+    return ["Refreshing package databases", "Listing available updates"];
   },
 
   parseCheckOutput(stdout, _stderr, _exitCode) {

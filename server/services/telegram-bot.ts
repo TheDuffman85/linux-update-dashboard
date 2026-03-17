@@ -18,6 +18,10 @@ import {
 } from "./notifications/telegram";
 import { formatUpdateCounts } from "./notifications/presentation";
 import { getCurrentAppVersionInfo } from "./app-update-service";
+import {
+  describeUpgradeBehaviors,
+  type PackageManagerConfigs,
+} from "../package-manager-configs";
 
 const TELEGRAM_TYPE = "telegram";
 const LINK_TTL_MS = 10 * 60_000;
@@ -100,6 +104,10 @@ interface WorkerState {
 interface AllowedSystem {
   id: number;
   name: string;
+  pkgManager?: string | null;
+  detectedPkgManagers?: string[] | null;
+  disabledPkgManagers?: string[] | null;
+  pkgManagerConfigs?: PackageManagerConfigs | null;
   updateCount?: number;
   securityCount?: number;
   keptBackCount?: number;
@@ -534,7 +542,7 @@ async function fetchAllowedSystems(channel: NotificationRow): Promise<AllowedSys
   const commandToken = resolveTelegramCommandToken(parseConfig(channel.config));
   if (!commandToken) return [];
 
-  const response = await callDashboardApi<{ systems: Array<{ id: number; name: string; updateCount: number; securityCount?: number; keptBackCount?: number; isReachable: number; supportsFullUpgrade?: boolean; excludeFromUpgradeAll?: number }> }>(
+  const response = await callDashboardApi<{ systems: Array<AllowedSystem> }>(
     commandToken,
     "/api/systems?scope=visible"
   );
@@ -607,6 +615,19 @@ function resolveSystem(
 
 function formatSystemLabel(system: Pick<AllowedSystem, "id" | "name">): string {
   return `${system.name} (#${system.id})`;
+}
+
+function getUpgradeBehaviorPromptLines(system: AllowedSystem): string[] {
+  const managers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
+    .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
+  return describeUpgradeBehaviors(managers, system.pkgManagerConfigs);
+}
+
+function buildUpgradePrompt(system: AllowedSystem): string {
+  return [
+    `Confirm upgrade for ${system.name} (#${system.id})?`,
+    ...getUpgradeBehaviorPromptLines(system),
+  ].join("\n");
 }
 
 function escapeTelegramHtml(text: string): string {
@@ -1019,7 +1040,7 @@ async function executeCommandForSystem(
     systemId: system.id,
   });
   const prompt = action === "upgrade"
-    ? `Confirm upgrade for ${system.name} (#${system.id})?`
+    ? buildUpgradePrompt(system)
     : `Confirm full upgrade for ${system.name} (#${system.id})?`;
 
   await sendTelegramText(botToken, chatId, prompt, buildConfirmationKeyboard(confirmationToken));
@@ -1418,7 +1439,7 @@ async function handleCommandMessage(
         command: "upgrade",
         systemId: system.id,
       });
-      prompt = `Confirm upgrade for ${system.name} (#${system.id})?`;
+      prompt = buildUpgradePrompt(system);
     } else if (requestedCommand === "fullupgrade") {
       if (!system.supportsFullUpgrade) {
         await sendTelegramText(botToken, chatId, `Full upgrade is not supported for ${system.name} (#${system.id}).`);

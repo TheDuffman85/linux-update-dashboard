@@ -256,6 +256,60 @@ describe("systems reorder route", () => {
     expect(body.error).toBe("disabledPkgManagers must be an array of strings");
   });
 
+  test("rejects unsupported package manager config managers", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad Manager Config",
+        hostname: "bad-manager-config.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          snap: {
+            refreshAppstreamOnCheck: true,
+          },
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("pkgManagerConfigs.snap is not supported");
+  });
+
+  test("rejects invalid package manager config values", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad Config Value",
+        hostname: "bad-config-value.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          apt: {
+            defaultUpgradeMode: "dist-upgrade",
+          },
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("pkgManagerConfigs.apt.defaultUpgradeMode must be 'upgrade' or 'full-upgrade'");
+  });
+
   test("allows creating the same connection tuple behind a different ProxyJump host", async () => {
     const db = getDb();
     const jumpCredentialId = createSystemCredential("jump");
@@ -356,6 +410,84 @@ describe("systems reorder route", () => {
     expect(updated?.hidden).toBe(0);
   });
 
+  test("persists and serializes package manager configs on create and update", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const createRes = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Configurable System",
+        hostname: "configurable.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          apt: {
+            defaultUpgradeMode: "full-upgrade",
+          },
+          pacman: {
+            refreshDatabasesOnCheck: false,
+          },
+        },
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const created = listSystems().find((system) => system.name === "Configurable System");
+    expect(created?.pkgManagerConfigs).toBe(JSON.stringify({
+      apt: {
+        defaultUpgradeMode: "full-upgrade",
+      },
+      pacman: {
+        refreshDatabasesOnCheck: false,
+      },
+    }));
+
+    const listRes = await app.request("/api/systems");
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === created!.id);
+    expect(listed.pkgManagerConfigs).toEqual({
+      apt: {
+        defaultUpgradeMode: "full-upgrade",
+      },
+      pacman: {
+        refreshDatabasesOnCheck: false,
+      },
+    });
+
+    const updateRes = await app.request(`/api/systems/${created!.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Configurable System",
+        hostname: "configurable.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          dnf: {
+            defaultUpgradeMode: "distro-sync",
+            refreshMetadataOnCheck: true,
+          },
+        },
+      }),
+    });
+
+    expect(updateRes.status).toBe(200);
+
+    const detailRes = await app.request(`/api/systems/${created!.id}`);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.pkgManagerConfigs).toEqual({
+      dnf: {
+        defaultUpgradeMode: "distro-sync",
+        refreshMetadataOnCheck: true,
+      },
+    });
+  });
+
   test("filters hidden systems when requesting visible scope", async () => {
     const db = getDb();
     db.insert(systems).values([
@@ -419,6 +551,11 @@ describe("systems reorder route", () => {
     expect(detailRes.status).toBe(200);
     const detailBody = await detailRes.json();
     expect(detailBody.system.autoHideKeptBackUpdates).toBe(1);
+    expect(detailBody.system.pkgManagerConfigs).toEqual({
+      apt: {
+        autoHideKeptBackUpdates: true,
+      },
+    });
     expect("ignoreKeptBackPackages" in detailBody.system).toBe(false);
   });
 
@@ -495,6 +632,133 @@ describe("systems reorder route", () => {
       startedAt: "2026-01-01 09:30:00",
       completedAt: "2026-01-01 09:31:00",
     });
+  });
+
+  test("reports host-key approval as needed when a ProxyJump hop is untrusted", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const inserted = db.insert(systems).values([
+      {
+        name: "Jump",
+        hostname: "jump.local",
+        port: 22,
+        credentialId,
+        authType: "password",
+        username: "root",
+        hostKeyVerificationEnabled: 1,
+        trustedHostKey: null,
+      },
+      {
+        name: "Target",
+        hostname: "target.local",
+        port: 22,
+        credentialId,
+        proxyJumpSystemId: null,
+        authType: "password",
+        username: "root",
+        hostKeyVerificationEnabled: 1,
+        trustedHostKey: "dGFyZ2V0LWtleQ==",
+        trustedHostKeyAlgorithm: "ssh-ed25519",
+        trustedHostKeyFingerprintSha256: "SHA256:target",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    db.update(systems)
+      .set({ proxyJumpSystemId: inserted[0].id })
+      .where(eq(systems.id, inserted[1].id))
+      .run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const listRes = await app.request("/api/systems");
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === inserted[1].id);
+    expect(listed.hostKeyStatus).toBe("needs_approval");
+
+    const detailRes = await app.request(`/api/systems/${inserted[1].id}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.hostKeyStatus).toBe("needs_approval");
+  });
+
+  test("reports host-key approval as needed when the latest check failed host-key verification", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("testuser");
+    const systemId = db.insert(systems).values({
+      name: "Test APT",
+      hostname: "localhost",
+      port: 2001,
+      credentialId,
+      authType: "password",
+      username: "testuser",
+      hostKeyVerificationEnabled: 1,
+      trustedHostKey: "ZmFrZS1ob3N0LWtleQ==",
+      trustedHostKeyAlgorithm: "ssh-ed25519",
+      trustedHostKeyFingerprintSha256: "SHA256:stored",
+      hostKeyTrustedAt: "2026-03-16 08:00:00",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateHistory).values({
+      systemId,
+      action: "check",
+      pkgManager: "apt",
+      status: "failed",
+      error: "HostKeyVerificationError: SSH host key approval required",
+      startedAt: "2026-03-17 09:00:00",
+      completedAt: "2026-03-17 09:01:00",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const listRes = await app.request("/api/systems");
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === systemId);
+    expect(listed.hostKeyStatus).toBe("needs_approval");
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.hostKeyStatus).toBe("needs_approval");
+  });
+
+  test("keeps host-key status verified when the key was re-approved after a failed check", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("testuser");
+    const systemId = db.insert(systems).values({
+      name: "Recovered Host Key",
+      hostname: "localhost",
+      port: 2002,
+      credentialId,
+      authType: "password",
+      username: "testuser",
+      hostKeyVerificationEnabled: 1,
+      trustedHostKey: "bmV3LWhvc3Qta2V5",
+      trustedHostKeyAlgorithm: "ssh-ed25519",
+      trustedHostKeyFingerprintSha256: "SHA256:new",
+      hostKeyTrustedAt: "2026-03-17 10:30:00",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateHistory).values({
+      systemId,
+      action: "check",
+      pkgManager: "apt",
+      status: "failed",
+      error: "HostKeyVerificationError: SSH host key approval required",
+      startedAt: "2026-03-17 09:00:00",
+      completedAt: "2026-03-17 09:01:00",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.hostKeyStatus).toBe("verified");
   });
 
   test("returns 409 when updating a system to match another connection tuple", async () => {
