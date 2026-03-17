@@ -51,6 +51,23 @@ export class ProxyJumpDependencyError extends Error {
   }
 }
 
+function normalizeStringList(value: string[] | string | null | undefined): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.length > 0
+      ? (() => {
+          try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+
+  return Array.from(new Set(raw.filter((entry): entry is string => typeof entry === "string"))).sort();
+}
+
 export function deriveHostKeyStatus(system: {
   hostKeyVerificationEnabled?: number | null;
   trustedHostKey?: string | null;
@@ -338,8 +355,8 @@ export function updateSystem(
     existing.hostname !== data.hostname || existing.port !== data.port;
   const disabledPkgManagersChanged =
     data.disabledPkgManagers !== undefined &&
-    JSON.stringify(data.disabledPkgManagers) !==
-      (existing.disabledPkgManagers ?? null);
+    JSON.stringify(normalizeStringList(data.disabledPkgManagers)) !==
+      JSON.stringify(normalizeStringList(existing.disabledPkgManagers));
 
   const values: Record<string, unknown> = {
     name: data.name,

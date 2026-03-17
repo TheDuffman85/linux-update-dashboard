@@ -825,6 +825,7 @@ export function SystemForm({
                           value={pkgManagerConfigs.apt?.defaultUpgradeMode ?? "upgrade"}
                           onChange={(e) =>
                             setManagerConfig("apt", {
+                              ...pkgManagerConfigs.apt,
                               defaultUpgradeMode: e.target.value as "upgrade" | "full-upgrade",
                             })
                           }
