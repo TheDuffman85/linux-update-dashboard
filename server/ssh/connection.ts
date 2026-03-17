@@ -180,7 +180,21 @@ interface ResolvedSSHHop extends Record<string, unknown> {
   trustedHostKey?: string | null;
 }
 
-class HostKeyVerificationError extends Error {
+function sameApprovedHostKey(
+  left: ApprovedHostKeyInput,
+  right: ApprovedHostKeyInput
+): boolean {
+  return (
+    left.role === right.role &&
+    left.host === right.host &&
+    left.port === right.port &&
+    (left.systemId ?? null) === (right.systemId ?? null) &&
+    left.fingerprintSha256 === right.fingerprintSha256 &&
+    left.rawKey === right.rawKey
+  );
+}
+
+export class HostKeyVerificationError extends Error {
   challenges: ApprovedHostKeyInput[];
 
   constructor(challenges: ApprovedHostKeyInput[]) {
@@ -270,23 +284,56 @@ export class SSHConnectionManager {
 
     const chain = this.resolveChain(system, context);
     const clients: Client[] = [];
+    const transientApprovedHostKeys = [...(context.approvedHostKeys ?? [])];
+    const collectedChallenges: ApprovedHostKeyInput[] = [];
 
     try {
       let forwardClient: Client | null = null;
 
       for (const [index, hop] of chain.entries()) {
-        const sock = forwardClient
-          ? await this.openForwardStream(forwardClient, hop.hostname, hop.port)
-          : undefined;
-        const client = await this.connectSingleHop(
-          hop,
-          index,
-          chain.length,
-          context,
-          sock
-        );
-        clients.push(client);
-        forwardClient = client;
+        while (true) {
+          const sock = forwardClient
+            ? await this.openForwardStream(forwardClient, hop.hostname, hop.port)
+            : undefined;
+
+          try {
+            const client = await this.connectSingleHop(
+              hop,
+              index,
+              chain.length,
+              {
+                ...context,
+                approvedHostKeys: transientApprovedHostKeys,
+              },
+              sock
+            );
+            clients.push(client);
+            forwardClient = client;
+            break;
+          } catch (error) {
+            if (!(error instanceof HostKeyVerificationError)) {
+              throw error;
+            }
+
+            const newChallenges = error.challenges.filter(
+              (challenge) =>
+                !transientApprovedHostKeys.some((approved) =>
+                  sameApprovedHostKey(approved, challenge)
+                )
+            );
+
+            if (newChallenges.length === 0) {
+              throw error;
+            }
+
+            transientApprovedHostKeys.push(...newChallenges);
+            collectedChallenges.push(...newChallenges);
+          }
+        }
+      }
+
+      if (collectedChallenges.length > 0) {
+        throw new HostKeyVerificationError(collectedChallenges);
       }
 
       const leaf = clients.at(-1);

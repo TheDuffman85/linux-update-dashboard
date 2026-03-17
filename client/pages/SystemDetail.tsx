@@ -14,6 +14,7 @@ import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-s
 import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
 import { getUpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
+import { getHostKeyStatusText } from "../lib/host-key-status";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -1029,12 +1030,7 @@ export default function SystemDetail() {
             },
             {
               label: "Host Key",
-              value:
-                system.hostKeyStatus === "verified"
-                  ? "Verified"
-                  : system.hostKeyStatus === "verification_disabled"
-                    ? "Verification disabled"
-                    : "Needs approval",
+              value: getHostKeyStatusText(system.hostKeyStatus),
             },
             { label: "Status", value: system.isReachable === 1 ? "Online" : system.isReachable === -1 ? "Offline" : "Unknown" },
           ]}

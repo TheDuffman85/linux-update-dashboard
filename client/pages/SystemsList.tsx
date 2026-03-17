@@ -18,6 +18,7 @@ import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
 import { deriveSystemUpdateState } from "../lib/system-status";
+import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -239,11 +240,11 @@ export default function SystemsList() {
                         <Badge variant="muted" small>Hidden</Badge>
                       )}
                       {s.hostKeyStatus === "verification_disabled" ? (
-                        <Badge variant="warning" small>Host key off</Badge>
+                        <Badge variant="warning" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus)}</Badge>
                       ) : s.hostKeyStatus === "needs_approval" ? (
-                        <Badge variant="info" small>Needs trust</Badge>
+                        <Badge variant="info" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus)}</Badge>
                       ) : (
-                        <Badge variant="success" small>Host key ok</Badge>
+                        <Badge variant="success" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus)}</Badge>
                       )}
                       {s.proxyJumpChain.length > 0 && (
                         <Badge variant="muted" small>

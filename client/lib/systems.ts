@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type { PackageManagerConfigs } from "./package-manager-configs";
+import type { HostKeyStatus } from "./host-key-status";
 
 export interface ActiveOperation {
   type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
@@ -30,7 +31,7 @@ export interface System {
   trustedHostKeyAlgorithm: string | null;
   trustedHostKeyFingerprintSha256: string | null;
   hostKeyTrustedAt: string | null;
-  hostKeyStatus: "verified" | "verification_disabled" | "needs_approval";
+  hostKeyStatus: HostKeyStatus;
   proxyJumpChain: Array<{ id: number; name: string }>;
   pkgManager: string | null;
   detectedPkgManagers: string[] | null;

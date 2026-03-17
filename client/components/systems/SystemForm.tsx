@@ -17,6 +17,10 @@ import {
   SUPPORTED_PACKAGE_MANAGER_CONFIGS,
   type PackageManagerConfigs,
 } from "../../lib/package-manager-configs";
+import {
+  getHostKeyStatusBadgeLabel,
+  type HostKeyStatus,
+} from "../../lib/host-key-status";
 
 interface SystemFormData {
   name: string;
@@ -72,7 +76,7 @@ export function SystemForm({
     excludeFromUpgradeAll?: number;
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
-    hostKeyStatus?: string;
+    hostKeyStatus?: HostKeyStatus;
   };
   systemId?: number;
   sourceSystemId?: number;
@@ -151,7 +155,7 @@ export function SystemForm({
   const [approvedHostKeyFingerprint, setApprovedHostKeyFingerprint] = useState<string | null>(
     initial?.trustedHostKeyFingerprintSha256 ?? null
   );
-  const [hostKeyStatus, setHostKeyStatus] = useState(
+  const [hostKeyStatus, setHostKeyStatus] = useState<HostKeyStatus>(
     initial?.hostKeyStatus ?? (initial?.approvedHostKey ? "verified" : "needs_approval")
   );
   const [showUnapprovedSaveWarning, setShowUnapprovedSaveWarning] = useState(false);
@@ -317,12 +321,8 @@ export function SystemForm({
       },
       {
         onSuccess: (data) => {
-          setTestResult({
-            success: data.success,
-            message: data.message,
-            debugRef: data.debugRef,
-          });
           if (data.hostKeyChallenges?.length && data.trustChallengeToken) {
+            setTestResult(null);
             setValidatedConfigToken(null);
             setHostKeyStatus("needs_approval");
             setPendingTrustChallenge({
@@ -332,6 +332,11 @@ export function SystemForm({
             return;
           }
 
+          setTestResult({
+            success: data.success,
+            message: data.message,
+            debugRef: data.debugRef,
+          });
           setPendingTrustChallenge(null);
           if (data.success && data.validatedConfigToken) {
             setValidatedConfigToken(data.validatedConfigToken);
@@ -380,12 +385,47 @@ export function SystemForm({
     hostKeyVerificationEnabled &&
     approvedHostKey !== null &&
     hostKeyStatus === "needs_approval";
+  const canRunConnectionTest = !testConnection.isPending && !!hostname && credentialId > 0;
+  const hasPendingHostKeyReview = pendingTrustChallenge !== null;
+  const needsHostKeyApproval =
+    hostKeyVerificationEnabled &&
+    (hostKeyStatus === "needs_approval" || !approvedHostKey);
+  const approvalFlowActive =
+    hostKeyVerificationEnabled && (hasPendingHostKeyReview || needsHostKeyApproval);
+  const showHostKeyFetchAction =
+    hostKeyVerificationEnabled && !hasPendingHostKeyReview && needsHostKeyApproval;
+  const hostKeyFetchActionLabel = "Approval";
+  const showRevokeHostKeyAction =
+    !!systemId && approvedHostKey !== null && !hasPendingHostKeyReview;
+  const pendingTargetChallenge = pendingTrustChallenge?.challenges.find(
+    (challenge) => challenge.role === "target"
+  ) ?? null;
+  const pendingReviewShowsMultipleHosts =
+    (pendingTrustChallenge?.challenges.length ?? 0) > 1;
+  const pendingChallengeCount = pendingTrustChallenge?.challenges.length ?? 0;
+  const pendingTargetFingerprint = pendingTargetChallenge?.fingerprintSha256 ?? null;
+  const fetchedHostKeyDiffersFromApproved =
+    storedHostKeyNeedsAttention &&
+    approvedHostKeyFingerprint !== null &&
+    pendingTargetFingerprint !== null &&
+    approvedHostKeyFingerprint !== pendingTargetFingerprint;
+  const footerConnectionTestDisabled =
+    !canRunConnectionTest || approvalFlowActive;
+  const footerConnectionTestTitle = approvalFlowActive
+    ? "Complete SSH host-key approval above before running a connection test."
+    : undefined;
 
   const hostKeySummary = approvedHostKey
-    ? storedHostKeyNeedsAttention
-      ? "Stored key is no longer valid for this host"
-      : "Stored for this system"
-    : "No approved key stored";
+    ? hasPendingHostKeyReview
+      ? ""
+      : storedHostKeyNeedsAttention
+        ? "Stored approval no longer matches this host."
+        : systemId
+          ? "Approved host key stored for this system."
+          : "Approved host key will be saved with this system."
+    : hasPendingHostKeyReview
+      ? ""
+      : "No approved host key stored.";
 
   const handleCreateCredential = (data: {
     name: string;
@@ -503,7 +543,7 @@ export function SystemForm({
               Verify SSH host key
             </span>
             <span className="block text-xs text-slate-400 mt-0.5">
-              Enabled by default for new systems. Disabling this weakens SSH trust checks for this system only.
+              Enabled by default for new systems. Disabling this weakens SSH host-key verification for this system only.
             </span>
           </span>
         </label>
@@ -514,12 +554,12 @@ export function SystemForm({
           </div>
         )}
 
-        {systemId && hostKeyVerificationEnabled && (
+        {hostKeyVerificationEnabled && (
           <div className="rounded-lg border border-border p-3 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Approved SSH Host Key
+                  SSH Host Key Approval
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">
                   {hostKeySummary}
@@ -527,13 +567,16 @@ export function SystemForm({
               </div>
               <div className="flex items-center gap-2">
                 {storedHostKeyNeedsAttention ? (
-                  <Badge variant="danger" small>Invalid</Badge>
+                  <Badge variant="danger" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
                 ) : approvedHostKey ? (
-                  <Badge variant="success" small>Verified</Badge>
+                  <Badge variant="success" small>{getHostKeyStatusBadgeLabel("verified")}</Badge>
                 ) : (
-                  <Badge variant="info" small>Needs trust</Badge>
+                  <Badge variant="info" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
                 )}
-              {approvedHostKey && (
+              {hasPendingHostKeyReview && pendingReviewShowsMultipleHosts && (
+                <Badge variant="muted" small>{`${pendingChallengeCount}\u00A0keys`}</Badge>
+              )}
+              {showRevokeHostKeyAction && (
                 <button
                   type="button"
                   onClick={() => {
@@ -558,15 +601,112 @@ export function SystemForm({
                   {revokeHostKey.isPending ? "Revoking..." : "Revoke"}
                 </button>
               )}
+              {showHostKeyFetchAction && (
+                <button
+                  type="button"
+                  onClick={() => runConnectionTest()}
+                  disabled={!canRunConnectionTest}
+                  className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                >
+                  {testConnection.isPending ? "Checking..." : hostKeyFetchActionLabel}
+                </button>
+              )}
               </div>
             </div>
-            {storedHostKeyNeedsAttention && (
+            {storedHostKeyNeedsAttention && !hasPendingHostKeyReview && (
               <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
                 The stored SSH host key no longer matches what this host presented during the latest check.
                 Review and re-approve the current host key before running SSH actions again.
               </div>
             )}
-            {approvedHostKey ? (
+            {hasPendingHostKeyReview ? (
+              <div className="space-y-4">
+                <div className="text-sm text-slate-600 dark:text-slate-300">
+                  {pendingReviewShowsMultipleHosts
+                    ? `Review all ${pendingChallengeCount} fetched host keys below. Each one must match what you expect before you approve.`
+                    : fetchedHostKeyDiffersFromApproved
+                    ? "The host presented a different key than the one currently approved. Approve it only if you expected this change."
+                    : "Review the fetched host key below and approve it only if these details match what you expect for this host."}
+                </div>
+                {fetchedHostKeyDiffersFromApproved && (
+                  <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+                    <div className="font-medium">The approved host key does not match the current host key.</div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">Approved fingerprint</div>
+                        <div className="mt-1 font-mono text-xs break-all">{approvedHostKeyFingerprint}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">Current fingerprint</div>
+                        <div className="mt-1 font-mono text-xs break-all">{pendingTargetFingerprint}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-3">
+                  {pendingTrustChallenge.challenges.map((challenge, index) => (
+                    <div key={`${challenge.role}-${challenge.host}-${challenge.port}-${challenge.fingerprintSha256}`} className="rounded-lg border border-border p-3 text-sm">
+                      {pendingReviewShowsMultipleHosts && (
+                        <>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                {index + 1} of {pendingChallengeCount}
+                              </div>
+                              <div className="mt-1 font-medium text-slate-800 dark:text-slate-100">
+                                {getChallengeSystemName(challenge.systemId) ?? `${challenge.host}:${challenge.port}`}
+                              </div>
+                            </div>
+                            <Badge variant={challenge.role === "target" ? "info" : "muted"} small>
+                              {challenge.role === "target" ? "Target" : "Jump"}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 text-slate-500 dark:text-slate-400">
+                            {challenge.host}:{challenge.port}
+                          </div>
+                        </>
+                      )}
+                      {!pendingReviewShowsMultipleHosts && (
+                        <div className="text-sm text-slate-600 dark:text-slate-300">
+                          Reviewing {challenge.role === "target" ? "target" : "jump"} host key
+                          {getChallengeSystemName(challenge.systemId) ? ` for ${getChallengeSystemName(challenge.systemId)}` : ""}
+                          <span className="text-slate-500 dark:text-slate-400"> ({challenge.host}:{challenge.port})</span>
+                        </div>
+                      )}
+                      <div className="mt-3 text-xs text-slate-500 dark:text-slate-400 break-all">
+                        Fingerprint: <span className="font-mono">{challenge.fingerprintSha256}</span>
+                      </div>
+                      <pre className="mt-3 text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                        {`${challenge.algorithm} ${challenge.rawKey}`}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPendingTrustChallenge(null)}
+                    disabled={testConnection.isPending}
+                    className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      runConnectionTest({
+                        trustChallengeToken: pendingTrustChallenge.token,
+                        approvedHostKeys: pendingTrustChallenge.challenges,
+                      })
+                    }
+                    disabled={testConnection.isPending}
+                    className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                  >
+                    {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Approve"}
+                  </button>
+                </div>
+              </div>
+            ) : approvedHostKey ? (
               <>
                 <div className="text-xs text-slate-500 dark:text-slate-400 break-all">
                   Fingerprint: <span className="font-mono">{approvedHostKeyFingerprint}</span>
@@ -576,8 +716,16 @@ export function SystemForm({
                 </pre>
               </>
             ) : (
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Use Test Connection to approve and store the host key from this dialog.
+              <div className="space-y-3">
+                <div className="text-xs text-slate-500 dark:text-slate-400 break-all">
+                  Approved fingerprint: <span className="font-mono">Not approved yet</span>
+                </div>
+                <div className="rounded-lg bg-slate-900 p-3 text-xs text-slate-400">
+                  <div className="font-mono">No approved SSH host key stored.</div>
+                  <div className="mt-2">
+                    Fetch the current host key to review and approve it here. Test Connection becomes available after host-key approval is complete.
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -628,17 +776,6 @@ export function SystemForm({
             </span>
           </span>
         </label>
-
-        {testResult && (
-          <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>
-            <div>{testResult.message}</div>
-            {!testResult.success && testResult.debugRef && (
-              <div className="mt-2 text-xs opacity-80">
-                Check container logs with debug reference <span className="font-mono">{testResult.debugRef}</span>.
-              </div>
-            )}
-          </div>
-        )}
 
         {visiblePackageManagers.length > 0 && (
           <div className="space-y-4">
@@ -846,19 +983,27 @@ export function SystemForm({
           </div>
         )}
 
+        {testResult && (
+          <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>
+            <div>{testResult.message}</div>
+            {!testResult.success && testResult.debugRef && (
+              <div className="mt-2 text-xs opacity-80">
+                Check container logs with debug reference <span className="font-mono">{testResult.debugRef}</span>.
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-3 pt-2">
           <button
             type="button"
-            disabled={testConnection.isPending || !hostname || credentialId <= 0}
+            disabled={footerConnectionTestDisabled}
+            title={footerConnectionTestTitle}
             onClick={() => runConnectionTest()}
             className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
           >
             {testConnection.isPending ? (
               <span className="spinner spinner-sm" />
-            ) : hostKeyVerificationEnabled && hostKeyStatus === "needs_approval" ? (
-              approvedHostKey ? "Re-approve SSH Host Key" : "Approve SSH Host Key"
-            ) : hostKeyVerificationEnabled && !approvedHostKey ? (
-              "Approve SSH Host Key"
             ) : (
               "Test Connection"
             )}
@@ -884,65 +1029,6 @@ export function SystemForm({
       </form>
 
       <Modal
-        open={pendingTrustChallenge !== null}
-        onClose={() => setPendingTrustChallenge(null)}
-        title="Approve SSH Host Key"
-        dismissible={!testConnection.isPending}
-      >
-        {pendingTrustChallenge && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              Approve the reported SSH host key before this connection can be trusted.
-            </p>
-            <div className="space-y-3">
-              {pendingTrustChallenge.challenges.map((challenge) => (
-                <div key={`${challenge.role}-${challenge.host}-${challenge.port}-${challenge.fingerprintSha256}`} className="rounded-lg border border-border p-3 text-sm">
-                  <div className="font-medium text-slate-800 dark:text-slate-100">
-                    {challenge.role === "target" ? "Target host" : "Jump host"}
-                  </div>
-                  {getChallengeSystemName(challenge.systemId) && (
-                    <div className="text-sm text-slate-200">
-                      {getChallengeSystemName(challenge.systemId)}
-                    </div>
-                  )}
-                  <div className="text-slate-500 dark:text-slate-400">
-                    {challenge.host}:{challenge.port}
-                  </div>
-                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    <div>Algorithm: <span className="font-mono">{challenge.algorithm}</span></div>
-                    <div>Fingerprint: <span className="font-mono break-all">{challenge.fingerprintSha256}</span></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setPendingTrustChallenge(null)}
-                disabled={testConnection.isPending}
-                className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  runConnectionTest({
-                    trustChallengeToken: pendingTrustChallenge.token,
-                    approvedHostKeys: pendingTrustChallenge.challenges,
-                  })
-                }
-                disabled={testConnection.isPending}
-                className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-              >
-                {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Approve and Continue"}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <Modal
         open={showCreateCredential}
         onClose={() => setShowCreateCredential(false)}
         title="Add Credential"
@@ -962,8 +1048,8 @@ export function SystemForm({
           setShowUnapprovedSaveWarning(false);
           submitForm();
         }}
-        title="Save Without Approved Host Key"
-        message="SSH host-key verification is enabled, but no host key has been approved yet. You can save now, but SSH actions will require approving the host key later from this dialog."
+        title="Save Without Host Key Approval"
+        message="SSH host-key verification is enabled, but no host key has been approved yet. You can save now, but SSH actions will require host-key approval later from this dialog."
         confirmLabel="Save Anyway"
       />
     </>
