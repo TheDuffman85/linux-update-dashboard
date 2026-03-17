@@ -1,5 +1,6 @@
 import type { PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName } from "./types";
+import type { DnfPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: curl.x86_64    7.76.1-26.el9_3.3    baseos
 const PATTERN = /^(\S+?)\.(\S+)\s+(\S+)\s+(\S+)/;
@@ -10,13 +11,17 @@ const INSTALLED_SEPARATOR = "---INSTALLED---";
  * Build a compound shell command that runs a check-update command and then
  * queries rpm for the installed versions of any packages that have updates.
  */
-export function buildCheckCommand(tool: "dnf" | "yum"): string {
+export function buildCheckCommand(tool: "dnf" | "yum", refreshMetadata = false): string {
+  const checkUpdateCommand =
+    tool === "dnf" && refreshMetadata
+      ? `${tool} check-update --refresh --quiet 2>/dev/null`
+      : `${tool} check-update --quiet 2>/dev/null`;
   // 1. Capture check-update output and its exit code
   // 2. Echo the update list for parsing
   // 3. Echo a separator, then query rpm for installed versions
   // 4. Echo the original exit code so the parser can detect updates-available (100)
   return [
-    `updates=$(${tool} check-update --quiet 2>/dev/null); rc=$?`,
+    `updates=$(${checkUpdateCommand}); rc=$?`,
     'echo "$updates"',
     `echo "${INSTALLED_SEPARATOR}"`,
     // Only query rpm when updates exist (rc=100); strip "(none):" epoch prefix
@@ -28,8 +33,9 @@ export function buildCheckCommand(tool: "dnf" | "yum"): string {
 export const dnfParser: PackageParser = {
   name: "dnf",
 
-  getCheckCommands() {
-    return [buildCheckCommand("dnf")];
+  getCheckCommands(config) {
+    const dnfConfig = config as DnfPackageManagerConfig | undefined;
+    return [buildCheckCommand("dnf", dnfConfig?.refreshMetadataOnCheck === true)];
   },
 
   getCheckCommandLabels() {
@@ -99,8 +105,10 @@ export const dnfParser: PackageParser = {
     return updates;
   },
 
-  getUpgradeAllCommand() {
-    return sudo("dnf upgrade -y") + " 2>&1";
+  getUpgradeAllCommand(config) {
+    const dnfConfig = config as DnfPackageManagerConfig | undefined;
+    const subcommand = dnfConfig?.defaultUpgradeMode === "distro-sync" ? "distro-sync" : "upgrade";
+    return sudo(`dnf ${subcommand} -y`) + " 2>&1";
   },
 
   getFullUpgradeAllCommand() {

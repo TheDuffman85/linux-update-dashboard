@@ -11,6 +11,11 @@ import {
 import { SSH_CREDENTIAL_KINDS } from "../../lib/credential-form";
 import { validateSystemForm } from "../../lib/system-form-validation";
 import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/systems";
+import {
+  normalizePackageManagerConfigs,
+  SUPPORTED_PACKAGE_MANAGER_CONFIGS,
+  type PackageManagerConfigs,
+} from "../../lib/package-manager-configs";
 
 interface SystemFormData {
   name: string;
@@ -22,6 +27,7 @@ interface SystemFormData {
   validatedConfigToken?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
@@ -29,6 +35,15 @@ interface SystemFormData {
 }
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const PACKAGE_MANAGER_LABELS: Record<string, string> = {
+  apt: "APT",
+  dnf: "DNF",
+  yum: "YUM",
+  pacman: "Pacman",
+  apk: "APK",
+  flatpak: "Flatpak",
+  snap: "Snap",
+};
 
 function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
@@ -45,6 +60,7 @@ export function SystemForm({
   initial?: Omit<Partial<SystemFormData>, "autoHideKeptBackUpdates" | "excludeFromUpgradeAll"> & {
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
+    pkgManagerConfigs?: PackageManagerConfigs | null;
     autoHideKeptBackUpdates?: number;
     excludeFromUpgradeAll?: number;
     approvedHostKey?: string | null;
@@ -94,8 +110,11 @@ export function SystemForm({
   const [disabledManagers, setDisabledManagers] = useState<Set<string>>(
     new Set(initial?.disabledPkgManagers ?? [])
   );
-  const [autoHideKeptBackUpdates, setAutoHideKeptBackUpdates] = useState(
-    initial?.autoHideKeptBackUpdates === 1
+  const [pkgManagerConfigs, setPkgManagerConfigs] = useState<PackageManagerConfigs>(
+    initial?.pkgManagerConfigs
+      ?? (initial?.autoHideKeptBackUpdates === 1
+        ? { apt: { autoHideKeptBackUpdates: true } }
+        : {})
   );
   const [excludeFromUpgradeAll, setExcludeFromUpgradeAll] = useState(
     initial?.excludeFromUpgradeAll === 1
@@ -161,6 +180,21 @@ export function SystemForm({
     });
   };
 
+  const setManagerConfig = <T extends keyof PackageManagerConfigs>(
+    manager: T,
+    value: PackageManagerConfigs[T] | undefined,
+  ) => {
+    setPkgManagerConfigs((prev) => {
+      const next = { ...prev };
+      if (!value || Object.keys(value).length === 0) {
+        delete next[manager];
+      } else {
+        next[manager] = value;
+      }
+      return next;
+    });
+  };
+
   const submitForm = () => {
     const validationError = validateSystemForm({
       name,
@@ -184,7 +218,7 @@ export function SystemForm({
       validatedConfigToken: validatedConfigToken || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: [...disabledManagers],
-      autoHideKeptBackUpdates,
+      pkgManagerConfigs: normalizePackageManagerConfigs(pkgManagerConfigs) ?? {},
       excludeFromUpgradeAll,
       hidden,
       sourceSystemId,
@@ -206,6 +240,20 @@ export function SystemForm({
     "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
   const showsProxyJumpLoopbackWarning =
     proxyJumpSystemId !== null && isLoopbackHost(hostname);
+  const visiblePackageManagers = Array.from(
+    new Set([
+      ...detectedManagers,
+      ...Object.keys(pkgManagerConfigs),
+    ]),
+  ).sort((a, b) => {
+    const order = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
+    const leftIndex = order.indexOf(a);
+    const rightIndex = order.indexOf(b);
+    if (leftIndex === -1 && rightIndex === -1) return a.localeCompare(b);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
 
   const runConnectionTest = (extra?: {
     trustChallengeToken?: string;
@@ -489,23 +537,6 @@ export function SystemForm({
         <label className="flex items-start gap-3 text-sm cursor-pointer">
           <input
             type="checkbox"
-            checked={autoHideKeptBackUpdates}
-            onChange={(e) => setAutoHideKeptBackUpdates(e.target.checked)}
-            className="rounded mt-0.5"
-          />
-          <span className="min-w-0">
-            <span className="block text-slate-700 dark:text-slate-200">
-              Auto-hide kept-back packages
-            </span>
-            <span className="block text-xs text-slate-400 mt-0.5">
-              Automatically move kept-back updates for this system into the hidden-updates list after refreshes.
-            </span>
-          </span>
-        </label>
-
-        <label className="flex items-start gap-3 text-sm cursor-pointer">
-          <input
-            type="checkbox"
             checked={excludeFromUpgradeAll}
             onChange={(e) => setExcludeFromUpgradeAll(e.target.checked)}
             className="rounded mt-0.5"
@@ -548,29 +579,209 @@ export function SystemForm({
           </div>
         )}
 
-        {detectedManagers.length > 0 && (
-          <div>
-            <label className={labelClass}>Detected Package Managers</label>
-            <div className="flex flex-wrap gap-2 mt-1">
-              {detectedManagers.map((m) => (
-                <label
-                  key={m}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
-                    !disabledManagers.has(m)
-                      ? "border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                      : "border-border bg-slate-50 dark:bg-slate-800 text-slate-400"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={!disabledManagers.has(m)}
-                    onChange={() => toggleManager(m)}
-                    className="rounded"
-                  />
-                  {m}
-                </label>
-              ))}
+        {visiblePackageManagers.length > 0 && (
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Package Managers
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Enable package managers for this system and adjust manager-specific behavior where it is useful.
+              </p>
             </div>
+
+            {visiblePackageManagers.map((manager) => {
+              const enabled = !disabledManagers.has(manager);
+              const title = PACKAGE_MANAGER_LABELS[manager] ?? manager;
+              const hasExtraSettings = (SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager);
+
+              return (
+                <div key={manager} className="rounded-lg border border-border p-3 space-y-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      {title}
+                    </div>
+                    <label className="mt-2 inline-flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={() => toggleManager(manager)}
+                        className="rounded"
+                      />
+                      <span className={enabled ? "text-slate-700 dark:text-slate-200" : "text-slate-400"}>
+                        Enabled
+                      </span>
+                    </label>
+                    {!detectedManagers.includes(manager) && (
+                      <p className="mt-2 text-xs text-slate-400">
+                        Saved config is shown here even though this package manager is not currently detected.
+                      </p>
+                    )}
+                  </div>
+
+                  {manager === "apt" && (
+                    <>
+                      <div>
+                        <label className={labelClass}>Default Upgrade Mode</label>
+                        <select
+                          value={pkgManagerConfigs.apt?.defaultUpgradeMode ?? "upgrade"}
+                          onChange={(e) =>
+                            setManagerConfig("apt", {
+                              defaultUpgradeMode: e.target.value as "upgrade" | "full-upgrade",
+                            })
+                          }
+                          className={inputClass}
+                        >
+                          <option value="upgrade">Standard upgrade</option>
+                          <option value="full-upgrade">Full upgrade</option>
+                        </select>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        When set to full upgrade, the normal Upgrade action may install new dependencies or remove obsolete packages.
+                      </p>
+                      <label className="flex items-start gap-3 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pkgManagerConfigs.apt?.autoHideKeptBackUpdates === true}
+                          onChange={(e) =>
+                            setManagerConfig("apt", {
+                              ...pkgManagerConfigs.apt,
+                              autoHideKeptBackUpdates: e.target.checked,
+                            })
+                          }
+                          className="rounded mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-slate-700 dark:text-slate-200">
+                            Auto-hide kept-back packages
+                          </span>
+                          <span className="block text-xs text-slate-400 mt-0.5">
+                            Automatically move kept-back APT updates into the hidden-updates list after refreshes.
+                          </span>
+                        </span>
+                      </label>
+                    </>
+                  )}
+
+                  {manager === "dnf" && (
+                    <>
+                      <div>
+                        <label className={labelClass}>Default Upgrade Mode</label>
+                        <select
+                          value={pkgManagerConfigs.dnf?.defaultUpgradeMode ?? "upgrade"}
+                          onChange={(e) =>
+                            setManagerConfig("dnf", {
+                              ...pkgManagerConfigs.dnf,
+                              defaultUpgradeMode: e.target.value as "upgrade" | "distro-sync",
+                            })
+                          }
+                          className={inputClass}
+                        >
+                          <option value="upgrade">Standard upgrade</option>
+                          <option value="distro-sync">Distro sync</option>
+                        </select>
+                      </div>
+                      <label className="flex items-start gap-3 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pkgManagerConfigs.dnf?.refreshMetadataOnCheck === true}
+                          onChange={(e) =>
+                            setManagerConfig("dnf", {
+                              ...pkgManagerConfigs.dnf,
+                              refreshMetadataOnCheck: e.target.checked,
+                            })
+                          }
+                          className="rounded mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-slate-700 dark:text-slate-200">
+                            Refresh metadata during checks
+                          </span>
+                          <span className="block text-xs text-slate-400 mt-0.5">
+                            Uses `dnf check-update --refresh` to force a metadata refresh during update checks.
+                          </span>
+                        </span>
+                      </label>
+                    </>
+                  )}
+
+                  {manager === "pacman" && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pkgManagerConfigs.pacman?.refreshDatabasesOnCheck !== false}
+                        onChange={(e) =>
+                          setManagerConfig("pacman", {
+                            refreshDatabasesOnCheck: e.target.checked,
+                          })
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          Refresh package databases during checks
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          Disabling this skips the `pacman -Sy` refresh step and uses locally cached sync data only.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {manager === "apk" && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pkgManagerConfigs.apk?.refreshIndexesOnCheck !== false}
+                        onChange={(e) =>
+                          setManagerConfig("apk", {
+                            refreshIndexesOnCheck: e.target.checked,
+                          })
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          Refresh package indexes during checks
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          Disabling this skips `apk update` during checks and only lists updates from the current local index state.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {manager === "flatpak" && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pkgManagerConfigs.flatpak?.refreshAppstreamOnCheck !== false}
+                        onChange={(e) =>
+                          setManagerConfig("flatpak", {
+                            refreshAppstreamOnCheck: e.target.checked,
+                          })
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          Refresh appstream data during checks
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          Disabling this skips the appstream refresh step and only checks for updates with current local metadata.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {!hasExtraSettings && (
+                    <p className="text-xs text-slate-400">
+                      No additional settings for this package manager yet.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

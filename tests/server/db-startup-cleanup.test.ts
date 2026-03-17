@@ -282,6 +282,11 @@ describe("database startup cleanup", () => {
     expect(restarted[0].name).toBe("Legacy Debian");
     expect(restarted[0].pkgManager).toBe("apt");
     expect(restarted[0].autoHideKeptBackUpdates).toBe(1);
+    expect(restarted[0].pkgManagerConfigs).toBe(JSON.stringify({
+      apt: {
+        autoHideKeptBackUpdates: true,
+      },
+    }));
     expect(restarted[0].excludeFromUpgradeAll).toBe(1);
     expect(restarted[0].needsReboot).toBe(1);
     expect(restarted[0].isReachable).toBe(1);
@@ -296,5 +301,15 @@ describe("database startup cleanup", () => {
 
     expect(tables).toHaveLength(1);
     expect(tables[0].name).toBe("hidden_updates");
+  });
+
+  test("adds the pkg_manager_configs column for systems", () => {
+    const sqlite = new Database(dbPath, { readonly: true });
+    const columns = sqlite
+      .query("PRAGMA table_info(systems)")
+      .all() as Array<{ name?: string }>;
+    sqlite.close();
+
+    expect(columns.some((column) => column.name === "pkg_manager_configs")).toBe(true);
   });
 });

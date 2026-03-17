@@ -1,5 +1,6 @@
 import type { PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName } from "./types";
+import type { ApkPackageManagerConfig } from "../../package-manager-configs";
 
 const PATTERN =
   /^(\S+)\s+(\S+)\s+\{([^}]+)\}(?:\s+\([^)]*\))?\s+\[upgradable from:\s+(\S+)\]$/;
@@ -19,18 +20,22 @@ function splitApkNameVersion(value: string): { name: string; version: string } |
 export const apkParser: PackageParser = {
   name: "apk",
 
-  getCheckCommands() {
-    return [
-      sudo("apk update") + " 2>&1",
-      "apk list -u 2>/dev/null",
-    ];
+  getCheckCommands(config) {
+    const apkConfig = config as ApkPackageManagerConfig | undefined;
+    const commands: string[] = [];
+    if (apkConfig?.refreshIndexesOnCheck !== false) {
+      commands.push(sudo("apk update") + " 2>&1");
+    }
+    commands.push("apk list -u 2>/dev/null");
+    return commands;
   },
 
-  getCheckCommandLabels() {
-    return [
-      "Refreshing package indexes",
-      "Listing available updates",
-    ];
+  getCheckCommandLabels(config) {
+    const apkConfig = config as ApkPackageManagerConfig | undefined;
+    if (apkConfig?.refreshIndexesOnCheck === false) {
+      return ["Listing available updates"];
+    }
+    return ["Refreshing package indexes", "Listing available updates"];
   },
 
   parseCheckOutput(stdout, _stderr, _exitCode) {

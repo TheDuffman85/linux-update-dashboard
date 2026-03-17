@@ -13,6 +13,7 @@ import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
 import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
 import { getUpdatesPanelState } from "../lib/system-status";
+import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -811,6 +812,13 @@ export default function SystemDetail() {
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton;
+  const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
+    .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
+  const upgradeBehaviorNotes = getUpgradeBehaviorNotes(activeManagers, system.pkgManagerConfigs);
+  const upgradeConfirmMessage = [
+    `Apply all ${system.updateCount} updates to ${system.name}?`,
+    ...upgradeBehaviorNotes,
+  ].join(" ");
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -1143,7 +1151,7 @@ export default function SystemDetail() {
         onClose={() => setShowUpgradeConfirm(false)}
         onConfirm={handleUpgradeAll}
         title="Upgrade All Packages"
-        message={`Apply all ${system.updateCount} updates to ${system.name}?`}
+        message={upgradeConfirmMessage}
         confirmLabel="Upgrade All"
         loading={upgrading}
       />

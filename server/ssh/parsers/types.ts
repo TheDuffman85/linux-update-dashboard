@@ -1,3 +1,5 @@
+import type { PackageManagerConfigValue } from "../../package-manager-configs";
+
 export interface ParsedUpdate {
   packageName: string;
   currentVersion: string | null;
@@ -26,11 +28,11 @@ export interface PackageParser {
       commandResults?: CheckCommandResult[];
     }
   ): ParsedUpdate[];
-  getCheckCommands(): string[];
+  getCheckCommands(config?: PackageManagerConfigValue): string[];
   /** Human-readable label for each check command step, shown in live output. */
-  getCheckCommandLabels?(): string[];
-  getUpgradeAllCommand(): string;
-  getFullUpgradeAllCommand(): string | null;
+  getCheckCommandLabels?(config?: PackageManagerConfigValue): string[];
+  getUpgradeAllCommand(config?: PackageManagerConfigValue): string;
+  getFullUpgradeAllCommand(config?: PackageManagerConfigValue): string | null;
   getUpgradePackageCommand(pkg: string): string;
 }
 

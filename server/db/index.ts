@@ -5,6 +5,11 @@ import { mkdirSync } from "fs";
 import { dirname } from "path";
 import { getEncryptor } from "../security";
 import * as schema from "./schema";
+import {
+  mergeLegacyAutoHideKeptBackUpdates,
+  parsePackageManagerConfigs,
+  serializePackageManagerConfigs,
+} from "../package-manager-configs";
 
 let _db: BunSQLiteDatabase<typeof schema> | null = null;
 let _sqlite: Database | null = null;
@@ -119,6 +124,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     pkg_manager TEXT,
     detected_pkg_managers TEXT,
     disabled_pkg_managers TEXT,
+    pkg_manager_configs TEXT,
     auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
     os_name TEXT,
     os_version TEXT,
@@ -261,6 +267,11 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   }
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN disabled_pkg_managers TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN pkg_manager_configs TEXT`);
   } catch {
     // Column already exists
   }
@@ -585,6 +596,8 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   // Cleanup: remove obsolete settings
   _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap', 'auto_hide_kept_back_updates')`);
 
+  migrateLegacyAptAutoHideIntoPackageManagerConfigs();
+
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
   migrateLegacyEmailNotificationConfigs(_db);
@@ -607,6 +620,33 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
   migrateNotificationUpdateDedupeState(_db);
 
   return _db;
+}
+
+function migrateLegacyAptAutoHideIntoPackageManagerConfigs(): void {
+  if (!_db) return;
+
+  const rows = _db
+    .select({
+      id: schema.systems.id,
+      autoHideKeptBackUpdates: schema.systems.autoHideKeptBackUpdates,
+      pkgManagerConfigs: schema.systems.pkgManagerConfigs,
+    })
+    .from(schema.systems)
+    .where(eq(schema.systems.autoHideKeptBackUpdates, 1))
+    .all();
+
+  for (const row of rows) {
+    const merged = mergeLegacyAutoHideKeptBackUpdates(
+      parsePackageManagerConfigs(row.pkgManagerConfigs),
+      row.autoHideKeptBackUpdates,
+    );
+    const serialized = serializePackageManagerConfigs(merged);
+    if (!serialized || serialized === row.pkgManagerConfigs) continue;
+    _db.update(schema.systems)
+      .set({ pkgManagerConfigs: serialized })
+      .where(eq(schema.systems.id, row.id))
+      .run();
+  }
 }
 
 function migrateSystemsTableShape(
@@ -665,6 +705,7 @@ function rebuildSystemsTable(
       pkg_manager TEXT,
       detected_pkg_managers TEXT,
       disabled_pkg_managers TEXT,
+      pkg_manager_configs TEXT,
       auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
       os_name TEXT,
       os_version TEXT,
@@ -709,6 +750,7 @@ function rebuildSystemsTable(
     "pkg_manager",
     "detected_pkg_managers",
     "disabled_pkg_managers",
+    "pkg_manager_configs",
     "auto_hide_kept_back_updates",
     "os_name",
     "os_version",
@@ -752,6 +794,7 @@ function rebuildSystemsTable(
     "pkg_manager",
     "detected_pkg_managers",
     "disabled_pkg_managers",
+    "pkg_manager_configs",
     opts.hasAutoHideKeptBackUpdates
       ? "auto_hide_kept_back_updates"
       : opts.hasIgnoreKeptBackPackages

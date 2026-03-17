@@ -32,9 +32,10 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Multi-distribution support:** APT (Debian/Ubuntu), DNF (Fedora/RHEL 8+), YUM (CentOS/older RHEL), Pacman (Arch/Manjaro), APK (Alpine), Flatpak, and Snap
 - **Reusable credential vault:** store username/password, SSH key, or OpenSSH certificate credentials once and reuse them across systems
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
+- **Per-system package-manager behavior:** configure manager-specific upgrade/check behavior such as APT full-upgrade defaults, DNF distro-sync defaults, and refresh toggles for DNF, Pacman, APK, and Flatpak
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date with a configurable scheduler interval and cache duration
-- **Per-system kept-back auto-hide:** optionally move kept-back packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
+- **APT kept-back auto-hide:** optionally move kept-back APT packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
 - **Home Assistant MQTT update entities:** publish one Linux Update Dashboard app update entity plus per-system package update entities with discovery, icons/images, rich JSON attributes, and optional install commands
 - **Telegram bot integration:** bind a private Telegram chat for notifications, with optional bot commands for refresh and upgrades
@@ -630,6 +631,16 @@ The `discord` preset keeps the webhook in JSON mode and uses a Discord embed pay
 | Snap | Any (cross-distribution) |
 
 Package managers are auto-detected on each system over SSH when you test the connection or run the first check. Detected managers are enabled by default, and you can toggle them individually per system in the edit dialog. Security updates are identified where possible (e.g. APT security repos).
+
+Per-system package-manager config is available in the system edit dialog for supported managers:
+
+- `apt`: choose whether the normal `Upgrade` action runs `upgrade` or `full-upgrade`, and optionally auto-hide kept-back APT updates after refreshes
+- `dnf`: choose whether the normal `Upgrade` action runs `upgrade` or `distro-sync`, and optionally refresh metadata during checks
+- `pacman`: optionally skip `pacman -Sy` during checks
+- `apk`: optionally skip `apk update` during checks
+- `flatpak`: optionally skip the appstream refresh step during checks
+
+`yum` and `snap` do not currently expose manager-specific config.
 
 ## Project Structure
 

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
+import type { PackageManagerConfigs } from "./package-manager-configs";
 
 export interface ActiveOperation {
   type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
@@ -34,6 +35,7 @@ export interface System {
   pkgManager: string | null;
   detectedPkgManagers: string[] | null;
   disabledPkgManagers: string[] | null;
+  pkgManagerConfigs: PackageManagerConfigs | null;
   autoHideKeptBackUpdates: number;
   osName: string | null;
   osVersion: string | null;
@@ -178,6 +180,7 @@ export function useCreateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      pkgManagerConfigs?: PackageManagerConfigs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
@@ -204,6 +207,7 @@ export function useUpdateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      pkgManagerConfigs?: PackageManagerConfigs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;

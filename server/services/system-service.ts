@@ -14,6 +14,8 @@ import {
 import { detectPackageManagers } from "../ssh/detector";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
+import type { PackageManagerConfigs } from "../package-manager-configs";
+import { serializePackageManagerConfigs } from "../package-manager-configs";
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
@@ -172,6 +174,7 @@ export function createSystem(data: {
   hostKeyVerificationEnabled?: boolean;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
@@ -219,6 +222,9 @@ export function createSystem(data: {
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
+  if (data.pkgManagerConfigs !== undefined) {
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
+  }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
   }
@@ -261,6 +267,7 @@ export function updateSystem(
     hostKeyVerificationEnabled?: boolean;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
+    pkgManagerConfigs?: PackageManagerConfigs | null;
     autoHideKeptBackUpdates?: boolean;
     excludeFromUpgradeAll?: boolean;
     hidden?: boolean;
@@ -306,6 +313,9 @@ export function updateSystem(
   }
   if (data.disabledPkgManagers !== undefined) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
+  }
+  if (data.pkgManagerConfigs !== undefined) {
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;

@@ -1,5 +1,6 @@
 import type { PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName } from "./types";
+import type { FlatpakPackageManagerConfig } from "../../package-manager-configs";
 
 const INSTALLED_MARKER = "===INSTALLED===";
 const UPDATES_MARKER = "===UPDATES===";
@@ -7,14 +8,23 @@ const UPDATES_MARKER = "===UPDATES===";
 export const flatpakParser: PackageParser = {
   name: "flatpak",
 
-  getCheckCommands() {
-    return [
-      sudo("flatpak update --appstream") + " 2>/dev/null; true",
+  getCheckCommands(config) {
+    const flatpakConfig = config as FlatpakPackageManagerConfig | undefined;
+    const commands: string[] = [];
+    if (flatpakConfig?.refreshAppstreamOnCheck !== false) {
+      commands.push(sudo("flatpak update --appstream") + " 2>/dev/null; true");
+    }
+    commands.push(
       `echo "${INSTALLED_MARKER}"; flatpak list --columns=application,version 2>/dev/null; echo "${UPDATES_MARKER}"; flatpak remote-ls --updates --columns=name,application,version,branch,origin 2>/dev/null`,
-    ];
+    );
+    return commands;
   },
 
-  getCheckCommandLabels() {
+  getCheckCommandLabels(config) {
+    const flatpakConfig = config as FlatpakPackageManagerConfig | undefined;
+    if (flatpakConfig?.refreshAppstreamOnCheck === false) {
+      return ["Checking for updates"];
+    }
     return ["Refreshing appstream data", "Checking for updates"];
   },
 

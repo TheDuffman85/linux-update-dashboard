@@ -23,6 +23,7 @@ import {
   waitForMqttConnect,
 } from "./mqtt-client";
 import { getActiveOperation } from "./active-operation-store";
+import { parsePackageManagerConfigs } from "../package-manager-configs";
 import { getAppUpdateStatus } from "./app-update-service";
 import * as updateService from "./update-service";
 import * as hiddenUpdateService from "./hidden-update-service";
@@ -231,6 +232,7 @@ function buildSafeSystemAttributes(
       pkg_manager: system.pkgManager,
       detected_pkg_managers: parseJsonStringArray(system.detectedPkgManagers),
       disabled_pkg_managers: parseJsonStringArray(system.disabledPkgManagers),
+      pkg_manager_configs: parsePackageManagerConfigs(system.pkgManagerConfigs),
       os_name: system.osName,
       os_version: system.osVersion,
       kernel: system.kernel,

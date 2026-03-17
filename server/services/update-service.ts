@@ -12,6 +12,12 @@ import * as outputStream from "./output-stream";
 import { logger } from "../logger";
 import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
 import {
+  describeUpgradeBehaviors,
+  getManagerConfig,
+  parsePackageManagerConfigs,
+  type PackageManagerConfigs,
+} from "../package-manager-configs";
+import {
   clearActiveOperation,
   getActiveOperation as getStoredActiveOperation,
   getAllActiveOperations as getStoredActiveOperations,
@@ -165,6 +171,19 @@ function createActivityStep(step: ActivityStep): ActivityStep {
 
 function createSingleStepHistory(step: ActivityStep): ActivityStep[] {
   return [createActivityStep(step)];
+}
+
+function getSystemPackageManagerConfigs(system: {
+  pkgManagerConfigs?: string | null;
+}): PackageManagerConfigs | null {
+  return parsePackageManagerConfigs(system.pkgManagerConfigs ?? null);
+}
+
+export function getConfiguredUpgradeBehaviorDescriptions(systemId: number): string[] {
+  const system = systemService.getSystem(systemId);
+  if (!system) return [];
+  const pkgManagers = systemService.getActivePkgManagers(system);
+  return describeUpgradeBehaviors(pkgManagers, getSystemPackageManagerConfigs(system));
 }
 
 /**
@@ -463,6 +482,7 @@ async function checkUpdatesUnlocked(
 
   const system = systemService.getSystem(systemId);
   if (!system) return [];
+  const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
 
   const sshManager = getSSHManager();
   const allUpdates: ParsedUpdate[] = [];
@@ -510,8 +530,9 @@ async function checkUpdatesUnlocked(
         const parser = getParser(pmName);
         if (!parser) continue;
 
-        const commands = parser.getCheckCommands();
-        const labels = parser.getCheckCommandLabels?.() ?? [];
+        const managerConfig = getManagerConfig(pkgManagerConfigs, pmName);
+        const commands = parser.getCheckCommands(managerConfig);
+        const labels = parser.getCheckCommandLabels?.(managerConfig) ?? [];
         allCommands.push(...commands);
         let lastStdout = "";
         let lastStderr = "";
@@ -684,6 +705,7 @@ export async function applyUpgradeAll(
     if (!system) {
       return { success: false, output: "System not found" };
     }
+    const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
 
     // Collect all distinct package managers from the cached updates
     const db = getDb();
@@ -723,7 +745,7 @@ export async function applyUpgradeAll(
         const parser = getParser(pmName);
         if (!parser) continue;
 
-        const cmd = parser.getUpgradeAllCommand();
+        const cmd = parser.getUpgradeAllCommand(getManagerConfig(pkgManagerConfigs, pmName));
         allCommands.push(cmd);
         const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
@@ -842,10 +864,11 @@ export async function applyUpgradeAll(
 export function supportsFullUpgrade(systemId: number): boolean {
   const system = systemService.getSystem(systemId);
   if (!system) return false;
+  const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
   const pkgManagers = systemService.getActivePkgManagers(system);
   return pkgManagers.some((pmName) => {
     const parser = getParser(pmName);
-    return parser?.getFullUpgradeAllCommand() != null;
+    return parser?.getFullUpgradeAllCommand(getManagerConfig(pkgManagerConfigs, pmName)) != null;
   });
 }
 
@@ -862,6 +885,7 @@ export async function applyFullUpgradeAll(
     if (!system) {
       return { success: false, output: "System not found" };
     }
+    const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
 
     const db = getDb();
     const cachedManagers = db
@@ -899,7 +923,8 @@ export async function applyFullUpgradeAll(
         const parser = getParser(pmName);
         if (!parser) continue;
 
-        const cmd = parser.getFullUpgradeAllCommand() ?? parser.getUpgradeAllCommand();
+        const managerConfig = getManagerConfig(pkgManagerConfigs, pmName);
+        const cmd = parser.getFullUpgradeAllCommand(managerConfig) ?? parser.getUpgradeAllCommand(managerConfig);
         allCommands.push(cmd);
         const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd);
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });

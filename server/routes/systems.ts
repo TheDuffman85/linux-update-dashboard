@@ -19,6 +19,13 @@ import {
   type ApprovedHostKeyInput,
   type SystemConnectionConfig,
 } from "../services/system-connection-validation";
+import {
+  getAptAutoHideKeptBackUpdates,
+  mergeLegacyAutoHideKeptBackUpdates,
+  normalizePackageManagerConfigs,
+  parsePackageManagerConfigs,
+  validatePackageManagerConfigsInput,
+} from "../package-manager-configs";
 
 const systems = new Hono();
 
@@ -86,6 +93,10 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     )
   ) {
     return "disabledPkgManagers must be an array of strings";
+  }
+  const pkgManagerConfigError = validatePackageManagerConfigsInput(body.pkgManagerConfigs);
+  if (pkgManagerConfigError) {
+    return pkgManagerConfigError;
   }
   if (
     body.validatedConfigToken !== undefined &&
@@ -167,6 +178,10 @@ function getSystemWriteErrorResponse(error: unknown): Response | null {
 }
 
 function serializeSystem(s: Record<string, unknown>) {
+  const pkgManagerConfigs = mergeLegacyAutoHideKeptBackUpdates(
+    parsePackageManagerConfigs(s.pkgManagerConfigs as string | null),
+    s.autoHideKeptBackUpdates as number | null | undefined,
+  );
   const {
     encryptedPassword,
     encryptedPrivateKey,
@@ -185,6 +200,7 @@ function serializeSystem(s: Record<string, unknown>) {
         : null,
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
+    pkgManagerConfigs,
     hostKeyStatus: systemService.deriveHostKeyStatus({
       hostKeyVerificationEnabled: s.hostKeyVerificationEnabled as number | null,
       trustedHostKey: s.trustedHostKey as string | null,
@@ -457,8 +473,20 @@ systems.post("/", async (c) => {
     const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
       ? body.disabledPkgManagers as string[]
       : undefined;
+    let pkgManagerConfigs =
+      body.pkgManagerConfigs !== undefined
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
+        : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
+    if (autoHideKeptBackUpdates !== undefined) {
+      pkgManagerConfigs = mergeLegacyAutoHideKeptBackUpdates(
+        pkgManagerConfigs,
+        autoHideKeptBackUpdates,
+      );
+    }
+    const effectiveAutoHideKeptBackUpdates =
+      getAptAutoHideKeptBackUpdates(pkgManagerConfigs) ?? autoHideKeptBackUpdates;
     const excludeFromUpgradeAll =
       typeof body.excludeFromUpgradeAll === "boolean" ? body.excludeFromUpgradeAll : undefined;
     const hidden = typeof body.hidden === "boolean" ? body.hidden : undefined;
@@ -472,7 +500,8 @@ systems.post("/", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword,
       disabledPkgManagers,
-      autoHideKeptBackUpdates,
+      pkgManagerConfigs,
+      autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,
       sourceSystemId,
@@ -550,8 +579,20 @@ systems.put("/:id", async (c) => {
     const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
       ? body.disabledPkgManagers as string[]
       : undefined;
+    let pkgManagerConfigs =
+      body.pkgManagerConfigs !== undefined
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
+        : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
+    if (autoHideKeptBackUpdates !== undefined) {
+      pkgManagerConfigs = mergeLegacyAutoHideKeptBackUpdates(
+        pkgManagerConfigs,
+        autoHideKeptBackUpdates,
+      );
+    }
+    const effectiveAutoHideKeptBackUpdates =
+      getAptAutoHideKeptBackUpdates(pkgManagerConfigs) ?? autoHideKeptBackUpdates;
     const excludeFromUpgradeAll =
       typeof body.excludeFromUpgradeAll === "boolean" ? body.excludeFromUpgradeAll : undefined;
     const hidden = typeof body.hidden === "boolean" ? body.hidden : undefined;
@@ -565,7 +606,8 @@ systems.put("/:id", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword,
       disabledPkgManagers,
-      autoHideKeptBackUpdates,
+      pkgManagerConfigs,
+      autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
@@ -576,7 +618,10 @@ systems.put("/:id", async (c) => {
     throw error;
   }
 
-  if (body.autoHideKeptBackUpdates === true) {
+  if (
+    body.autoHideKeptBackUpdates === true ||
+    getAptAutoHideKeptBackUpdates(normalizePackageManagerConfigs(body.pkgManagerConfigs)) === true
+  ) {
     hiddenUpdateService.autoHideCachedKeptBackUpdates(id);
   }
 

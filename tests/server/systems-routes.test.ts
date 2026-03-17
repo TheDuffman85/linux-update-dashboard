@@ -256,6 +256,60 @@ describe("systems reorder route", () => {
     expect(body.error).toBe("disabledPkgManagers must be an array of strings");
   });
 
+  test("rejects unsupported package manager config managers", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad Manager Config",
+        hostname: "bad-manager-config.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          snap: {
+            refreshAppstreamOnCheck: true,
+          },
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("pkgManagerConfigs.snap is not supported");
+  });
+
+  test("rejects invalid package manager config values", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad Config Value",
+        hostname: "bad-config-value.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          apt: {
+            defaultUpgradeMode: "dist-upgrade",
+          },
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("pkgManagerConfigs.apt.defaultUpgradeMode must be 'upgrade' or 'full-upgrade'");
+  });
+
   test("allows creating the same connection tuple behind a different ProxyJump host", async () => {
     const db = getDb();
     const jumpCredentialId = createSystemCredential("jump");
@@ -356,6 +410,84 @@ describe("systems reorder route", () => {
     expect(updated?.hidden).toBe(0);
   });
 
+  test("persists and serializes package manager configs on create and update", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const createRes = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Configurable System",
+        hostname: "configurable.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          apt: {
+            defaultUpgradeMode: "full-upgrade",
+          },
+          pacman: {
+            refreshDatabasesOnCheck: false,
+          },
+        },
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const created = listSystems().find((system) => system.name === "Configurable System");
+    expect(created?.pkgManagerConfigs).toBe(JSON.stringify({
+      apt: {
+        defaultUpgradeMode: "full-upgrade",
+      },
+      pacman: {
+        refreshDatabasesOnCheck: false,
+      },
+    }));
+
+    const listRes = await app.request("/api/systems");
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === created!.id);
+    expect(listed.pkgManagerConfigs).toEqual({
+      apt: {
+        defaultUpgradeMode: "full-upgrade",
+      },
+      pacman: {
+        refreshDatabasesOnCheck: false,
+      },
+    });
+
+    const updateRes = await app.request(`/api/systems/${created!.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Configurable System",
+        hostname: "configurable.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          dnf: {
+            defaultUpgradeMode: "distro-sync",
+            refreshMetadataOnCheck: true,
+          },
+        },
+      }),
+    });
+
+    expect(updateRes.status).toBe(200);
+
+    const detailRes = await app.request(`/api/systems/${created!.id}`);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.pkgManagerConfigs).toEqual({
+      dnf: {
+        defaultUpgradeMode: "distro-sync",
+        refreshMetadataOnCheck: true,
+      },
+    });
+  });
+
   test("filters hidden systems when requesting visible scope", async () => {
     const db = getDb();
     db.insert(systems).values([
@@ -419,6 +551,11 @@ describe("systems reorder route", () => {
     expect(detailRes.status).toBe(200);
     const detailBody = await detailRes.json();
     expect(detailBody.system.autoHideKeptBackUpdates).toBe(1);
+    expect(detailBody.system.pkgManagerConfigs).toEqual({
+      apt: {
+        autoHideKeptBackUpdates: true,
+      },
+    });
     expect("ignoreKeptBackPackages" in detailBody.system).toBe(false);
   });
 

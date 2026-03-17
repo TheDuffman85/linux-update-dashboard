@@ -1,5 +1,6 @@
 import type { CheckCommandResult, PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName } from "./types";
+import type { AptPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: curl/jammy-updates 7.81.0-1ubuntu1.18 amd64 [upgradable from: 7.81.0-1ubuntu1.16]
 const PATTERN =
@@ -91,10 +92,12 @@ export const aptParser: PackageParser = {
     return updates;
   },
 
-  getUpgradeAllCommand() {
+  getUpgradeAllCommand(config) {
+    const aptConfig = config as AptPackageManagerConfig | undefined;
+    const upgradeMode = aptConfig?.defaultUpgradeMode === "full-upgrade" ? "full-upgrade" : "upgrade";
     return (
       "export DEBIAN_FRONTEND=noninteractive; " +
-      sudo(`apt-get ${APT_LOCK_WAIT} upgrade -y`) +
+      sudo(`apt-get ${APT_LOCK_WAIT} ${upgradeMode} -y`) +
       " 2>&1"
     );
   },
