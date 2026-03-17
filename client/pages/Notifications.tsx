@@ -2029,8 +2029,8 @@ export default function Notifications() {
                         disabled={!canResetUpdateDedupe(channel) || resetNotificationUpdateDedupe.isPending}
                         className={`p-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                           canResetUpdateDedupe(channel)
-                            ? "text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100"
-                            : "text-slate-400"
+                            ? "hover:bg-slate-100 dark:hover:bg-slate-700"
+                            : "text-slate-400 dark:text-slate-500"
                         }`}
                         title={
                           canResetUpdateDedupe(channel)
