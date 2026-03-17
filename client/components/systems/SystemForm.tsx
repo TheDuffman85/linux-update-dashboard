@@ -3,6 +3,7 @@ import { useToast } from "../../context/ToastContext";
 import { CredentialForm } from "../credentials/CredentialForm";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Modal } from "../Modal";
+import { Badge } from "../Badge";
 import {
   useCreateCredential,
   useCredentials,
@@ -47,6 +48,12 @@ const PACKAGE_MANAGER_LABELS: Record<string, string> = {
 
 function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
+}
+
+function isHostKeyErrorMessage(message: string | null | undefined): boolean {
+  return /HostKeyVerificationError|SSH host key approval required|SSH host key verification failed/i.test(
+    message ?? ""
+  );
 }
 
 export function SystemForm({
@@ -144,6 +151,9 @@ export function SystemForm({
   const [approvedHostKeyFingerprint, setApprovedHostKeyFingerprint] = useState<string | null>(
     initial?.trustedHostKeyFingerprintSha256 ?? null
   );
+  const [hostKeyStatus, setHostKeyStatus] = useState(
+    initial?.hostKeyStatus ?? (initial?.approvedHostKey ? "verified" : "needs_approval")
+  );
   const [showUnapprovedSaveWarning, setShowUnapprovedSaveWarning] = useState(false);
   const [showCreateCredential, setShowCreateCredential] = useState(false);
 
@@ -159,14 +169,28 @@ export function SystemForm({
   useEffect(() => {
     setApprovedHostKey(initial?.approvedHostKey ?? null);
     setApprovedHostKeyFingerprint(initial?.trustedHostKeyFingerprintSha256 ?? null);
-  }, [initial?.approvedHostKey, initial?.trustedHostKeyFingerprintSha256]);
+    setHostKeyStatus(
+      initial?.hostKeyStatus ?? (initial?.approvedHostKey ? "verified" : "needs_approval")
+    );
+  }, [initial?.approvedHostKey, initial?.trustedHostKeyFingerprintSha256, initial?.hostKeyStatus]);
 
   useEffect(() => {
     if (hostname !== (initial?.hostname || "") || port !== (initial?.port || 22)) {
       setApprovedHostKey(null);
       setApprovedHostKeyFingerprint(null);
+      setHostKeyStatus(hostKeyVerificationEnabled ? "needs_approval" : "verification_disabled");
     }
-  }, [hostname, port, initial?.hostname, initial?.port]);
+  }, [hostname, port, initial?.hostname, initial?.port, hostKeyVerificationEnabled]);
+
+  useEffect(() => {
+    setHostKeyStatus((prev) => {
+      if (!hostKeyVerificationEnabled) return "verification_disabled";
+      if (prev === "verification_disabled") {
+        return approvedHostKey ? "verified" : "needs_approval";
+      }
+      return prev;
+    });
+  }, [hostKeyVerificationEnabled, approvedHostKey]);
 
   const toggleManager = (manager: string) => {
     setDisabledManagers((prev) => {
@@ -300,6 +324,7 @@ export function SystemForm({
           });
           if (data.hostKeyChallenges?.length && data.trustChallengeToken) {
             setValidatedConfigToken(null);
+            setHostKeyStatus("needs_approval");
             setPendingTrustChallenge({
               token: data.trustChallengeToken,
               challenges: data.hostKeyChallenges,
@@ -320,7 +345,13 @@ export function SystemForm({
                 `${targetApproval.algorithm} ${targetApproval.rawKey}`
               );
               setApprovedHostKeyFingerprint(targetApproval.fingerprintSha256);
+              setHostKeyStatus("verified");
             }
+          }
+          if (!data.success && isHostKeyErrorMessage(data.message)) {
+            setHostKeyStatus("needs_approval");
+          } else if (data.success && hostKeyVerificationEnabled) {
+            setHostKeyStatus(approvedHostKey || extra?.approvedHostKeys?.length ? "verified" : hostKeyStatus);
           }
           if (data.detectedManagers?.length) {
             setDetectedManagers(data.detectedManagers);
@@ -336,11 +367,25 @@ export function SystemForm({
         onError: (err) => {
           setValidatedConfigToken(null);
           setPendingTrustChallenge(null);
+          if (isHostKeyErrorMessage(err.message)) {
+            setHostKeyStatus("needs_approval");
+          }
           setTestResult({ success: false, message: err.message });
         },
       }
     );
   };
+
+  const storedHostKeyNeedsAttention =
+    hostKeyVerificationEnabled &&
+    approvedHostKey !== null &&
+    hostKeyStatus === "needs_approval";
+
+  const hostKeySummary = approvedHostKey
+    ? storedHostKeyNeedsAttention
+      ? "Stored key is no longer valid for this host"
+      : "Stored for this system"
+    : "No approved key stored";
 
   const handleCreateCredential = (data: {
     name: string;
@@ -477,9 +522,17 @@ export function SystemForm({
                   Approved SSH Host Key
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">
-                  {approvedHostKey ? "Stored for this system" : "No approved key stored"}
+                  {hostKeySummary}
                 </div>
               </div>
+              <div className="flex items-center gap-2">
+                {storedHostKeyNeedsAttention ? (
+                  <Badge variant="danger" small>Invalid</Badge>
+                ) : approvedHostKey ? (
+                  <Badge variant="success" small>Verified</Badge>
+                ) : (
+                  <Badge variant="info" small>Needs trust</Badge>
+                )}
               {approvedHostKey && (
                 <button
                   type="button"
@@ -488,6 +541,7 @@ export function SystemForm({
                       onSuccess: () => {
                         setApprovedHostKey(null);
                         setApprovedHostKeyFingerprint(null);
+                        setHostKeyStatus("needs_approval");
                         setValidatedConfigToken(null);
                       },
                       onError: (err) => {
@@ -504,7 +558,14 @@ export function SystemForm({
                   {revokeHostKey.isPending ? "Revoking..." : "Revoke"}
                 </button>
               )}
+              </div>
             </div>
+            {storedHostKeyNeedsAttention && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+                The stored SSH host key no longer matches what this host presented during the latest check.
+                Review and re-approve the current host key before running SSH actions again.
+              </div>
+            )}
             {approvedHostKey ? (
               <>
                 <div className="text-xs text-slate-500 dark:text-slate-400 break-all">
@@ -794,6 +855,8 @@ export function SystemForm({
           >
             {testConnection.isPending ? (
               <span className="spinner spinner-sm" />
+            ) : hostKeyVerificationEnabled && hostKeyStatus === "needs_approval" ? (
+              approvedHostKey ? "Re-approve SSH Host Key" : "Approve SSH Host Key"
             ) : hostKeyVerificationEnabled && !approvedHostKey ? (
               "Approve SSH Host Key"
             ) : (

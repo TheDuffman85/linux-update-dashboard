@@ -61,6 +61,50 @@ export function deriveHostKeyStatus(system: {
   return system.trustedHostKey ? "verified" : "needs_approval";
 }
 
+export function deriveConnectionHostKeyStatus(system: {
+  id?: number;
+  hostKeyVerificationEnabled?: number | null;
+  trustedHostKey?: string | null;
+  proxyJumpSystemId?: number | null;
+}): "verified" | "verification_disabled" | "needs_approval" {
+  const ownStatus = deriveHostKeyStatus(system);
+  if (ownStatus === "needs_approval") {
+    return ownStatus;
+  }
+
+  let hasVerificationDisabled = ownStatus === "verification_disabled";
+  const seen = new Set<number>();
+  if (typeof system.id === "number") {
+    seen.add(system.id);
+  }
+
+  let currentProxyJumpId = system.proxyJumpSystemId ?? null;
+  let depth = 0;
+
+  while (currentProxyJumpId) {
+    if (seen.has(currentProxyJumpId) || depth >= MAX_PROXY_JUMP_DEPTH) {
+      break;
+    }
+    seen.add(currentProxyJumpId);
+    depth++;
+
+    const hop = getSystem(currentProxyJumpId);
+    if (!hop) break;
+
+    const hopStatus = deriveHostKeyStatus(hop);
+    if (hopStatus === "needs_approval") {
+      return hopStatus;
+    }
+    if (hopStatus === "verification_disabled") {
+      hasVerificationDisabled = true;
+    }
+
+    currentProxyJumpId = hop.proxyJumpSystemId ?? null;
+  }
+
+  return hasVerificationDisabled ? "verification_disabled" : "verified";
+}
+
 function isSystemConnectionUniqueConstraintError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
 

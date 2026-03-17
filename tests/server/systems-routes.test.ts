@@ -634,6 +634,133 @@ describe("systems reorder route", () => {
     });
   });
 
+  test("reports host-key approval as needed when a ProxyJump hop is untrusted", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const inserted = db.insert(systems).values([
+      {
+        name: "Jump",
+        hostname: "jump.local",
+        port: 22,
+        credentialId,
+        authType: "password",
+        username: "root",
+        hostKeyVerificationEnabled: 1,
+        trustedHostKey: null,
+      },
+      {
+        name: "Target",
+        hostname: "target.local",
+        port: 22,
+        credentialId,
+        proxyJumpSystemId: null,
+        authType: "password",
+        username: "root",
+        hostKeyVerificationEnabled: 1,
+        trustedHostKey: "dGFyZ2V0LWtleQ==",
+        trustedHostKeyAlgorithm: "ssh-ed25519",
+        trustedHostKeyFingerprintSha256: "SHA256:target",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    db.update(systems)
+      .set({ proxyJumpSystemId: inserted[0].id })
+      .where(eq(systems.id, inserted[1].id))
+      .run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const listRes = await app.request("/api/systems");
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === inserted[1].id);
+    expect(listed.hostKeyStatus).toBe("needs_approval");
+
+    const detailRes = await app.request(`/api/systems/${inserted[1].id}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.hostKeyStatus).toBe("needs_approval");
+  });
+
+  test("reports host-key approval as needed when the latest check failed host-key verification", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("testuser");
+    const systemId = db.insert(systems).values({
+      name: "Test APT",
+      hostname: "localhost",
+      port: 2001,
+      credentialId,
+      authType: "password",
+      username: "testuser",
+      hostKeyVerificationEnabled: 1,
+      trustedHostKey: "ZmFrZS1ob3N0LWtleQ==",
+      trustedHostKeyAlgorithm: "ssh-ed25519",
+      trustedHostKeyFingerprintSha256: "SHA256:stored",
+      hostKeyTrustedAt: "2026-03-16 08:00:00",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateHistory).values({
+      systemId,
+      action: "check",
+      pkgManager: "apt",
+      status: "failed",
+      error: "HostKeyVerificationError: SSH host key approval required",
+      startedAt: "2026-03-17 09:00:00",
+      completedAt: "2026-03-17 09:01:00",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const listRes = await app.request("/api/systems");
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json();
+    const listed = listBody.systems.find((system: { id: number }) => system.id === systemId);
+    expect(listed.hostKeyStatus).toBe("needs_approval");
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.hostKeyStatus).toBe("needs_approval");
+  });
+
+  test("keeps host-key status verified when the key was re-approved after a failed check", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("testuser");
+    const systemId = db.insert(systems).values({
+      name: "Recovered Host Key",
+      hostname: "localhost",
+      port: 2002,
+      credentialId,
+      authType: "password",
+      username: "testuser",
+      hostKeyVerificationEnabled: 1,
+      trustedHostKey: "bmV3LWhvc3Qta2V5",
+      trustedHostKeyAlgorithm: "ssh-ed25519",
+      trustedHostKeyFingerprintSha256: "SHA256:new",
+      hostKeyTrustedAt: "2026-03-17 10:30:00",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateHistory).values({
+      systemId,
+      action: "check",
+      pkgManager: "apt",
+      status: "failed",
+      error: "HostKeyVerificationError: SSH host key approval required",
+      startedAt: "2026-03-17 09:00:00",
+      completedAt: "2026-03-17 09:01:00",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.system.hostKeyStatus).toBe("verified");
+  });
+
   test("returns 409 when updating a system to match another connection tuple", async () => {
     const db = getDb();
     const inserted = db.insert(systems).values([

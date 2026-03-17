@@ -201,9 +201,11 @@ function serializeSystem(s: Record<string, unknown>) {
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
     pkgManagerConfigs,
-    hostKeyStatus: systemService.deriveHostKeyStatus({
+    hostKeyStatus: systemService.deriveConnectionHostKeyStatus({
+      id: s.id as number | undefined,
       hostKeyVerificationEnabled: s.hostKeyVerificationEnabled as number | null,
       trustedHostKey: s.trustedHostKey as string | null,
+      proxyJumpSystemId: s.proxyJumpSystemId as number | null,
     }),
     proxyJumpChain:
       typeof s.id === "number"
@@ -333,6 +335,40 @@ function getLastCheckMap(systemIds: number[]): Map<number, updateService.LastChe
   return updateService.getLatestCompletedChecks(systemIds);
 }
 
+function isHostKeyFailure(summary: updateService.LastCheckSummary | null | undefined): boolean {
+  const error = summary?.error ?? "";
+  return /HostKeyVerificationError|SSH host key approval required|SSH host key verification failed/i.test(
+    error
+  );
+}
+
+function deriveDisplayedHostKeyStatus(
+  system: Record<string, unknown>,
+  lastCheck: updateService.LastCheckSummary | null | undefined
+): "verified" | "verification_disabled" | "needs_approval" {
+  const baseStatus = systemService.deriveConnectionHostKeyStatus({
+    id: system.id as number | undefined,
+    hostKeyVerificationEnabled: system.hostKeyVerificationEnabled as number | null,
+    trustedHostKey: system.trustedHostKey as string | null,
+    proxyJumpSystemId: system.proxyJumpSystemId as number | null,
+  });
+
+  if (baseStatus === "verification_disabled" || !isHostKeyFailure(lastCheck)) {
+    return baseStatus;
+  }
+
+  const trustedAt =
+    typeof system.hostKeyTrustedAt === "string" ? system.hostKeyTrustedAt : null;
+  const checkCompletedAt =
+    typeof lastCheck?.completedAt === "string" ? lastCheck.completedAt : null;
+
+  if (trustedAt && checkCompletedAt && trustedAt > checkCompletedAt) {
+    return baseStatus;
+  }
+
+  return "needs_approval";
+}
+
 // List all systems
 systems.get("/", (c) => {
   const scope = c.req.query("scope");
@@ -342,6 +378,10 @@ systems.get("/", (c) => {
   const lastChecks = getLastCheckMap(allSystems.map((system) => system.id));
   const systemsWithMeta = allSystems.map((s) => ({
     ...serializeSystem(s as Record<string, unknown>),
+    hostKeyStatus: deriveDisplayedHostKeyStatus(
+      s as Record<string, unknown>,
+      lastChecks.get(s.id) ?? null
+    ),
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
     activeOperation: updateService.getActiveOperation(s.id),
@@ -368,6 +408,10 @@ systems.get("/:id", (c) => {
   return c.json({
     system: {
       ...serializeSystem(system as Record<string, unknown>),
+      hostKeyStatus: deriveDisplayedHostKeyStatus(
+        system as Record<string, unknown>,
+        updateService.getLatestCompletedCheck(id)
+      ),
       lastCheck: updateService.getLatestCompletedCheck(id),
       cacheAge: cacheService.getCacheAge(id),
       isStale: cacheService.isCacheStale(id),
