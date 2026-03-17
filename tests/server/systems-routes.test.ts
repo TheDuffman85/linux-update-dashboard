@@ -488,6 +488,57 @@ describe("systems reorder route", () => {
     });
   });
 
+  test("updating package manager configs does not clear cached updates when enabled managers are unchanged", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "APT Cache Preserve",
+      hostname: "apt-cache-preserve.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "openssl",
+      currentVersion: "1.0",
+      newVersion: "1.1",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "APT Cache Preserve",
+        hostname: "apt-cache-preserve.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        disabledPkgManagers: [],
+        pkgManagerConfigs: {
+          apt: {
+            defaultUpgradeMode: "full-upgrade",
+          },
+        },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+
+    expect(detailBody.system.updateCount).toBe(1);
+    expect(detailBody.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["openssl"]);
+  });
+
   test("filters hidden systems when requesting visible scope", async () => {
     const db = getDb();
     db.insert(systems).values([
