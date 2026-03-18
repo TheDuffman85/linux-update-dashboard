@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
+import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
@@ -245,33 +246,6 @@ function UpdateCheckNotice({
       )}
     </div>
   );
-}
-
-function formatTimeAgo(dateStr: string): string {
-  const date = new Date(dateStr + "Z");
-  const now = Date.now();
-  const diffMs = now - date.getTime();
-  const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function formatExactDateTime(dateStr: string): string {
-  const date = new Date(dateStr + "Z");
-  return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-  });
 }
 
 function getStatusVariant(status: string): "success" | "warning" | "danger" | "muted" {
@@ -713,12 +687,7 @@ function HistoryList({
                 <span className="text-xs text-slate-400 whitespace-nowrap">
                   {h.pkgManager}
                 </span>
-                <span
-                  className="text-[11px] text-slate-500 dark:text-slate-500 whitespace-nowrap"
-                  title={formatExactDateTime(h.startedAt)}
-                >
-                  {formatTimeAgo(h.startedAt)}
-                </span>
+                <AgoLabel timestamp={h.startedAt} />
               </div>
             </button>
 
@@ -1120,10 +1089,8 @@ export default function SystemDetail() {
               <Badge variant="muted" small>{system.keptBackCount} kept back</Badge>
             )}
           </h2>
-          {system.cacheAge && (
-            <span className={`text-xs ${system.isStale ? "text-amber-500" : "text-slate-400"}`}>
-              {system.cacheAge}
-            </span>
+          {system.cacheTimestamp && (
+            <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
           )}
         </div>
         <UpdateCheckNotice state={updatesPanelState} />

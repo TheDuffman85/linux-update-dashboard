@@ -59,6 +59,7 @@ export interface System {
   keptBackCount: number;
   lastCheck: LastCheckSummary | null;
   cacheAge: string | null;
+  cacheTimestamp?: string | null;
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
   supportsFullUpgrade?: boolean;
