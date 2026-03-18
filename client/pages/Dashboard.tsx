@@ -32,7 +32,7 @@ function SystemCard({ system, upgrading, checking }: { system: { id: number; nam
   return (
     <Link
       to={`/systems/${system.id}`}
-      className="block bg-white dark:bg-slate-800 rounded-xl border border-border p-4 hover:shadow-md transition-shadow"
+      className="block bg-white dark:bg-slate-800 rounded-xl border border-border p-4 hover:bg-slate-100 hover:border-slate-300 dark:hover:bg-slate-700 dark:hover:border-slate-600 transition-colors"
     >
       <div className="flex items-center gap-2 mb-2 min-w-0">
         {upgrading || checking ? (
