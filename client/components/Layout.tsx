@@ -14,7 +14,7 @@ const contentWidthClass: Record<LayoutWidth, string> = {
 
 export function Layout({ children, title, actions, contentWidth = "wide" }: {
   children: ReactNode;
-  title: string;
+  title: ReactNode;
   actions?: ReactNode;
   contentWidth?: LayoutWidth;
 }) {

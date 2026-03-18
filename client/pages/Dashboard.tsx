@@ -20,17 +20,6 @@ function StatCard({ label, value, color }: { label: string; value: number; color
 
 function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; securityCount: number; keptBackCount: number; needsReboot?: number; cacheAge: string | null; isStale?: boolean; lastCheck: { status: "success" | "warning" | "failed"; error: string | null; startedAt: string; completedAt: string | null } | null; activeOperation?: { type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot"; startedAt: string; packageName?: string } | null }; upgrading: boolean; checking: boolean }) {
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
-  const borderColor = updateState === "upgrading"
-    ? "border-l-blue-500"
-    : updateState === "checking"
-      ? "border-l-sky-400"
-      : updateState === "unreachable" || updateState === "check_failed"
-        ? "border-l-red-500"
-        : updateState === "check_warning" || updateState === "updates_available"
-          ? "border-l-amber-500"
-          : updateState === "up_to_date"
-            ? "border-l-green-500"
-            : "border-l-slate-300 dark:border-l-slate-600";
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
     : updateState === "check_warning" || updateState === "updates_available"
@@ -42,15 +31,15 @@ function SystemCard({ system, upgrading, checking }: { system: { id: number; nam
   return (
     <Link
       to={`/systems/${system.id}`}
-      className={`block bg-white dark:bg-slate-800 rounded-xl border border-border border-l-4 ${borderColor} p-4 hover:shadow-md transition-shadow`}
+      className="block bg-white dark:bg-slate-800 rounded-xl border border-border p-4 hover:shadow-md transition-shadow"
     >
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-medium text-sm truncate">{system.name}</h3>
+      <div className="flex items-center gap-2 mb-2 min-w-0">
         {upgrading || checking ? (
-          <span className={`spinner spinner-sm !w-2.5 !h-2.5 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+          <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
         ) : (
-          <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+          <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
         )}
+        <h3 className="font-medium text-sm truncate">{system.name}</h3>
       </div>
       <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
         {system.hostname}

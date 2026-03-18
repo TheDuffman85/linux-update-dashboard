@@ -12,7 +12,7 @@ import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
 import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
-import { getUpdatesPanelState } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 
@@ -811,6 +811,14 @@ export default function SystemDetail() {
 
   const { system, updates, hiddenUpdates, history } = data;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
+  const updateState = deriveSystemUpdateState(system, { upgrading, checking });
+  const dotColor = updateState === "check_failed" || updateState === "unreachable"
+    ? "bg-red-500"
+    : updateState === "check_warning" || updateState === "updates_available"
+      ? "bg-amber-500"
+      : updateState === "up_to_date"
+        ? "bg-green-500"
+        : "bg-slate-400";
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
@@ -911,7 +919,16 @@ export default function SystemDetail() {
 
   return (
     <Layout
-      title={system.name}
+      title={
+        <span className="flex items-center gap-2 min-w-0">
+          {upgrading || checking ? (
+            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+          ) : (
+            <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
+          )}
+          <span className="truncate">{system.name}</span>
+        </span>
+      }
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
