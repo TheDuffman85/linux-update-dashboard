@@ -235,7 +235,7 @@ function UpdateCheckNotice({
       };
 
   return (
-    <div className={`mx-4 mt-4 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
+    <div className={`mx-4 mt-4 mb-4 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
       <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
       <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
       {state.error && (
