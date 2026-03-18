@@ -394,7 +394,7 @@ export function SystemForm({
     hostKeyVerificationEnabled && (hasPendingHostKeyReview || needsHostKeyApproval);
   const showHostKeyFetchAction =
     hostKeyVerificationEnabled && !hasPendingHostKeyReview && needsHostKeyApproval;
-  const hostKeyFetchActionLabel = "Approval";
+  const hostKeyFetchActionLabel = "Review key";
   const showRevokeHostKeyAction =
     !!systemId && approvedHostKey !== null && !hasPendingHostKeyReview;
   const pendingTargetChallenge = pendingTrustChallenge?.challenges.find(
@@ -556,8 +556,8 @@ export function SystemForm({
 
         {hostKeyVerificationEnabled && (
           <div className="rounded-lg border border-border p-3 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   SSH Host Key Approval
                 </div>
@@ -565,7 +565,7 @@ export function SystemForm({
                   {hostKeySummary}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2 sm:shrink-0">
                 {storedHostKeyNeedsAttention ? (
                   <Badge variant="danger" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
                 ) : approvedHostKey ? (
@@ -606,7 +606,7 @@ export function SystemForm({
                   type="button"
                   onClick={() => runConnectionTest()}
                   disabled={!canRunConnectionTest}
-                  className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                  className="whitespace-nowrap px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
                 >
                   {testConnection.isPending ? "Checking..." : hostKeyFetchActionLabel}
                 </button>
