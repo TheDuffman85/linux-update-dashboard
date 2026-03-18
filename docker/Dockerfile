@@ -33,7 +33,6 @@ ARG APP_COMMIT_HASH=""
 ARG APP_BRANCH=""
 ARG APP_REPOSITORY=""
 ARG APP_REPO_URL=""
-RUN apt-get update && apt-get install -y openssh-client && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
 RUN rm -rf node_modules/esbuild node_modules/@esbuild node_modules/@esbuild-kit \
