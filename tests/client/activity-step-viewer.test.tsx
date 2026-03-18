@@ -10,6 +10,8 @@ const baseStep: ActivityStep = {
   output: "Hit:1 mirror\n",
   error: null,
   status: "success",
+  startedAt: "2026-03-18 10:00:00",
+  completedAt: "2026-03-18 10:01:05",
 };
 
 describe("ActivityStepViewer", () => {
@@ -21,6 +23,7 @@ describe("ActivityStepViewer", () => {
     expect(html).not.toContain('aria-label="Activity steps"');
     expect(html).not.toContain('role="tablist"');
     expect(html).toContain("apt-get update");
+    expect(html).not.toContain("Runtime 1m 5s");
   });
 
   test("shows step tabs when multiple steps are available", () => {
@@ -42,6 +45,8 @@ describe("ActivityStepViewer", () => {
     expect(html).toContain('aria-label="Activity steps"');
     expect(html).toContain('role="tablist"');
     expect(html).toContain("1/2 apt");
+    expect(html).toContain("1m 5s");
+    expect(html).not.toContain("Runtime 1m 5s");
     expect(html).toContain("Listing available updates");
   });
 });

@@ -8,9 +8,16 @@ function appendText(existing: string | null, next: string): string {
   return `${existing || ""}${next}`;
 }
 
-function finalizePendingStep(step: ActivityStep | undefined, status: "success" | "failed"): void {
-  if (!step || step.status !== "started") return;
-  step.status = status;
+function finalizePendingStep(
+  step: ActivityStep | undefined,
+  status: "success" | "failed",
+  completedAt?: string
+): void {
+  if (!step) return;
+  if (step.status === "started") {
+    step.status = status;
+  }
+  step.completedAt = completedAt ?? step.completedAt ?? null;
 }
 
 export function deriveLiveActivitySteps(messages: WsMessage[]): ActivityStep[] {
@@ -21,7 +28,7 @@ export function deriveLiveActivitySteps(messages: WsMessage[]): ActivityStep[] {
 
     switch (message.type) {
       case "started":
-        finalizePendingStep(current, "success");
+        finalizePendingStep(current, "success", message.startedAt);
         steps.push({
           label: null,
           pkgManager: message.pkgManager,
@@ -29,6 +36,8 @@ export function deriveLiveActivitySteps(messages: WsMessage[]): ActivityStep[] {
           output: null,
           error: null,
           status: "started",
+          startedAt: message.startedAt,
+          completedAt: null,
         });
         break;
       case "output":
@@ -47,7 +56,7 @@ export function deriveLiveActivitySteps(messages: WsMessage[]): ActivityStep[] {
         }
         break;
       case "done":
-        finalizePendingStep(current, message.success ? "success" : "failed");
+        finalizePendingStep(current, message.success ? "success" : "failed", message.completedAt);
         break;
       default:
         break;

@@ -16,6 +16,7 @@ import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, Activit
 import { deriveSystemUpdateState, getUpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
+import { formatDurationBetween } from "../lib/time";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -255,6 +256,24 @@ function getStatusVariant(status: string): "success" | "warning" | "danger" | "m
   return "muted";
 }
 
+function useNowTicker(enabled: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  return nowMs;
+}
+
+function joinMetaParts(parts: Array<string | null | undefined>): string {
+  return parts.filter((part): part is string => !!part).join(" • ");
+}
+
 function StepPanel({
   title,
   children,
@@ -328,6 +347,7 @@ export function ActivityStepViewer({
     defaultToLastStep && steps.length > 0 ? steps.length - 1 : 0
   );
   const prevStepCountRef = useRef(steps.length);
+  const nowMs = useNowTicker(steps.some((step) => !!step.startedAt && !step.completedAt));
 
   useEffect(() => {
     const prevCount = prevStepCountRef.current;
@@ -359,7 +379,6 @@ export function ActivityStepViewer({
 
   const isGlobalPhase = phase === "reconnecting" || phase === "rechecking";
   const showStepTabs = steps.length > 1;
-
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -384,6 +403,7 @@ export function ActivityStepViewer({
         >
           {steps.map((step, index) => {
             const isSelected = index === selectedIndex;
+            const stepRuntime = formatDurationBetween(step.startedAt, step.completedAt, nowMs);
             return (
               <button
                 key={`${viewerId}-step-${index}`}
@@ -406,6 +426,11 @@ export function ActivityStepViewer({
                 <span className="block text-xs font-medium">
                   {getActivityStepLabel(step, index)}
                 </span>
+                {stepRuntime && (
+                  <span className="mt-1 block text-[11px] opacity-75">
+                    {stepRuntime}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -483,11 +508,12 @@ function HistoryList({
   // isLive: stay true until messages are cleared (new command starts)
   const hasOutput = commandOutput.isActive || commandOutput.messages.length > 0;
   // The in-progress DB entry (status "started") — appears quickly after polling kicks in
-  const startedEntry = hasOutput ? history.find((h) => h.status === "started") : undefined;
+  const startedEntry = history.find((h) => h.status === "started");
   // Keep the synthetic visible while the command is active OR while waiting for the DB result
   // to arrive (the gap between WS "done" and the next poll). This prevents the "vanish then
   // reappear" flicker for check-type ops.
   const showSynthetic = (commandOutput.isActive || pendingExpand) && !startedEntry;
+  const nowMs = useNowTicker(showSynthetic || !!startedEntry);
 
   // For upgrade-type ops: clear pendingExpand when the "started" DB entry appears.
   useEffect(() => {
@@ -526,6 +552,8 @@ function HistoryList({
   const syntheticStartedMsg = commandOutput.messages
     .findLast((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
   const liveSteps = deriveLiveActivitySteps(commandOutput.messages);
+  const syntheticStartedAt = activeOp?.startedAt ?? syntheticStartedMsg?.startedAt ?? null;
+  const syntheticRuntime = formatDurationBetween(syntheticStartedAt, null, nowMs);
   const syntheticLabel = (() => {
     if (activeOp) {
       if (activeOp.type === "check") return "Checking for updates";
@@ -548,6 +576,8 @@ function HistoryList({
             output: null,
             error: null,
             status: "started" as const,
+            startedAt: syntheticStartedMsg.startedAt,
+            completedAt: null,
           }]
         : [];
 
@@ -586,7 +616,18 @@ function HistoryList({
                   </span>
                 )}
               </p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {joinMetaParts([
+                  syntheticStartedMsg?.pkgManager ?? null,
+                  syntheticRuntime ? `running for ${syntheticRuntime}` : null,
+                ])}
+              </p>
             </div>
+            {syntheticStartedAt && (
+              <div className="flex flex-col items-end gap-0.5 shrink-0">
+                <AgoLabel timestamp={syntheticStartedAt} />
+              </div>
+            )}
           </div>
           <div className="ml-10 mr-2 mb-2 space-y-2">
             {syntheticSteps.length > 0 ? (
@@ -605,13 +646,18 @@ function HistoryList({
       )}
       {history.map((h) => {
         const isRunningEntry = h.id === startedEntry?.id;
+        const totalRuntime = formatDurationBetween(
+          h.startedAt,
+          isRunningEntry ? null : h.completedAt,
+          nowMs,
+        );
         // A running entry has the command set; treat it as expandable even without output/error yet
         const hasDetails = !!(h.steps?.length || h.command || h.output || h.error) || isRunningEntry;
         const isOpen = expanded.has(h.id);
         const runningSteps =
           isRunningEntry && liveSteps.length > 0
             ? liveSteps
-            : isRunningEntry && h.command
+              : isRunningEntry && h.command
               ? [{
                   label: null,
                   pkgManager: h.pkgManager,
@@ -619,6 +665,8 @@ function HistoryList({
                   output: null,
                   error: null,
                   status: "started" as const,
+                  startedAt: h.startedAt,
+                  completedAt: null,
                 }]
               : [];
 
@@ -679,14 +727,23 @@ function HistoryList({
                 </p>
                 {h.packageCount !== null && h.action === "check" && (
                   <p className="text-xs text-slate-500">
-                    {h.packageCount} update{h.packageCount !== 1 ? "s" : ""} found
+                    {joinMetaParts([
+                      `${h.packageCount} update${h.packageCount !== 1 ? "s" : ""} found`,
+                      h.pkgManager,
+                      totalRuntime ? `${isRunningEntry ? "running for" : "completed in"} ${totalRuntime}` : null,
+                    ])}
+                  </p>
+                )}
+                {(h.packageCount === null || h.action !== "check") && (
+                  <p className="text-xs text-slate-500">
+                    {joinMetaParts([
+                      h.pkgManager,
+                      totalRuntime ? `${isRunningEntry ? "running for" : "completed in"} ${totalRuntime}` : null,
+                    ])}
                   </p>
                 )}
               </div>
-              <div className="flex flex-col items-end gap-0.5 shrink-0">
-                <span className="text-xs text-slate-400 whitespace-nowrap">
-                  {h.pkgManager}
-                </span>
+              <div className="flex flex-col items-end gap-0.5 shrink-0 pt-0.5">
                 <AgoLabel timestamp={h.startedAt} />
               </div>
             </button>

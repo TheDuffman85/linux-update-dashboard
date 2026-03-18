@@ -106,6 +106,8 @@ export interface ActivityStep {
   output: string | null;
   error: string | null;
   status: ActivityStepStatus;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface HistoryEntry {

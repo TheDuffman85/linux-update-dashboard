@@ -3,10 +3,10 @@ import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
 
 export type WsMessage =
   | { type: "reset" }
-  | { type: "started"; command: string; pkgManager: string }
+  | { type: "started"; command: string; pkgManager: string; startedAt: string }
   | { type: "output"; data: string; stream: "stdout" | "stderr" }
   | { type: "phase"; phase: string }
-  | { type: "done"; success: boolean }
+  | { type: "done"; success: boolean; completedAt: string }
   | { type: "error"; message: string }
   | { type: "warning"; message: string };
 
