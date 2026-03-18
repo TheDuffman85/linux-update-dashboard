@@ -19,6 +19,7 @@ dashboard.get("/stats", (c) => {
     ...s,
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
+    cacheTimestamp: cacheService.getCacheTimestamp(s.id),
     isStale: cacheService.isCacheStale(s.id),
     activeOperation: updateService.getActiveOperation(s.id),
   }));
@@ -57,6 +58,7 @@ dashboard.get("/systems", (c) => {
     ...s,
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
+    cacheTimestamp: cacheService.getCacheTimestamp(s.id),
     isStale: cacheService.isCacheStale(s.id),
     activeOperation: updateService.getActiveOperation(s.id),
   }));

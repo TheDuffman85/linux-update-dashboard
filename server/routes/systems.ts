@@ -384,6 +384,7 @@ systems.get("/", (c) => {
     ),
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
+    cacheTimestamp: cacheService.getCacheTimestamp(s.id),
     activeOperation: updateService.getActiveOperation(s.id),
     supportsFullUpgrade: updateService.supportsFullUpgrade(s.id),
   }));
@@ -414,6 +415,7 @@ systems.get("/:id", (c) => {
       ),
       lastCheck: updateService.getLatestCompletedCheck(id),
       cacheAge: cacheService.getCacheAge(id),
+      cacheTimestamp: cacheService.getCacheTimestamp(id),
       isStale: cacheService.isCacheStale(id),
       activeOperation: updateService.getActiveOperation(id),
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),

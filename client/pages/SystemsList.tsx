@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
+import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -306,8 +307,12 @@ export default function SystemsList() {
                       <span className="text-slate-400 text-xs">-</span>
                     )}
                   </td>
-                  <td className="px-2 sm:px-4 py-3 hidden lg:table-cell text-xs text-slate-400">
-                    {s.cacheAge || "Never"}
+                  <td className="px-2 sm:px-4 py-3 hidden lg:table-cell">
+                    {s.cacheTimestamp ? (
+                      <AgoLabel timestamp={s.cacheTimestamp} stale={s.isStale} />
+                    ) : (
+                      <span className="text-xs text-slate-400">Never</span>
+                    )}
                   </td>
                   <td className="px-2 sm:px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-0.5 sm:gap-1">

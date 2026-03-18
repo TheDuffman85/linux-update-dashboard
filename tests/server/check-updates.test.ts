@@ -209,6 +209,8 @@ describe("checkUpdates", () => {
 
     const steps = JSON.parse(history?.steps || "[]");
     expect(steps).toHaveLength(3);
+    expect(history?.startedAt).toBe(steps[0].startedAt);
+    expect(history?.completedAt).not.toBe(history?.startedAt);
     expect(steps.map((step: { label: string }) => step.label)).toEqual([
       "Fetching package lists",
       "Listing available updates",
@@ -218,14 +220,20 @@ describe("checkUpdates", () => {
       pkgManager: "apt",
       status: "success",
       output: "Hit:1 https://deb.debian.org stable InRelease\n",
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
     });
     expect(steps[1]).toMatchObject({
       command: expect.stringContaining("apt list --upgradable"),
       output: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n",
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
     });
     expect(steps[2]).toMatchObject({
       command: expect.stringContaining("apt-get -s -o Debug::NoLocking=1 upgrade"),
       output: "Inst curl [7.0] (8.0 stable [amd64])\n",
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
     });
   });
 

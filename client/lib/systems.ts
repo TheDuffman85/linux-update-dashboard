@@ -59,6 +59,7 @@ export interface System {
   keptBackCount: number;
   lastCheck: LastCheckSummary | null;
   cacheAge: string | null;
+  cacheTimestamp?: string | null;
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
   supportsFullUpgrade?: boolean;
@@ -105,6 +106,8 @@ export interface ActivityStep {
   output: string | null;
   error: string | null;
   status: ActivityStepStatus;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface HistoryEntry {

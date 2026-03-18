@@ -5,13 +5,13 @@ import type { WsMessage } from "../../client/hooks/useCommandOutput";
 describe("deriveLiveActivitySteps", () => {
   test("groups websocket messages into ordered activity steps", () => {
     const messages: WsMessage[] = [
-      { type: "started", command: "apt-get update", pkgManager: "apt" },
+      { type: "started", command: "apt-get update", pkgManager: "apt", startedAt: "2026-03-18 10:00:00" },
       { type: "phase", phase: "Fetching package lists" },
       { type: "output", data: "Hit:1 mirror\n", stream: "stdout" },
-      { type: "started", command: "apt list --upgradable", pkgManager: "apt" },
+      { type: "started", command: "apt list --upgradable", pkgManager: "apt", startedAt: "2026-03-18 10:00:04" },
       { type: "phase", phase: "Listing available updates" },
       { type: "output", data: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n", stream: "stdout" },
-      { type: "done", success: true },
+      { type: "done", success: true, completedAt: "2026-03-18 10:00:06" },
     ];
 
     expect(deriveLiveActivitySteps(messages)).toEqual([
@@ -22,6 +22,8 @@ describe("deriveLiveActivitySteps", () => {
         output: "Hit:1 mirror\n",
         error: null,
         status: "success",
+        startedAt: "2026-03-18 10:00:00",
+        completedAt: "2026-03-18 10:00:04",
       },
       {
         label: "Listing available updates",
@@ -30,16 +32,18 @@ describe("deriveLiveActivitySteps", () => {
         output: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n",
         error: null,
         status: "success",
+        startedAt: "2026-03-18 10:00:04",
+        completedAt: "2026-03-18 10:00:06",
       },
     ]);
   });
 
   test("marks the active step failed when an error arrives", () => {
     const messages: WsMessage[] = [
-      { type: "started", command: "apt-get update", pkgManager: "apt" },
+      { type: "started", command: "apt-get update", pkgManager: "apt", startedAt: "2026-03-18 10:00:00" },
       { type: "phase", phase: "Fetching package lists" },
       { type: "error", message: "sudo: a password is required" },
-      { type: "done", success: false },
+      { type: "done", success: false, completedAt: "2026-03-18 10:00:03" },
     ];
 
     expect(deriveLiveActivitySteps(messages)).toEqual([
@@ -50,6 +54,8 @@ describe("deriveLiveActivitySteps", () => {
         output: null,
         error: "sudo: a password is required",
         status: "failed",
+        startedAt: "2026-03-18 10:00:00",
+        completedAt: "2026-03-18 10:00:03",
       },
     ]);
   });

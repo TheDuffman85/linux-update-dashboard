@@ -133,10 +133,16 @@ export interface ActivityStep {
   output: string | null;
   error: string | null;
   status: ActivityStepStatus;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 const STEP_OUTPUT_LIMIT = 5000;
 const STEP_ERROR_LIMIT = 2000;
+
+function getCurrentTimestamp(): string {
+  return new Date().toISOString().replace("T", " ").replace("Z", "");
+}
 
 function trimSanitizedOutput(value: string | null | undefined, limit: number): string | null {
   if (!value) return null;
@@ -154,6 +160,8 @@ function serializeActivitySteps(steps: ActivityStep[] | undefined): string | nul
       output: trimSanitizedOutput(step.output, STEP_OUTPUT_LIMIT),
       error: trimSanitizedOutput(step.error, STEP_ERROR_LIMIT),
       status: step.status,
+      startedAt: step.startedAt ?? null,
+      completedAt: step.completedAt ?? null,
     }))
   );
 }
@@ -166,6 +174,8 @@ function createActivityStep(step: ActivityStep): ActivityStep {
     output: step.output ?? null,
     error: step.error ?? null,
     status: step.status,
+    startedAt: step.startedAt ?? null,
+    completedAt: step.completedAt ?? null,
   };
 }
 
@@ -397,12 +407,20 @@ function logHistory(
     steps?: ActivityStep[];
     output?: string;
     error?: string;
+    startedAt?: string;
+    completedAt?: string;
   }
 ): void {
   const db = getDb();
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const now = getCurrentTimestamp();
+  const inferredStartedAt =
+    opts?.startedAt ??
+    opts?.steps?.find((step) => !!step.startedAt)?.startedAt ??
+    getStoredActiveOperation(systemId)?.startedAt ??
+    now;
   const completedAt =
-    status === "success" || status === "failed" || status === "warning" ? now : null;
+    opts?.completedAt ??
+    (status === "success" || status === "failed" || status === "warning" ? now : null);
 
   db.insert(updateHistory)
     .values({
@@ -416,6 +434,7 @@ function logHistory(
       steps: serializeActivitySteps(opts?.steps),
       output: opts?.output ? sanitizeOutput(opts.output) : null,
       error: opts?.error ? sanitizeOutput(opts.error) : null,
+      startedAt: inferredStartedAt,
       completedAt,
     })
     .run();
@@ -426,7 +445,8 @@ function insertStartedEntry(
   systemId: number,
   action: string,
   pkgManager: string,
-  command: string
+  command: string,
+  startedAt = getCurrentTimestamp()
 ): number {
   const db = getDb();
   const result = db
@@ -437,6 +457,7 @@ function insertStartedEntry(
       pkgManager,
       status: "started",
       command: sanitizeCommand(command),
+      startedAt,
       completedAt: null,
     })
     .returning({ id: updateHistory.id })
@@ -457,7 +478,7 @@ function finishEntry(
   }
 ): void {
   const db = getDb();
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const now = getCurrentTimestamp();
   db.update(updateHistory)
     .set({
       status,
@@ -542,7 +563,8 @@ async function checkUpdatesUnlocked(
         for (let i = 0; i < commands.length; i++) {
           const label = labels[i] ?? `Step ${i + 1}`;
           let streamedOutput = "";
-          pub({ type: "started", command: commands[i], pkgManager: pmName });
+          const stepStartedAt = getCurrentTimestamp();
+          pub({ type: "started", command: commands[i], pkgManager: pmName, startedAt: stepStartedAt });
           pub({ type: "phase", phase: label });
           const result = await sshManager.runCommand(
             conn,
@@ -554,6 +576,7 @@ async function checkUpdatesUnlocked(
               pub({ type: "output", data: chunk, stream });
             }
           );
+          const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
           checkOutput += combinedOutput;
           lastStdout = result.stdout;
@@ -576,6 +599,8 @@ async function checkUpdatesUnlocked(
                   ? null
                   : result.stderr || result.stdout || combinedOutput || `Command exited with code ${result.exitCode}`,
               status: result.exitCode === 0 ? "success" : "failed",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
             })
           );
 
@@ -609,7 +634,7 @@ async function checkUpdatesUnlocked(
       error: sanitizeOutput(String(e)),
     });
     systemService.markUnreachable(systemId);
-    pub({ type: "done", success: false });
+    pub({ type: "done", success: false, completedAt: getCurrentTimestamp() });
     if (!silent) {
       logHistory(systemId, "check", system.pkgManager || "unknown", "failed", {
         error: String(e),
@@ -666,7 +691,7 @@ async function checkUpdatesUnlocked(
         error: combinedErrors?.slice(0, 2000),
       }
     );
-    pub({ type: "done", success: historyStatus === "success" });
+    pub({ type: "done", success: historyStatus === "success", completedAt: getCurrentTimestamp() });
   }
 
   if (!silent && successfulChecks === 0 && combinedErrors) {
@@ -680,7 +705,7 @@ export async function checkUpdates(
   systemId: number
 ): Promise<ParsedUpdate[]> {
   return withLock(systemId, async () => {
-    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "check", startedAt: now });
     outputStream.resetStream(systemId);
     try {
@@ -696,7 +721,7 @@ export async function applyUpgradeAll(
   systemId: number
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
-    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "upgrade_all", startedAt: now });
     await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
@@ -747,8 +772,9 @@ export async function applyUpgradeAll(
 
         const cmd = parser.getUpgradeAllCommand(getManagerConfig(pkgManagerConfigs, pmName));
         allCommands.push(cmd);
-        const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd);
-        outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
+        const stepStartedAt = getCurrentTimestamp();
+        const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd, stepStartedAt);
+        outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName, startedAt: stepStartedAt });
         let streamedOutput = "";
 
         const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
@@ -792,6 +818,7 @@ export async function applyUpgradeAll(
 
         const success = exitCode === 0;
         if (!success) overallSuccess = false;
+        const stepCompletedAt = getCurrentTimestamp();
         const combinedOutput = streamedOutput || stdout || stderr;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
@@ -804,6 +831,8 @@ export async function applyUpgradeAll(
             output: combinedOutput,
             error: success ? null : stderr || stdout || combinedOutput,
             status: histStatus,
+            startedAt: stepStartedAt,
+            completedAt: stepCompletedAt,
           }),
           output: stdout.slice(0, STEP_OUTPUT_LIMIT),
           error: success ? undefined : (stderr || stdout).slice(0, 2000),
@@ -825,7 +854,7 @@ export async function applyUpgradeAll(
       syncSystemNotificationHash(systemId);
 
       const combinedOutput = allOutputs.join("\n\n");
-      outputStream.publish(systemId, { type: "done", success: overallSuccess });
+      outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
       return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
     } catch (e) {
       logHistory(
@@ -849,7 +878,7 @@ export async function applyUpgradeAll(
         }
       );
       outputStream.publish(systemId, { type: "error", message: String(e) });
-      outputStream.publish(systemId, { type: "done", success: false });
+      outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
       return { success: false, output: String(e) };
     } finally {
       if (conn) sshManager.disconnect(conn);
@@ -876,7 +905,7 @@ export async function applyFullUpgradeAll(
   systemId: number
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
-    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "full_upgrade_all", startedAt: now });
     await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
@@ -926,8 +955,9 @@ export async function applyFullUpgradeAll(
         const managerConfig = getManagerConfig(pkgManagerConfigs, pmName);
         const cmd = parser.getFullUpgradeAllCommand(managerConfig) ?? parser.getUpgradeAllCommand(managerConfig);
         allCommands.push(cmd);
-        const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd);
-        outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
+        const stepStartedAt = getCurrentTimestamp();
+        const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd, stepStartedAt);
+        outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName, startedAt: stepStartedAt });
         let streamedOutput = "";
 
         const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
@@ -970,6 +1000,7 @@ export async function applyFullUpgradeAll(
 
         const success = exitCode === 0;
         if (!success) overallSuccess = false;
+        const stepCompletedAt = getCurrentTimestamp();
         const combinedOutput = streamedOutput || stdout || stderr;
         allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
 
@@ -982,6 +1013,8 @@ export async function applyFullUpgradeAll(
             output: combinedOutput,
             error: success ? null : stderr || stdout || combinedOutput,
             status: histStatus,
+            startedAt: stepStartedAt,
+            completedAt: stepCompletedAt,
           }),
           output: stdout.slice(0, STEP_OUTPUT_LIMIT),
           error: success ? undefined : (stderr || stdout).slice(0, 2000),
@@ -1002,7 +1035,7 @@ export async function applyFullUpgradeAll(
       syncSystemNotificationHash(systemId);
 
       const combinedOutput = allOutputs.join("\n\n");
-      outputStream.publish(systemId, { type: "done", success: overallSuccess });
+      outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
       return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
     } catch (e) {
       logHistory(
@@ -1026,7 +1059,7 @@ export async function applyFullUpgradeAll(
         }
       );
       outputStream.publish(systemId, { type: "error", message: String(e) });
-      outputStream.publish(systemId, { type: "done", success: false });
+      outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
       return { success: false, output: String(e) };
     } finally {
       if (conn) sshManager.disconnect(conn);
@@ -1043,7 +1076,7 @@ export async function applyUpgradePackage(
   packageName: string
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
-    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "upgrade_package", startedAt: now, packageName });
     await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
@@ -1077,8 +1110,9 @@ export async function applyUpgradePackage(
     let conn;
     let reconnectionUsed = false;
 
-    const histId = insertStartedEntry(systemId, "upgrade_package", pmName, cmd);
-    outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName });
+    const stepStartedAt = getCurrentTimestamp();
+    const histId = insertStartedEntry(systemId, "upgrade_package", pmName, cmd, stepStartedAt);
+    outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName, startedAt: stepStartedAt });
 
     try {
       conn = await sshManager.connect(system as Record<string, unknown>, {
@@ -1120,6 +1154,7 @@ export async function applyUpgradePackage(
 
       const success = exitCode === 0;
       const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
+      const stepCompletedAt = getCurrentTimestamp();
       finishEntry(histId, histStatus, {
         packageCount: 1,
         packages: JSON.stringify([packageName]),
@@ -1130,6 +1165,8 @@ export async function applyUpgradePackage(
           output: streamedOutput || stdout || stderr,
           error: success ? null : stderr || stdout || streamedOutput,
           status: histStatus,
+          startedAt: stepStartedAt,
+          completedAt: stepCompletedAt,
         }),
         output: stdout.slice(0, STEP_OUTPUT_LIMIT),
         error: success ? undefined : (stderr || stdout).slice(0, 2000),
@@ -1149,7 +1186,7 @@ export async function applyUpgradePackage(
       }
       syncSystemNotificationHash(systemId);
 
-      outputStream.publish(systemId, { type: "done", success });
+      outputStream.publish(systemId, { type: "done", success, completedAt: getCurrentTimestamp() });
       return { success, output: success ? stdout : stderr || stdout, warning: reconnectionUsed && success };
     } catch (e) {
       finishEntry(histId, "failed", {
@@ -1164,7 +1201,7 @@ export async function applyUpgradePackage(
         error: String(e),
       });
       outputStream.publish(systemId, { type: "error", message: String(e) });
-      outputStream.publish(systemId, { type: "done", success: false });
+      outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
       return { success: false, output: String(e) };
     } finally {
       if (conn) sshManager.disconnect(conn);
@@ -1180,7 +1217,7 @@ export async function rebootSystem(
   systemId: number
 ): Promise<{ success: boolean; message: string }> {
   return withLock(systemId, async () => {
-    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "reboot", startedAt: now });
     await requestNotificationRuntimeSystemSync(systemId);
     outputStream.resetStream(systemId);
@@ -1191,8 +1228,9 @@ export async function rebootSystem(
       const sshManager = getSSHManager();
       const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
       const cmd = sudo("reboot");
-      const histId = insertStartedEntry(systemId, "reboot", "system", cmd);
-      outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: "system" });
+      const stepStartedAt = getCurrentTimestamp();
+      const histId = insertStartedEntry(systemId, "reboot", "system", cmd, stepStartedAt);
+      outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: "system", startedAt: stepStartedAt });
 
       let conn;
       try {
@@ -1204,6 +1242,7 @@ export async function rebootSystem(
           streamedOutput += chunk;
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
         });
+        const stepCompletedAt = getCurrentTimestamp();
 
         if (result.exitCode !== 0) {
           const errorText = result.stderr || result.stdout || `reboot exited with code ${result.exitCode}`;
@@ -1215,11 +1254,13 @@ export async function rebootSystem(
               output: streamedOutput || result.stdout || result.stderr,
               error: errorText,
               status: "failed",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
             }),
             error: errorText,
           });
           outputStream.publish(systemId, { type: "error", message: errorText });
-          outputStream.publish(systemId, { type: "done", success: false });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
           return { success: false, message: `Reboot failed: ${errorText}` };
         }
 
@@ -1233,13 +1274,16 @@ export async function rebootSystem(
             output: streamedOutput || result.stdout || "Reboot command sent",
             error: null,
             status: "success",
+            startedAt: stepStartedAt,
+            completedAt: stepCompletedAt,
           }),
           output: result.stdout || "Reboot command sent",
         });
-        outputStream.publish(systemId, { type: "done", success: true });
+        outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
         return { success: true, message: "Reboot command sent" };
       } catch (e) {
         const errMsg = String(e);
+        const stepCompletedAt = getCurrentTimestamp();
         // A closed connection after reboot is expected
         if (errMsg.includes("ECONNRESET") || errMsg.includes("closed") || errMsg.includes("end")) {
           systemService.markUnreachable(systemId);
@@ -1251,10 +1295,12 @@ export async function rebootSystem(
               output: "Reboot command sent (connection closed)",
               error: null,
               status: "success",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
             }),
             output: "Reboot command sent (connection closed)",
           });
-          outputStream.publish(systemId, { type: "done", success: true });
+          outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
           return { success: true, message: "Reboot command sent" };
         }
         finishEntry(histId, "failed", {
@@ -1265,11 +1311,13 @@ export async function rebootSystem(
             output: null,
             error: errMsg,
             status: "failed",
+            startedAt: stepStartedAt,
+            completedAt: stepCompletedAt,
           }),
           error: errMsg,
         });
         outputStream.publish(systemId, { type: "error", message: errMsg });
-        outputStream.publish(systemId, { type: "done", success: false });
+        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
         return { success: false, message: `Reboot failed: ${errMsg}` };
       } finally {
         if (conn) {

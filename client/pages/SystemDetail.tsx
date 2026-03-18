@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
+import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
@@ -12,9 +13,10 @@ import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
 import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
-import { getUpdatesPanelState } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
+import { formatDurationBetween } from "../lib/time";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -235,7 +237,7 @@ function UpdateCheckNotice({
       };
 
   return (
-    <div className={`mx-4 mt-4 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
+    <div className={`mx-4 mt-4 mb-4 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
       <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
       <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
       {state.error && (
@@ -247,38 +249,29 @@ function UpdateCheckNotice({
   );
 }
 
-function formatTimeAgo(dateStr: string): string {
-  const date = new Date(dateStr + "Z");
-  const now = Date.now();
-  const diffMs = now - date.getTime();
-  const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function formatExactDateTime(dateStr: string): string {
-  const date = new Date(dateStr + "Z");
-  return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-  });
-}
-
 function getStatusVariant(status: string): "success" | "warning" | "danger" | "muted" {
   if (status === "success") return "success";
   if (status === "warning") return "warning";
   if (status === "failed") return "danger";
   return "muted";
+}
+
+function useNowTicker(enabled: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  return nowMs;
+}
+
+function joinMetaParts(parts: Array<string | null | undefined>): string {
+  return parts.filter((part): part is string => !!part).join(" • ");
 }
 
 function StepPanel({
@@ -354,6 +347,7 @@ export function ActivityStepViewer({
     defaultToLastStep && steps.length > 0 ? steps.length - 1 : 0
   );
   const prevStepCountRef = useRef(steps.length);
+  const nowMs = useNowTicker(steps.some((step) => !!step.startedAt && !step.completedAt));
 
   useEffect(() => {
     const prevCount = prevStepCountRef.current;
@@ -385,7 +379,6 @@ export function ActivityStepViewer({
 
   const isGlobalPhase = phase === "reconnecting" || phase === "rechecking";
   const showStepTabs = steps.length > 1;
-
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -410,6 +403,7 @@ export function ActivityStepViewer({
         >
           {steps.map((step, index) => {
             const isSelected = index === selectedIndex;
+            const stepRuntime = formatDurationBetween(step.startedAt, step.completedAt, nowMs);
             return (
               <button
                 key={`${viewerId}-step-${index}`}
@@ -432,6 +426,11 @@ export function ActivityStepViewer({
                 <span className="block text-xs font-medium">
                   {getActivityStepLabel(step, index)}
                 </span>
+                {stepRuntime && (
+                  <span className="mt-1 block text-[11px] opacity-75">
+                    {stepRuntime}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -509,11 +508,12 @@ function HistoryList({
   // isLive: stay true until messages are cleared (new command starts)
   const hasOutput = commandOutput.isActive || commandOutput.messages.length > 0;
   // The in-progress DB entry (status "started") — appears quickly after polling kicks in
-  const startedEntry = hasOutput ? history.find((h) => h.status === "started") : undefined;
+  const startedEntry = history.find((h) => h.status === "started");
   // Keep the synthetic visible while the command is active OR while waiting for the DB result
   // to arrive (the gap between WS "done" and the next poll). This prevents the "vanish then
   // reappear" flicker for check-type ops.
   const showSynthetic = (commandOutput.isActive || pendingExpand) && !startedEntry;
+  const nowMs = useNowTicker(showSynthetic || !!startedEntry);
 
   // For upgrade-type ops: clear pendingExpand when the "started" DB entry appears.
   useEffect(() => {
@@ -552,6 +552,8 @@ function HistoryList({
   const syntheticStartedMsg = commandOutput.messages
     .findLast((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
   const liveSteps = deriveLiveActivitySteps(commandOutput.messages);
+  const syntheticStartedAt = activeOp?.startedAt ?? syntheticStartedMsg?.startedAt ?? null;
+  const syntheticRuntime = formatDurationBetween(syntheticStartedAt, null, nowMs);
   const syntheticLabel = (() => {
     if (activeOp) {
       if (activeOp.type === "check") return "Checking for updates";
@@ -574,6 +576,8 @@ function HistoryList({
             output: null,
             error: null,
             status: "started" as const,
+            startedAt: syntheticStartedMsg.startedAt,
+            completedAt: null,
           }]
         : [];
 
@@ -612,7 +616,18 @@ function HistoryList({
                   </span>
                 )}
               </p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {joinMetaParts([
+                  syntheticStartedMsg?.pkgManager ?? null,
+                  syntheticRuntime ? `running for ${syntheticRuntime}` : null,
+                ])}
+              </p>
             </div>
+            {syntheticStartedAt && (
+              <div className="flex flex-col items-end gap-0.5 shrink-0">
+                <AgoLabel timestamp={syntheticStartedAt} />
+              </div>
+            )}
           </div>
           <div className="ml-10 mr-2 mb-2 space-y-2">
             {syntheticSteps.length > 0 ? (
@@ -631,13 +646,18 @@ function HistoryList({
       )}
       {history.map((h) => {
         const isRunningEntry = h.id === startedEntry?.id;
+        const totalRuntime = formatDurationBetween(
+          h.startedAt,
+          isRunningEntry ? null : h.completedAt,
+          nowMs,
+        );
         // A running entry has the command set; treat it as expandable even without output/error yet
         const hasDetails = !!(h.steps?.length || h.command || h.output || h.error) || isRunningEntry;
         const isOpen = expanded.has(h.id);
         const runningSteps =
           isRunningEntry && liveSteps.length > 0
             ? liveSteps
-            : isRunningEntry && h.command
+              : isRunningEntry && h.command
               ? [{
                   label: null,
                   pkgManager: h.pkgManager,
@@ -645,6 +665,8 @@ function HistoryList({
                   output: null,
                   error: null,
                   status: "started" as const,
+                  startedAt: h.startedAt,
+                  completedAt: null,
                 }]
               : [];
 
@@ -705,20 +727,24 @@ function HistoryList({
                 </p>
                 {h.packageCount !== null && h.action === "check" && (
                   <p className="text-xs text-slate-500">
-                    {h.packageCount} update{h.packageCount !== 1 ? "s" : ""} found
+                    {joinMetaParts([
+                      `${h.packageCount} update${h.packageCount !== 1 ? "s" : ""} found`,
+                      h.pkgManager,
+                      totalRuntime ? `${isRunningEntry ? "running for" : "completed in"} ${totalRuntime}` : null,
+                    ])}
+                  </p>
+                )}
+                {(h.packageCount === null || h.action !== "check") && (
+                  <p className="text-xs text-slate-500">
+                    {joinMetaParts([
+                      h.pkgManager,
+                      totalRuntime ? `${isRunningEntry ? "running for" : "completed in"} ${totalRuntime}` : null,
+                    ])}
                   </p>
                 )}
               </div>
-              <div className="flex flex-col items-end gap-0.5 shrink-0">
-                <span className="text-xs text-slate-400 whitespace-nowrap">
-                  {h.pkgManager}
-                </span>
-                <span
-                  className="text-[11px] text-slate-500 dark:text-slate-500 whitespace-nowrap"
-                  title={formatExactDateTime(h.startedAt)}
-                >
-                  {formatTimeAgo(h.startedAt)}
-                </span>
+              <div className="flex flex-col items-end gap-0.5 shrink-0 pt-0.5">
+                <AgoLabel timestamp={h.startedAt} />
               </div>
             </button>
 
@@ -811,6 +837,14 @@ export default function SystemDetail() {
 
   const { system, updates, hiddenUpdates, history } = data;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
+  const updateState = deriveSystemUpdateState(system, { upgrading, checking });
+  const dotColor = updateState === "check_failed" || updateState === "unreachable"
+    ? "bg-red-500"
+    : updateState === "check_warning" || updateState === "updates_available"
+      ? "bg-amber-500"
+      : updateState === "up_to_date"
+        ? "bg-green-500"
+        : "bg-slate-400";
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
@@ -911,7 +945,16 @@ export default function SystemDetail() {
 
   return (
     <Layout
-      title={system.name}
+      title={
+        <span className="flex items-center gap-2 min-w-0">
+          {upgrading || checking ? (
+            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+          ) : (
+            <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
+          )}
+          <span className="truncate">{system.name}</span>
+        </span>
+      }
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
@@ -1103,10 +1146,8 @@ export default function SystemDetail() {
               <Badge variant="muted" small>{system.keptBackCount} kept back</Badge>
             )}
           </h2>
-          {system.cacheAge && (
-            <span className={`text-xs ${system.isStale ? "text-amber-500" : "text-slate-400"}`}>
-              {system.cacheAge}
-            </span>
+          {system.cacheTimestamp && (
+            <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
           )}
         </div>
         <UpdateCheckNotice state={updatesPanelState} />

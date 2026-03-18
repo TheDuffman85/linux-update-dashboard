@@ -58,41 +58,49 @@ A self-hosted web app for managing Linux package updates across multiple servers
 ## Screenshots
 
 ### Dashboard
-Overview of all systems with summary stats and color-coded update status at a glance.
+Overview of all systems with summary cards, update totals, and color-coded status tiles for quick triage.
 
-![Dashboard](screenshots/screenshot-1.png)
-
-### Systems List
-Manage all connected servers with status, update counts, and quick actions.
-
-![Systems List](screenshots/screenshot-2.1.png)
-
-### Add System
-Add a new server via SSH using a saved credential, with package-manager detection, host-key trust, and ProxyJump support.
-
-![Add System](screenshots/screenshot-2.2.png)
+![Dashboard](screenshots/1.png)
 
 ### System Detail
-Detailed view of a single system showing connection info, OS details, resource usage, available packages, and upgrade history.
+Detailed system view with connection data, OS and resource information, available updates, and expandable activity output.
 
-![System Detail](screenshots/screenshot-2.3.png)
+![System Detail](screenshots/2.png)
 
-### Activity Log
-Expandable history entries with the executed command and its full output.
+### Systems List
+Table view of all configured systems with OS, status, update counts, last check time, and quick actions.
 
-![Activity Log](screenshots/screenshot-3.png)
+![Systems List](screenshots/3.png)
+
+### Edit System
+Edit an existing system's connection settings, SSH credential, host-key approval, and visibility options.
+
+![Edit System](screenshots/4.png)
+
+### Credentials
+Manage saved SSH credentials and see which systems reference each one.
+
+![Credentials](screenshots/5.png)
+
+### Add Credential
+Create a new SSH key or password credential for reuse across systems.
+
+![Add Credential](screenshots/6.png)
 
 ### Notifications
-Configure notification channels (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks) with per-event and per-system filtering.
+Manage notification channels with delivery status, enabled state, supported events, and per-channel actions.
 
-![Notifications](screenshots/screenshot-4.png)
+![Notifications](screenshots/7.png)
 
-![Add Notification](screenshots/screenshot-5.png)
+### Add Notification
+Configure a new notification channel with event filters, system scope, schedule, and provider-specific fields.
+
+![Add Notification](screenshots/8.png)
 
 ### Settings
-Configure update schedules, SSH timeouts, OIDC single sign-on, and API tokens.
+Configure scheduler intervals, SSH timeouts, password settings, and other application options.
 
-![Settings](screenshots/screenshot-6.png)
+![Settings](screenshots/9.png)
 
 ## Quick Start
 

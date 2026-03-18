@@ -36,7 +36,7 @@ export function getCachedUpdates(systemId: number) {
     .all();
 }
 
-function getLatestCheckTimestamp(systemId: number): string | null {
+export function getCacheTimestamp(systemId: number): string | null {
   const db = getDb();
   const row = db
     .select({
@@ -55,7 +55,7 @@ function getLatestCheckTimestamp(systemId: number): string | null {
 export function isCacheStale(systemId: number): boolean {
   const cacheHours = getCacheDurationHours();
   if (cacheHours === 0) return true;
-  const lastCached = getLatestCheckTimestamp(systemId);
+  const lastCached = getCacheTimestamp(systemId);
   if (!lastCached) return true;
 
   try {
@@ -68,7 +68,7 @@ export function isCacheStale(systemId: number): boolean {
 }
 
 export function getCacheAge(systemId: number): string | null {
-  const lastCached = getLatestCheckTimestamp(systemId);
+  const lastCached = getCacheTimestamp(systemId);
   if (!lastCached) return null;
 
   try {
