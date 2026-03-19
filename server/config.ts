@@ -19,6 +19,10 @@ export interface Config {
   trustProxy: boolean;
 }
 
+export function hasConfiguredBaseUrl(): boolean {
+  return !!process.env.LUDASH_BASE_URL;
+}
+
 function getSecretKey(dbPath: string, envKey?: string): string {
   if (envKey) return envKey;
 

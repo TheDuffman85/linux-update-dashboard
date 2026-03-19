@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, hiddenUpdates, systems, updateCache, updateHistory } from "../../server/db/schema";
+import { credentials, hiddenUpdates, settings, systems, updateCache, updateHistory } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
@@ -519,6 +519,170 @@ describe("systems reorder route", () => {
         autoAcceptNewSigningKeysOnCheck: true,
       },
     });
+  });
+
+  test("uses the activity history limit setting for system detail responses", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "History Limit System",
+      hostname: "history-limit.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    db.update(settings)
+      .set({ value: "5" })
+      .where(eq(settings.key, "activity_history_limit"))
+      .run();
+
+    db.insert(updateHistory).values([
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 07:00:00",
+        completedAt: "2026-03-19 07:00:05",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 08:00:00",
+        completedAt: "2026-03-19 08:00:05",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 09:00:00",
+        completedAt: "2026-03-19 09:00:05",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 10:00:00",
+        completedAt: "2026-03-19 10:00:05",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "warning",
+        startedAt: "2026-03-19 11:00:00",
+        completedAt: "2026-03-19 11:00:05",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "failed",
+        startedAt: "2026-03-19 12:00:00",
+        completedAt: "2026-03-19 12:00:05",
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.history).toHaveLength(5);
+    expect(body.history.map((entry: { status: string }) => entry.status)).toEqual([
+      "failed",
+      "warning",
+      "success",
+      "success",
+      "success",
+    ]);
+  });
+
+  test("keeps the latest completed check for system state without showing it when out of scope", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "History Scope System",
+      hostname: "history-scope.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      hostKeyVerificationEnabled: true,
+    }).returning({ id: systems.id }).get().id;
+
+    db.update(settings)
+      .set({ value: "5" })
+      .where(eq(settings.key, "activity_history_limit"))
+      .run();
+
+    db.insert(updateHistory).values([
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "failed",
+        error: "SSH host key verification failed",
+        startedAt: "2026-03-19 10:00:00",
+        completedAt: "2026-03-19 10:00:05",
+      },
+      {
+        systemId,
+        action: "upgrade_all",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 11:00:00",
+        completedAt: "2026-03-19 11:00:05",
+      },
+      {
+        systemId,
+        action: "upgrade_all",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 12:00:00",
+        completedAt: "2026-03-19 12:00:05",
+      },
+      {
+        systemId,
+        action: "upgrade_all",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 13:00:00",
+        completedAt: "2026-03-19 13:00:05",
+      },
+      {
+        systemId,
+        action: "upgrade_all",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 14:00:00",
+        completedAt: "2026-03-19 14:00:05",
+      },
+      {
+        systemId,
+        action: "upgrade_all",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 15:00:00",
+        completedAt: "2026-03-19 15:00:05",
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const detailRes = await app.request(`/api/systems/${systemId}`);
+
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody.history).toHaveLength(5);
+    expect(detailBody.history.every((entry: { action: string }) => entry.action === "upgrade_all")).toBe(true);
+    expect(detailBody.system.lastCheck?.status).toBe("failed");
+    expect(detailBody.system.hostKeyStatus).toBe("needs_approval");
   });
 
   test("updating package manager configs does not clear cached updates when enabled managers are unchanged", async () => {

@@ -1,7 +1,7 @@
 import { mkdirSync, chmodSync } from "fs";
 import { dirname } from "path";
 import { eq } from "drizzle-orm";
-import { config, getEncryptionSalt } from "./config";
+import { config, getEncryptionSalt, hasConfiguredBaseUrl } from "./config";
 import { initDatabase, closeDatabase, getDb } from "./db";
 import { settings } from "./db/schema";
 import { getEncryptor, initEncryptor } from "./security";
@@ -18,6 +18,12 @@ import { syncSSHManagerWithSettings } from "./services/settings-service";
 // Ensure data directory exists with restrictive permissions
 mkdirSync(dirname(config.dbPath), { recursive: true });
 try { chmodSync(dirname(config.dbPath), 0o700); } catch { /* Windows */ }
+
+if (!hasConfiguredBaseUrl()) {
+  logger.warn("LUDASH_BASE_URL is not set; falling back to the default base URL", {
+    baseUrl: config.baseUrl,
+  });
+}
 
 logger.info("Initializing encryption");
 const salt = getEncryptionSalt(config.dbPath, config.encryptionKey);

@@ -27,6 +27,11 @@ const DEFAULT_SETTINGS = [
     description: "How often the scheduler scans for systems with expired cached results (minutes)",
   },
   {
+    key: "activity_history_limit",
+    value: "20",
+    description: "How many recent activity history entries to keep per system; older entries are deleted and the same limit is shown in the UI",
+  },
+  {
     key: "concurrent_connections",
     value: "5",
     description: "Max simultaneous SSH connections",

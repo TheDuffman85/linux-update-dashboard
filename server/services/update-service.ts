@@ -17,6 +17,7 @@ import {
   parsePackageManagerConfigs,
   type PackageManagerConfigs,
 } from "../package-manager-configs";
+import { getActivityHistoryLimit } from "./settings-service";
 import {
   clearActiveOperation,
   getActiveOperation as getStoredActiveOperation,
@@ -85,6 +86,53 @@ export function getLatestCompletedChecks(systemIds: number[]): Map<number, LastC
 
 export function getLatestCompletedCheck(systemId: number): LastCheckSummary | null {
   return getLatestCompletedChecks([systemId]).get(systemId) ?? null;
+}
+
+export function pruneHistoryForSystem(systemId: number, limit = getActivityHistoryLimit()): void {
+  if (!Number.isInteger(systemId) || systemId <= 0 || !Number.isInteger(limit) || limit < 1) {
+    return;
+  }
+
+  const latestCompletedCheckId = getDb()
+    .select({ id: updateHistory.id })
+    .from(updateHistory)
+    .where(
+      and(
+        eq(updateHistory.systemId, systemId),
+        eq(updateHistory.action, "check"),
+        ne(updateHistory.status, "started"),
+      ),
+    )
+    .orderBy(desc(updateHistory.startedAt), desc(updateHistory.id))
+    .get()?.id ?? null;
+
+  getDb().run(sql`
+    DELETE FROM update_history
+    WHERE system_id = ${systemId}
+      ${latestCompletedCheckId !== null
+        ? sql`AND id != ${latestCompletedCheckId}`
+        : sql``}
+      AND id NOT IN (
+        SELECT id
+        FROM update_history
+        WHERE system_id = ${systemId}
+        ORDER BY started_at DESC, id DESC
+        LIMIT ${limit}
+      )
+  `);
+}
+
+export function pruneHistoryToConfiguredLimit(): void {
+  const rows = getDb()
+    .select({ systemId: updateHistory.systemId })
+    .from(updateHistory)
+    .groupBy(updateHistory.systemId)
+    .all();
+
+  const limit = getActivityHistoryLimit();
+  for (const row of rows) {
+    pruneHistoryForSystem(row.systemId, limit);
+  }
 }
 
 // Per-system locks using a simple promise-based mutex
@@ -438,6 +486,8 @@ function logHistory(
       completedAt,
     })
     .run();
+
+  pruneHistoryForSystem(systemId);
 }
 
 /** Insert a "started" history row and return its ID. */
@@ -462,6 +512,7 @@ function insertStartedEntry(
     })
     .returning({ id: updateHistory.id })
     .get();
+  pruneHistoryForSystem(systemId);
   return result.id;
 }
 
@@ -1351,7 +1402,7 @@ export function getHistory(systemId: number, limit = 50) {
     .select()
     .from(updateHistory)
     .where(eq(updateHistory.systemId, systemId))
-    .orderBy(desc(updateHistory.startedAt))
+    .orderBy(desc(updateHistory.startedAt), desc(updateHistory.id))
     .limit(limit)
     .all();
 }

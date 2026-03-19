@@ -180,7 +180,7 @@ export default function Settings() {
             />
           </div>
         </div>
-        <p className="mt-3 max-w-2xl text-xs text-slate-500 dark:text-slate-400">
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
           The scheduler wakes up on this interval and rechecks systems whose cached
           results have expired. Set cache duration to <code>0</code> to disable
           cache reuse. Manual refreshes, server restarts, and newly added systems
@@ -188,6 +188,36 @@ export default function Settings() {
         </p>
         <button
           onClick={() => handleSave(["check_interval_minutes", "cache_duration_hours"])}
+          disabled={updateSettings.isPending}
+          className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+        >
+          Save
+        </button>
+      </SettingSection>
+
+      <SettingSection title="Activity History">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md">
+          <div>
+            <label className={labelClass}>Number of Activities</label>
+            <input
+              type="number"
+              min={5}
+              max={200}
+              value={form.activity_history_limit || "20"}
+              onChange={(e) =>
+                setForm({ ...form, activity_history_limit: e.target.value })
+              }
+              className={inputClass}
+            />
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          Keeps only this many recent activity entries per system. Older history is
+          automatically deleted, and the same limit is used in the Activity History
+          on the system detail page.
+        </p>
+        <button
+          onClick={() => handleSave(["activity_history_limit"])}
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
