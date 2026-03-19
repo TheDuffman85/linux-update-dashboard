@@ -9,6 +9,11 @@ export interface AptPackageManagerConfig {
 export interface DnfPackageManagerConfig {
   defaultUpgradeMode?: DnfDefaultUpgradeMode;
   refreshMetadataOnCheck?: boolean;
+  autoAcceptNewSigningKeysOnCheck?: boolean;
+}
+
+export interface YumPackageManagerConfig {
+  autoAcceptNewSigningKeysOnCheck?: boolean;
 }
 
 export interface PacmanPackageManagerConfig {
@@ -26,6 +31,7 @@ export interface FlatpakPackageManagerConfig {
 export interface PackageManagerConfigs {
   apt?: AptPackageManagerConfig;
   dnf?: DnfPackageManagerConfig;
+  yum?: YumPackageManagerConfig;
   pacman?: PacmanPackageManagerConfig;
   apk?: ApkPackageManagerConfig;
   flatpak?: FlatpakPackageManagerConfig;
@@ -37,12 +43,13 @@ export type PackageManagerConfigValue = PackageManagerConfigs[SupportedPackageMa
 const SUPPORTED_CONFIG_MANAGERS = [
   "apt",
   "dnf",
+  "yum",
   "pacman",
   "apk",
   "flatpak",
 ] as const satisfies SupportedPackageManagerConfigName[];
 
-const UNSUPPORTED_CONFIG_MANAGERS = new Set(["yum", "snap"]);
+const UNSUPPORTED_CONFIG_MANAGERS = new Set(["snap"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -92,7 +99,18 @@ export function normalizePackageManagerConfigs(
     if (typeof value.dnf.refreshMetadataOnCheck === "boolean") {
       dnf.refreshMetadataOnCheck = value.dnf.refreshMetadataOnCheck;
     }
+    if (typeof value.dnf.autoAcceptNewSigningKeysOnCheck === "boolean") {
+      dnf.autoAcceptNewSigningKeysOnCheck = value.dnf.autoAcceptNewSigningKeysOnCheck;
+    }
     if (Object.keys(dnf).length > 0) next.dnf = dnf;
+  }
+
+  if (isRecord(value.yum)) {
+    const yum: YumPackageManagerConfig = {};
+    if (typeof value.yum.autoAcceptNewSigningKeysOnCheck === "boolean") {
+      yum.autoAcceptNewSigningKeysOnCheck = value.yum.autoAcceptNewSigningKeysOnCheck;
+    }
+    if (Object.keys(yum).length > 0) next.yum = yum;
   }
 
   if (isRecord(value.pacman)) {
@@ -164,7 +182,11 @@ export function validatePackageManagerConfigsInput(value: unknown): string | nul
 
     if (manager === "dnf") {
       for (const key of keys) {
-        if (key !== "defaultUpgradeMode" && key !== "refreshMetadataOnCheck") {
+        if (
+          key !== "defaultUpgradeMode" &&
+          key !== "refreshMetadataOnCheck" &&
+          key !== "autoAcceptNewSigningKeysOnCheck"
+        ) {
           return `pkgManagerConfigs.dnf.${key} is not supported`;
         }
       }
@@ -180,6 +202,27 @@ export function validatePackageManagerConfigsInput(value: unknown): string | nul
         typeof rawConfig.refreshMetadataOnCheck !== "boolean"
       ) {
         return "pkgManagerConfigs.dnf.refreshMetadataOnCheck must be a boolean";
+      }
+      if (
+        rawConfig.autoAcceptNewSigningKeysOnCheck !== undefined &&
+        typeof rawConfig.autoAcceptNewSigningKeysOnCheck !== "boolean"
+      ) {
+        return "pkgManagerConfigs.dnf.autoAcceptNewSigningKeysOnCheck must be a boolean";
+      }
+      continue;
+    }
+
+    if (manager === "yum") {
+      for (const key of keys) {
+        if (key !== "autoAcceptNewSigningKeysOnCheck") {
+          return `pkgManagerConfigs.yum.${key} is not supported`;
+        }
+      }
+      if (
+        rawConfig.autoAcceptNewSigningKeysOnCheck !== undefined &&
+        typeof rawConfig.autoAcceptNewSigningKeysOnCheck !== "boolean"
+      ) {
+        return "pkgManagerConfigs.yum.autoAcceptNewSigningKeysOnCheck must be a boolean";
       }
       continue;
     }

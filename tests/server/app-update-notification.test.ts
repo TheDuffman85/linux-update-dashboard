@@ -91,6 +91,7 @@ describe("app update notifications", () => {
 
     expect(sentBodies).toHaveLength(1);
     expect(sentBodies[0]).toContain("Linux Update Dashboard: v2026.3.1 -> v2026.3.2");
+    expect(sentBodies[0]).not.toContain("https://github.com/");
     expect(row?.lastAppVersionNotified).toBe("2026.3.2");
   });
 
@@ -127,6 +128,7 @@ describe("app update notifications", () => {
         expect(String(init?.body ?? "")).toContain(
           "Linux Update Dashboard: v2026.3.1 -> v2026.3.2"
         );
+        expect(String(init?.body ?? "")).not.toContain("https://github.com/");
         return new Response("", { status: 200 });
       }
       throw new Error(`Unexpected fetch: ${url}`);

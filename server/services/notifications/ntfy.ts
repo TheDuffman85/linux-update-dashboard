@@ -1,6 +1,7 @@
 import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
 import { createFlatProvider } from "./flat-provider";
+import { resolveNotificationLinkLabel, resolveNotificationLinkUrl } from "./link-target";
 
 const VALID_PRIORITY_OVERRIDES = ["auto", "min", "low", "default", "high", "urgent"] as const;
 const ALLOWED_CONFIG_KEYS = new Set([
@@ -86,6 +87,8 @@ export const ntfyProvider = createFlatProvider({
     const headers: Record<string, string> = {
       "Title": sanitizeHeaderValue(payload.title),
       "Priority": resolvePriority(payload.priority, config.ntfyPriorityOverride),
+      "Click": resolveNotificationLinkUrl(payload),
+      "Actions": `view, ${resolveNotificationLinkLabel(payload)}, ${resolveNotificationLinkUrl(payload)}`,
     };
 
     if (payload.tags?.length) {

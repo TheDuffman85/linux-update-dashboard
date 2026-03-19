@@ -167,9 +167,67 @@ describe("email provider sending", () => {
     });
     expect(sentMail?.subject).toBe("⚠️ Updates");
     expect(sentMail?.priority).toBe("high");
+    expect(typeof sentMail?.html).toBe("string");
+    expect(String(sentMail?.html)).toContain(">Open LUD<");
     expect(sentMail?.headers).toEqual({
       Importance: "high",
       "X-Priority": "1",
     });
+  });
+
+  test("adds an Open release link to HTML app update emails", async () => {
+    let sentMail: Record<string, unknown> | undefined;
+    (nodemailer as any).createTransport = () => ({
+      sendMail: async (mailOptions: Record<string, unknown>) => {
+        sentMail = mailOptions;
+      },
+    });
+
+    const result = await emailProvider.send(
+      {
+        title: "Application update available",
+        body: "Linux Update Dashboard: v2026.3.1 -> v2026.3.2",
+        tags: ["arrow_up"],
+        event: {
+          title: "Application update available",
+          body: "Linux Update Dashboard: v2026.3.1 -> v2026.3.2",
+          priority: "default",
+          tags: ["arrow_up"],
+          sentAt: new Date().toISOString(),
+          eventTypes: ["appUpdates"],
+          totals: {
+            systemsWithUpdates: 0,
+            totalUpdates: 0,
+            totalSecurity: 0,
+            totalKeptBack: 0,
+            unreachableSystems: 0,
+          },
+          updates: [],
+          unreachable: [],
+          appUpdate: {
+            currentVersion: "2026.3.1",
+            currentBranch: "main",
+            remoteVersion: "2026.3.2",
+            releaseUrl: "https://github.com/TheDuffman85/linux-update-dashboard/releases/tag/2026.3.2",
+            repoUrl: "https://github.com/TheDuffman85/linux-update-dashboard",
+          },
+        },
+      },
+      {
+        smtpHost: "smtp.example.com",
+        smtpPort: "587",
+        smtpTlsMode: "starttls",
+        smtpFrom: "dashboard@example.com",
+        emailTo: "admin@example.com",
+        emailImportanceOverride: "auto",
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(String(sentMail?.text)).not.toContain("https://github.com/");
+    expect(String(sentMail?.html)).toContain(">Open release<");
+    expect(String(sentMail?.html)).toContain(
+      "https://github.com/TheDuffman85/linux-update-dashboard/releases/tag/2026.3.2"
+    );
   });
 });

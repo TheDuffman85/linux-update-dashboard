@@ -674,9 +674,10 @@ export class SSHConnectionManager {
           resolve({ stdout, stderr, exitCode: code ?? 0 });
         });
 
-        // Pipe sudo password via stdin if provided (for sudo -S)
+        // Always close stdin so non-interactive commands cannot block on prompts.
         if (sudoPassword) {
-          stream.write(sudoPassword + "\n");
+          stream.end(sudoPassword + "\n");
+        } else {
           stream.end();
         }
       });

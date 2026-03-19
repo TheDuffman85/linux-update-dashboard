@@ -28,6 +28,7 @@ export interface PackageParser {
       commandResults?: CheckCommandResult[];
     }
   ): ParsedUpdate[];
+  getCheckErrorMessage?(stdout: string, stderr: string, exitCode: number): string | null;
   getCheckCommands(config?: PackageManagerConfigValue): string[];
   /** Human-readable label for each check command step, shown in live output. */
   getCheckCommandLabels?(config?: PackageManagerConfigValue): string[];

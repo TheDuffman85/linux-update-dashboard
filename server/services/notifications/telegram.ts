@@ -3,6 +3,7 @@ import { getDb } from "../../db";
 import { apiTokens } from "../../db/schema";
 import { getEncryptor, looksLikeEncryptedValue } from "../../security";
 import { decorateNotificationTitle } from "./presentation";
+import { resolveNotificationLinkLabel, resolveNotificationLinkUrl } from "./link-target";
 import type {
   NotificationConfig,
   NotificationPayload,
@@ -287,6 +288,7 @@ async function sendTelegramMessage(
   botToken: string,
   chatId: string,
   text: string,
+  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; url: string }>> },
 ): Promise<NotificationResult> {
   const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: "POST",
@@ -298,6 +300,7 @@ async function sendTelegramMessage(
       text,
       parse_mode: "HTML",
       disable_web_page_preview: true,
+      reply_markup: replyMarkup,
     }),
   });
 
@@ -383,6 +386,11 @@ export const telegramProvider: NotificationProvider = {
       `<b>${escapeTelegramHtml(decorateNotificationTitle(payload))}</b>`,
       escapeTelegramHtml(payload.body),
     ].filter(Boolean).join("\n\n");
-    return sendTelegramMessage(botToken, telegram.chatId, message);
+    return sendTelegramMessage(botToken, telegram.chatId, message, {
+      inline_keyboard: [[{
+        text: resolveNotificationLinkLabel(payload),
+        url: resolveNotificationLinkUrl(payload),
+      }]],
+    });
   },
 };

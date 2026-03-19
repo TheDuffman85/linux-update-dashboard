@@ -310,6 +310,33 @@ describe("systems reorder route", () => {
     expect(body.error).toBe("pkgManagerConfigs.apt.defaultUpgradeMode must be 'upgrade' or 'full-upgrade'");
   });
 
+  test("rejects invalid signing-key automation config values", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad Signing Key Config",
+        hostname: "bad-signing-key-config.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        pkgManagerConfigs: {
+          yum: {
+            autoAcceptNewSigningKeysOnCheck: "yes",
+          },
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("pkgManagerConfigs.yum.autoAcceptNewSigningKeysOnCheck must be a boolean");
+  });
+
   test("allows creating the same connection tuple behind a different ProxyJump host", async () => {
     const db = getDb();
     const jumpCredentialId = createSystemCredential("jump");
@@ -472,6 +499,9 @@ describe("systems reorder route", () => {
             defaultUpgradeMode: "distro-sync",
             refreshMetadataOnCheck: true,
           },
+          yum: {
+            autoAcceptNewSigningKeysOnCheck: true,
+          },
         },
       }),
     });
@@ -484,6 +514,9 @@ describe("systems reorder route", () => {
       dnf: {
         defaultUpgradeMode: "distro-sync",
         refreshMetadataOnCheck: true,
+      },
+      yum: {
+        autoAcceptNewSigningKeysOnCheck: true,
       },
     });
   });

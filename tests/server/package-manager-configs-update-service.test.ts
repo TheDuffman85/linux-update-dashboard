@@ -40,9 +40,11 @@ ABSENT
 
 describe("update service package manager configs", () => {
   let tempDir: string;
+  let systemCounter = 0;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "ludash-pm-configs-"));
+    systemCounter = 0;
     initEncryptor(randomBytes(32).toString("base64"));
     initDatabase(join(tempDir, "dashboard.db"));
   });
@@ -56,9 +58,10 @@ describe("update service package manager configs", () => {
     pkgManager: string;
     pkgManagerConfigs?: Record<string, unknown>;
   }): number {
+    systemCounter += 1;
     return getDb().insert(systems).values({
-      name: `${data.pkgManager}-system`,
-      hostname: `${data.pkgManager}.local`,
+      name: `${data.pkgManager}-system-${systemCounter}`,
+      hostname: `${data.pkgManager}-${systemCounter}.local`,
       port: 22,
       authType: "password",
       username: "root",
@@ -173,6 +176,18 @@ describe("update service package manager configs", () => {
         dnf: { refreshMetadataOnCheck: true },
       },
     });
+    const dnfAutoAcceptSystemId = insertSystem({
+      pkgManager: "dnf",
+      pkgManagerConfigs: {
+        dnf: { autoAcceptNewSigningKeysOnCheck: true },
+      },
+    });
+    const yumSystemId = insertSystem({
+      pkgManager: "yum",
+      pkgManagerConfigs: {
+        yum: { autoAcceptNewSigningKeysOnCheck: true },
+      },
+    });
     const pacmanSystemId = insertSystem({
       pkgManager: "pacman",
       pkgManagerConfigs: {
@@ -210,6 +225,15 @@ describe("update service package manager configs", () => {
       if (command.includes("dnf check-update --refresh --quiet")) {
         return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
       }
+      if (command.includes("dnf -y check-update --quiet")) {
+        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("yum -y check-update --quiet")) {
+        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dnf check-update --quiet")) {
+        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
+      }
       if (command.includes("pacman -Qu")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
@@ -224,6 +248,15 @@ describe("update service package manager configs", () => {
 
     await checkUpdates(dnfSystemId);
     expect(commands.some((command) => command.includes("dnf check-update --refresh --quiet"))).toBe(true);
+    expect(commands.some((command) => command.includes("dnf -y check-update --quiet"))).toBe(false);
+
+    commands.length = 0;
+    await checkUpdates(dnfAutoAcceptSystemId);
+    expect(commands.some((command) => command.includes("dnf -y check-update --quiet"))).toBe(true);
+
+    commands.length = 0;
+    await checkUpdates(yumSystemId);
+    expect(commands.some((command) => command.includes("yum -y check-update --quiet"))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(pacmanSystemId);

@@ -1,5 +1,8 @@
 FROM oven/bun:1.3.10 AS base
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade libc6 libc-bin \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
 FROM base AS deps

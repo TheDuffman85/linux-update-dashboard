@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
+import { EventEmitter } from "events";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import {
   buildPersistentSetupCommand,
@@ -130,6 +131,60 @@ describe("buildTestConnectionFailureMessage", () => {
     );
 
     expect(message).toBe("Connection failed: (SSH) Channel open failure: Connection refused");
+  });
+});
+
+describe("SSHConnectionManager.runCommand", () => {
+  test("closes stdin for non-interactive commands without sudo", async () => {
+    initEncryptor(randomBytes(32).toString("base64"));
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const stream = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter;
+      end: (input?: string) => void;
+    };
+    let endedWith: string | undefined;
+    stream.stderr = new EventEmitter();
+    stream.end = (input?: string) => {
+      endedWith = input;
+      queueMicrotask(() => stream.emit("close", 0));
+    };
+
+    const conn = {
+      exec: (_command: string, callback: (err: Error | null, stream: typeof stream) => void) => {
+        callback(null, stream);
+      },
+    };
+
+    const result = await manager.runCommand(conn as any, "echo ok", 1);
+
+    expect(result.exitCode).toBe(0);
+    expect(endedWith).toBeUndefined();
+  });
+
+  test("writes the sudo password and then closes stdin", async () => {
+    initEncryptor(randomBytes(32).toString("base64"));
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const stream = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter;
+      end: (input?: string) => void;
+    };
+    let endedWith: string | undefined;
+    stream.stderr = new EventEmitter();
+    stream.end = (input?: string) => {
+      endedWith = input;
+      queueMicrotask(() => stream.emit("close", 0));
+    };
+
+    const conn = {
+      exec: (_command: string, callback: (err: Error | null, stream: typeof stream) => void) => {
+        callback(null, stream);
+      },
+    };
+
+    const result = await manager.runCommand(conn as any, "sudo -S -p '' true", 1, "secret");
+
+    expect(result.exitCode).toBe(0);
+    expect(endedWith).toBe("secret\n");
   });
 });
 
