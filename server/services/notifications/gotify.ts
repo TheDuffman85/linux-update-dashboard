@@ -2,6 +2,7 @@ import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
 import { createFlatProvider } from "./flat-provider";
 import { decorateNotificationTitle } from "./presentation";
+import { resolveNotificationLinkUrl } from "./link-target";
 
 const ALLOWED_CONFIG_KEYS = new Set([
   "gotifyUrl",
@@ -118,6 +119,13 @@ export const gotifyProvider = createFlatProvider({
         title: decorateNotificationTitle(payload),
         message: payload.body,
         priority: resolvePriority(payload.priority, config.gotifyPriorityOverride),
+        extras: {
+          "client::notification": {
+            click: {
+              url: resolveNotificationLinkUrl(payload),
+            },
+          },
+        },
       }),
     });
 

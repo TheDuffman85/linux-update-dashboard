@@ -1151,15 +1151,7 @@ function buildBatchPayload(
       ? `${prefix}${appUpdate.currentVersion.replace(/^dev-/, "")}`
       : "current build";
     const remoteVersion = `${prefix}${appUpdate.remoteVersion.replace(/^dev-/, "")}`;
-    const lines = [
-      `Linux Update Dashboard: ${currentVersion} -> ${remoteVersion}`,
-    ];
-
-    if (appUpdate.releaseUrl) {
-      lines.push(appUpdate.releaseUrl);
-    } else if (appUpdate.repoUrl) {
-      lines.push(appUpdate.repoUrl);
-    }
+    const lines = [`Linux Update Dashboard: ${currentVersion} -> ${remoteVersion}`];
 
     if (body) body += "\n\n";
     body += lines.join("\n");

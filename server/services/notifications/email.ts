@@ -3,6 +3,7 @@ import type { NotificationPayload, NotificationResult } from "./types";
 import { getEncryptor } from "../../security";
 import { createFlatProvider } from "./flat-provider";
 import { decorateNotificationTitle } from "./presentation";
+import { resolveNotificationLinkLabel, resolveNotificationLinkUrl } from "./link-target";
 
 // Basic email format check (RFC 5322 simplified)
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -101,6 +102,28 @@ export function buildEmailTransportOptions(
   };
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function buildEmailHtmlBody(payload: NotificationPayload): string {
+  const title = escapeHtml(decorateNotificationTitle(payload));
+  const body = escapeHtml(payload.body).replaceAll("\n", "<br>");
+  const actionUrl = escapeHtml(resolveNotificationLinkUrl(payload));
+  const actionLabel = escapeHtml(resolveNotificationLinkLabel(payload));
+
+  return [
+    "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111827;\">",
+    `<p style="margin:0 0 16px;"><strong>${title}</strong></p>`,
+    `<p style="margin:0 0 20px;">${body}</p>`,
+    `<p style="margin:0;"><a href="${actionUrl}" style="display:inline-block;padding:10px 16px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;">${actionLabel}</a></p>`,
+    "</div>",
+  ].join("");
+}
+
 export const emailProvider = createFlatProvider({
   name: "email",
   allowedKeys: [
@@ -179,6 +202,7 @@ export const emailProvider = createFlatProvider({
       to: recipients,
       subject: decorateNotificationTitle(payload),
       text: payload.body,
+      html: buildEmailHtmlBody(payload),
       priority: importance.mailPriority,
       headers: {
         Importance: importance.importanceHeader,
