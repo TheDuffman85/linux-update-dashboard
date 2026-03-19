@@ -109,4 +109,29 @@ describe("config secret env loading", () => {
     expect(config.secretKey.length).toBeGreaterThan(0);
     expect(existsSync(join(dir, ".secret_key"))).toBe(true);
   });
+
+  test("reports when LUDASH_BASE_URL is not explicitly configured", async () => {
+    const dir = createTempDir();
+
+    resetLudashEnv();
+    process.env.LUDASH_DB_PATH = join(dir, "dashboard.db");
+    process.env.LUDASH_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+
+    const { config, hasConfiguredBaseUrl } = await importFreshConfig();
+    expect(hasConfiguredBaseUrl()).toBe(false);
+    expect(config.baseUrl).toBe("http://localhost:3001");
+  });
+
+  test("reports when LUDASH_BASE_URL is explicitly configured", async () => {
+    const dir = createTempDir();
+
+    resetLudashEnv();
+    process.env.LUDASH_DB_PATH = join(dir, "dashboard.db");
+    process.env.LUDASH_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    process.env.LUDASH_BASE_URL = "https://dashboard.example.com";
+
+    const { config, hasConfiguredBaseUrl } = await importFreshConfig();
+    expect(hasConfiguredBaseUrl()).toBe(true);
+    expect(config.baseUrl).toBe("https://dashboard.example.com");
+  });
 });

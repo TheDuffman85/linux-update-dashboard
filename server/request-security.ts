@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { lookup } from "dns/promises";
 import { isIP } from "net";
-import { config } from "./config";
+import { config, hasConfiguredBaseUrl } from "./config";
 import { getRequestIp } from "./request-ip-store";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
@@ -109,15 +109,8 @@ function pickHost(c: Context): string | null {
   return c.req.header("host") ?? null;
 }
 
-// When LUDASH_BASE_URL is explicitly set, we validate discovered origins
-// against it (strict mode). Otherwise we infer the public origin from request
-// headers with pragmatic fallback rules for reverse proxies.
-function hasExplicitBaseUrl(): boolean {
-  return !!process.env.LUDASH_BASE_URL;
-}
-
 export function rememberTrustedPublicOrigin(value: string): boolean {
-  if (hasExplicitBaseUrl()) return false;
+  if (hasConfiguredBaseUrl()) return false;
 
   const parsed = parseOrigin(value);
   if (!parsed) return false;
@@ -133,7 +126,7 @@ export function rememberTrustedPublicOrigin(value: string): boolean {
 }
 
 export function getKnownPublicOrigin(): string {
-  if (hasExplicitBaseUrl()) return getCanonicalOrigin().origin;
+  if (hasConfiguredBaseUrl()) return getCanonicalOrigin().origin;
   return lastTrustedPublicOrigin || getCanonicalOrigin().origin;
 }
 
@@ -145,7 +138,7 @@ export function getTrustedPublicOrigin(c: Context): string {
   const requestOrigin = host ? parseOrigin(`${pickProto(c)}//${host}`) : null;
   const headerOrigin = getHeaderOrigin(c);
 
-  if (hasExplicitBaseUrl()) {
+  if (hasConfiguredBaseUrl()) {
     // Strict: only accept if it matches the configured base URL.
     if (requestOrigin && isTrustedOriginUrl(requestOrigin)) return requestOrigin.origin;
     if (headerOrigin && isTrustedOriginUrl(headerOrigin)) return headerOrigin.origin;
@@ -172,7 +165,7 @@ export function isTrustedReturnOrigin(value: string): boolean {
   if (!parsed) return false;
   // When no explicit base URL is set, accept any valid origin for the
   // return redirect (the OIDC callback sets an httpOnly cookie with it).
-  if (!hasExplicitBaseUrl()) return true;
+  if (!hasConfiguredBaseUrl()) return true;
   return isTrustedOriginUrl(parsed);
 }
 
