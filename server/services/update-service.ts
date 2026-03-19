@@ -93,9 +93,25 @@ export function pruneHistoryForSystem(systemId: number, limit = getActivityHisto
     return;
   }
 
+  const latestCompletedCheckId = getDb()
+    .select({ id: updateHistory.id })
+    .from(updateHistory)
+    .where(
+      and(
+        eq(updateHistory.systemId, systemId),
+        eq(updateHistory.action, "check"),
+        ne(updateHistory.status, "started"),
+      ),
+    )
+    .orderBy(desc(updateHistory.startedAt), desc(updateHistory.id))
+    .get()?.id ?? null;
+
   getDb().run(sql`
     DELETE FROM update_history
     WHERE system_id = ${systemId}
+      ${latestCompletedCheckId !== null
+        ? sql`AND id != ${latestCompletedCheckId}`
+        : sql``}
       AND id NOT IN (
         SELECT id
         FROM update_history
