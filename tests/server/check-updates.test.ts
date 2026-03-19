@@ -103,6 +103,23 @@ describe("checkUpdates", () => {
     return systemId;
   }
 
+  function createDnfSystem(options?: {
+    pkgManagerConfigs?: Record<string, unknown>;
+  }): number {
+    const db = getDb();
+    return db.insert(systems).values({
+      name: "Red Hat",
+      hostname: "redhat.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      hostKeyVerificationEnabled: false,
+      pkgManager: "dnf",
+      detectedPkgManagers: JSON.stringify(["dnf"]),
+      pkgManagerConfigs: options?.pkgManagerConfigs ? JSON.stringify(options.pkgManagerConfigs) : null,
+    }).returning({ id: systems.id }).get().id;
+  }
+
   test("fails the check when the sudo-backed refresh command exits non-zero", async () => {
     const db = getDb();
     const encryptor = getEncryptor();
@@ -235,6 +252,120 @@ describe("checkUpdates", () => {
       startedAt: expect.any(String),
       completedAt: expect.any(String),
     });
+  });
+
+  test("fails closed when dnf requires manual trust of a new repository signing key", async () => {
+    const db = getDb();
+    const systemId = createDnfSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (
+      _conn: unknown,
+      command: string,
+    ) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dnf check-update --quiet 2>&1")) {
+        return {
+          stdout: [
+            "Importing GPG key 0x51312F3F:",
+            'Userid     : "GitLab B.V. (package repository signing key) <packages@gitlab.com>"',
+            "Fingerprint: F640 3F65 44A3 8863 DAA0 B6E0 3F01 618A 5131 2F3F",
+            "From       : https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey",
+            "Is this ok [y/N]: ",
+            "---INSTALLED---",
+            "EXIT:1",
+          ].join("\n"),
+          stderr: "",
+          exitCode: 1,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await expect(checkUpdates(systemId)).rejects.toThrow(
+      "[dnf] DNF update check requires manual trust of a new repository signing key.",
+    );
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, systemId))
+      .all()
+      .at(-1);
+
+    expect(history?.status).toBe("failed");
+    expect(history?.packageCount).toBe(0);
+    expect(history?.error).toContain("[dnf] DNF update check requires manual trust of a new repository signing key.");
+    const steps = JSON.parse(history?.steps || "[]");
+    expect(steps).toMatchObject([
+      {
+        label: "Checking for updates",
+        pkgManager: "dnf",
+        status: "failed",
+      },
+    ]);
+    expect(steps[0].output).toContain("Importing GPG key 0x51312F3F:");
+    expect(steps[0].output).toContain("Is this ok [y/N]:");
+    expect(steps[0].error).toContain("manual trust of a new repository signing key");
+  });
+
+  test("fails closed when dnf prompt output is returned with wrapped exit 0", async () => {
+    const db = getDb();
+    const systemId = createDnfSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (
+      _conn: unknown,
+      command: string,
+    ) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dnf check-update --quiet 2>&1")) {
+        return {
+          stdout: [
+            "Importing OpenPGP key 0x05A12548:",
+            ' UserID     : "Linux Update Dashboard Test Repo <devnull@example.invalid>"',
+            " Fingerprint: 7F1FD66AB1D9860E5F1E86A06ABAAA7905A12548",
+            " From       : file:///opt/localrepo/RPM-GPG-KEY-ludash-test",
+            "Is this ok [y/N]: Is this ok [y/N]: ",
+            "---INSTALLED---",
+            "EXIT:0",
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await expect(checkUpdates(systemId)).rejects.toThrow(
+      "[dnf] DNF update check requires manual trust of a new repository signing key.",
+    );
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, systemId))
+      .all()
+      .at(-1);
+
+    expect(history?.status).toBe("failed");
+    expect(history?.packageCount).toBe(0);
+    expect(history?.error).toContain("[dnf] DNF update check requires manual trust of a new repository signing key.");
+    const steps = JSON.parse(history?.steps || "[]");
+    expect(steps[0]).toMatchObject({
+      label: "Checking for updates",
+      pkgManager: "dnf",
+      status: "failed",
+    });
+    expect(steps[0].output).toContain("Importing OpenPGP key 0x05A12548:");
+    expect(steps[0].output).toContain("EXIT:0");
+    expect(steps[0].error).toContain("manual trust of a new repository signing key");
   });
 
   test("keeps successful apt updates when a second package manager refresh fails", async () => {

@@ -20,6 +20,7 @@
 #   Alpine  (APK)     → localhost:2010
 #   Debian  (APT kept-back fixture) → localhost:2011
 #   Ubuntu  (APT works + Snap fails) → localhost:2012
+#   Fedora  (DNF GPG key prompt fixture) → localhost:2013
 #
 # SSH examples:
 #   ssh testuser@localhost -p 2001   # Ubuntu  (APT)
@@ -34,6 +35,7 @@
 #   ssh testuser@localhost -p 2010   # Alpine  (APK)
 #   ssh testuser@localhost -p 2011   # Debian  (APT kept-back fixture)
 #   ssh testuser@localhost -p 2012   # Ubuntu  (APT works + Snap fails)
+#   ssh testuser@localhost -p 2013   # Fedora  (DNF GPG key prompt fixture)
 #
 # Note: Flatpak needs --privileged for bubblewrap (used during install/update).
 # Snap needs systemd as PID 1 + --privileged for snapd to function.
@@ -165,4 +167,14 @@ services:
     hostname: apt-snap-partial-test
     ports:
       - "2012:22"
+    restart: unless-stopped
+
+  dnf-gpg-prompt:
+    build:
+      context: .
+      dockerfile: Dockerfile.dnf-gpg-prompt
+    container_name: ludash-test-dnf-gpg-prompt
+    hostname: dnf-gpg-prompt-test
+    ports:
+      - "2013:22"
     restart: unless-stopped

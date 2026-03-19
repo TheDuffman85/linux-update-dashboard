@@ -6,6 +6,11 @@ export interface AptPackageManagerConfig {
 export interface DnfPackageManagerConfig {
   defaultUpgradeMode?: "upgrade" | "distro-sync";
   refreshMetadataOnCheck?: boolean;
+  autoAcceptNewSigningKeysOnCheck?: boolean;
+}
+
+export interface YumPackageManagerConfig {
+  autoAcceptNewSigningKeysOnCheck?: boolean;
 }
 
 export interface PacmanPackageManagerConfig {
@@ -23,6 +28,7 @@ export interface FlatpakPackageManagerConfig {
 export interface PackageManagerConfigs {
   apt?: AptPackageManagerConfig;
   dnf?: DnfPackageManagerConfig;
+  yum?: YumPackageManagerConfig;
   pacman?: PacmanPackageManagerConfig;
   apk?: ApkPackageManagerConfig;
   flatpak?: FlatpakPackageManagerConfig;
@@ -31,6 +37,7 @@ export interface PackageManagerConfigs {
 export const SUPPORTED_PACKAGE_MANAGER_CONFIGS = [
   "apt",
   "dnf",
+  "yum",
   "pacman",
   "apk",
   "flatpak",
@@ -52,7 +59,11 @@ export function normalizePackageManagerConfigs(
       autoHideKeptBackUpdates: value.apt.autoHideKeptBackUpdates,
     };
   }
-  if (value.dnf?.defaultUpgradeMode !== undefined || value.dnf?.refreshMetadataOnCheck !== undefined) {
+  if (
+    value.dnf?.defaultUpgradeMode !== undefined ||
+    value.dnf?.refreshMetadataOnCheck !== undefined ||
+    value.dnf?.autoAcceptNewSigningKeysOnCheck !== undefined
+  ) {
     next.dnf = {};
     if (value.dnf.defaultUpgradeMode !== undefined) {
       next.dnf.defaultUpgradeMode = value.dnf.defaultUpgradeMode;
@@ -60,6 +71,14 @@ export function normalizePackageManagerConfigs(
     if (value.dnf.refreshMetadataOnCheck !== undefined) {
       next.dnf.refreshMetadataOnCheck = value.dnf.refreshMetadataOnCheck;
     }
+    if (value.dnf.autoAcceptNewSigningKeysOnCheck !== undefined) {
+      next.dnf.autoAcceptNewSigningKeysOnCheck = value.dnf.autoAcceptNewSigningKeysOnCheck;
+    }
+  }
+  if (value.yum?.autoAcceptNewSigningKeysOnCheck !== undefined) {
+    next.yum = {
+      autoAcceptNewSigningKeysOnCheck: value.yum.autoAcceptNewSigningKeysOnCheck,
+    };
   }
   if (value.pacman?.refreshDatabasesOnCheck !== undefined) {
     next.pacman = { refreshDatabasesOnCheck: value.pacman.refreshDatabasesOnCheck };

@@ -153,6 +153,39 @@ describe("DnfParser", () => {
       dnfParser.getCheckCommands({ refreshMetadataOnCheck: true })[0],
     ).toContain("check-update --refresh --quiet");
   });
+
+  test("keeps signing-key acceptance disabled by default", () => {
+    expect(dnfParser.getCheckCommands()[0]).not.toContain(" -y check-update");
+  });
+
+  test("can opt into automatic signing-key acceptance during checks", () => {
+    expect(
+      dnfParser.getCheckCommands({ autoAcceptNewSigningKeysOnCheck: true })[0],
+    ).toContain("dnf -y check-update --quiet");
+  });
+
+  test("ignores GPG import chatter before package output", () => {
+    const stdout = [
+      "Importing GPG key 0x51312F3F:",
+      'Userid     : "GitLab B.V. (package repository signing key) <packages@gitlab.com>"',
+      "Fingerprint: F640 3F65 44A3 8863 DAA0 B6E0 3F01 618A 5131 2F3F",
+      "From       : https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey",
+      "Is this ok [y/N]: y",
+      "",
+      "gitlab-ce.x86_64 18.9.2-ce.0.el9 gitlab_gitlab-ce",
+      "EXIT:100",
+    ].join("\n");
+
+    const updates = dnfParser.parseCheckOutput(stdout, "", 0);
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      packageName: "gitlab-ce",
+      architecture: "x86_64",
+      newVersion: "18.9.2-ce.0.el9",
+      repository: "gitlab_gitlab-ce",
+    });
+  });
 });
 
 describe("YumParser", () => {
@@ -166,6 +199,12 @@ describe("YumParser", () => {
   test("yum commands", () => {
     expect(yumParser.getUpgradeAllCommand()).toContain("yum");
     expect(yumParser.getCheckCommands()[0]).toContain("yum");
+  });
+
+  test("can opt into automatic signing-key acceptance during checks", () => {
+    expect(
+      yumParser.getCheckCommands({ autoAcceptNewSigningKeysOnCheck: true })[0],
+    ).toContain("yum -y check-update --quiet");
   });
 
   test("no full upgrade command", () => {

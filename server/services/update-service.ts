@@ -578,6 +578,17 @@ async function checkUpdatesUnlocked(
           );
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
+          const parserReportedError =
+            parser.getCheckErrorMessage?.(result.stdout, result.stderr, result.exitCode) ?? null;
+          const checkErrorMessage =
+            parserReportedError
+            || (result.exitCode !== 0
+              ? result.stderr
+                || result.stdout
+                || combinedOutput
+                || `Command exited with code ${result.exitCode}`
+              : null);
+          const commandFailed = result.exitCode !== 0 || checkErrorMessage !== null;
           checkOutput += combinedOutput;
           lastStdout = result.stdout;
           lastStderr = result.stderr;
@@ -594,19 +605,17 @@ async function checkUpdatesUnlocked(
               pkgManager: pmName,
               command: commands[i],
               output: combinedOutput,
-              error:
-                result.exitCode === 0
-                  ? null
-                  : result.stderr || result.stdout || combinedOutput || `Command exited with code ${result.exitCode}`,
-              status: result.exitCode === 0 ? "success" : "failed",
+              error: checkErrorMessage,
+              status: commandFailed ? "failed" : "success",
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             })
           );
 
-          if (result.exitCode !== 0) {
+          if (commandFailed) {
             throw new Error(
-              result.stderr || result.stdout || `Command exited with code ${result.exitCode}`
+              checkErrorMessage
+              || `Command exited with code ${result.exitCode}`
             );
           }
         }

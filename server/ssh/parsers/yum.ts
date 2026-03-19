@@ -1,16 +1,21 @@
 import type { PackageParser } from "./types";
 import { sudo, validatePackageName } from "./types";
-import { buildCheckCommand, dnfParser } from "./dnf";
+import type { YumPackageManagerConfig } from "../../package-manager-configs";
+import { dnfParser, getDnfLikeCheckErrorMessage, getYumCheckCommands } from "./dnf";
 
 export const yumParser: PackageParser = {
   name: "yum",
 
-  getCheckCommands() {
-    return [buildCheckCommand("yum")];
+  getCheckCommands(config) {
+    return getYumCheckCommands(config as YumPackageManagerConfig | undefined);
   },
 
   getCheckCommandLabels() {
     return ["Checking for updates"];
+  },
+
+  getCheckErrorMessage(stdout, stderr, exitCode) {
+    return getDnfLikeCheckErrorMessage("yum", stdout, stderr, exitCode);
   },
 
   // Same output format as DNF

@@ -1,0 +1,90 @@
+FROM fedora:41
+
+# Self-contained DNF fixture that reproduces the "new repo signing key"
+# prompt path on the first `dnf check-update`. We build a tiny local RPM repo,
+# sign its metadata with a custom key that is *not* imported into RPM, install
+# v1.0 of the package directly, and leave v2.0 available in the repo.
+RUN dnf install -y \
+        openssh-server sudo passwd \
+        rpm-build createrepo_c gnupg2 && \
+    dnf clean all && \
+    mkdir -p /run/sshd /root/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} /opt/localrepo
+
+RUN printf '%s\n' \
+    'Name:           prompt-app' \
+    'Version:        %{?version}%{!?version:1.0}' \
+    'Release:        1%{?dist}' \
+    'Summary:        Test package for DNF GPG prompt fixture' \
+    'License:        MIT' \
+    'BuildArch:      noarch' \
+    '' \
+    '%description' \
+    'Tiny package used to exercise DNF update-check behavior when a repository' \
+    'signing key must be trusted manually.' \
+    '' \
+    '%install' \
+    'mkdir -p %{buildroot}/usr/share/doc/prompt-app' \
+    "printf '%s\\n' '%{version}' > %{buildroot}/usr/share/doc/prompt-app/version.txt" \
+    '' \
+    '%files' \
+    '/usr/share/doc/prompt-app/version.txt' \
+    > /root/rpmbuild/SPECS/prompt-app.spec
+
+RUN set -eux; \
+    rpmbuild --define '_topdir /root/rpmbuild' --define 'version 1.0' -bb /root/rpmbuild/SPECS/prompt-app.spec; \
+    rpmbuild --define '_topdir /root/rpmbuild' --define 'version 2.0' -bb /root/rpmbuild/SPECS/prompt-app.spec; \
+    cp /root/rpmbuild/RPMS/noarch/prompt-app-*.rpm /opt/localrepo/; \
+    rpm -Uvh --nodeps /root/rpmbuild/RPMS/noarch/prompt-app-1.0-1*.noarch.rpm
+
+RUN set -eux; \
+    mkdir -p /root/.gnupg && chmod 700 /root/.gnupg; \
+    printf '%s\n' \
+      '%no-protection' \
+      'Key-Type: RSA' \
+      'Key-Length: 3072' \
+      'Name-Real: Linux Update Dashboard Test Repo' \
+      'Name-Email: devnull@example.invalid' \
+      'Expire-Date: 0' \
+      '%commit' \
+      > /tmp/ludash-gpg-batch; \
+    gpg --batch --generate-key /tmp/ludash-gpg-batch; \
+    KEY_ID="$(gpg --batch --list-keys --with-colons 'Linux Update Dashboard Test Repo' | awk -F: '/^pub:/ { print $5; exit }')"; \
+    gpg --batch --yes --armor --export "$KEY_ID" > /opt/localrepo/RPM-GPG-KEY-ludash-test; \
+    createrepo_c /opt/localrepo; \
+    gpg --batch --yes --armor --detach-sign --local-user "$KEY_ID" \
+      --output /opt/localrepo/repodata/repomd.xml.asc \
+      /opt/localrepo/repodata/repomd.xml; \
+    rm -f /tmp/ludash-gpg-batch
+
+RUN rm -f /etc/yum.repos.d/*.repo && \
+    printf '%s\n' \
+      '[ludash-gpg-prompt]' \
+      'name=Linux Update Dashboard DNF GPG prompt fixture' \
+      'baseurl=file:///opt/localrepo' \
+      'enabled=1' \
+      'gpgcheck=0' \
+      'repo_gpgcheck=1' \
+      'gpgkey=file:///opt/localrepo/RPM-GPG-KEY-ludash-test' \
+      'metadata_expire=0' \
+      > /etc/yum.repos.d/ludash-gpg-prompt.repo && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# Create test user with sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testpass' | passwd --stdin testuser && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Fail the build early if sudo is not usable for the test user.
+RUN su - testuser -c "sudo -n true"
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

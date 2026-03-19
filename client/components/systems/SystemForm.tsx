@@ -901,7 +901,51 @@ export function SystemForm({
                           </span>
                         </span>
                       </label>
+                      <label className="flex items-start gap-3 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pkgManagerConfigs.dnf?.autoAcceptNewSigningKeysOnCheck === true}
+                          onChange={(e) =>
+                            setManagerConfig("dnf", {
+                              ...pkgManagerConfigs.dnf,
+                              autoAcceptNewSigningKeysOnCheck: e.target.checked,
+                            })
+                          }
+                          className="rounded mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-slate-700 dark:text-slate-200">
+                            Allow automatic acceptance of new repository signing keys during update checks
+                          </span>
+                          <span className="block text-xs text-slate-400 mt-0.5">
+                            Disabled by default. Enable only if you trust the configured repositories and want unattended checks to import newly presented signing keys.
+                          </span>
+                        </span>
+                      </label>
                     </>
+                  )}
+
+                  {manager === "yum" && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pkgManagerConfigs.yum?.autoAcceptNewSigningKeysOnCheck === true}
+                        onChange={(e) =>
+                          setManagerConfig("yum", {
+                            autoAcceptNewSigningKeysOnCheck: e.target.checked,
+                          })
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          Allow automatic acceptance of new repository signing keys during update checks
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          Disabled by default. Enable only if you trust the configured repositories and want unattended checks to import newly presented signing keys.
+                        </span>
+                      </span>
+                    </label>
                   )}
 
                   {manager === "pacman" && (

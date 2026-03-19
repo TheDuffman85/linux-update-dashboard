@@ -751,6 +751,7 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-alpine` | 2010 | APK | `bash` | Alpine 3.16 |
 | `ludash-test-apt-keptback` | 2011 | APT (kept-back fixture) | `bash` | Debian 12 |
 | `ludash-test-apt-snap-partial` | 2012 | APT + Snap (Snap check fails) | `bash` | Ubuntu 24.04 |
+| `ludash-test-dnf-gpg-prompt` | 2013 | DNF (GPG key prompt fixture) | `bash` | Fedora 41 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -767,6 +768,12 @@ That makes it useful for verifying the dashboard’s `isKeptBack` badge/count be
 - a detected Snap installation whose checks fail because `snapd` is not running inside the container
 
 That makes it useful for verifying the dashboard’s semi-working warning state where one package manager succeeds and another fails in the same check run.
+
+`ludash-test-dnf-gpg-prompt` is a special self-contained DNF fixture. It intentionally exposes:
+- one local RPM update: `prompt-app` 1.0 -> 2.0
+- a repository metadata signature whose public key exists on disk but is not yet trusted by RPM
+
+That makes it useful for verifying the dashboard’s fail-closed handling of `dnf check-update` when a new repository signing key would normally trigger an interactive `Is this ok [y/N]` prompt.
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 
