@@ -5,6 +5,7 @@ import { settings, webauthnCredentials } from "../db/schema";
 import { configureOidc } from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as scheduler from "../services/scheduler";
+import * as updateService from "../services/update-service";
 import {
   isNumericSettingKey,
   normalizeNumericSetting,
@@ -101,6 +102,10 @@ settingsRouter.put("/", async (c) => {
   // Restart scheduler if check interval was changed
   if ("check_interval_minutes" in normalizedBody) {
     scheduler.restart();
+  }
+
+  if ("activity_history_limit" in normalizedBody) {
+    updateService.pruneHistoryToConfiguredLimit();
   }
 
   if (

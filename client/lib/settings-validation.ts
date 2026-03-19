@@ -1,6 +1,7 @@
 export const NUMERIC_SETTING_RULES = {
   check_interval_minutes: { min: 5, max: 1440, fallback: 15 },
   cache_duration_hours: { min: 0, max: 168, fallback: 12 },
+  activity_history_limit: { min: 5, max: 200, fallback: 20 },
   ssh_timeout_seconds: { min: 5, max: 120, fallback: 30 },
   cmd_timeout_seconds: { min: 10, max: 600, fallback: 120 },
   concurrent_connections: { min: 1, max: 50, fallback: 5 },

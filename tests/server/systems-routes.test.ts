@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, hiddenUpdates, systems, updateCache, updateHistory } from "../../server/db/schema";
+import { credentials, hiddenUpdates, settings, systems, updateCache, updateHistory } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
@@ -519,6 +519,62 @@ describe("systems reorder route", () => {
         autoAcceptNewSigningKeysOnCheck: true,
       },
     });
+  });
+
+  test("uses the activity history limit setting for system detail responses", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "History Limit System",
+      hostname: "history-limit.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    db.update(settings)
+      .set({ value: "2" })
+      .where(eq(settings.key, "activity_history_limit"))
+      .run();
+
+    db.insert(updateHistory).values([
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "success",
+        startedAt: "2026-03-19 10:00:00",
+        completedAt: "2026-03-19 10:00:05",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "warning",
+        startedAt: "2026-03-19 11:00:00",
+        completedAt: "2026-03-19 11:00:05",
+      },
+      {
+        systemId,
+        action: "check",
+        pkgManager: "apt",
+        status: "failed",
+        startedAt: "2026-03-19 12:00:00",
+        completedAt: "2026-03-19 12:00:05",
+      },
+    ]).run();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.history).toHaveLength(2);
+    expect(body.history.map((entry: { status: string }) => entry.status)).toEqual([
+      "failed",
+      "warning",
+    ]);
   });
 
   test("updating package manager configs does not clear cached updates when enabled managers are unchanged", async () => {

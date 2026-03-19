@@ -10,6 +10,7 @@ import { validatePackageName } from "../ssh/parsers/types";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
 import { resolveSystemCredential } from "../services/credential-service";
+import { getActivityHistoryLimit } from "../services/settings-service";
 import {
   clearTrustChallenge,
   getTrustChallenge,
@@ -400,7 +401,7 @@ systems.get("/:id", (c) => {
 
   const updates = hiddenUpdateService.getVisibleCachedUpdates(id);
   const hiddenUpdates = hiddenUpdateService.listActiveHiddenUpdates(id);
-  const history = updateService.getHistory(id, 20).map((h) => ({
+  const history = updateService.getHistory(id, getActivityHistoryLimit()).map((h) => ({
     ...h,
     packagesList: h.packages ? JSON.parse(h.packages) : [],
     steps: parseJsonField(h.steps),
