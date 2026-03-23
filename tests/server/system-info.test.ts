@@ -84,6 +84,68 @@ aarch64
     expect(info.osName).toBe("Unknown");
     expect(info.kernel).toBe("");
   });
+
+  test("prefers Raspberry Pi OS when the image exposes /etc/rpi-issue", () => {
+    const stdout = `===OS===
+NAME="Debian GNU/Linux"
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+VERSION="12 (bookworm)"
+VERSION_ID="12"
+ID=debian
+===RPI_ISSUE===
+Raspberry Pi reference 2025-02-12
+===PVE_VERSION===
+===KERNEL===
+6.6.74+rpt-rpi-v8
+===HOSTNAME===
+pi
+===UPTIME===
+up 2 days
+===ARCH===
+aarch64
+===CPU===
+4
+===MEM===
+Mem: 7.7Gi
+===DISK===
+/dev/root 50G 12G 35G 26% /
+`;
+
+    const info = parseSystemInfo(stdout);
+    expect(info.osName).toBe("Raspberry Pi OS 12 (bookworm)");
+    expect(info.osVersion).toBe("12");
+  });
+
+  test("prefers Proxmox VE when pveversion is available", () => {
+    const stdout = `===OS===
+NAME="Debian GNU/Linux"
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+VERSION="13 (trixie)"
+VERSION_ID="13"
+ID=debian
+===RPI_ISSUE===
+===PVE_VERSION===
+pve-manager/9.0.3/abc12345
+===KERNEL===
+6.14.8-2-pve
+===HOSTNAME===
+proxmox
+===UPTIME===
+up 7 days
+===ARCH===
+x86_64
+===CPU===
+8
+===MEM===
+Mem: 31Gi
+===DISK===
+/dev/mapper/pve-root 94G 17G 72G 20% /
+`;
+
+    const info = parseSystemInfo(stdout);
+    expect(info.osName).toBe("Proxmox VE 9.0.3");
+    expect(info.osVersion).toBe("9.0.3");
+  });
 });
 
 describe("hasPendingKernelUpdate", () => {

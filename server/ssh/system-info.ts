@@ -2,6 +2,8 @@
 // containers) does not break the entire chain via &&.
 export const SYSTEM_INFO_CMD =
   'echo "===OS==="; cat /etc/os-release 2>/dev/null; ' +
+  'echo "===RPI_ISSUE==="; cat /etc/rpi-issue 2>/dev/null; ' +
+  'echo "===PVE_VERSION==="; if command -v pveversion >/dev/null 2>&1; then pveversion 2>/dev/null | head -1; fi; ' +
   'echo "===KERNEL==="; uname -r 2>/dev/null; ' +
   'echo "===HOSTNAME==="; (hostname 2>/dev/null || cat /etc/hostname 2>/dev/null); ' +
   'echo "===UPTIME==="; (uptime -p 2>/dev/null || uptime 2>/dev/null); ' +
@@ -53,6 +55,52 @@ function normalizeKernelFamily(kernel: string): string {
   if (!match) return "";
 
   return match[0].toLowerCase().replace(/\d+/g, "#");
+}
+
+function buildRaspberryPiOsName(osFields: Record<string, string>): string {
+  const prettyName = osFields["PRETTY_NAME"] || osFields["NAME"] || "";
+  if (/raspberry pi os|raspbian/i.test(prettyName)) {
+    return prettyName;
+  }
+
+  const versionLabel = osFields["VERSION"] || osFields["VERSION_ID"] || "";
+  return versionLabel ? `Raspberry Pi OS ${versionLabel}` : "Raspberry Pi OS";
+}
+
+function extractProxmoxVersion(pveVersion: string): string {
+  const match = pveVersion.match(/pve-manager\/([0-9][^/\s]*)/i);
+  return match?.[1] || "";
+}
+
+function resolveOsDisplayName(
+  osFields: Record<string, string>,
+  sections: Record<string, string>
+): { osName: string; osVersion: string } {
+  const prettyName = osFields["PRETTY_NAME"] || osFields["NAME"] || "Unknown";
+  const defaultVersion = osFields["VERSION_ID"] || osFields["VERSION"] || "";
+  const kernel = (sections["KERNEL"] || "").trim();
+  const rpiIssue = (sections["RPI_ISSUE"] || "").trim();
+  const pveVersion = (sections["PVE_VERSION"] || "").trim();
+
+  if (pveVersion || /-pve\b/i.test(kernel)) {
+    const proxmoxVersion = extractProxmoxVersion(pveVersion);
+    return {
+      osName: proxmoxVersion ? `Proxmox VE ${proxmoxVersion}` : "Proxmox VE",
+      osVersion: proxmoxVersion || defaultVersion,
+    };
+  }
+
+  if (rpiIssue) {
+    return {
+      osName: buildRaspberryPiOsName(osFields),
+      osVersion: defaultVersion,
+    };
+  }
+
+  return {
+    osName: prettyName,
+    osVersion: defaultVersion,
+  };
 }
 
 export function hasPendingKernelUpdate(
@@ -155,9 +203,9 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     }
   }
 
-  info.osName =
-    osFields["PRETTY_NAME"] || osFields["NAME"] || "Unknown";
-  info.osVersion = osFields["VERSION_ID"] || osFields["VERSION"] || "";
+  const osDisplay = resolveOsDisplayName(osFields, sections);
+  info.osName = osDisplay.osName;
+  info.osVersion = osDisplay.osVersion;
   info.kernel = (sections["KERNEL"] || "").trim();
   info.hostname = (sections["HOSTNAME"] || "").trim();
   info.uptime = (sections["UPTIME"] || "").trim();
