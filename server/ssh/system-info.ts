@@ -78,11 +78,10 @@ function resolveOsDisplayName(
 ): { osName: string; osVersion: string } {
   const prettyName = osFields["PRETTY_NAME"] || osFields["NAME"] || "Unknown";
   const defaultVersion = osFields["VERSION_ID"] || osFields["VERSION"] || "";
-  const kernel = (sections["KERNEL"] || "").trim();
   const rpiIssue = (sections["RPI_ISSUE"] || "").trim();
   const pveVersion = (sections["PVE_VERSION"] || "").trim();
 
-  if (pveVersion || /-pve\b/i.test(kernel)) {
+  if (pveVersion) {
     const proxmoxVersion = extractProxmoxVersion(pveVersion);
     return {
       osName: proxmoxVersion ? `Proxmox VE ${proxmoxVersion}` : "Proxmox VE",

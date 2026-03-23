@@ -146,6 +146,36 @@ Mem: 31Gi
     expect(info.osName).toBe("Proxmox VE 9.0.3");
     expect(info.osVersion).toBe("9.0.3");
   });
+
+  test("keeps Debian for LXC containers that only inherit a -pve host kernel", () => {
+    const stdout = `===OS===
+NAME="Debian GNU/Linux"
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+VERSION="13 (trixie)"
+VERSION_ID="13"
+ID=debian
+===RPI_ISSUE===
+===PVE_VERSION===
+===KERNEL===
+6.17.13-2-pve
+===HOSTNAME===
+domain
+===UPTIME===
+up 3 days
+===ARCH===
+x86_64
+===CPU===
+2
+===MEM===
+Mem: 8.0Gi
+===DISK===
+/dev/sda 49G 11G 36G 24% /
+`;
+
+    const info = parseSystemInfo(stdout);
+    expect(info.osName).toBe("Debian GNU/Linux 13 (trixie)");
+    expect(info.osVersion).toBe("13");
+  });
 });
 
 describe("hasPendingKernelUpdate", () => {
