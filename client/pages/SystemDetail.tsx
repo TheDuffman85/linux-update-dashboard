@@ -274,19 +274,336 @@ function joinMetaParts(parts: Array<string | null | undefined>): string {
   return parts.filter((part): part is string => !!part).join(" • ");
 }
 
+export function isScrollNearBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight < 50;
+}
+
+function getActionForActiveOperation(
+  type: ActiveOperation["type"],
+): HistoryEntry["action"] {
+  return type;
+}
+
+function getActivityDisplayKey(input: {
+  action: string;
+  startedAt: string | null;
+  historyId?: number | null;
+}): string {
+  if (input.startedAt) return `${input.action}:${input.startedAt}`;
+  if (input.historyId) return `history:${input.historyId}`;
+  return `activity:${input.action}:pending`;
+}
+
+function getActivityTitle(
+  action: string,
+  packagesList: string[],
+  packageName?: string,
+): string {
+  if (action === "check") return "Checked for updates";
+  if (action === "upgrade_all") return "Upgraded all packages";
+  if (action === "full_upgrade_all") return "Full upgraded all packages";
+  if (action === "reboot") return "Rebooted system";
+  return `Upgraded ${packagesList.join(", ") || packageName || "package"}`;
+}
+
+function isSshSafeActivity(action: string): boolean {
+  return action !== "check" && action !== "reboot";
+}
+
+type ActivityDisplayRow = {
+  key: string;
+  historyId: number | null;
+  action: string;
+  pkgManager: string;
+  packageCount: number | null;
+  packagesList: string[];
+  command: string | null;
+  steps: ActivityStep[] | null;
+  output: string | null;
+  error: string | null;
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  isRunning: boolean;
+  useLiveDetails: boolean;
+  liveSteps: ActivityStep[];
+  packageName?: string;
+};
+
+type ActivitySession = {
+  key: string;
+  action: HistoryEntry["action"];
+  activeStartedAt: string | null;
+  firstCommandStartedAt: string | null;
+  packageName?: string;
+};
+
+function getFirstStartedMessage(
+  messages: WsMessage[],
+): Extract<WsMessage, { type: "started" }> | undefined {
+  return messages.find((message): message is Extract<WsMessage, { type: "started" }> => message.type === "started");
+}
+
+export function matchesHistoryEntryToSession(
+  historyEntry: HistoryEntry,
+  session: ActivitySession,
+): boolean {
+  if (historyEntry.action !== session.action) return false;
+
+  if (session.firstCommandStartedAt) {
+    if (historyEntry.startedAt === session.firstCommandStartedAt) {
+      return true;
+    }
+
+    if (session.activeStartedAt) {
+      return historyEntry.startedAt >= session.activeStartedAt;
+    }
+
+    return false;
+  }
+
+  if (session.activeStartedAt) {
+    return historyEntry.startedAt >= session.activeStartedAt;
+  }
+
+  return false;
+}
+
+export function resolveCurrentActivitySession({
+  previousSession,
+  nextSessionKey,
+  history,
+  activeOp,
+  actionHint,
+  messages,
+  isCommandActive,
+  pendingTransition,
+}: {
+  previousSession: ActivitySession | null;
+  nextSessionKey: () => string;
+  history: HistoryEntry[];
+  activeOp: ActiveOperation | null | undefined;
+  actionHint?: HistoryEntry["action"] | null;
+  messages: WsMessage[];
+  isCommandActive: boolean;
+  pendingTransition: boolean;
+}): ActivitySession | null {
+  const startedEntry = history.find((entry) => entry.status === "started");
+  const firstStartedMessage = getFirstStartedMessage(messages);
+  const topHistory = history[0] ?? null;
+  const activeAction = activeOp ? getActionForActiveOperation(activeOp.type) : null;
+  const observedAction =
+    startedEntry?.action ??
+    activeAction ??
+    actionHint ??
+    previousSession?.action ??
+    null;
+  const observedActiveStartedAt =
+    activeOp?.startedAt ??
+    previousSession?.activeStartedAt ??
+    startedEntry?.startedAt ??
+    firstStartedMessage?.startedAt ??
+    null;
+  const observedCommandStartedAt =
+    firstStartedMessage?.startedAt ??
+    startedEntry?.startedAt ??
+    previousSession?.firstCommandStartedAt ??
+    null;
+  const topHistoryMatchesPrevious =
+    !!topHistory &&
+    !!previousSession &&
+    matchesHistoryEntryToSession(topHistory, previousSession);
+  const hasLiveSignal =
+    !!activeOp ||
+    !!startedEntry ||
+    isCommandActive ||
+    (pendingTransition && (!!firstStartedMessage || !!previousSession));
+
+  if (!hasLiveSignal) {
+    return topHistoryMatchesPrevious ? previousSession : null;
+  }
+
+  if (!observedAction) return null;
+
+  if (previousSession && previousSession.action === observedAction) {
+    const activeStartedAtMatches =
+      !activeOp?.startedAt ||
+      !previousSession.activeStartedAt ||
+      previousSession.activeStartedAt === activeOp.startedAt;
+    const commandStartedAtMatches =
+      !observedCommandStartedAt ||
+      !previousSession.firstCommandStartedAt ||
+      previousSession.firstCommandStartedAt === observedCommandStartedAt;
+
+    if (activeStartedAtMatches && commandStartedAtMatches) {
+      return {
+        ...previousSession,
+        activeStartedAt: previousSession.activeStartedAt ?? observedActiveStartedAt,
+        firstCommandStartedAt: previousSession.firstCommandStartedAt ?? observedCommandStartedAt,
+        packageName: activeOp?.packageName ?? previousSession.packageName,
+      };
+    }
+  }
+
+  return {
+    key: nextSessionKey(),
+    action: observedAction,
+    activeStartedAt: observedActiveStartedAt,
+    firstCommandStartedAt: observedCommandStartedAt,
+    packageName: activeOp?.packageName,
+  };
+}
+
+function createHistoryDisplayRow(
+  historyEntry: HistoryEntry,
+  liveSteps: ActivityStep[] = [],
+  keyOverride?: string,
+): ActivityDisplayRow {
+  return {
+    key: keyOverride ?? getActivityDisplayKey({
+      action: historyEntry.action,
+      startedAt: historyEntry.startedAt,
+      historyId: historyEntry.id,
+    }),
+    historyId: historyEntry.id,
+    action: historyEntry.action,
+    pkgManager: historyEntry.pkgManager,
+    packageCount: historyEntry.packageCount,
+    packagesList: historyEntry.packagesList,
+    command: historyEntry.command,
+    steps: historyEntry.steps,
+    output: historyEntry.output,
+    error: historyEntry.error,
+    status: historyEntry.status,
+    startedAt: historyEntry.startedAt,
+    completedAt: historyEntry.completedAt,
+    isRunning: historyEntry.status === "started",
+    useLiveDetails: historyEntry.status === "started" && liveSteps.length > 0,
+    liveSteps,
+  };
+}
+
+export function buildActivityDisplayRows({
+  history,
+  activeOp,
+  messages,
+  isCommandActive,
+  pendingTransition,
+  currentSession,
+}: {
+  history: HistoryEntry[];
+  activeOp: ActiveOperation | null | undefined;
+  messages: WsMessage[];
+  isCommandActive: boolean;
+  pendingTransition: boolean;
+  currentSession: ActivitySession | null;
+}): ActivityDisplayRow[] {
+  const startedEntry = history.find((entry) => entry.status === "started");
+  const liveSteps = deriveLiveActivitySteps(messages);
+  const firstStartedMessage = getFirstStartedMessage(messages);
+  const liveAction =
+    startedEntry?.action ??
+    (activeOp ? getActionForActiveOperation(activeOp.type) : currentSession?.action ?? null);
+  const liveStartedAt =
+    startedEntry?.startedAt ??
+    firstStartedMessage?.startedAt ??
+    activeOp?.startedAt ??
+    currentSession?.firstCommandStartedAt ??
+    currentSession?.activeStartedAt ??
+    null;
+  const topHistory = history[0] ?? null;
+  const matchedTopHistory =
+    !!topHistory &&
+    !!currentSession &&
+    matchesHistoryEntryToSession(topHistory, currentSession)
+      ? topHistory
+      : null;
+  const currentHistoryEntry = startedEntry ?? matchedTopHistory;
+  const showCurrentRow =
+    !!currentHistoryEntry ||
+    ((isCommandActive || pendingTransition) && !!liveAction && !!currentSession);
+
+  const rows: ActivityDisplayRow[] = [];
+  if (showCurrentRow) {
+    if (currentHistoryEntry) {
+      rows.push(
+        createHistoryDisplayRow(
+          currentHistoryEntry,
+          currentHistoryEntry.status === "started" ? liveSteps : [],
+          currentSession?.key,
+        ),
+      );
+    } else if (liveAction) {
+      rows.push({
+        key: currentSession?.key ?? getActivityDisplayKey({ action: liveAction, startedAt: liveStartedAt }),
+        historyId: null,
+        action: liveAction,
+        pkgManager: firstStartedMessage?.pkgManager ?? "system",
+        packageCount: null,
+        packagesList: [],
+        command: firstStartedMessage?.command ?? null,
+        steps: null,
+        output: null,
+        error: null,
+        status: "started",
+        startedAt: liveStartedAt,
+        completedAt: null,
+        isRunning: true,
+        useLiveDetails: true,
+        liveSteps,
+        packageName: activeOp?.packageName ?? currentSession?.packageName,
+      });
+    }
+  }
+
+  const consumedHistoryId = currentHistoryEntry?.id ?? null;
+  for (const historyEntry of history) {
+    if (historyEntry.id === consumedHistoryId) continue;
+    rows.push(createHistoryDisplayRow(historyEntry));
+  }
+
+  return rows;
+}
+
 function StepPanel({
   title,
   children,
   className,
+  followContentKey,
 }: {
   title: string;
   children: React.ReactNode;
   className: string;
+  followContentKey?: string;
 }) {
+  const containerRef = useRef<HTMLPreElement>(null);
+  const isFollowingRef = useRef(true);
+
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    isFollowingRef.current = isScrollNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
+  }, []);
+
+  useEffect(() => {
+    if (!followContentKey || !isFollowingRef.current || !containerRef.current) return;
+    containerRef.current.scrollTop = containerRef.current.scrollHeight;
+  }, [followContentKey]);
+
   return (
     <div>
       <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">{title}</p>
-      <pre className={className}>{children}</pre>
+      <pre
+        ref={containerRef}
+        onScroll={followContentKey ? handleScroll : undefined}
+        className={className}
+      >
+        {children}
+      </pre>
     </div>
   );
 }
@@ -462,6 +779,7 @@ export function ActivityStepViewer({
         <StepPanel
           title="Output"
           className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          followContentKey={isLive ? `${selectedIndex}:${selectedStep.output || ""}` : undefined}
         >
           {selectedStep.output || <span className="text-slate-500 italic">No output</span>}
         </StepPanel>
@@ -483,36 +801,58 @@ function HistoryList({
   history,
   commandOutput,
   activeOp,
+  liveActionHint,
 }: {
   history: HistoryEntry[];
   commandOutput: ReturnType<typeof useCommandOutput>;
   activeOp: ActiveOperation | null | undefined;
+  liveActionHint?: HistoryEntry["action"] | null;
 }) {
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Tracks whether we're waiting for the DB result of a check-type op (no "started" row).
   // Using state (not ref) so that showSynthetic keeps the placeholder visible during the gap
   // between WS "done" and the next poll returning the new history entry.
   const [pendingExpand, setPendingExpand] = useState(false);
+  const sessionRef = useRef<ActivitySession | null>(null);
+  const sessionCounterRef = useRef(0);
   // Initialised to current top so we don't re-trigger on mount
   const prevTopHistoryIdRef = useRef<number | undefined>(history[0]?.id);
 
-  const toggle = useCallback((id: number) => {
+  const toggle = useCallback((key: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
 
-  // isLive: stay true until messages are cleared (new command starts)
   const hasOutput = commandOutput.isActive || commandOutput.messages.length > 0;
-  // The in-progress DB entry (status "started") — appears quickly after polling kicks in
   const startedEntry = history.find((h) => h.status === "started");
-  // Keep the synthetic visible while the command is active OR while waiting for the DB result
-  // to arrive (the gap between WS "done" and the next poll). This prevents the "vanish then
-  // reappear" flicker for check-type ops.
-  const showSynthetic = (commandOutput.isActive || pendingExpand) && !startedEntry;
+  const currentSession = resolveCurrentActivitySession({
+    previousSession: sessionRef.current,
+    nextSessionKey: () => {
+      sessionCounterRef.current += 1;
+      return `activity-current-${sessionCounterRef.current}`;
+    },
+    history,
+    activeOp,
+    actionHint: liveActionHint,
+    messages: commandOutput.messages,
+    isCommandActive: commandOutput.isActive,
+    pendingTransition: pendingExpand,
+  });
+  sessionRef.current = currentSession;
+
+  const displayRows = buildActivityDisplayRows({
+    history,
+    activeOp,
+    messages: commandOutput.messages,
+    isCommandActive: commandOutput.isActive,
+    pendingTransition: pendingExpand,
+    currentSession,
+  });
+  const showSynthetic = displayRows.some((row) => row.historyId === null);
   const nowMs = useNowTicker(showSynthetic || !!startedEntry);
 
   // For upgrade-type ops: clear pendingExpand when the "started" DB entry appears.
@@ -548,40 +888,7 @@ function HistoryList({
     setPendingExpand(false);
   }, [topHistoryId, topHistoryStatus, pendingExpand]);
 
-  // Fallback label for the synthetic placeholder (before DB entry arrives)
-  const syntheticStartedMsg = commandOutput.messages
-    .findLast((m): m is Extract<WsMessage, { type: "started" }> => m.type === "started");
-  const liveSteps = deriveLiveActivitySteps(commandOutput.messages);
-  const syntheticStartedAt = activeOp?.startedAt ?? syntheticStartedMsg?.startedAt ?? null;
-  const syntheticRuntime = formatDurationBetween(syntheticStartedAt, null, nowMs);
-  const syntheticLabel = (() => {
-    if (activeOp) {
-      if (activeOp.type === "check") return "Checking for updates";
-      if (activeOp.type === "upgrade_all") return "Upgrading all packages";
-      if (activeOp.type === "full_upgrade_all") return "Full upgrading all packages";
-      if (activeOp.type === "reboot") return "Rebooting system";
-        return `Upgrading ${activeOp.packageName || "package"}`;
-    }
-    if (syntheticStartedMsg) return `Running ${syntheticStartedMsg.pkgManager} command`;
-    return "Running…";
-  })();
-  const syntheticSteps =
-    liveSteps.length > 0
-      ? liveSteps
-      : syntheticStartedMsg?.command
-        ? [{
-            label: null,
-            pkgManager: syntheticStartedMsg.pkgManager,
-            command: syntheticStartedMsg.command,
-            output: null,
-            error: null,
-            status: "started" as const,
-            startedAt: syntheticStartedMsg.startedAt,
-            completedAt: null,
-          }]
-        : [];
-
-  if (!hasOutput && !history.length) {
+  if (!displayRows.length && !hasOutput) {
     return (
       <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
         No activity yet
@@ -591,90 +898,35 @@ function HistoryList({
 
   return (
     <div className="space-y-1">
-      {/* Synthetic placeholder shown only during the brief polling lag before the DB entry appears */}
-      {showSynthetic && (
-        <div>
-          <div className="w-full flex items-start gap-3 text-sm px-2 py-2 rounded-lg text-left">
-            <svg
-              className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-400 rotate-90"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            <Badge variant="muted" small>running</Badge>
-            <div className="flex-1 min-w-0">
-              <p className="font-medium">
-                {syntheticLabel}
-                {activeOp?.type !== "check" && activeOp?.type !== "reboot" && (
-                  <span className="relative group ml-2 inline-flex">
-                    <Badge variant="info" small>SSH-safe</Badge>
-                    <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-xs rounded bg-slate-900 dark:bg-slate-700 px-2 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                      This command runs via nohup on the remote system and will continue even if the SSH connection drops.
-                    </span>
-                  </span>
-                )}
-              </p>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                {joinMetaParts([
-                  syntheticStartedMsg?.pkgManager ?? null,
-                  syntheticRuntime ? `running for ${syntheticRuntime}` : null,
-                ])}
-              </p>
-            </div>
-            {syntheticStartedAt && (
-              <div className="flex flex-col items-end gap-0.5 shrink-0">
-                <AgoLabel timestamp={syntheticStartedAt} />
-              </div>
-            )}
-          </div>
-          <div className="ml-10 mr-2 mb-2 space-y-2">
-            {syntheticSteps.length > 0 ? (
-              <ActivityStepViewer
-                viewerId="activity-synthetic"
-                steps={syntheticSteps}
-                defaultToLastStep
-                isLive
-                phase={commandOutput.phase}
-              />
-            ) : (
-              <div className="text-xs text-slate-500 italic">Waiting for output…</div>
-            )}
-          </div>
-        </div>
-      )}
-      {history.map((h) => {
-        const isRunningEntry = h.id === startedEntry?.id;
+      {displayRows.map((row) => {
         const totalRuntime = formatDurationBetween(
-          h.startedAt,
-          isRunningEntry ? null : h.completedAt,
+          row.startedAt,
+          row.isRunning ? null : row.completedAt,
           nowMs,
         );
-        // A running entry has the command set; treat it as expandable even without output/error yet
-        const hasDetails = !!(h.steps?.length || h.command || h.output || h.error) || isRunningEntry;
-        const isOpen = expanded.has(h.id);
-        const runningSteps =
-          isRunningEntry && liveSteps.length > 0
-            ? liveSteps
-              : isRunningEntry && h.command
+        const displaySteps =
+          row.useLiveDetails && row.liveSteps.length > 0
+            ? row.liveSteps
+            : row.isRunning && row.command
               ? [{
                   label: null,
-                  pkgManager: h.pkgManager,
-                  command: h.command,
+                  pkgManager: row.pkgManager,
+                  command: row.command,
                   output: null,
                   error: null,
                   status: "started" as const,
-                  startedAt: h.startedAt,
+                  startedAt: row.startedAt,
                   completedAt: null,
                 }]
               : [];
+        const hasDetails = !!(row.steps?.length || row.command || row.output || row.error) || row.isRunning;
+        const isOpen = expanded.has(row.key);
 
         return (
-          <div key={h.id}>
+          <div key={row.key}>
             <button
               type="button"
-              onClick={() => hasDetails && toggle(h.id)}
+              onClick={() => hasDetails && toggle(row.key)}
               className={`w-full flex items-start gap-3 text-sm px-2 py-2 rounded-lg transition-colors text-left ${hasDetails
                   ? "hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer"
                   : "cursor-default"
@@ -693,81 +945,77 @@ function HistoryList({
               {!hasDetails && <span className="w-3.5 shrink-0" />}
               <Badge
                 variant={
-                  h.status === "success"
+                  row.status === "success"
                     ? "success"
-                    : h.status === "warning"
+                    : row.status === "warning"
                       ? "warning"
-                      : h.status === "failed"
+                      : row.status === "failed"
                         ? "danger"
                         : "muted"
                 }
                 small
               >
-                {isRunningEntry ? "running" : h.status}
+                {row.isRunning ? "running" : row.status}
               </Badge>
               <div className="flex-1 min-w-0">
                 <p className="font-medium">
-                  {h.action === "check"
-                    ? "Checked for updates"
-                    : h.action === "upgrade_all"
-                      ? "Upgraded all packages"
-                      : h.action === "full_upgrade_all"
-                        ? "Full upgraded all packages"
-                        : h.action === "reboot"
-                          ? "Rebooted system"
-                          : `Upgraded ${h.packagesList?.join(", ") || "package"}`}
-                  {h.action !== "check" && h.action !== "reboot" && (
+                  {getActivityTitle(row.action, row.packagesList, row.packageName)}
+                  {isSshSafeActivity(row.action) && (
                     <span className="relative group ml-2 inline-flex align-middle">
                       <Badge variant="info" small>SSH-safe</Badge>
                       <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-xs rounded bg-slate-900 dark:bg-slate-700 px-2 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                        This command ran via nohup on the remote system and would have continued even if the SSH connection dropped.
+                        {row.isRunning
+                          ? "This command runs via nohup on the remote system and will continue even if the SSH connection drops."
+                          : "This command ran via nohup on the remote system and would have continued even if the SSH connection dropped."}
                       </span>
                     </span>
                   )}
                 </p>
-                {h.packageCount !== null && h.action === "check" && (
+                {row.packageCount !== null && row.action === "check" && (
                   <p className="text-xs text-slate-500">
                     {joinMetaParts([
-                      `${h.packageCount} update${h.packageCount !== 1 ? "s" : ""} found`,
-                      h.pkgManager,
-                      totalRuntime ? `${isRunningEntry ? "running for" : "completed in"} ${totalRuntime}` : null,
+                      `${row.packageCount} update${row.packageCount !== 1 ? "s" : ""} found`,
+                      row.pkgManager,
+                      totalRuntime ? `${row.isRunning ? "running for" : "completed in"} ${totalRuntime}` : null,
                     ])}
                   </p>
                 )}
-                {(h.packageCount === null || h.action !== "check") && (
+                {(row.packageCount === null || row.action !== "check") && (
                   <p className="text-xs text-slate-500">
                     {joinMetaParts([
-                      h.pkgManager,
-                      totalRuntime ? `${isRunningEntry ? "running for" : "completed in"} ${totalRuntime}` : null,
+                      row.pkgManager,
+                      totalRuntime ? `${row.isRunning ? "running for" : "completed in"} ${totalRuntime}` : null,
                     ])}
                   </p>
                 )}
               </div>
               <div className="flex flex-col items-end gap-0.5 shrink-0 pt-0.5">
-                <AgoLabel timestamp={h.startedAt} />
+                {row.startedAt && (
+                  <AgoLabel timestamp={row.startedAt} />
+                )}
               </div>
             </button>
 
             {isOpen && hasDetails && (
               <div className="ml-10 mr-2 mb-2 space-y-2">
-                {isRunningEntry ? (
+                {row.isRunning ? (
                   <ActivityStepViewer
-                    viewerId={`activity-live-${h.id}`}
-                    steps={runningSteps}
+                    viewerId={`activity-live-${row.key}`}
+                    steps={displaySteps}
                     defaultToLastStep
                     isLive
                     phase={commandOutput.phase}
                   />
-                ) : h.steps?.length ? (
+                ) : row.steps?.length ? (
                   <ActivityStepViewer
-                    viewerId={`activity-history-${h.id}`}
-                    steps={h.steps}
+                    viewerId={`activity-history-${row.key}`}
+                    steps={row.steps}
                   />
                 ) : (
                   <LegacyActivityDetails
-                    command={h.command}
-                    output={h.output}
-                    error={h.error}
+                    command={row.command}
+                    output={row.output}
+                    error={row.error}
                   />
                 )}
               </div>
@@ -1178,7 +1426,12 @@ export default function SystemDetail() {
           <h2 className="text-sm font-semibold">Activity</h2>
         </div>
         <div className="p-4">
-          <HistoryList history={history} commandOutput={commandOutput} activeOp={activeOp} />
+          <HistoryList
+            history={history}
+            commandOutput={commandOutput}
+            activeOp={activeOp}
+            liveActionHint={checkUpdates.isPending ? "check" : null}
+          />
         </div>
       </div>
 
