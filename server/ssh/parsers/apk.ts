@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo, validatePackageName } from "./types";
+import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { ApkPackageManagerConfig } from "../../package-manager-configs";
 
 const PATTERN =
@@ -78,5 +78,10 @@ export const apkParser: PackageParser = {
   getUpgradePackageCommand(pkg) {
     const safePkg = validatePackageName(pkg);
     return sudo(`apk upgrade ${safePkg}`) + " 2>&1";
+  },
+
+  getUpgradePackagesCommand(pkgs) {
+    const safePkgs = validatePackageNames(pkgs).join(" ");
+    return sudo(`apk upgrade ${safePkgs}`) + " 2>&1";
   },
 };

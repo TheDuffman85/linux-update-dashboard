@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildActivityDisplayRows,
+  getActivityTitle,
+  getPackageSelectionState,
   isScrollNearBottom,
   matchesHistoryEntryToSession,
+  toggleSelectedPackageName,
   resolveCurrentActivitySession,
 } from "../../client/pages/SystemDetail";
 import type { ActiveOperation, HistoryEntry } from "../../client/lib/systems";
@@ -281,6 +284,57 @@ describe("buildActivityDisplayRows", () => {
     expect(rows[0]?.useLiveDetails).toBe(true);
     expect(rows[0]?.liveSteps[0]?.output).toContain("Reading package lists");
   });
+
+  test("uses live active-operation package names for running selected-package upgrades", () => {
+    const history = [
+      createHistoryEntry({
+        id: 12,
+        action: "upgrade_package",
+        pkgManager: "apt",
+        status: "started",
+        command: "apt-get install --only-upgrade -y curl firefox",
+        startedAt: "2026-03-25 20:00:00",
+      }),
+    ];
+    const activeOp: ActiveOperation = {
+      type: "upgrade_package",
+      startedAt: "2026-03-25 20:00:00",
+      packageNames: ["curl", "firefox"],
+      packageName: "curl",
+    };
+    const messages: WsMessage[] = [
+      {
+        type: "started",
+        command: "apt-get install --only-upgrade -y curl firefox",
+        pkgManager: "apt",
+        startedAt: "2026-03-25 20:00:00",
+      },
+    ];
+
+    const session = resolveCurrentActivitySession({
+      previousSession: null,
+      nextSessionKey: () => "activity-current-10",
+      history,
+      activeOp,
+      actionHint: null,
+      messages,
+      isCommandActive: true,
+      pendingTransition: true,
+    });
+    const rows = buildActivityDisplayRows({
+      history,
+      activeOp,
+      messages,
+      isCommandActive: true,
+      pendingTransition: true,
+      currentSession: session,
+    });
+
+    expect(rows[0]?.packagesList).toEqual(["curl", "firefox"]);
+    expect(getActivityTitle(rows[0]?.action || "", rows[0]?.packagesList || [], rows[0]?.packageName)).toBe(
+      "Upgraded curl, firefox"
+    );
+  });
 });
 
 describe("matchesHistoryEntryToSession", () => {
@@ -313,5 +367,37 @@ describe("isScrollNearBottom", () => {
 
   test("returns false when the user has scrolled meaningfully away from the end", () => {
     expect(isScrollNearBottom(600, 200, 300)).toBe(false);
+  });
+});
+
+describe("package selection helpers", () => {
+  test("toggle selection supports select, select-all state, and deselect", () => {
+    const updates = [
+      { packageName: "bash" },
+      { packageName: "curl" },
+    ];
+
+    const afterFirstToggle = toggleSelectedPackageName([], "bash");
+    expect(afterFirstToggle).toEqual(["bash"]);
+
+    const selectedAll = [...afterFirstToggle, "curl"];
+    expect(getPackageSelectionState(selectedAll, updates)).toMatchObject({
+      selectedCount: 2,
+      allSelected: true,
+      indeterminate: false,
+    });
+
+    const afterDeselect = toggleSelectedPackageName(selectedAll, "bash");
+    expect(getPackageSelectionState(afterDeselect, updates)).toMatchObject({
+      selectedCount: 1,
+      allSelected: false,
+      indeterminate: true,
+    });
+  });
+
+  test("selection state carries disabled status for busy system detail actions", () => {
+    const state = getPackageSelectionState(["bash"], [{ packageName: "bash" }], true);
+    expect(state.selectionDisabled).toBe(true);
+    expect(state.selectedCount).toBe(1);
   });
 });

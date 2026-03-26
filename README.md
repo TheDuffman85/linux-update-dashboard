@@ -835,7 +835,8 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/systems/check-all` | Check all systems (background) |
 | POST | `/api/systems/:id/upgrade` | Upgrade all packages on a system |
 | POST | `/api/systems/:id/full-upgrade` | Full/dist upgrade on a system |
-| POST | `/api/systems/:id/upgrade/:packageName` | Upgrade a single package |
+| POST | `/api/systems/:id/upgrade-packages` | Upgrade one or more selected visible packages on a system |
+| POST | `/api/systems/:id/upgrade/:packageName` | Upgrade one selected package (compatibility alias) |
 | POST | `/api/cache/refresh` | Invalidate cache and re-check all systems |
 | GET | `/api/jobs/:id` | Poll background job status |
 
@@ -913,7 +914,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 
 ## SSH-Safe Upgrades
 
-All upgrade operations (upgrade all, full upgrade, single package) run via **nohup** on the remote system, so they survive SSH connection drops. If your network blips or the dashboard restarts mid-upgrade, the process keeps running on the server.
+All upgrade operations (upgrade all, full upgrade, selected packages) run via **nohup** on the remote system, so they survive SSH connection drops. If your network blips or the dashboard restarts mid-upgrade, the process keeps running on the server.
 
 ### How it works
 
@@ -937,7 +938,7 @@ The upgrade itself continues on the remote host unaffected. Temporary files are 
 |-----------|----------|
 | Upgrade all packages | Yes |
 | Full upgrade (dist upgrade) | Yes |
-| Upgrade single package | Yes |
+| Upgrade selected packages | Yes |
 | Check for updates | No (read-only, safe to retry) |
 | Reboot | No (fire-and-forget) |
 

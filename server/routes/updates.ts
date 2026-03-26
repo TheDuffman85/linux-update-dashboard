@@ -7,6 +7,12 @@ import { logger } from "../logger";
 
 const updates = new Hono();
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -107,11 +113,52 @@ updates.post("/systems/:id/upgrade/:packageName", async (c) => {
   } catch {
     return c.json({ error: "Invalid package name" }, 400);
   }
+  try {
+    updateService.validateSelectedPackageUpgradeRequest(id, [packageName]);
+  } catch (error) {
+    return c.json({ error: String(error instanceof Error ? error.message : error) }, 400);
+  }
   const jobId = startJob(async () => {
     const result = await updateService.applyUpgradePackage(id, packageName);
     return {
       status: result.warning ? "warning" : result.success ? "success" : "failed",
       package: packageName,
+      output: result.output,
+    };
+  });
+  return c.json({ status: "started", jobId });
+});
+
+// Upgrade selected packages on a system (async)
+updates.post("/systems/:id/upgrade-packages", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  if (!Array.isArray(body.packageNames) || !body.packageNames.every((value) => typeof value === "string")) {
+    return c.json({ error: "packageNames must be a non-empty array of strings" }, 400);
+  }
+
+  let normalizedPackageNames: string[];
+  try {
+    ({ packageNames: normalizedPackageNames } = updateService.validateSelectedPackageUpgradeRequest(
+      id,
+      body.packageNames as string[],
+    ));
+  } catch (error) {
+    return c.json({ error: String(error instanceof Error ? error.message : error) }, 400);
+  }
+
+  const jobId = startJob(async () => {
+    const result = await updateService.applyUpgradePackages(id, normalizedPackageNames);
+    return {
+      status: result.warning ? "warning" : result.success ? "success" : "failed",
+      packageCount: normalizedPackageNames.length,
+      packages: normalizedPackageNames,
       output: result.output,
     };
   });

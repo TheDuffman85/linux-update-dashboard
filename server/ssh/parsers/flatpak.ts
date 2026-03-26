@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo, validatePackageName } from "./types";
+import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { FlatpakPackageManagerConfig } from "../../package-manager-configs";
 
 const INSTALLED_MARKER = "===INSTALLED===";
@@ -93,5 +93,10 @@ export const flatpakParser: PackageParser = {
   getUpgradePackageCommand(pkg) {
     const safePkg = validatePackageName(pkg);
     return sudo(`flatpak update -y ${safePkg}`) + " 2>&1";
+  },
+
+  getUpgradePackagesCommand(pkgs) {
+    const safePkgs = validatePackageNames(pkgs).join(" ");
+    return sudo(`flatpak update -y ${safePkgs}`) + " 2>&1";
   },
 };

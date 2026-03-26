@@ -4,7 +4,7 @@ import { updateCache, updateHistory } from "../db/schema";
 import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCommandInfo } from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import type { CheckCommandResult } from "../ssh/parsers/types";
-import { sudo } from "../ssh/parsers/types";
+import { sudo, validatePackageName } from "../ssh/parsers/types";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
@@ -27,6 +27,8 @@ import {
 } from "./active-operation-store";
 import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
 import { syncSystemNotificationHash } from "./notification-service";
+
+type VisibleCachedUpdate = ReturnType<typeof hiddenUpdateService.getVisibleCachedUpdates>[number];
 
 export function getActiveOperation(systemId: number): ActiveOperation | null {
   return getStoredActiveOperation(systemId);
@@ -242,6 +244,60 @@ export function getConfiguredUpgradeBehaviorDescriptions(systemId: number): stri
   if (!system) return [];
   const pkgManagers = systemService.getActivePkgManagers(system);
   return describeUpgradeBehaviors(pkgManagers, getSystemPackageManagerConfigs(system));
+}
+
+interface SelectedPackageUpgradeResolution {
+  packageNames: string[];
+  updates: VisibleCachedUpdate[];
+}
+
+function normalizeRequestedPackageNames(packageNames: string[]): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of packageNames) {
+    const safeName = validatePackageName(raw);
+    if (seen.has(safeName)) continue;
+    seen.add(safeName);
+    normalized.push(safeName);
+  }
+
+  return normalized;
+}
+
+function resolveSelectedPackageUpgrades(
+  systemId: number,
+  packageNames: string[],
+): SelectedPackageUpgradeResolution {
+  const normalizedNames = normalizeRequestedPackageNames(packageNames);
+  if (normalizedNames.length === 0) {
+    throw new Error("At least one package name is required");
+  }
+
+  const visibleUpdates = hiddenUpdateService.getVisibleCachedUpdates(systemId);
+  const requestedNameSet = new Set(normalizedNames);
+  const selectedUpdates = visibleUpdates.filter((update) => requestedNameSet.has(update.packageName));
+  const availableNameSet = new Set(selectedUpdates.map((update) => update.packageName));
+  const missingNames = normalizedNames.filter((packageName) => !availableNameSet.has(packageName));
+
+  if (missingNames.length > 0) {
+    throw new Error(
+      `Selected package updates are no longer available: ${missingNames.join(", ")}`,
+    );
+  }
+
+  return {
+    packageNames: normalizedNames,
+    updates: selectedUpdates,
+  };
+}
+
+export function validateSelectedPackageUpgradeRequest(
+  systemId: number,
+  packageNames: string[],
+): { packageNames: string[] } {
+  const resolved = resolveSelectedPackageUpgrades(systemId, packageNames);
+  return { packageNames: resolved.packageNames };
 }
 
 /**
@@ -1135,137 +1191,183 @@ export async function applyUpgradePackage(
   systemId: number,
   packageName: string
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
+  return applyUpgradePackages(systemId, [packageName]);
+}
+
+export async function applyUpgradePackages(
+  systemId: number,
+  packageNames: string[],
+): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
-    const now = getCurrentTimestamp();
-    setActiveOperation(systemId, { type: "upgrade_package", startedAt: now, packageName });
-    await requestNotificationRuntimeSystemSync(systemId);
-    outputStream.resetStream(systemId);
-    try {
     const system = systemService.getSystem(systemId);
     if (!system) {
       return { success: false, output: "System not found" };
     }
 
-    // Look up the package manager from the cache for this specific package
-    const db = getDb();
-    const cached = db
-      .select({ pkgManager: updateCache.pkgManager })
-      .from(updateCache)
-      .where(
-        sql`${updateCache.systemId} = ${systemId} AND ${updateCache.packageName} = ${packageName}`
-      )
-      .get();
-
-    const pmName = cached?.pkgManager || system.pkgManager;
-    if (!pmName) {
-      return { success: false, output: "No package manager detected" };
+    let selected: SelectedPackageUpgradeResolution;
+    try {
+      selected = resolveSelectedPackageUpgrades(systemId, packageNames);
+    } catch (error) {
+      return { success: false, output: String(error instanceof Error ? error.message : error) };
     }
 
-    const parser = getParser(pmName);
-    if (!parser) return { success: false, output: "Unknown package manager" };
-
-    const cmd = parser.getUpgradePackageCommand(packageName);
-    const sshManager = getSSHManager();
-    const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
-    let conn;
-    let reconnectionUsed = false;
-
-    const stepStartedAt = getCurrentTimestamp();
-    const histId = insertStartedEntry(systemId, "upgrade_package", pmName, cmd, stepStartedAt);
-    outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName, startedAt: stepStartedAt });
+    const now = getCurrentTimestamp();
+    setActiveOperation(systemId, {
+      type: "upgrade_package",
+      startedAt: now,
+      packageName: selected.packageNames[0],
+      packageNames: selected.packageNames,
+    });
+    await requestNotificationRuntimeSystemSync(systemId);
+    outputStream.resetStream(systemId);
 
     try {
-      conn = await sshManager.connect(system as Record<string, unknown>, {
-        systemId,
-      });
-      let streamedOutput = "";
-      const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
-        streamedOutput += chunk;
-        outputStream.publish(systemId, { type: "output", data: chunk, stream });
-      };
+      const groupedUpdates = new Map<string, string[]>();
+      for (const update of selected.updates) {
+        const packagesForManager = groupedUpdates.get(update.pkgManager) ?? [];
+        packagesForManager.push(update.packageName);
+        groupedUpdates.set(update.pkgManager, packagesForManager);
+      }
 
-      const result = await sshManager.runPersistentCommand(
-        conn,
-        cmd,
-        300,
-        sudoPassword,
-        onDataCb,
-      );
+      const sshManager = getSSHManager();
+      const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
+      const selectedPackagesJson = JSON.stringify(selected.packageNames);
+      const allCommands: string[] = [];
+      const allOutputs: string[] = [];
+      let overallSuccess = true;
+      let reconnectionUsed = false;
+      let conn;
 
-      let { stdout, stderr, exitCode } = result;
-
-      if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
-        try { sshManager.disconnect(conn); } catch {}
-        conn = null;
-
-        // For single package, pre-upgrade count is 1
-        const reconResult = await attemptReconnection(
+      try {
+        conn = await sshManager.connect(system as Record<string, unknown>, {
           systemId,
-          result.persistentInfo,
-          1,
-          onDataCb,
-        );
+        });
 
-        stdout = reconResult.stdout || stdout;
-        stderr = reconResult.stderr;
-        exitCode = reconResult.exitCode;
-        reconnectionUsed = true;
-      }
+        for (const [pmName, packagesForManager] of groupedUpdates) {
+          const parser = getParser(pmName);
+          if (!parser) {
+            overallSuccess = false;
+            allOutputs.push(`[${pmName}] Unknown package manager`);
+            continue;
+          }
 
-      const success = exitCode === 0;
-      const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
-      const stepCompletedAt = getCurrentTimestamp();
-      finishEntry(histId, histStatus, {
-        packageCount: 1,
-        packages: JSON.stringify([packageName]),
-        steps: createSingleStepHistory({
-          label: null,
-          pkgManager: pmName,
-          command: cmd,
-          output: streamedOutput || stdout || stderr,
-          error: success ? null : stderr || stdout || streamedOutput,
-          status: histStatus,
-          startedAt: stepStartedAt,
-          completedAt: stepCompletedAt,
-        }),
-        output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-        error: success ? undefined : (stderr || stdout).slice(0, 2000),
-      });
+          const cmd = parser.getUpgradePackagesCommand(packagesForManager);
+          allCommands.push(cmd);
 
-      // Always re-check after upgrade to reflect the actual package state,
-      // even if the upgrade reported a non-zero exit code (e.g. flatpak in
-      // Docker reports exit 1 due to cross-device hardlink errors despite the
-      // update succeeding).
-      if (conn) {
-        sshManager.disconnect(conn);
-        conn = null;
-      }
-      if (!reconnectionUsed) {
-        outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-        await checkUpdatesUnlocked(systemId, true);
-      }
-      syncSystemNotificationHash(systemId);
+          const stepStartedAt = getCurrentTimestamp();
+          const histId = insertStartedEntry(systemId, "upgrade_package", pmName, cmd, stepStartedAt);
+          outputStream.publish(systemId, {
+            type: "started",
+            command: cmd,
+            pkgManager: pmName,
+            startedAt: stepStartedAt,
+          });
 
-      outputStream.publish(systemId, { type: "done", success, completedAt: getCurrentTimestamp() });
-      return { success, output: success ? stdout : stderr || stdout, warning: reconnectionUsed && success };
-    } catch (e) {
-      finishEntry(histId, "failed", {
-        steps: createSingleStepHistory({
-          label: null,
-          pkgManager: pmName,
-          command: cmd,
-          output: null,
+          let streamedOutput = "";
+          const onDataCb = (chunk: string, stream: "stdout" | "stderr") => {
+            streamedOutput += chunk;
+            outputStream.publish(systemId, { type: "output", data: chunk, stream });
+          };
+
+          const result = await sshManager.runPersistentCommand(
+            conn!,
+            cmd,
+            3600,
+            sudoPassword,
+            onDataCb,
+          );
+
+          let { stdout, stderr, exitCode } = result;
+
+          if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+            try { sshManager.disconnect(conn!); } catch {}
+            conn = null;
+
+            const reconResult = await attemptReconnection(
+              systemId,
+              result.persistentInfo,
+              selected.packageNames.length,
+              onDataCb,
+            );
+
+            stdout = reconResult.stdout || stdout;
+            stderr = reconResult.stderr;
+            exitCode = reconResult.exitCode;
+            reconnectionUsed = true;
+          }
+
+          const success = exitCode === 0;
+          if (!success) overallSuccess = false;
+          const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
+          const stepCompletedAt = getCurrentTimestamp();
+          const combinedOutput = streamedOutput || stdout || stderr;
+          finishEntry(histId, histStatus, {
+            packageCount: selected.packageNames.length,
+            packages: selectedPackagesJson,
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: pmName,
+              command: cmd,
+              output: combinedOutput,
+              error: success ? null : stderr || stdout || combinedOutput,
+              status: histStatus,
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }),
+            output: stdout.slice(0, STEP_OUTPUT_LIMIT),
+            error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          });
+          allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
+
+          if (reconnectionUsed) break;
+        }
+
+        if (conn) {
+          sshManager.disconnect(conn);
+          conn = null;
+        }
+
+        if (!reconnectionUsed) {
+          outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
+          await checkUpdatesUnlocked(systemId, true);
+        }
+
+        syncSystemNotificationHash(systemId);
+
+        const combinedOutput = allOutputs.join("\n\n");
+        outputStream.publish(systemId, {
+          type: "done",
+          success: overallSuccess,
+          completedAt: getCurrentTimestamp(),
+        });
+        return {
+          success: overallSuccess,
+          output: combinedOutput,
+          warning: reconnectionUsed && overallSuccess,
+        };
+      } catch (e) {
+        logHistory(systemId, "upgrade_package", Array.from(groupedUpdates.keys()).join(","), "failed", {
+          packageCount: selected.packageNames.length,
+          packages: selectedPackagesJson,
+          command: allCommands.join(" && "),
+          steps: allCommands.length
+            ? createSingleStepHistory({
+                label: null,
+                pkgManager: Array.from(groupedUpdates.keys())[0] || "unknown",
+                command: allCommands[allCommands.length - 1] || allCommands[0],
+                output: null,
+                error: String(e),
+                status: "failed",
+              })
+            : undefined,
           error: String(e),
-          status: "failed",
-        }),
-        error: String(e),
-      });
-      outputStream.publish(systemId, { type: "error", message: String(e) });
-      outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-      return { success: false, output: String(e) };
-    } finally {
-      if (conn) sshManager.disconnect(conn);
-    }
+        });
+        outputStream.publish(systemId, { type: "error", message: String(e) });
+        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+        return { success: false, output: String(e) };
+      } finally {
+        if (conn) sshManager.disconnect(conn);
+      }
     } finally {
       clearActiveOperation(systemId);
       await requestNotificationRuntimeSystemSync(systemId);
