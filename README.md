@@ -192,6 +192,7 @@ services:
       - dashboard_data:/data
     environment:
       - LUDASH_ENCRYPTION_KEY=${LUDASH_ENCRYPTION_KEY}
+      - TZ=Europe/Berlin
       # Optional: use Docker secrets instead of direct env vars
       # - LUDASH_ENCRYPTION_KEY_FILE=/run/secrets/ludash_encryption_key
       # - LUDASH_SECRET_KEY_FILE=/run/secrets/ludash_secret_key
@@ -209,6 +210,8 @@ volumes:
 The dashboard will be available at `http://localhost:3001`. Data is persisted in a Docker volume.
 
 Set `LUDASH_BASE_URL` in all deployments. Use the external URL when the dashboard is accessed through a DNS name or reverse proxy.
+
+To use a local timezone instead of UTC, set the standard Docker `TZ` environment variable, for example `TZ=Europe/Berlin`. Notification scheduling follows the container timezone.
 
 If you prefer Docker secrets with Compose, add a `secrets:` block and set `LUDASH_ENCRYPTION_KEY_FILE` instead of `LUDASH_ENCRYPTION_KEY`.
 
@@ -257,6 +260,7 @@ cd docker
 # Generate your encryption key (required)
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
 export LUDASH_BASE_URL=http://localhost:3001
+export TZ=Europe/Berlin
 
 # Start the container
 docker compose up -d
@@ -294,6 +298,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `LUDASH_BASE_URL` | No | `http://localhost:3001` | Recommended to always set. Public URL used for WebAuthn/OIDC and Home Assistant URLs such as `entity_picture`/`origin.url`. Set it to the URL users and integrations actually use |
 | `LUDASH_TRUST_PROXY` | No | `false` | Set to `true` behind a reverse proxy so `X-Forwarded-*` headers are trusted. Recommended whenever the public URL is provided by a proxy |
+| `TZ` | No | `UTC` | Standard container timezone used by Docker and Node.js. Set it to a value like `Europe/Berlin` if you want the UI and notification times to use a specific timezone |
 | `LUDASH_LOG_LEVEL` | No | `info` | Server log level: `debug`, `info`, `warn`, or `error`. Routine per-attempt SSH and scheduler refresh logs are only shown at `debug` |
 | `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are reused before re-checking; `0` disables cache reuse |
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
