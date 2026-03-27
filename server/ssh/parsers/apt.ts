@@ -1,5 +1,5 @@
 import type { CheckCommandResult, PackageParser, ParsedUpdate } from "./types";
-import { sudo, validatePackageName } from "./types";
+import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { AptPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: curl/jammy-updates 7.81.0-1ubuntu1.18 amd64 [upgradable from: 7.81.0-1ubuntu1.16]
@@ -115,6 +115,15 @@ export const aptParser: PackageParser = {
     return (
       "export DEBIAN_FRONTEND=noninteractive; " +
       sudo(`apt-get ${APT_LOCK_WAIT} install --only-upgrade -y ${safePkg}`) +
+      " 2>&1"
+    );
+  },
+
+  getUpgradePackagesCommand(pkgs) {
+    const safePkgs = validatePackageNames(pkgs).join(" ");
+    return (
+      "export DEBIAN_FRONTEND=noninteractive; " +
+      sudo(`apt-get ${APT_LOCK_WAIT} install --only-upgrade -y ${safePkgs}`) +
       " 2>&1"
     );
   },

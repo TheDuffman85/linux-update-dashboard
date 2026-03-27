@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo, validatePackageName } from "./types";
+import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { DnfPackageManagerConfig, YumPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: curl.x86_64    7.76.1-26.el9_3.3    baseos
@@ -176,6 +176,11 @@ export const dnfParser: PackageParser = {
   getUpgradePackageCommand(pkg) {
     const safePkg = validatePackageName(pkg);
     return sudo(`dnf upgrade -y ${safePkg}`) + " 2>&1";
+  },
+
+  getUpgradePackagesCommand(pkgs) {
+    const safePkgs = validatePackageNames(pkgs).join(" ");
+    return sudo(`dnf upgrade -y ${safePkgs}`) + " 2>&1";
   },
 };
 

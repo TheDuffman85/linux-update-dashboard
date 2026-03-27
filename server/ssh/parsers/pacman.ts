@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo, validatePackageName } from "./types";
+import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { PacmanPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: linux 6.7.4.arch1-1 -> 6.7.5.arch1-1
@@ -72,5 +72,10 @@ export const pacmanParser: PackageParser = {
   getUpgradePackageCommand(pkg) {
     const safePkg = validatePackageName(pkg);
     return sudo(`pacman -S --noconfirm ${safePkg}`) + " 2>&1";
+  },
+
+  getUpgradePackagesCommand(pkgs) {
+    const safePkgs = validatePackageNames(pkgs).join(" ");
+    return sudo(`pacman -S --noconfirm ${safePkgs}`) + " 2>&1";
   },
 };

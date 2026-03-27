@@ -5,11 +5,12 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { useUpgradeAll, useFullUpgradeAll, useUpgradePackage } from "../lib/updates";
+import { useUpgradeAll, useFullUpgradeAll, useUpgradePackage, useUpgradePackages } from "../lib/updates";
 
 interface UpgradeEntry {
   type: "all" | "full_all" | "package";
   packageName?: string;
+  packageNames?: string[];
   addedAt: number;
 }
 
@@ -27,6 +28,11 @@ interface UpgradeContextType {
     packageName: string,
     callbacks?: UpgradeCallbacks
   ) => void;
+  upgradePackages: (
+    systemId: number,
+    packageNames: string[],
+    callbacks?: UpgradeCallbacks
+  ) => void;
   isUpgrading: (systemId: number) => boolean;
   removeUpgrading: (systemId: number) => void;
   upgradingCount: number;
@@ -42,6 +48,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
   const upgradeAllMutation = useUpgradeAll();
   const fullUpgradeAllMutation = useFullUpgradeAll();
   const upgradePackageMutation = useUpgradePackage();
+  const upgradePackagesMutation = useUpgradePackages();
 
   const addUpgrading = useCallback(
     (systemId: number, entry: UpgradeEntry) => {
@@ -94,7 +101,12 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
 
   const upgradePackage = useCallback(
     (systemId: number, packageName: string, callbacks?: UpgradeCallbacks) => {
-      addUpgrading(systemId, { type: "package", packageName, addedAt: Date.now() });
+      addUpgrading(systemId, {
+        type: "package",
+        packageName,
+        packageNames: [packageName],
+        addedAt: Date.now(),
+      });
       upgradePackageMutation.mutate(
         { systemId, packageName },
         {
@@ -112,6 +124,32 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
     [upgradePackageMutation, addUpgrading, removeUpgrading]
   );
 
+  const upgradePackages = useCallback(
+    (systemId: number, packageNames: string[], callbacks?: UpgradeCallbacks) => {
+      const normalizedPackageNames = Array.from(new Set(packageNames));
+      addUpgrading(systemId, {
+        type: "package",
+        packageName: normalizedPackageNames[0],
+        packageNames: normalizedPackageNames,
+        addedAt: Date.now(),
+      });
+      upgradePackagesMutation.mutate(
+        { systemId, packageNames: normalizedPackageNames },
+        {
+          onSuccess: (data) => {
+            removeUpgrading(systemId);
+            callbacks?.onSuccess?.(data);
+          },
+          onError: (err) => {
+            removeUpgrading(systemId);
+            callbacks?.onError?.(err);
+          },
+        }
+      );
+    },
+    [upgradePackagesMutation, addUpgrading, removeUpgrading]
+  );
+
   const isUpgrading = useCallback(
     (systemId: number) => upgradingSystems.has(systemId),
     [upgradingSystems]
@@ -124,6 +162,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
         upgradeAll,
         fullUpgradeAll,
         upgradePackage,
+        upgradePackages,
         isUpgrading,
         removeUpgrading,
         upgradingCount: upgradingSystems.size,

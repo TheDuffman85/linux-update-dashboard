@@ -1,5 +1,5 @@
 import type { PackageParser } from "./types";
-import { sudo, validatePackageName } from "./types";
+import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { YumPackageManagerConfig } from "../../package-manager-configs";
 import { dnfParser, getDnfLikeCheckErrorMessage, getYumCheckCommands } from "./dnf";
 
@@ -35,5 +35,10 @@ export const yumParser: PackageParser = {
   getUpgradePackageCommand(pkg) {
     const safePkg = validatePackageName(pkg);
     return sudo(`yum update -y ${safePkg}`) + " 2>&1";
+  },
+
+  getUpgradePackagesCommand(pkgs) {
+    const safePkgs = validatePackageNames(pkgs).join(" ");
+    return sudo(`yum update -y ${safePkgs}`) + " 2>&1";
   },
 };

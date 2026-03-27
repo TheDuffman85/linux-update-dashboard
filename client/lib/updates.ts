@@ -71,6 +71,7 @@ export function useFullUpgradeAll() {
 }
 
 export function useUpgradePackage() {
+  const upgradePackages = useUpgradePackages();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({
@@ -80,15 +81,46 @@ export function useUpgradePackage() {
       systemId: number;
       packageName: string;
     }) => {
-      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
-        `/systems/${systemId}/upgrade/${packageName}`,
-        { method: "POST" }
-      );
-      return pollJob<{ status: string; package: string; output: string }>(jobId, 3000);
+      const result = await upgradePackages.mutateAsync({
+        systemId,
+        packageNames: [packageName],
+      });
+      return {
+        ...result,
+        package: packageName,
+      };
     },
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useUpgradePackages() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      systemId,
+      packageNames,
+    }: {
+      systemId: number;
+      packageNames: string[];
+    }) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
+        `/systems/${systemId}/upgrade-packages`,
+        {
+          method: "POST",
+          body: JSON.stringify({ packageNames }),
+        }
+      );
+      return pollJob<{ status: string; packageCount: number; packages: string[]; output: string }>(jobId, 3000);
+    },
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

@@ -36,28 +36,19 @@ function InfoCard({ title, items }: { title: string; items: { label: string; val
 
 function UpdatesTable({
   updates,
-  systemId,
-  busy,
   onHide,
+  onTogglePackage,
+  selectedPackageNames,
+  selectionDisabled,
   hideBusy,
 }: {
   updates: CachedUpdate[];
-  systemId: number;
-  busy?: boolean;
   onHide: (update: CachedUpdate) => void;
+  onTogglePackage: (packageName: string) => void;
+  selectedPackageNames: string[];
+  selectionDisabled?: boolean;
   hideBusy?: boolean;
 }) {
-  const { upgradePackage, isUpgrading } = useUpgrade();
-  const { addToast } = useToast();
-  const upgrading = isUpgrading(systemId) || busy;
-
-  const handleUpgrade = (packageName: string) => {
-    upgradePackage(systemId, packageName, {
-      onSuccess: () => addToast(`${packageName} upgraded`, "success"),
-      onError: (err) => addToast(err.message, "danger"),
-    });
-  };
-
   if (!updates.length) {
     return (
       <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
@@ -71,6 +62,7 @@ function UpdatesTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
+            <th className="px-2 sm:px-4 py-2 w-10" />
             <th className="px-2 sm:px-4 py-2">Package</th>
             <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">Current</th>
             <th className="px-2 sm:px-4 py-2">Available</th>
@@ -82,6 +74,16 @@ function UpdatesTable({
         <tbody>
           {updates.map((u) => (
             <tr key={u.id} className="border-b border-border last:border-0">
+              <td className="px-2 sm:px-4 py-2 align-top">
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${u.packageName}`}
+                  checked={selectedPackageNames.includes(u.packageName)}
+                  disabled={selectionDisabled}
+                  onChange={() => onTogglePackage(u.packageName)}
+                  className="mt-0.5 rounded border-border text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                />
+              </td>
               <td className="px-2 sm:px-4 py-2 break-all">
                 {u.packageName}
                 {u.isSecurity ? (
@@ -107,7 +109,7 @@ function UpdatesTable({
                 <div className="inline-flex items-center gap-1">
                   <button
                     onClick={() => onHide(u)}
-                    disabled={upgrading || hideBusy}
+                    disabled={selectionDisabled || hideBusy}
                     className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors disabled:opacity-50"
                     title={`Hide ${u.packageName} ${u.newVersion || ""}`.trim()}
                   >
@@ -115,16 +117,6 @@ function UpdatesTable({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.584 10.587A2 2 0 0013.412 13.4" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.363 5.365A9.466 9.466 0 0112 5c4.478 0 8.268 2.943 9.543 7a9.97 9.97 0 01-4.132 5.411M6.228 6.228A9.965 9.965 0 002.458 12c1.274 4.057 5.064 7 9.542 7a9.46 9.46 0 005.057-1.47" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => handleUpgrade(u.packageName)}
-                    disabled={upgrading}
-                    className="p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 transition-colors disabled:opacity-50"
-                    title={`Upgrade ${u.packageName}`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                     </svg>
                   </button>
                 </div>
@@ -298,7 +290,7 @@ function getActivityDisplayKey(input: {
   return `activity:${input.action}:pending`;
 }
 
-function getActivityTitle(
+export function getActivityTitle(
   action: string,
   packagesList: string[],
   packageName?: string,
@@ -308,6 +300,55 @@ function getActivityTitle(
   if (action === "full_upgrade_all") return "Full upgraded all packages";
   if (action === "reboot") return "Rebooted system";
   return `Upgraded ${packagesList.join(", ") || packageName || "package"}`;
+}
+
+function getActiveOperationPackageNames(activeOp: ActiveOperation | null | undefined): string[] {
+  if (activeOp?.packageNames?.length) return activeOp.packageNames;
+  if (activeOp?.packageName) return [activeOp.packageName];
+  return [];
+}
+
+export function getSelectablePackageNames(updates: Array<Pick<CachedUpdate, "packageName">>): string[] {
+  return Array.from(new Set(updates.map((update) => update.packageName)));
+}
+
+export function normalizeSelectedPackageNames(
+  selectedPackageNames: string[],
+  updates: Array<Pick<CachedUpdate, "packageName">>,
+): string[] {
+  const visiblePackageNames = new Set(getSelectablePackageNames(updates));
+  return Array.from(new Set(selectedPackageNames)).filter((packageName) => visiblePackageNames.has(packageName));
+}
+
+export function toggleSelectedPackageName(selectedPackageNames: string[], packageName: string): string[] {
+  const next = new Set(selectedPackageNames);
+  if (next.has(packageName)) {
+    next.delete(packageName);
+  } else {
+    next.add(packageName);
+  }
+  return Array.from(next);
+}
+
+export function getPackageSelectionState(
+  selectedPackageNames: string[],
+  updates: Array<Pick<CachedUpdate, "packageName">>,
+  disabled = false,
+) {
+  const visiblePackageNames = getSelectablePackageNames(updates);
+  const normalizedSelectedPackageNames = normalizeSelectedPackageNames(selectedPackageNames, updates);
+  const selectedCount = normalizedSelectedPackageNames.length;
+  const totalCount = visiblePackageNames.length;
+
+  return {
+    visiblePackageNames,
+    selectedPackageNames: normalizedSelectedPackageNames,
+    selectedCount,
+    totalCount,
+    allSelected: totalCount > 0 && selectedCount === totalCount,
+    indeterminate: selectedCount > 0 && selectedCount < totalCount,
+    selectionDisabled: disabled,
+  };
 }
 
 function isSshSafeActivity(action: string): boolean {
@@ -340,6 +381,7 @@ type ActivitySession = {
   activeStartedAt: string | null;
   firstCommandStartedAt: string | null;
   packageName?: string;
+  packageNames?: string[];
 };
 
 function getFirstStartedMessage(
@@ -413,6 +455,10 @@ export function resolveCurrentActivitySession({
     startedEntry?.startedAt ??
     previousSession?.firstCommandStartedAt ??
     null;
+  const observedPackageNames =
+    getActiveOperationPackageNames(activeOp).length > 0
+      ? getActiveOperationPackageNames(activeOp)
+      : previousSession?.packageNames ?? [];
   const topHistoryMatchesPrevious =
     !!topHistory &&
     !!previousSession &&
@@ -444,7 +490,8 @@ export function resolveCurrentActivitySession({
         ...previousSession,
         activeStartedAt: previousSession.activeStartedAt ?? observedActiveStartedAt,
         firstCommandStartedAt: previousSession.firstCommandStartedAt ?? observedCommandStartedAt,
-        packageName: activeOp?.packageName ?? previousSession.packageName,
+        packageName: observedPackageNames[0] ?? previousSession.packageName,
+        packageNames: observedPackageNames.length > 0 ? observedPackageNames : previousSession.packageNames,
       };
     }
   }
@@ -454,7 +501,8 @@ export function resolveCurrentActivitySession({
     action: observedAction,
     activeStartedAt: observedActiveStartedAt,
     firstCommandStartedAt: observedCommandStartedAt,
-    packageName: activeOp?.packageName,
+    packageName: observedPackageNames[0],
+    packageNames: observedPackageNames,
   };
 }
 
@@ -462,7 +510,9 @@ function createHistoryDisplayRow(
   historyEntry: HistoryEntry,
   liveSteps: ActivityStep[] = [],
   keyOverride?: string,
+  packagesListOverride?: string[],
 ): ActivityDisplayRow {
+  const packagesList = packagesListOverride?.length ? packagesListOverride : historyEntry.packagesList;
   return {
     key: keyOverride ?? getActivityDisplayKey({
       action: historyEntry.action,
@@ -473,7 +523,7 @@ function createHistoryDisplayRow(
     action: historyEntry.action,
     pkgManager: historyEntry.pkgManager,
     packageCount: historyEntry.packageCount,
-    packagesList: historyEntry.packagesList,
+    packagesList,
     command: historyEntry.command,
     steps: historyEntry.steps,
     output: historyEntry.output,
@@ -505,6 +555,9 @@ export function buildActivityDisplayRows({
   const startedEntry = history.find((entry) => entry.status === "started");
   const liveSteps = deriveLiveActivitySteps(messages);
   const firstStartedMessage = getFirstStartedMessage(messages);
+  const livePackageNames = getActiveOperationPackageNames(activeOp).length > 0
+    ? getActiveOperationPackageNames(activeOp)
+    : currentSession?.packageNames ?? [];
   const liveAction =
     startedEntry?.action ??
     (activeOp ? getActionForActiveOperation(activeOp.type) : currentSession?.action ?? null);
@@ -535,6 +588,9 @@ export function buildActivityDisplayRows({
           currentHistoryEntry,
           currentHistoryEntry.status === "started" ? liveSteps : [],
           currentSession?.key,
+          currentHistoryEntry.status === "started" && currentHistoryEntry.packagesList.length === 0
+            ? livePackageNames
+            : undefined,
         ),
       );
     } else if (liveAction) {
@@ -544,7 +600,7 @@ export function buildActivityDisplayRows({
         action: liveAction,
         pkgManager: firstStartedMessage?.pkgManager ?? "system",
         packageCount: null,
-        packagesList: [],
+        packagesList: livePackageNames,
         command: firstStartedMessage?.command ?? null,
         steps: null,
         output: null,
@@ -555,7 +611,7 @@ export function buildActivityDisplayRows({
         isRunning: true,
         useLiveDetails: true,
         liveSteps,
-        packageName: activeOp?.packageName ?? currentSession?.packageName,
+        packageName: livePackageNames[0] ?? currentSession?.packageName,
       });
     }
   }
@@ -1035,15 +1091,18 @@ export default function SystemDetail() {
   const checkUpdates = useCheckUpdates();
   const hideUpdate = useHideUpdate();
   const unhideUpdate = useUnhideUpdate();
-  const { upgradeAll, fullUpgradeAll, isUpgrading } = useUpgrade();
+  const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
   const rebootSystem = useRebootSystem();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
+  const [showUpgradeSelectedConfirm, setShowUpgradeSelectedConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
+  const [selectedPackageNames, setSelectedPackageNames] = useState<string[]>([]);
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const updatesSignatureRef = useRef<string | null>(null);
   const commandOutput = useCommandOutput(systemId);
   const qc = useQueryClient();
 
@@ -1072,6 +1131,23 @@ export default function SystemDetail() {
   const checking = checkUpdates.isPending || activeOp?.type === "check";
   const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "full_upgrade_all" || activeOp?.type === "upgrade_package";
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
+  const updatesSignature = data?.updates
+    .map((update) => `${update.pkgManager}:${update.packageName}:${update.newVersion || ""}`)
+    .join("|") ?? "";
+
+  useEffect(() => {
+    if (!data) return;
+
+    if (updatesSignatureRef.current === null) {
+      updatesSignatureRef.current = updatesSignature;
+      return;
+    }
+
+    if (updatesSignatureRef.current !== updatesSignature) {
+      setSelectedPackageNames([]);
+      updatesSignatureRef.current = updatesSignature;
+    }
+  }, [data, updatesSignature]);
 
   if (isLoading || !data) {
     return (
@@ -1084,6 +1160,9 @@ export default function SystemDetail() {
   }
 
   const { system, updates, hiddenUpdates, history } = data;
+  const selectionBusy = upgrading || checking || rebooting || hideUpdate.isPending || unhideUpdate.isPending;
+  const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
+  const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
@@ -1095,6 +1174,7 @@ export default function SystemDetail() {
         : "bg-slate-400";
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton;
+  const hasSelectedPackages = packageSelectionState.selectedCount > 0;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
     .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
   const upgradeBehaviorNotes = getUpgradeBehaviorNotes(activeManagers, system.pkgManagerConfigs);
@@ -1140,6 +1220,29 @@ export default function SystemDetail() {
           d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleUpgradeSelected = () => {
+    if (selectedVisiblePackageNames.length === 0) return;
+
+    const selectedNames = selectedVisiblePackageNames;
+    setShowUpgradeSelectedConfirm(false);
+    setSelectedPackageNames([]);
+    upgradePackages(systemId, selectedNames, {
+      onSuccess: (d: any) =>
+        addToast(
+          d.status === "success"
+            ? `Selected update${selectedNames.length !== 1 ? "s" : ""} complete`
+            : d.status === "warning"
+              ? `Selected update${selectedNames.length !== 1 ? "s" : ""} likely complete (inferred after reboot)`
+              : `Selected update${selectedNames.length !== 1 ? "s" : ""} failed`,
+          d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
+        ),
+      onError: (err: Error) => {
+        setSelectedPackageNames(selectedNames);
+        addToast(err.message, "danger");
+      },
     });
   };
 
@@ -1191,6 +1294,10 @@ export default function SystemDetail() {
     );
   };
 
+  const handleTogglePackageSelection = (packageName: string) => {
+    setSelectedPackageNames((current) => toggleSelectedPackageName(current, packageName));
+  };
+
   return (
     <Layout
       title={
@@ -1227,7 +1334,22 @@ export default function SystemDetail() {
             ) : "Refresh"}
           </button>
           {showUpgradeActions && (
-            system.supportsFullUpgrade ? (
+            hasSelectedPackages ? (
+              <button
+                onClick={() => setShowUpgradeSelectedConfirm(true)}
+                disabled={upgrading || checking}
+                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {upgrading ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="spinner spinner-sm" />
+                    Upgrading...
+                  </span>
+                ) : (
+                  `Upgrade Selected (${packageSelectionState.selectedCount})`
+                )}
+              </button>
+            ) : system.supportsFullUpgrade ? (
               showUpgradeAllButton ? (
                 <div className="relative" ref={dropdownRef}>
                   <div className="flex">
@@ -1402,8 +1524,9 @@ export default function SystemDetail() {
         {updates.length > 0 ? (
           <UpdatesTable
             updates={updates}
-            systemId={systemId}
-            busy={upgrading || checking}
+            onTogglePackage={handleTogglePackageSelection}
+            selectedPackageNames={selectedVisiblePackageNames}
+            selectionDisabled={packageSelectionState.selectionDisabled}
             hideBusy={hideUpdate.isPending}
             onHide={setPendingHideUpdate}
           />
@@ -1443,6 +1566,17 @@ export default function SystemDetail() {
         title="Upgrade All Packages"
         message={upgradeConfirmMessage}
         confirmLabel="Upgrade All"
+        loading={upgrading}
+      />
+      <ConfirmDialog
+        open={showUpgradeSelectedConfirm}
+        onClose={() => setShowUpgradeSelectedConfirm(false)}
+        onConfirm={handleUpgradeSelected}
+        title="Upgrade Selected Packages"
+        message={
+          `Apply ${packageSelectionState.selectedCount} selected update${packageSelectionState.selectedCount !== 1 ? "s" : ""} to ${system.name}?`
+        }
+        confirmLabel={`Upgrade Selected (${packageSelectionState.selectedCount})`}
         loading={upgrading}
       />
       <ConfirmDialog

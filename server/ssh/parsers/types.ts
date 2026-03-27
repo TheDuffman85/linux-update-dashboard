@@ -34,6 +34,7 @@ export interface PackageParser {
   getCheckCommandLabels?(config?: PackageManagerConfigValue): string[];
   getUpgradeAllCommand(config?: PackageManagerConfigValue): string;
   getFullUpgradeAllCommand(config?: PackageManagerConfigValue): string | null;
+  getUpgradePackagesCommand(pkgs: string[]): string;
   getUpgradePackageCommand(pkg: string): string;
 }
 
@@ -49,6 +50,13 @@ export function validatePackageName(pkg: string): string {
     throw new Error(`Invalid package name: ${pkg.slice(0, 80)}`);
   }
   return pkg;
+}
+
+export function validatePackageNames(pkgs: string[]): string[] {
+  if (!Array.isArray(pkgs)) {
+    throw new Error("Package names must be an array");
+  }
+  return pkgs.map((pkg) => validatePackageName(pkg));
 }
 
 /**

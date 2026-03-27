@@ -1,5 +1,5 @@
 import type { PackageParser, ParsedUpdate } from "./types";
-import { sudo, validatePackageName } from "./types";
+import { sudo, validatePackageName, validatePackageNames } from "./types";
 
 const INSTALLED_MARKER = "===INSTALLED===";
 const UPDATES_MARKER = "===UPDATES===";
@@ -82,5 +82,10 @@ export const snapParser: PackageParser = {
   getUpgradePackageCommand(pkg) {
     const safePkg = validatePackageName(pkg);
     return sudo(`snap refresh ${safePkg}`) + " 2>&1";
+  },
+
+  getUpgradePackagesCommand(pkgs) {
+    const safePkgs = validatePackageNames(pkgs).join(" ");
+    return sudo(`snap refresh ${safePkgs}`) + " 2>&1";
   },
 };

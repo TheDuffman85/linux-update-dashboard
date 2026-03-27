@@ -7,6 +7,7 @@ export interface ActiveOperation {
   type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
   startedAt: string;
   packageName?: string;
+  packageNames?: string[];
 }
 
 export interface LastCheckSummary {
