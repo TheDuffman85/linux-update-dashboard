@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 let envSnapshot: NodeJS.ProcessEnv;
 const originalFetch = globalThis.fetch;
 
 async function importFreshAppUpdateService() {
-  const cacheBust = `${Date.now()}-${Math.random()}`;
-  return await import(`../../server/services/app-update-service.ts?test=${cacheBust}`);
+  vi.resetModules();
+  return await import("../../server/services/app-update-service.ts");
 }
 
 beforeEach(() => {

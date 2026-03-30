@@ -1,13 +1,17 @@
-FROM oven/bun:1.3.11 AS base
+FROM node:24.14.1-trixie-slim AS base
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade libc6 libc-bin \
     && rm -rf /var/lib/apt/lists/*
+RUN npm install --global pnpm@10.33.0
 
 # Install dependencies
 FROM base AS deps
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Build client
 FROM deps AS build
@@ -26,7 +30,8 @@ ENV VITE_APP_REPOSITORY=$APP_REPOSITORY
 ENV VITE_APP_REPO_URL=$APP_REPO_URL
 
 COPY . .
-RUN bun run build
+RUN pnpm run build \
+    && pnpm prune --prod
 
 # Production image
 FROM base AS production
@@ -37,12 +42,9 @@ ARG APP_BRANCH=""
 ARG APP_REPOSITORY=""
 ARG APP_REPO_URL=""
 
-COPY --from=deps /app/node_modules ./node_modules
-RUN rm -rf node_modules/esbuild node_modules/@esbuild node_modules/@esbuild-kit \
-    node_modules/vite node_modules/@vitejs
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/assets ./assets
-COPY --from=build /app/server ./server
 COPY --from=build /app/package.json ./
 COPY docker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh && mkdir -p /data
@@ -56,7 +58,7 @@ ENV LUDASH_APP_REPO_URL=$APP_REPO_URL
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD bun -e "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["./entrypoint.sh"]
-CMD ["bun", "run", "server/index.ts"]
+CMD ["node", "dist/server/index.js"]

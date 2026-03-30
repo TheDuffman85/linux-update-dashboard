@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { __testing as requestSecurityTesting, rememberTrustedPublicOrigin } from "../../server/request-security";
 import { ntfyProvider } from "../../server/services/notifications/ntfy";
 

@@ -128,6 +128,28 @@ export interface HistoryEntry {
   completedAt: string | null;
 }
 
+export interface PotentialCommandEntry {
+  id: string;
+  category: "detection" | "system_info" | "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
+  label: string;
+  purpose: string;
+  pkgManager: string | null;
+  command: string;
+}
+
+export interface CommandReference {
+  exact: PotentialCommandEntry[];
+  sudoers: PotentialCommandEntry[];
+}
+
+export interface SystemDetailResponse {
+  system: System;
+  updates: CachedUpdate[];
+  hiddenUpdates: HiddenUpdate[];
+  history: HistoryEntry[];
+  commandReference: CommandReference;
+}
+
 export function useSystems() {
   return useQuery({
     queryKey: ["systems"],
@@ -152,16 +174,12 @@ export function useVisibleSystems() {
   });
 }
 
-export function useSystem(id: number) {
+export function useSystem(id: number, options?: { enabled?: boolean }) {
   const query = useQuery({
     queryKey: ["system", id],
+    enabled: options?.enabled ?? true,
     queryFn: () =>
-      apiFetch<{
-        system: System;
-        updates: CachedUpdate[];
-        hiddenUpdates: HiddenUpdate[];
-        history: HistoryEntry[];
-      }>(
+      apiFetch<SystemDetailResponse>(
         `/systems/${id}`
       ),
     refetchInterval: (query) => {

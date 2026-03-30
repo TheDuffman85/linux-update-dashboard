@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { randomBytes } from "crypto";
 import { join } from "path";
@@ -26,8 +26,8 @@ function resetLudashEnv(): void {
 }
 
 async function importFreshConfig() {
-  const cacheBust = `${Date.now()}-${Math.random()}`;
-  return await import(`../../server/config.ts?test=${cacheBust}`);
+  vi.resetModules();
+  return await import("../../server/config.ts");
 }
 
 beforeEach(() => {

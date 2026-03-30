@@ -12,7 +12,13 @@ import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
-import type { CachedUpdate, HiddenUpdate, HistoryEntry, ActiveOperation, ActivityStep } from "../lib/systems";
+import type {
+  CachedUpdate,
+  HiddenUpdate,
+  HistoryEntry,
+  ActiveOperation,
+  ActivityStep,
+} from "../lib/systems";
 import { deriveSystemUpdateState, getUpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";

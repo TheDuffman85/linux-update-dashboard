@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { deriveSystemUpdateState, getUpdatesPanelState } from "../../client/lib/system-status";
 import type { ActiveOperation, LastCheckSummary } from "../../client/lib/systems";
 

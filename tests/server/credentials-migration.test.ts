@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -98,7 +98,7 @@ describe("legacy credential migration", () => {
     `);
 
     const encryptor = getEncryptor();
-    sqlite.query(
+    sqlite.prepare(
       "INSERT INTO systems (name, hostname, port, auth_type, username, encrypted_password) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(
       "Primary",
@@ -108,7 +108,7 @@ describe("legacy credential migration", () => {
       "root",
       encryptor.encrypt("ssh-secret")
     );
-    sqlite.query(
+    sqlite.prepare(
       "INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(
       "Ops Email",
@@ -126,7 +126,7 @@ describe("legacy credential migration", () => {
         emailTo: "admin@example.com",
       })
     );
-    sqlite.query(
+    sqlite.prepare(
       "INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(
       "Ops ntfy",

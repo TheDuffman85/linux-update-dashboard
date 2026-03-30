@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { Client, utils, type ClientChannel } from "ssh2";
+import ssh2 from "ssh2";
 import type { CredentialEncryptor } from "../security";
 import { logger } from "../logger";
 import { sanitizeOutput } from "../utils/sanitize";
@@ -8,7 +8,7 @@ import {
   createSafeSshDebugHook,
   type SSHConnectContext,
 } from "./diagnostics";
-import type { PublicKeyAuthMethod } from "ssh2";
+import type { Client, ClientChannel, ConnectConfig, PublicKeyAuthMethod } from "ssh2";
 import {
   buildSshCertificateParsedKey,
   resolveSystemCredential,
@@ -18,6 +18,8 @@ import {
   getSystem,
 } from "../services/system-service";
 import type { ApprovedHostKeyInput } from "../services/system-connection-validation";
+
+const { Client: SshClient, utils } = ssh2;
 
 // Non-interactive SSH sessions often have a minimal PATH; force C locale so
 // package-manager output is always in English for reliable parsing.
@@ -524,7 +526,7 @@ export class SSHConnectionManager {
     const attemptId = randomUUID();
     const startedAt = Date.now();
     const meta = buildSSHAttemptLogMeta(hop, context);
-    const conn = new Client();
+    const conn = new SshClient();
     const connectConfig = this.buildConnectionConfig(hop);
     const approvedHostKey = this.findApprovedHostKey(hop, context);
     let hostKeyError: HostKeyVerificationError | null = null;

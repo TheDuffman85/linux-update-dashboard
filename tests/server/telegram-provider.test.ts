@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { initEncryptor } from "../../server/security";
 import { telegramProvider, resolveTelegramBotToken } from "../../server/services/notifications/telegram";
 import { __testing as requestSecurityTesting, rememberTrustedPublicOrigin } from "../../server/request-security";

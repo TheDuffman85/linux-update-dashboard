@@ -1,5 +1,5 @@
-import { Database } from "bun:sqlite";
-import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import BetterSqlite3 from "better-sqlite3";
+import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { eq, sql } from "drizzle-orm";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
@@ -11,8 +11,10 @@ import {
   serializePackageManagerConfigs,
 } from "../package-manager-configs";
 
-let _db: BunSQLiteDatabase<typeof schema> | null = null;
-let _sqlite: Database | null = null;
+type SqliteClient = BetterSqlite3.Database;
+
+let _db: BetterSQLite3Database<typeof schema> | null = null;
+let _sqlite: SqliteClient | null = null;
 const SYSTEMS_CONNECTION_UNIQUE_INDEX = "systems_connection_identity_idx";
 
 const DEFAULT_SETTINGS = [
@@ -68,10 +70,10 @@ const DEFAULT_SETTINGS = [
   },
 ];
 
-export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
+export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schema> {
   mkdirSync(dirname(dbPath), { recursive: true });
 
-  _sqlite = new Database(dbPath);
+  _sqlite = new BetterSqlite3(dbPath);
   _sqlite.exec("PRAGMA journal_mode=WAL");
   _sqlite.exec("PRAGMA foreign_keys=ON");
 
@@ -293,7 +295,7 @@ export function initDatabase(dbPath: string): BunSQLiteDatabase<typeof schema> {
     // Column already exists
   }
   const systemColumns = _sqlite
-    .query("PRAGMA table_info(systems)")
+    .prepare("PRAGMA table_info(systems)")
     .all() as Array<{ name?: string }>;
   const hasProxyJumpSystemId = systemColumns.some((column) => column.name === "proxy_jump_system_id");
   const hasHostKeyVerificationEnabled = systemColumns.some((column) => column.name === "host_key_verification_enabled");
@@ -661,7 +663,7 @@ function migrateSystemsTableShape(
   if (!_sqlite) return;
 
   const tableDefinition = _sqlite
-    .query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'systems'")
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'systems'")
     .get() as { sql?: string } | null;
   const hasLegacyConstraint =
     typeof tableDefinition?.sql === "string" &&
@@ -681,7 +683,7 @@ function migrateSystemsTableShape(
 }
 
 function rebuildSystemsTable(
-  sqlite: Database,
+  sqlite: SqliteClient,
   opts: {
     hasIgnoreKeptBackPackages: boolean;
     hasAutoHideKeptBackUpdates: boolean;
@@ -847,7 +849,7 @@ function rebuildSystemsTable(
   }
 }
 
-function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void {
+function migrateNotificationSettings(db: BetterSQLite3Database<typeof schema>): void {
   // Check if there are already rows in the notifications table
   const existing = db.run(sql`SELECT COUNT(*) as count FROM notifications`);
   // If notifications table already has data, skip migration
@@ -913,7 +915,7 @@ function migrateNotificationSettings(db: BunSQLiteDatabase<typeof schema>): void
   }
 }
 
-function migrateLegacyEmailNotificationConfigs(db: BunSQLiteDatabase<typeof schema>): void {
+function migrateLegacyEmailNotificationConfigs(db: BetterSQLite3Database<typeof schema>): void {
   const rows = db
     .select({ id: schema.notifications.id, config: schema.notifications.config })
     .from(schema.notifications)
@@ -963,7 +965,7 @@ function migrateLegacyEmailNotificationConfigs(db: BunSQLiteDatabase<typeof sche
   }
 }
 
-function migrateLegacyCredentials(db: BunSQLiteDatabase<typeof schema>): void {
+function migrateLegacyCredentials(db: BetterSQLite3Database<typeof schema>): void {
   const systemRows = db.select().from(schema.systems).all();
   for (const system of systemRows) {
     if (system.credentialId) continue;
@@ -1024,7 +1026,7 @@ function migrateCredentialsTable(): void {
   if (!_sqlite) return;
 
   const columns = _sqlite
-    .query("PRAGMA table_info(credentials)")
+    .prepare("PRAGMA table_info(credentials)")
     .all() as Array<{ name?: string }>;
 
   if (!columns.some((column) => column.name === "usage_scopes")) return;
@@ -1088,7 +1090,7 @@ function deliveredUpdateSeedKey(
 }
 
 function buildVisibleDeliveredUpdatesBySystem(
-  db: BunSQLiteDatabase<typeof schema>,
+  db: BetterSQLite3Database<typeof schema>,
 ): Map<number, DeliveredUpdateSeed[]> {
   const visibleSystems = db
     .select({ id: schema.systems.id })
@@ -1169,8 +1171,10 @@ function stripPendingUpdateEntries(raw: string): string | null {
 }
 
 function migrateNotificationUpdateDedupeState(
-  db: BunSQLiteDatabase<typeof schema>,
+  db: BetterSQLite3Database<typeof schema>,
 ): void {
+  if (!_sqlite) return;
+
   const status = db
     .select({ value: schema.settings.value })
     .from(schema.settings)
@@ -1181,22 +1185,38 @@ function migrateNotificationUpdateDedupeState(
 
   const visibleUpdatesBySystem = buildVisibleDeliveredUpdatesBySystem(db);
   const visibleSystemIds = new Set(visibleUpdatesBySystem.keys());
-  const notificationRows = db
-    .select({
-      id: schema.notifications.id,
-      notifyOn: schema.notifications.notifyOn,
-      systemIds: schema.notifications.systemIds,
-      pendingEvents: schema.notifications.pendingEvents,
-    })
-    .from(schema.notifications)
-    .all();
+  const notificationColumns = _sqlite
+    .prepare("PRAGMA table_info(notifications)")
+    .all() as Array<{ name?: string }>;
+  const notificationColumnNames = new Set(
+    notificationColumns.map((column) => column.name).filter(Boolean),
+  );
+  const notifyOnExpr = notificationColumnNames.has("notify_on")
+    ? "notify_on"
+    : `'["updates","appUpdates"]' AS notify_on`;
+  const systemIdsExpr = notificationColumnNames.has("system_ids")
+    ? "system_ids"
+    : "NULL AS system_ids";
+  const pendingEventsExpr = notificationColumnNames.has("pending_events")
+    ? "pending_events"
+    : "NULL AS pending_events";
+  const notificationRows = _sqlite
+    .prepare(
+      `SELECT id, ${notifyOnExpr}, ${systemIdsExpr}, ${pendingEventsExpr} FROM notifications`
+    )
+    .all() as Array<{
+      id: number;
+      notify_on: string | null;
+      system_ids: string | null;
+      pending_events: string | null;
+    }>;
 
   for (const row of notificationRows) {
-    if (!parseNotifyOnForMigration(row.notifyOn).includes("updates")) {
+    if (!parseNotifyOnForMigration(row.notify_on).includes("updates")) {
       continue;
     }
 
-    const scopedSystemIds = parseSystemIdsForMigration(row.systemIds);
+    const scopedSystemIds = parseSystemIdsForMigration(row.system_ids);
     const deliveredRows: Array<typeof schema.notificationDeliveredUpdates.$inferInsert> = [];
     const deliveredKeys = new Set<string>();
     const candidateSystemIds =
@@ -1234,9 +1254,9 @@ function migrateNotificationUpdateDedupeState(
         .run();
     }
 
-    if (row.pendingEvents) {
+    if (row.pending_events) {
       db.update(schema.notifications)
-        .set({ pendingEvents: stripPendingUpdateEntries(row.pendingEvents) })
+        .set({ pendingEvents: stripPendingUpdateEntries(row.pending_events) })
         .where(eq(schema.notifications.id, row.id))
         .run();
     }
@@ -1256,7 +1276,7 @@ function migrateNotificationUpdateDedupeState(
   `);
 }
 
-export function getDb(): BunSQLiteDatabase<typeof schema> {
+export function getDb(): BetterSQLite3Database<typeof schema> {
   if (!_db) throw new Error("Database not initialized");
   return _db;
 }

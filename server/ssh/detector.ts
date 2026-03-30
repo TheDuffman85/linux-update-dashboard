@@ -1,15 +1,24 @@
 import type { Client } from "ssh2";
 import type { SSHConnectionManager } from "./connection";
 
-const DETECTION_COMMANDS: [string, string][] = [
-  ["apt", "command -v apt >/dev/null 2>&1 && echo 'found'"],
-  ["dnf", "command -v dnf >/dev/null 2>&1 && echo 'found'"],
-  ["yum", "command -v yum >/dev/null 2>&1 && echo 'found'"],
-  ["pacman", "command -v pacman >/dev/null 2>&1 && echo 'found'"],
-  ["apk", "command -v apk >/dev/null 2>&1 && echo 'found'"],
-  ["flatpak", "command -v flatpak >/dev/null 2>&1 && echo 'found'"],
-  ["snap", "command -v snap >/dev/null 2>&1 && echo 'found'"],
+export interface PackageManagerDetectionCommand {
+  name: string;
+  command: string;
+}
+
+const DETECTION_COMMANDS: PackageManagerDetectionCommand[] = [
+  { name: "apt", command: "command -v apt >/dev/null 2>&1 && echo 'found'" },
+  { name: "dnf", command: "command -v dnf >/dev/null 2>&1 && echo 'found'" },
+  { name: "yum", command: "command -v yum >/dev/null 2>&1 && echo 'found'" },
+  { name: "pacman", command: "command -v pacman >/dev/null 2>&1 && echo 'found'" },
+  { name: "apk", command: "command -v apk >/dev/null 2>&1 && echo 'found'" },
+  { name: "flatpak", command: "command -v flatpak >/dev/null 2>&1 && echo 'found'" },
+  { name: "snap", command: "command -v snap >/dev/null 2>&1 && echo 'found'" },
 ];
+
+export function getPackageManagerDetectionCommands(): PackageManagerDetectionCommand[] {
+  return DETECTION_COMMANDS.map((entry) => ({ ...entry }));
+}
 
 export async function detectPackageManagers(
   sshManager: SSHConnectionManager,
@@ -17,8 +26,8 @@ export async function detectPackageManagers(
 ): Promise<string[]> {
   const detected: string[] = [];
 
-  for (const [name, cmd] of DETECTION_COMMANDS) {
-    const { stdout, exitCode } = await sshManager.runCommand(conn, cmd, 10);
+  for (const { name, command } of DETECTION_COMMANDS) {
+    const { stdout, exitCode } = await sshManager.runCommand(conn, command, 10);
     if (exitCode === 0 && stdout.includes("found")) {
       detected.push(name);
     }

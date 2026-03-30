@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
+import { buildCommandReference } from "../services/command-reference";
 import * as hiddenUpdateService from "../services/hidden-update-service";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
@@ -421,6 +422,12 @@ systems.get("/:id", (c) => {
       activeOperation: updateService.getActiveOperation(id),
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
     },
+    commandReference: buildCommandReference({
+      pkgManager: (system.pkgManager as string | null) ?? null,
+      detectedPkgManagers: (system.detectedPkgManagers as string | null) ?? null,
+      disabledPkgManagers: (system.disabledPkgManagers as string | null) ?? null,
+      pkgManagerConfigs: (system.pkgManagerConfigs as string | null) ?? null,
+    }),
     updates,
     hiddenUpdates,
     history,

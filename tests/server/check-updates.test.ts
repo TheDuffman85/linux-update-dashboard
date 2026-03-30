@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
 import { mkdtempSync, rmSync } from "fs";
@@ -113,7 +113,7 @@ describe("checkUpdates", () => {
       port: 22,
       authType: "password",
       username: "root",
-      hostKeyVerificationEnabled: false,
+      hostKeyVerificationEnabled: 0,
       pkgManager: "dnf",
       detectedPkgManagers: JSON.stringify(["dnf"]),
       pkgManagerConfigs: options?.pkgManagerConfigs ? JSON.stringify(options.pkgManagerConfigs) : null,

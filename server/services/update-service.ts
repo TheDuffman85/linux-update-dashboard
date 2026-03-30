@@ -5,6 +5,7 @@ import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCo
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName } from "../ssh/parsers/types";
+import { getRebootCommand } from "../ssh/reboot";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
@@ -1389,7 +1390,7 @@ export async function rebootSystem(
 
       const sshManager = getSSHManager();
       const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
-      const cmd = sudo("reboot");
+      const cmd = getRebootCommand();
       const stepStartedAt = getCurrentTimestamp();
       const histId = insertStartedEntry(systemId, "reboot", "system", cmd, stepStartedAt);
       outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: "system", startedAt: stepStartedAt });

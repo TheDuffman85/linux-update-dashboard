@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { wrapRemoteCommand } from "../../server/ssh/connection";
 import { sudo } from "../../server/ssh/parsers/types";
 import { sanitizeCommand, sanitizeOutput } from "../../server/utils/sanitize";

@@ -7,9 +7,68 @@ ENV_FILE="$SCRIPT_DIR/.env"
 SERVER_PORT=3001
 CLIENT_PORT=5173
 
+# Keep Corepack-managed pnpm downloads non-interactive for local scripts.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
 # Helper functions
 log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+}
+
+prepare_native_build_env() {
+    local node_bin
+    local node_root
+
+    export XDG_CACHE_HOME="${TMPDIR:-/tmp}/ludash-cache"
+    export npm_config_cache="${TMPDIR:-/tmp}/ludash-npm-cache"
+    node_bin="$(command -v node)"
+    node_root="$(dirname "$(dirname "$node_bin")")"
+
+    if [ -f "$node_root/include/node/node.h" ]; then
+        export npm_config_nodedir="$node_root"
+    fi
+
+    mkdir -p "$XDG_CACHE_HOME" "$npm_config_cache"
+}
+
+check_better_sqlite3() {
+    pnpm exec node -e "const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.prepare('select 1').get(); db.close();" >/dev/null 2>&1
+}
+
+rebuild_better_sqlite3() {
+    local better_sqlite3_dir=""
+
+    pnpm rebuild better-sqlite3 >/dev/null 2>&1 || true
+    if check_better_sqlite3; then
+        return 0
+    fi
+
+    better_sqlite3_dir="$(pnpm exec node -p "require('path').dirname(require.resolve('better-sqlite3/package.json'))" 2>/dev/null || true)"
+    if [ -n "$better_sqlite3_dir" ] && [ -d "$better_sqlite3_dir" ]; then
+        (cd "$better_sqlite3_dir" && npm run build-release >/dev/null 2>&1) || true
+    fi
+
+    check_better_sqlite3
+}
+
+ensure_native_dependencies() {
+    log "Checking native dependencies for Node.js $(node -v)..."
+
+    if check_better_sqlite3; then
+        log "Native dependencies are ready."
+        return 0
+    fi
+
+    log "Detected an incompatible better-sqlite3 native build. Rebuilding for Node.js $(node -v)..."
+    prepare_native_build_env
+    if rebuild_better_sqlite3; then
+        log "better-sqlite3 rebuilt successfully."
+        return 0
+    fi
+
+    log "better-sqlite3 is still incompatible with Node.js $(node -v) after rebuild."
+    log "Try running 'pnpm install' to refresh native modules for the active Node version."
+    exit 1
 }
 
 cleanup_test_containers() {
@@ -72,12 +131,19 @@ else
     log "No .env file found at $ENV_FILE. Proceeding with default environment."
 fi
 
-# Check for Bun
-if ! command -v bun &> /dev/null; then
-    log "Error: 'bun' runtime is not installed."
-    log "Please install Bun to run this application locally: https://bun.sh"
-    log "Example: curl -fsSL https://bun.sh/install | bash"
+# Check for Node.js and pnpm
+if ! command -v node &> /dev/null; then
+    log "Error: 'node' is not installed."
+    log "Please install Node.js 24.14.1 to run this application locally."
     log "Alternatively, use Docker to run the containerized application."
+    exit 1
+fi
+
+if ! command -v pnpm &> /dev/null; then
+    log "Error: 'pnpm' is not installed."
+    log "Install pnpm 10.33.0 or activate it with Corepack:"
+    log "  corepack enable"
+    log "  corepack prepare pnpm@10.33.0 --activate"
     exit 1
 fi
 
@@ -85,6 +151,8 @@ fi
 MODE="${1:-normal}"
 
 cd "$PROJECT_ROOT" || exit 1
+
+ensure_native_dependencies
 
 if [ "$MODE" == "test" ]; then
     log "Starting in TEST mode..."
@@ -118,12 +186,12 @@ if [ "$MODE" == "test" ]; then
     export NODE_ENV=production
 
     log "Building application..."
-    bun run build
+    pnpm run build
 
     if [ $? -eq 0 ]; then
         log "Build successful."
         log "Starting server..."
-        bun run start
+        pnpm run start
     else
         log "Build failed. Aborting."
         exit 1
@@ -132,12 +200,12 @@ if [ "$MODE" == "test" ]; then
 elif [ "$MODE" == "dev" ]; then
     log "Starting in DEVELOPMENT mode..."
 
-    # Start both server and client via bun run dev
-    log "Starting server (bun --watch) and client (vite)..."
-    bun run dev:server &
+    # Start both server and client via pnpm scripts
+    log "Starting server (tsx watch) and client (vite)..."
+    pnpm run dev:server &
     SERVER_PID=$!
 
-    bun run dev:client &
+    pnpm run dev:client &
     CLIENT_PID=$!
 
     log "Services started. Server PID: $SERVER_PID, Client PID: $CLIENT_PID"
@@ -163,12 +231,12 @@ else
 
     # Build
     log "Building application..."
-    bun run build
+    pnpm run build
 
     if [ $? -eq 0 ]; then
         log "Build successful."
         log "Starting server..."
-        bun run start
+        pnpm run start
     else
         log "Build failed. Aborting."
         exit 1
