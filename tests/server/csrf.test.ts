@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Hono } from "hono";
 import { csrfMiddleware, CSRF_COOKIE, CSRF_HEADER } from "../../server/middleware/csrf";
 

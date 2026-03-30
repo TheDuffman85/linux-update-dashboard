@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -38,7 +38,7 @@ describe("email notification config migration", () => {
       );
     `);
 
-    sqlite.query(
+    sqlite.prepare(
       "INSERT INTO notifications (name, type, enabled, notify_on, config) VALUES (?, ?, ?, ?, ?)"
     ).run(
       "Ops Email",

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { randomBytes } from "crypto";
 import { EventEmitter } from "events";
 import { getEncryptor, initEncryptor } from "../../server/security";

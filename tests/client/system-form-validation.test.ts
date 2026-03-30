@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { validateSystemForm } from "../../client/lib/system-form-validation";
 
 describe("validateSystemForm", () => {

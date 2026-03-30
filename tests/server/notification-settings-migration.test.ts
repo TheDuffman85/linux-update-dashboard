@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -24,17 +24,17 @@ describe("legacy notification settings migration", () => {
       );
     `);
 
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("notifications_enabled", "true");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("notification_methods", '["email"]');
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("notify_on_updates", "true");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("notify_on_unreachable", "false");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_host", "smtp.example.com");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_port", "587");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_secure", "true");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_user", "mailer");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_password", "smtp-secret");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_from", "dashboard@example.com");
-    sqlite.query("INSERT INTO settings (key, value) VALUES (?, ?)").run("notification_email_to", "admin@example.com");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("notifications_enabled", "true");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("notification_methods", '["email"]');
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("notify_on_updates", "true");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("notify_on_unreachable", "false");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_host", "smtp.example.com");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_port", "587");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_secure", "true");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_user", "mailer");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_password", "smtp-secret");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("smtp_from", "dashboard@example.com");
+    sqlite.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("notification_email_to", "admin@example.com");
     sqlite.close();
   });
 

@@ -1,8 +1,11 @@
 import { asc, eq } from "drizzle-orm";
-import { utils, type ParsedKey } from "ssh2";
+import ssh2 from "ssh2";
 import { getDb } from "../db";
 import { credentials, systems } from "../db/schema";
 import { getEncryptor } from "../security";
+
+const { utils } = ssh2;
+type ParsedKey = import("ssh2").ParsedKey;
 
 export const CREDENTIAL_KINDS = [
   "usernamePassword",

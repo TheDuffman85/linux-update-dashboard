@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createCipheriv, randomBytes } from "crypto";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";

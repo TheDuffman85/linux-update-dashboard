@@ -1,8 +1,8 @@
 import type { Context } from "hono";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import { lookup } from "dns/promises";
 import { isIP } from "net";
 import { config, hasConfiguredBaseUrl } from "./config";
-import { getRequestIp } from "./request-ip-store";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 let lastTrustedPublicOrigin: string | null = null;
@@ -170,7 +170,7 @@ export function isTrustedReturnOrigin(value: string): boolean {
 }
 
 export function getClientIp(c: Context): string | null {
-  const directIp = getRequestIp(c.req.raw);
+  const directIp = getConnInfo(c).remote.address;
   if (directIp) return directIp.trim();
 
   if (config.trustProxy) {

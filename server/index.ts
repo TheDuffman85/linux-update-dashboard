@@ -1,5 +1,6 @@
 import { mkdirSync, chmodSync } from "fs";
 import { dirname } from "path";
+import { serve } from "@hono/node-server";
 import { eq } from "drizzle-orm";
 import { config, getEncryptionSalt, hasConfiguredBaseUrl } from "./config";
 import { initDatabase, closeDatabase, getDb } from "./db";
@@ -8,8 +9,7 @@ import { getEncryptor, initEncryptor } from "./security";
 import { initSession } from "./auth/session";
 import { configureOidc } from "./auth/oidc";
 import * as scheduler from "./services/scheduler";
-import { createApp, websocket } from "./app";
-import { setRequestIp } from "./request-ip-store";
+import { createApp } from "./app";
 import { logger } from "./logger";
 import * as notificationRuntime from "./services/notification-runtime";
 import { migrateEncryptionSalt, migrateLegacyAuthTags } from "./encryption-migration";
@@ -69,7 +69,7 @@ logger.info("Starting update scheduler");
 scheduler.start();
 
 // Create and start Hono app
-const app = createApp();
+const { app, injectWebSocket } = createApp();
 
 logger.info("Server starting", {
   host: config.host,
@@ -77,16 +77,12 @@ logger.info("Server starting", {
   logLevel: config.logLevel,
 });
 
-const server = Bun.serve({
-  fetch(req, server) {
-    const ip = server.requestIP(req);
-    if (ip) setRequestIp(req, ip.address);
-    return app.fetch(req, server);
-  },
+const server = serve({
+  fetch: app.fetch,
   hostname: config.host,
   port: config.port,
-  websocket,
 });
+injectWebSocket(server);
 
 logger.info("Starting notification runtimes");
 notificationRuntime.start().catch((error) => {
@@ -99,7 +95,7 @@ process.on("SIGINT", () => {
   scheduler.stop();
   notificationRuntime.stop().catch(() => {});
   closeDatabase();
-  server.stop();
+  server.close();
   process.exit(0);
 });
 
@@ -107,6 +103,6 @@ process.on("SIGTERM", () => {
   scheduler.stop();
   notificationRuntime.stop().catch(() => {});
   closeDatabase();
-  server.stop();
+  server.close();
   process.exit(0);
 });

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../../client/lib/activity-steps";
 import type { WsMessage } from "../../client/hooks/useCommandOutput";
 

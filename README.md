@@ -17,7 +17,8 @@
 A self-hosted web app for managing Linux package updates across multiple servers. Connect via SSH, check for updates, and apply them from a single dashboard in your browser.
 
 <div align="center">
-  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/Bun-%23000000.svg?style=for-the-badge&logo=bun&logoColor=white" alt="Bun" /></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node.js-%235FA04E.svg?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js" /></a>
+  <a href="https://pnpm.io/"><img src="https://img.shields.io/badge/pnpm-%23F69220.svg?style=for-the-badge&logo=pnpm&logoColor=white" alt="pnpm" /></a>
   <a href="https://hono.dev/"><img src="https://img.shields.io/badge/hono-%23E36002.svg?style=for-the-badge&logo=hono&logoColor=white" alt="Hono" /></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/react-%2320232a.svg?style=for-the-badge&logo=react&logoColor=%2361DAFB" alt="React" /></a>
   <a href="https://vite.dev/"><img src="https://img.shields.io/badge/vite-%23646CFF.svg?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" /></a>
@@ -109,7 +110,8 @@ Configure scheduler intervals, SSH timeouts, password settings, and other applic
 
 ### Prerequisites
 
-- [Bun](https://bun.sh) 1.x installed
+- Node.js 24.14.1 installed
+- pnpm 10.33.0 available via Corepack or a global install
 - SSH access to at least one Linux server
 
 ### Installation
@@ -119,14 +121,18 @@ Configure scheduler intervals, SSH timeouts, password settings, and other applic
 git clone https://github.com/TheDuffman85/linux-update-dashboard.git
 cd linux-update-dashboard
 
+# Activate the pinned pnpm version
+corepack enable
+corepack prepare pnpm@10.33.0 --activate
+
 # Install dependencies
-bun install
+pnpm install
 
 # Generate an encryption key
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
 
 # Start development servers
-bun run dev
+pnpm run dev
 ```
 
 The frontend dev server runs on `http://localhost:5173` (proxies API calls to the backend on port 3001).
@@ -136,8 +142,8 @@ On first visit, you'll be guided through creating an admin account.
 ### Production Build
 
 ```bash
-bun run build
-NODE_ENV=production bun run start
+pnpm run build
+NODE_ENV=production pnpm run start
 ```
 
 The production server serves both the API and the built frontend on port 3001.
@@ -701,21 +707,21 @@ There's a helper script `run.sh` to manage services.
 ./run.sh
 ```
 
-Or use the Bun scripts directly:
+Or use the pnpm scripts directly:
 
 ```bash
 # Start both dev servers (backend :3001 + Vite :5173 with HMR)
-bun run dev
+pnpm run dev
 
 # Or run them individually
-bun run dev:server           # Backend only (with watch mode)
-bun run dev:client           # Vite frontend only
+pnpm run dev:server          # Backend only (with watch mode)
+pnpm run dev:client          # Vite frontend only
 
 # Run tests
-bun test
+pnpm test
 
 # Type check
-bun run check
+pnpm run check
 ```
 The app creates and upgrades the SQLite schema automatically on startup.
 

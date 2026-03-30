@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { gotifyProvider } from "../../server/services/notifications/gotify";
 import { __testing as requestSecurityTesting, rememberTrustedPublicOrigin } from "../../server/request-security";

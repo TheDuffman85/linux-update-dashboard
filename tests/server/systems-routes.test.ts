@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
@@ -612,7 +612,7 @@ describe("systems reorder route", () => {
       port: 22,
       authType: "password",
       username: "root",
-      hostKeyVerificationEnabled: true,
+      hostKeyVerificationEnabled: 1,
     }).returning({ id: systems.id }).get().id;
 
     db.update(settings)
@@ -1516,5 +1516,40 @@ describe("systems reorder route", () => {
       .where(eq(hiddenUpdates.systemId, systemId))
       .all();
     expect(remaining).toHaveLength(0);
+  });
+
+  test("returns a per-system command reference derived from runtime builders", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "Command Reference",
+      hostname: "command-reference.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      pkgManager: "apt",
+      detectedPkgManagers: JSON.stringify(["apt"]),
+      pkgManagerConfigs: JSON.stringify({
+        apt: { defaultUpgradeMode: "full-upgrade" },
+      }),
+    }).returning({ id: systems.id }).get().id;
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.commandReference.exact.some((entry: { id: string; command: string }) => entry.id === "system-info" && entry.command.includes("===OS==="))).toBe(true);
+    expect(body.commandReference.exact.some((entry: { category: string; pkgManager: string | null; command: string }) =>
+      entry.category === "upgrade_all" &&
+      entry.pkgManager === "apt" &&
+      entry.command.includes("full-upgrade -y")
+    )).toBe(true);
+    expect(body.commandReference.sudoers.some((entry: { category: string; command: string }) =>
+      entry.category === "upgrade_all" &&
+      entry.command === "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"
+    )).toBe(true);
   });
 });

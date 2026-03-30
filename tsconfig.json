@@ -16,8 +16,16 @@
       "@server/*": ["./server/*"],
       "@client/*": ["./client/*"]
     },
-    "types": ["bun"]
+    "types": ["node", "vitest/globals"]
   },
-  "include": ["server/**/*.ts", "client/**/*.ts", "client/**/*.tsx", "*.d.ts", "vite.config.ts"],
+  "include": [
+    "server/**/*.ts",
+    "client/**/*.ts",
+    "client/**/*.tsx",
+    "*.d.ts",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "tsup.config.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

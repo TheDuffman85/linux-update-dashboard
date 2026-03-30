@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { buildCredentialPayload, validateCredentialForm } from "../../client/lib/credential-form";
 import type { CredentialDetail } from "../../client/lib/credentials";
 

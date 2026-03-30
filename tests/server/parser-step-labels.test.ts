@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { dnfParser, pacmanParser, snapParser, yumParser } from "../../server/ssh/parsers";
 
 describe("parser check step labels", () => {

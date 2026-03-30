@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { formatDurationBetween, formatDurationMs } from "../../client/lib/time";
 
 describe("duration formatting", () => {

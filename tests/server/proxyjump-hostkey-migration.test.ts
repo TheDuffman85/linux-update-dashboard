@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -106,7 +106,7 @@ describe("ProxyJump host-key migration", () => {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
-    sqlite.query(
+    sqlite.prepare(
       "INSERT INTO systems (name, hostname, port, auth_type, username) VALUES (?, ?, ?, ?, ?)"
     ).run("Legacy", "legacy.local", 22, "password", "root");
     sqlite.close();

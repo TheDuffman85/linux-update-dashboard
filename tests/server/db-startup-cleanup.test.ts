@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import Database from "better-sqlite3";
 import { mkdtempSync, rmSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -271,7 +271,7 @@ describe("database startup cleanup", () => {
 
     const restartedSqlite = new Database(dbPath, { readonly: true });
     const columns = restartedSqlite
-      .query("PRAGMA table_info(systems)")
+      .prepare("PRAGMA table_info(systems)")
       .all() as Array<{ name?: string }>;
     restartedSqlite.close();
     expect(columns.some((column) => column.name === "ignore_kept_back_packages")).toBe(false);
@@ -295,7 +295,7 @@ describe("database startup cleanup", () => {
   test("creates the hidden_updates table on startup", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const tables = sqlite
-      .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hidden_updates'")
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hidden_updates'")
       .all() as Array<{ name?: string }>;
     sqlite.close();
 
@@ -306,7 +306,7 @@ describe("database startup cleanup", () => {
   test("adds the pkg_manager_configs column for systems", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const columns = sqlite
-      .query("PRAGMA table_info(systems)")
+      .prepare("PRAGMA table_info(systems)")
       .all() as Array<{ name?: string }>;
     sqlite.close();
 
