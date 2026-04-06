@@ -62,6 +62,7 @@ describe("buildCommandReference", () => {
           refreshMetadataOnCheck: true,
           autoAcceptNewSigningKeysOnCheck: true,
           defaultUpgradeMode: "distro-sync",
+          autoAcceptEulaOnUpgrade: true,
         },
       }),
     }));
@@ -71,18 +72,34 @@ describe("buildCommandReference", () => {
     })[0])).toBe(true);
     expect(dnfReference.exact.some((entry) => entry.category === "upgrade_all" && entry.command === dnfParser.getUpgradeAllCommand({
       defaultUpgradeMode: "distro-sync",
+      autoAcceptEulaOnUpgrade: true,
     }))).toBe(true);
+    expect(dnfReference.exact.some((entry) =>
+      entry.category === "upgrade_selected" &&
+      entry.command.includes("ACCEPT_EULA=Y dnf upgrade -y <package>")
+    )).toBe(true);
 
     const yumReference = buildCommandReference(createSystem({
       pkgManager: "yum",
       detectedPkgManagers: JSON.stringify(["yum"]),
       pkgManagerConfigs: JSON.stringify({
-        yum: { autoAcceptNewSigningKeysOnCheck: true },
+        yum: {
+          autoAcceptNewSigningKeysOnCheck: true,
+          autoAcceptEulaOnUpgrade: true,
+        },
       }),
     }));
     expect(yumReference.exact.some((entry) => entry.category === "check" && entry.command === yumParser.getCheckCommands({
       autoAcceptNewSigningKeysOnCheck: true,
     })[0])).toBe(true);
+    expect(yumReference.exact.some((entry) =>
+      entry.category === "upgrade_all" &&
+      entry.command === yumParser.getUpgradeAllCommand({ autoAcceptEulaOnUpgrade: true })
+    )).toBe(true);
+    expect(yumReference.exact.some((entry) =>
+      entry.category === "upgrade_selected" &&
+      entry.command.includes("ACCEPT_EULA=Y yum update -y <package>")
+    )).toBe(true);
 
     const pacmanReference = buildCommandReference(createSystem({
       pkgManager: "pacman",

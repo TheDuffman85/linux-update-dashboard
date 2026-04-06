@@ -169,7 +169,7 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
       purpose: `Upgrades a single selected package via ${managerLabel(manager)}`,
       pkgManager: manager,
       command: normalizeCommandTemplate(
-        parser.getUpgradePackageCommand(SINGLE_PACKAGE_PLACEHOLDER),
+        parser.getUpgradePackageCommand(SINGLE_PACKAGE_PLACEHOLDER, config),
       ),
     });
 
@@ -183,7 +183,7 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         parser.getUpgradePackagesCommand([
           MULTI_PACKAGE_PLACEHOLDER_ONE,
           MULTI_PACKAGE_PLACEHOLDER_TWO,
-        ]),
+        ], config),
       ),
     });
   }

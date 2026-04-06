@@ -7,6 +7,8 @@ const PATTERN = /^(\S+?)\.(\S+)\s+(\S+)\s+(\S+)/;
 
 const INSTALLED_SEPARATOR = "---INSTALLED---";
 const DNF_YUM_GPG_PROMPT_PATTERN = /(Importing GPG key|Is this ok \[y\/N\]:)/i;
+const DNF_YUM_EULA_PROMPT_PATTERN =
+  /(Do you accept the license terms\?|\/dev\/tty: No such device or address|Error in PREIN scriptlet)/i;
 
 function isSkippableDnfLine(line: string): boolean {
   return (
@@ -51,6 +53,22 @@ export function getDnfLikeCheckErrorMessage(
     return combinedOutput || `Command exited with code ${exitCode}`;
   }
   return null;
+}
+
+export function hasDnfLikeEulaPrompt(output: string): boolean {
+  return DNF_YUM_EULA_PROMPT_PATTERN.test(output);
+}
+
+export function getDnfLikeEulaPromptMessage(tool: "dnf" | "yum"): string {
+  const label = getParserLabel(tool);
+  return `${label} upgrade appears to require interactive license acceptance. Enable automatic EULA acceptance for ${label} upgrades on this system if you trust the affected package repository, or accept the license manually on the target system.`;
+}
+
+function applyDnfLikeUpgradeEnv(
+  command: string,
+  config: DnfPackageManagerConfig | YumPackageManagerConfig | undefined,
+): string {
+  return config?.autoAcceptEulaOnUpgrade === true ? `ACCEPT_EULA=Y ${command}` : command;
 }
 
 /**
@@ -166,21 +184,24 @@ export const dnfParser: PackageParser = {
   getUpgradeAllCommand(config) {
     const dnfConfig = config as DnfPackageManagerConfig | undefined;
     const subcommand = dnfConfig?.defaultUpgradeMode === "distro-sync" ? "distro-sync" : "upgrade";
-    return sudo(`dnf ${subcommand} -y`) + " 2>&1";
+    return sudo(applyDnfLikeUpgradeEnv(`dnf ${subcommand} -y`, dnfConfig)) + " 2>&1";
   },
 
-  getFullUpgradeAllCommand() {
-    return sudo("dnf distro-sync -y") + " 2>&1";
+  getFullUpgradeAllCommand(config) {
+    const dnfConfig = config as DnfPackageManagerConfig | undefined;
+    return sudo(applyDnfLikeUpgradeEnv("dnf distro-sync -y", dnfConfig)) + " 2>&1";
   },
 
-  getUpgradePackageCommand(pkg) {
+  getUpgradePackageCommand(pkg, config) {
     const safePkg = validatePackageName(pkg);
-    return sudo(`dnf upgrade -y ${safePkg}`) + " 2>&1";
+    const dnfConfig = config as DnfPackageManagerConfig | undefined;
+    return sudo(applyDnfLikeUpgradeEnv(`dnf upgrade -y ${safePkg}`, dnfConfig)) + " 2>&1";
   },
 
-  getUpgradePackagesCommand(pkgs) {
+  getUpgradePackagesCommand(pkgs, config) {
     const safePkgs = validatePackageNames(pkgs).join(" ");
-    return sudo(`dnf upgrade -y ${safePkgs}`) + " 2>&1";
+    const dnfConfig = config as DnfPackageManagerConfig | undefined;
+    return sudo(applyDnfLikeUpgradeEnv(`dnf upgrade -y ${safePkgs}`, dnfConfig)) + " 2>&1";
   },
 };
 

@@ -164,6 +164,29 @@ describe("DnfParser", () => {
     ).toContain("dnf -y check-update --quiet");
   });
 
+  test("keeps automatic EULA acceptance disabled by default for upgrades", () => {
+    const fullUpgrade = dnfParser.getFullUpgradeAllCommand();
+    expect(dnfParser.getUpgradeAllCommand()).not.toContain("ACCEPT_EULA=Y");
+    expect(fullUpgrade).not.toBeNull();
+    expect(fullUpgrade).not.toContain("ACCEPT_EULA=Y");
+    expect(dnfParser.getUpgradePackageCommand("curl")).not.toContain("ACCEPT_EULA=Y");
+  });
+
+  test("can opt into automatic EULA acceptance during upgrades", () => {
+    const fullUpgrade = dnfParser.getFullUpgradeAllCommand({
+      defaultUpgradeMode: "distro-sync",
+      autoAcceptEulaOnUpgrade: true,
+    });
+    expect(
+      dnfParser.getUpgradeAllCommand({ autoAcceptEulaOnUpgrade: true }),
+    ).toContain("ACCEPT_EULA=Y dnf upgrade -y");
+    expect(fullUpgrade).not.toBeNull();
+    expect(fullUpgrade).toContain("ACCEPT_EULA=Y dnf distro-sync -y");
+    expect(
+      dnfParser.getUpgradePackagesCommand(["curl", "vim"], { autoAcceptEulaOnUpgrade: true }),
+    ).toContain("ACCEPT_EULA=Y dnf upgrade -y curl vim");
+  });
+
   test("ignores GPG import chatter before package output", () => {
     const stdout = [
       "Importing GPG key 0x51312F3F:",
@@ -205,6 +228,20 @@ describe("YumParser", () => {
     expect(
       yumParser.getCheckCommands({ autoAcceptNewSigningKeysOnCheck: true })[0],
     ).toContain("yum -y check-update --quiet");
+  });
+
+  test("keeps automatic EULA acceptance disabled by default for upgrades", () => {
+    expect(yumParser.getUpgradeAllCommand()).not.toContain("ACCEPT_EULA=Y");
+    expect(yumParser.getUpgradePackageCommand("curl")).not.toContain("ACCEPT_EULA=Y");
+  });
+
+  test("can opt into automatic EULA acceptance during upgrades", () => {
+    expect(
+      yumParser.getUpgradeAllCommand({ autoAcceptEulaOnUpgrade: true }),
+    ).toContain("ACCEPT_EULA=Y yum update -y");
+    expect(
+      yumParser.getUpgradePackagesCommand(["curl", "vim"], { autoAcceptEulaOnUpgrade: true }),
+    ).toContain("ACCEPT_EULA=Y yum update -y curl vim");
   });
 
   test("no full upgrade command", () => {

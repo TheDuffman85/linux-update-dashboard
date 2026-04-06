@@ -10,10 +10,12 @@ export interface DnfPackageManagerConfig {
   defaultUpgradeMode?: DnfDefaultUpgradeMode;
   refreshMetadataOnCheck?: boolean;
   autoAcceptNewSigningKeysOnCheck?: boolean;
+  autoAcceptEulaOnUpgrade?: boolean;
 }
 
 export interface YumPackageManagerConfig {
   autoAcceptNewSigningKeysOnCheck?: boolean;
+  autoAcceptEulaOnUpgrade?: boolean;
 }
 
 export interface PacmanPackageManagerConfig {
@@ -102,6 +104,9 @@ export function normalizePackageManagerConfigs(
     if (typeof value.dnf.autoAcceptNewSigningKeysOnCheck === "boolean") {
       dnf.autoAcceptNewSigningKeysOnCheck = value.dnf.autoAcceptNewSigningKeysOnCheck;
     }
+    if (typeof value.dnf.autoAcceptEulaOnUpgrade === "boolean") {
+      dnf.autoAcceptEulaOnUpgrade = value.dnf.autoAcceptEulaOnUpgrade;
+    }
     if (Object.keys(dnf).length > 0) next.dnf = dnf;
   }
 
@@ -109,6 +114,9 @@ export function normalizePackageManagerConfigs(
     const yum: YumPackageManagerConfig = {};
     if (typeof value.yum.autoAcceptNewSigningKeysOnCheck === "boolean") {
       yum.autoAcceptNewSigningKeysOnCheck = value.yum.autoAcceptNewSigningKeysOnCheck;
+    }
+    if (typeof value.yum.autoAcceptEulaOnUpgrade === "boolean") {
+      yum.autoAcceptEulaOnUpgrade = value.yum.autoAcceptEulaOnUpgrade;
     }
     if (Object.keys(yum).length > 0) next.yum = yum;
   }
@@ -185,7 +193,8 @@ export function validatePackageManagerConfigsInput(value: unknown): string | nul
         if (
           key !== "defaultUpgradeMode" &&
           key !== "refreshMetadataOnCheck" &&
-          key !== "autoAcceptNewSigningKeysOnCheck"
+          key !== "autoAcceptNewSigningKeysOnCheck" &&
+          key !== "autoAcceptEulaOnUpgrade"
         ) {
           return `pkgManagerConfigs.dnf.${key} is not supported`;
         }
@@ -209,12 +218,18 @@ export function validatePackageManagerConfigsInput(value: unknown): string | nul
       ) {
         return "pkgManagerConfigs.dnf.autoAcceptNewSigningKeysOnCheck must be a boolean";
       }
+      if (
+        rawConfig.autoAcceptEulaOnUpgrade !== undefined &&
+        typeof rawConfig.autoAcceptEulaOnUpgrade !== "boolean"
+      ) {
+        return "pkgManagerConfigs.dnf.autoAcceptEulaOnUpgrade must be a boolean";
+      }
       continue;
     }
 
     if (manager === "yum") {
       for (const key of keys) {
-        if (key !== "autoAcceptNewSigningKeysOnCheck") {
+        if (key !== "autoAcceptNewSigningKeysOnCheck" && key !== "autoAcceptEulaOnUpgrade") {
           return `pkgManagerConfigs.yum.${key} is not supported`;
         }
       }
@@ -223,6 +238,12 @@ export function validatePackageManagerConfigsInput(value: unknown): string | nul
         typeof rawConfig.autoAcceptNewSigningKeysOnCheck !== "boolean"
       ) {
         return "pkgManagerConfigs.yum.autoAcceptNewSigningKeysOnCheck must be a boolean";
+      }
+      if (
+        rawConfig.autoAcceptEulaOnUpgrade !== undefined &&
+        typeof rawConfig.autoAcceptEulaOnUpgrade !== "boolean"
+      ) {
+        return "pkgManagerConfigs.yum.autoAcceptEulaOnUpgrade must be a boolean";
       }
       continue;
     }

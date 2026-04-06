@@ -1,0 +1,91 @@
+FROM fedora:41
+
+# Self-contained DNF fixture that reproduces the "interactive EULA required"
+# path on package upgrade. We build a tiny local RPM repo, install v1.0 of the
+# package directly, and leave v2.0 available in the repo. The upgrade package
+# has a %pre scriptlet that reads from /dev/tty unless ACCEPT_EULA=Y is set,
+# which mirrors the failure mode seen with packages like msodbcsql18 during
+# non-interactive dashboard upgrades.
+RUN dnf install -y \
+        openssh-server sudo passwd \
+        rpm-build createrepo_c && \
+    dnf clean all && \
+    mkdir -p /run/sshd /root/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} /opt/localrepo
+
+RUN printf '%s\n' \
+    'Name:           eula-app' \
+    'Version:        %{?version}%{!?version:1.0}' \
+    'Release:        1%{?dist}' \
+    'Summary:        Test package for DNF EULA prompt fixture' \
+    'License:        Proprietary' \
+    'BuildArch:      noarch' \
+    '' \
+    '%description' \
+    'Tiny package used to exercise DNF upgrade behavior when a package scriptlet' \
+    'requires an interactive license acceptance unless ACCEPT_EULA=Y is set.' \
+    '' \
+    '%install' \
+    'mkdir -p %{buildroot}/usr/share/doc/eula-app' \
+    "printf '%s\\n' '%{version}' > %{buildroot}/usr/share/doc/eula-app/version.txt" \
+    "printf '%s\\n' 'Test fixture license text.' > %{buildroot}/usr/share/doc/eula-app/LICENSE.txt" \
+    '' \
+    '%pre' \
+    'if [ "$1" -gt 1 ] && [ "${ACCEPT_EULA:-}" = "Y" ]; then' \
+    '  exit 0' \
+    'fi' \
+    'if [ "$1" -gt 1 ]; then' \
+    '  echo "The license terms for this test package can be found in /usr/share/doc/eula-app/LICENSE.txt ." > /dev/tty' \
+    '  echo "Do you accept the license terms? (Enter YES or NO)" > /dev/tty' \
+    '  read answer < /dev/tty' \
+    '  case "$answer" in' \
+    '    YES|yes)' \
+    '      exit 0' \
+    '      ;;' \
+    '  esac' \
+    '  echo "License not accepted" >&2' \
+    '  exit 1' \
+    'fi' \
+    'exit 0' \
+    '' \
+    '%files' \
+    '/usr/share/doc/eula-app/version.txt' \
+    '/usr/share/doc/eula-app/LICENSE.txt' \
+    > /root/rpmbuild/SPECS/eula-app.spec
+
+RUN set -eux; \
+    rpmbuild --define '_topdir /root/rpmbuild' --define 'version 1.0' -bb /root/rpmbuild/SPECS/eula-app.spec; \
+    rpmbuild --define '_topdir /root/rpmbuild' --define 'version 2.0' -bb /root/rpmbuild/SPECS/eula-app.spec; \
+    cp /root/rpmbuild/RPMS/noarch/eula-app-*.rpm /opt/localrepo/; \
+    rpm -Uvh --nodeps /root/rpmbuild/RPMS/noarch/eula-app-1.0-1*.noarch.rpm; \
+    createrepo_c /opt/localrepo
+
+RUN rm -f /etc/yum.repos.d/*.repo && \
+    printf '%s\n' \
+      '[ludash-eula-prompt]' \
+      'name=Linux Update Dashboard DNF EULA prompt fixture' \
+      'baseurl=file:///opt/localrepo' \
+      'enabled=1' \
+      'gpgcheck=0' \
+      'metadata_expire=0' \
+      > /etc/yum.repos.d/ludash-eula-prompt.repo && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# Create test user with sudo
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testpass' | passwd --stdin testuser && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+# Fail the build early if sudo is not usable for the test user.
+RUN su - testuser -c "sudo -n true"
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]
