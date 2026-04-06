@@ -7,10 +7,12 @@ export interface DnfPackageManagerConfig {
   defaultUpgradeMode?: "upgrade" | "distro-sync";
   refreshMetadataOnCheck?: boolean;
   autoAcceptNewSigningKeysOnCheck?: boolean;
+  autoAcceptEulaOnUpgrade?: boolean;
 }
 
 export interface YumPackageManagerConfig {
   autoAcceptNewSigningKeysOnCheck?: boolean;
+  autoAcceptEulaOnUpgrade?: boolean;
 }
 
 export interface PacmanPackageManagerConfig {
@@ -62,7 +64,8 @@ export function normalizePackageManagerConfigs(
   if (
     value.dnf?.defaultUpgradeMode !== undefined ||
     value.dnf?.refreshMetadataOnCheck !== undefined ||
-    value.dnf?.autoAcceptNewSigningKeysOnCheck !== undefined
+    value.dnf?.autoAcceptNewSigningKeysOnCheck !== undefined ||
+    value.dnf?.autoAcceptEulaOnUpgrade !== undefined
   ) {
     next.dnf = {};
     if (value.dnf.defaultUpgradeMode !== undefined) {
@@ -74,11 +77,21 @@ export function normalizePackageManagerConfigs(
     if (value.dnf.autoAcceptNewSigningKeysOnCheck !== undefined) {
       next.dnf.autoAcceptNewSigningKeysOnCheck = value.dnf.autoAcceptNewSigningKeysOnCheck;
     }
+    if (value.dnf.autoAcceptEulaOnUpgrade !== undefined) {
+      next.dnf.autoAcceptEulaOnUpgrade = value.dnf.autoAcceptEulaOnUpgrade;
+    }
   }
-  if (value.yum?.autoAcceptNewSigningKeysOnCheck !== undefined) {
-    next.yum = {
-      autoAcceptNewSigningKeysOnCheck: value.yum.autoAcceptNewSigningKeysOnCheck,
-    };
+  if (
+    value.yum?.autoAcceptNewSigningKeysOnCheck !== undefined ||
+    value.yum?.autoAcceptEulaOnUpgrade !== undefined
+  ) {
+    next.yum = {};
+    if (value.yum.autoAcceptNewSigningKeysOnCheck !== undefined) {
+      next.yum.autoAcceptNewSigningKeysOnCheck = value.yum.autoAcceptNewSigningKeysOnCheck;
+    }
+    if (value.yum.autoAcceptEulaOnUpgrade !== undefined) {
+      next.yum.autoAcceptEulaOnUpgrade = value.yum.autoAcceptEulaOnUpgrade;
+    }
   }
   if (value.pacman?.refreshDatabasesOnCheck !== undefined) {
     next.pacman = { refreshDatabasesOnCheck: value.pacman.refreshDatabasesOnCheck };

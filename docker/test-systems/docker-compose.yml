@@ -21,6 +21,7 @@
 #   Debian  (APT kept-back fixture) → localhost:2011
 #   Ubuntu  (APT works + Snap fails) → localhost:2012
 #   Fedora  (DNF GPG key prompt fixture) → localhost:2013
+#   Fedora  (DNF EULA prompt fixture) → localhost:2014
 #
 # SSH examples:
 #   ssh testuser@localhost -p 2001   # Ubuntu  (APT)
@@ -36,6 +37,7 @@
 #   ssh testuser@localhost -p 2011   # Debian  (APT kept-back fixture)
 #   ssh testuser@localhost -p 2012   # Ubuntu  (APT works + Snap fails)
 #   ssh testuser@localhost -p 2013   # Fedora  (DNF GPG key prompt fixture)
+#   ssh testuser@localhost -p 2014   # Fedora  (DNF EULA prompt fixture)
 #
 # Note: Flatpak needs --privileged for bubblewrap (used during install/update).
 # Snap needs systemd as PID 1 + --privileged for snapd to function.
@@ -177,4 +179,14 @@ services:
     hostname: dnf-gpg-prompt-test
     ports:
       - "2013:22"
+    restart: unless-stopped
+
+  dnf-eula-prompt:
+    build:
+      context: .
+      dockerfile: Dockerfile.dnf-eula-prompt
+    container_name: ludash-test-dnf-eula-prompt
+    hostname: dnf-eula-prompt-test
+    ports:
+      - "2014:22"
     restart: unless-stopped

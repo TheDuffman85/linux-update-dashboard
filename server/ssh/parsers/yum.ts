@@ -3,6 +3,10 @@ import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { YumPackageManagerConfig } from "../../package-manager-configs";
 import { dnfParser, getDnfLikeCheckErrorMessage, getYumCheckCommands } from "./dnf";
 
+function applyYumUpgradeEnv(command: string, config: YumPackageManagerConfig | undefined): string {
+  return config?.autoAcceptEulaOnUpgrade === true ? `ACCEPT_EULA=Y ${command}` : command;
+}
+
 export const yumParser: PackageParser = {
   name: "yum",
 
@@ -24,21 +28,24 @@ export const yumParser: PackageParser = {
     return updates.map((u) => ({ ...u, pkgManager: "yum" }));
   },
 
-  getUpgradeAllCommand() {
-    return sudo("yum update -y") + " 2>&1";
+  getUpgradeAllCommand(config) {
+    const yumConfig = config as YumPackageManagerConfig | undefined;
+    return sudo(applyYumUpgradeEnv("yum update -y", yumConfig)) + " 2>&1";
   },
 
   getFullUpgradeAllCommand() {
     return null;
   },
 
-  getUpgradePackageCommand(pkg) {
+  getUpgradePackageCommand(pkg, config) {
     const safePkg = validatePackageName(pkg);
-    return sudo(`yum update -y ${safePkg}`) + " 2>&1";
+    const yumConfig = config as YumPackageManagerConfig | undefined;
+    return sudo(applyYumUpgradeEnv(`yum update -y ${safePkg}`, yumConfig)) + " 2>&1";
   },
 
-  getUpgradePackagesCommand(pkgs) {
+  getUpgradePackagesCommand(pkgs, config) {
     const safePkgs = validatePackageNames(pkgs).join(" ");
-    return sudo(`yum update -y ${safePkgs}`) + " 2>&1";
+    const yumConfig = config as YumPackageManagerConfig | undefined;
+    return sudo(applyYumUpgradeEnv(`yum update -y ${safePkgs}`, yumConfig)) + " 2>&1";
   },
 };

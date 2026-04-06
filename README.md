@@ -654,12 +654,13 @@ Package managers are auto-detected on each system over SSH when you test the con
 Per-system package-manager config is available in the system edit dialog for supported managers:
 
 - `apt`: choose whether the normal `Upgrade` action runs `upgrade` or `full-upgrade`, and optionally auto-hide kept-back APT updates after refreshes
-- `dnf`: choose whether the normal `Upgrade` action runs `upgrade` or `distro-sync`, and optionally refresh metadata during checks
+- `dnf`: choose whether the normal `Upgrade` action runs `upgrade` or `distro-sync`, optionally refresh metadata during checks, auto-accept newly presented repository signing keys during checks, and opt into `ACCEPT_EULA=Y` for upgrades that require unattended license acceptance
+- `yum`: optionally auto-accept newly presented repository signing keys during checks and opt into `ACCEPT_EULA=Y` for upgrades that require unattended license acceptance
 - `pacman`: optionally skip `pacman -Sy` during checks
 - `apk`: optionally skip `apk update` during checks
 - `flatpak`: optionally skip the appstream refresh step during checks
 
-`yum` and `snap` do not currently expose manager-specific config.
+`snap` does not currently expose manager-specific config.
 
 ## Project Structure
 
@@ -736,7 +737,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 
 This will:
 1. Stop any running dev/production services
-2. Build and start 12 Docker containers (including Alpine, fish-shell, sudo-password APT, and partial multi-manager fixtures)
+2. Build and start 14 Docker containers (including Alpine, fish-shell, sudo-password APT, and partial multi-manager fixtures)
 3. Build the frontend in production mode
 4. Start the production server on `:3001`
 
@@ -763,6 +764,7 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-apt-keptback` | 2011 | APT (kept-back fixture) | `bash` | Debian 12 |
 | `ludash-test-apt-snap-partial` | 2012 | APT + Snap (Snap check fails) | `bash` | Ubuntu 24.04 |
 | `ludash-test-dnf-gpg-prompt` | 2013 | DNF (GPG key prompt fixture) | `bash` | Fedora 41 |
+| `ludash-test-dnf-eula-prompt` | 2014 | DNF (EULA prompt fixture) | `bash` | Fedora 41 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -785,6 +787,12 @@ That makes it useful for verifying the dashboard’s semi-working warning state 
 - a repository metadata signature whose public key exists on disk but is not yet trusted by RPM
 
 That makes it useful for verifying the dashboard’s fail-closed handling of `dnf check-update` when a new repository signing key would normally trigger an interactive `Is this ok [y/N]` prompt.
+
+`ludash-test-dnf-eula-prompt` is a special self-contained DNF fixture. It intentionally exposes:
+- one local RPM update: `eula-app` 1.0 -> 2.0
+- an upgrade `%pre` scriptlet that reads from `/dev/tty` unless `ACCEPT_EULA=Y` is set
+
+That makes it useful for verifying the dashboard’s opt-in DNF/YUM EULA automation for non-interactive upgrades without depending on third-party repositories.
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 

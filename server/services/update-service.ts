@@ -5,6 +5,7 @@ import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCo
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName } from "../ssh/parsers/types";
+import { getDnfLikeEulaPromptMessage, hasDnfLikeEulaPrompt } from "../ssh/parsers/dnf";
 import { getRebootCommand } from "../ssh/reboot";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
@@ -232,6 +233,19 @@ function createActivityStep(step: ActivityStep): ActivityStep {
 
 function createSingleStepHistory(step: ActivityStep): ActivityStep[] {
   return [createActivityStep(step)];
+}
+
+function formatUpgradeFailureOutput(
+  pkgManager: string,
+  stdout: string,
+  stderr: string,
+  combinedOutput: string,
+): string {
+  const rawError = stderr || stdout || combinedOutput || "Upgrade failed";
+  if ((pkgManager === "dnf" || pkgManager === "yum") && hasDnfLikeEulaPrompt(combinedOutput)) {
+    return `${rawError}\n\n${getDnfLikeEulaPromptMessage(pkgManager)}`;
+  }
+  return rawError;
 }
 
 function getSystemPackageManagerConfigs(system: {
@@ -937,7 +951,10 @@ export async function applyUpgradeAll(
         if (!success) overallSuccess = false;
         const stepCompletedAt = getCurrentTimestamp();
         const combinedOutput = streamedOutput || stdout || stderr;
-        allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
+        const formattedError = success
+          ? null
+          : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
+        allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
 
         const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
         finishEntry(histId, histStatus, {
@@ -946,13 +963,13 @@ export async function applyUpgradeAll(
             pkgManager: pmName,
             command: cmd,
             output: combinedOutput,
-            error: success ? null : stderr || stdout || combinedOutput,
+            error: formattedError,
             status: histStatus,
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }),
           output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-          error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          error: success ? undefined : formattedError?.slice(0, 2000),
         });
 
         // If connection was lost, can't continue with remaining package managers
@@ -1119,7 +1136,10 @@ export async function applyFullUpgradeAll(
         if (!success) overallSuccess = false;
         const stepCompletedAt = getCurrentTimestamp();
         const combinedOutput = streamedOutput || stdout || stderr;
-        allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
+        const formattedError = success
+          ? null
+          : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
+        allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
 
         const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
         finishEntry(histId, histStatus, {
@@ -1128,13 +1148,13 @@ export async function applyFullUpgradeAll(
             pkgManager: pmName,
             command: cmd,
             output: combinedOutput,
-            error: success ? null : stderr || stdout || combinedOutput,
+            error: formattedError,
             status: histStatus,
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }),
           output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-          error: success ? undefined : (stderr || stdout).slice(0, 2000),
+          error: success ? undefined : formattedError?.slice(0, 2000),
         });
 
         // If connection was lost, can't continue with remaining package managers
@@ -1204,6 +1224,7 @@ export async function applyUpgradePackages(
     if (!system) {
       return { success: false, output: "System not found" };
     }
+    const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
 
     let selected: SelectedPackageUpgradeResolution;
     try {
@@ -1252,7 +1273,10 @@ export async function applyUpgradePackages(
             continue;
           }
 
-          const cmd = parser.getUpgradePackagesCommand(packagesForManager);
+          const cmd = parser.getUpgradePackagesCommand(
+            packagesForManager,
+            getManagerConfig(pkgManagerConfigs, pmName),
+          );
           allCommands.push(cmd);
 
           const stepStartedAt = getCurrentTimestamp();
@@ -1302,6 +1326,9 @@ export async function applyUpgradePackages(
           const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || stdout || stderr;
+          const formattedError = success
+            ? null
+            : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
           finishEntry(histId, histStatus, {
             packageCount: selected.packageNames.length,
             packages: selectedPackagesJson,
@@ -1310,15 +1337,15 @@ export async function applyUpgradePackages(
               pkgManager: pmName,
               command: cmd,
               output: combinedOutput,
-              error: success ? null : stderr || stdout || combinedOutput,
+              error: formattedError,
               status: histStatus,
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             }),
             output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-            error: success ? undefined : (stderr || stdout).slice(0, 2000),
+            error: success ? undefined : formattedError?.slice(0, 2000),
           });
-          allOutputs.push(`[${pmName}] ${success ? stdout : stderr || stdout}`);
+          allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
 
           if (reconnectionUsed) break;
         }

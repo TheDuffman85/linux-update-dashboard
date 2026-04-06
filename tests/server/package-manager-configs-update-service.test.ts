@@ -7,7 +7,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateCache } from "../../server/db/schema";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
-import { applyFullUpgradeAll, applyUpgradeAll, checkUpdates } from "../../server/services/update-service";
+import { applyFullUpgradeAll, applyUpgradeAll, applyUpgradePackages, checkUpdates } from "../../server/services/update-service";
 import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
 
 const SYSTEM_INFO_OUTPUT = `===OS===
@@ -123,6 +123,54 @@ describe("update service package manager configs", () => {
 
     expect(commands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"))).toBe(true);
     expect(commands.some((command) => command.includes("dnf distro-sync -y"))).toBe(true);
+  });
+
+  test("threads DNF and YUM EULA config into upgrade commands", async () => {
+    const db = getDb();
+    const dnfSystemId = insertSystem({
+      pkgManager: "dnf",
+      pkgManagerConfigs: {
+        dnf: { defaultUpgradeMode: "distro-sync", autoAcceptEulaOnUpgrade: true },
+      },
+    });
+    const yumSystemId = insertSystem({
+      pkgManager: "yum",
+      pkgManagerConfigs: {
+        yum: { autoAcceptEulaOnUpgrade: true },
+      },
+    });
+
+    db.insert(updateCache).values([
+      { systemId: dnfSystemId, pkgManager: "dnf", packageName: "msodbcsql18", newVersion: "18.6.2.1-1" },
+      { systemId: yumSystemId, pkgManager: "yum", packageName: "msodbcsql18", newVersion: "18.6.2.1-1" },
+    ]).run();
+
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    const commands: string[] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runPersistentCommand = async (_conn: unknown, command: string) => {
+      commands.push(command);
+      return { stdout: "ok", stderr: "", exitCode: 0 };
+    };
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dnf check-update --quiet")) {
+        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("yum check-update --quiet")) {
+        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await applyUpgradeAll(dnfSystemId);
+    await applyUpgradeAll(yumSystemId);
+
+    expect(commands.some((command) => command.includes("ACCEPT_EULA=Y dnf distro-sync -y"))).toBe(true);
+    expect(commands.some((command) => command.includes("ACCEPT_EULA=Y yum update -y"))).toBe(true);
   });
 
   test("applyFullUpgradeAll still forces full-upgrade semantics", async () => {
@@ -269,5 +317,90 @@ describe("update service package manager configs", () => {
     commands.length = 0;
     await checkUpdates(flatpakSystemId);
     expect(commands.some((command) => command.includes("flatpak update --appstream"))).toBe(false);
+  });
+
+  test("threads DNF EULA config into full-upgrade and selected-package commands", async () => {
+    const db = getDb();
+    const systemId = insertSystem({
+      pkgManager: "dnf",
+      pkgManagerConfigs: {
+        dnf: {
+          defaultUpgradeMode: "distro-sync",
+          autoAcceptEulaOnUpgrade: true,
+        },
+      },
+    });
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "dnf",
+      packageName: "msodbcsql18",
+      newVersion: "18.6.2.1-1",
+    }).run();
+
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    const commands: string[] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runPersistentCommand = async (_conn: unknown, command: string) => {
+      commands.push(command);
+      return { stdout: "ok", stderr: "", exitCode: 0 };
+    };
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dnf check-update --quiet")) {
+        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await applyFullUpgradeAll(systemId);
+    await applyUpgradePackages(systemId, ["msodbcsql18"]);
+
+    expect(commands.some((command) => command.includes("ACCEPT_EULA=Y dnf distro-sync -y"))).toBe(true);
+    expect(commands.some((command) => command.includes("ACCEPT_EULA=Y dnf upgrade -y msodbcsql18"))).toBe(true);
+  });
+
+  test("adds a license-acceptance hint for DNF upgrade failures that require a tty", async () => {
+    const db = getDb();
+    const systemId = insertSystem({
+      pkgManager: "dnf",
+    });
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "dnf",
+      packageName: "msodbcsql18",
+      newVersion: "18.6.2.1-1",
+    }).run();
+
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runPersistentCommand = async () => ({
+      stdout: [
+        "Running transaction",
+        "  Running scriptlet: msodbcsql18-18.6.2.1-1.x86_64",
+        "/var/tmp/rpm-tmp.0iTrPf: line 17: /dev/tty: No such device or address",
+        "error: %prein(msodbcsql18-18.6.2.1-1.x86_64) scriptlet failed, exit status 1",
+      ].join("\n"),
+      stderr: "Error in PREIN scriptlet in rpm package msodbcsql18",
+      exitCode: 1,
+    });
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dnf check-update --quiet")) {
+        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    const result = await applyUpgradeAll(systemId);
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("interactive license acceptance");
+    expect(result.output).toContain("automatic EULA acceptance");
   });
 });

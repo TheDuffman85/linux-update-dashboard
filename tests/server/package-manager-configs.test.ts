@@ -13,9 +13,11 @@ describe("package-manager configs", () => {
         defaultUpgradeMode: "distro-sync",
         refreshMetadataOnCheck: true,
         autoAcceptNewSigningKeysOnCheck: true,
+        autoAcceptEulaOnUpgrade: true,
       },
       yum: {
         autoAcceptNewSigningKeysOnCheck: true,
+        autoAcceptEulaOnUpgrade: true,
       },
     });
 
@@ -24,9 +26,11 @@ describe("package-manager configs", () => {
         defaultUpgradeMode: "distro-sync",
         refreshMetadataOnCheck: true,
         autoAcceptNewSigningKeysOnCheck: true,
+        autoAcceptEulaOnUpgrade: true,
       },
       yum: {
         autoAcceptNewSigningKeysOnCheck: true,
+        autoAcceptEulaOnUpgrade: true,
       },
     });
     expect(parsePackageManagerConfigs(serializePackageManagerConfigs(normalized))).toEqual(normalized);
@@ -44,5 +48,17 @@ describe("package-manager configs", () => {
         autoAcceptNewSigningKeysOnCheck: "yes",
       },
     })).toBe("pkgManagerConfigs.yum.autoAcceptNewSigningKeysOnCheck must be a boolean");
+
+    expect(validatePackageManagerConfigsInput({
+      dnf: {
+        autoAcceptEulaOnUpgrade: "yes",
+      },
+    })).toBe("pkgManagerConfigs.dnf.autoAcceptEulaOnUpgrade must be a boolean");
+
+    expect(validatePackageManagerConfigsInput({
+      yum: {
+        autoAcceptEulaOnUpgrade: "yes",
+      },
+    })).toBe("pkgManagerConfigs.yum.autoAcceptEulaOnUpgrade must be a boolean");
   });
 });

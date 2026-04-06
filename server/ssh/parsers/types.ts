@@ -34,8 +34,8 @@ export interface PackageParser {
   getCheckCommandLabels?(config?: PackageManagerConfigValue): string[];
   getUpgradeAllCommand(config?: PackageManagerConfigValue): string;
   getFullUpgradeAllCommand(config?: PackageManagerConfigValue): string | null;
-  getUpgradePackagesCommand(pkgs: string[]): string;
-  getUpgradePackageCommand(pkg: string): string;
+  getUpgradePackagesCommand(pkgs: string[], config?: PackageManagerConfigValue): string;
+  getUpgradePackageCommand(pkg: string, config?: PackageManagerConfigValue): string;
 }
 
 /**
