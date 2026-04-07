@@ -38,7 +38,7 @@
     "@tanstack/react-query": "^5.95.2",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "25.5.0",
-    "@types/nodemailer": "^7.0.11",
+    "@types/nodemailer": "^8.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ssh2": "^1.15.0",
