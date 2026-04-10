@@ -356,6 +356,14 @@ describe("update service package manager configs", () => {
     };
 
     await applyFullUpgradeAll(systemId);
+    // The full-upgrade path rechecks and refreshes cached updates; reseed the selected package path.
+    db.delete(updateCache).run();
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "dnf",
+      packageName: "msodbcsql18",
+      newVersion: "18.6.2.1-1",
+    }).run();
     await applyUpgradePackages(systemId, ["msodbcsql18"]);
 
     expect(commands.some((command) => command.includes("ACCEPT_EULA=Y dnf distro-sync -y"))).toBe(true);

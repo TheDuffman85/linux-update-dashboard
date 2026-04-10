@@ -6,6 +6,7 @@ PROJECT_ROOT="$(realpath "$SCRIPT_DIR")"
 ENV_FILE="$SCRIPT_DIR/.env"
 SERVER_PORT=3001
 CLIENT_PORT=5173
+PNPM_CMD=()
 
 # Keep Corepack-managed pnpm downloads non-interactive for local scripts.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -13,6 +14,28 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # Helper functions
 log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+}
+
+configure_pnpm() {
+    if command -v pnpm >/dev/null 2>&1; then
+        PNPM_CMD=(pnpm)
+        return 0
+    fi
+
+    if command -v corepack >/dev/null 2>&1; then
+        PNPM_CMD=(corepack pnpm)
+        return 0
+    fi
+
+    log "Error: 'pnpm' is not installed and 'corepack' is not available."
+    log "Install pnpm 10.33.0 or activate it with Corepack:"
+    log "  corepack enable"
+    log "  corepack prepare pnpm@10.33.0 --activate"
+    exit 1
+}
+
+run_pnpm() {
+    "${PNPM_CMD[@]}" "$@"
 }
 
 prepare_native_build_env() {
@@ -32,18 +55,18 @@ prepare_native_build_env() {
 }
 
 check_better_sqlite3() {
-    pnpm exec node -e "const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.prepare('select 1').get(); db.close();" >/dev/null 2>&1
+    run_pnpm exec node -e "const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.prepare('select 1').get(); db.close();" >/dev/null 2>&1
 }
 
 rebuild_better_sqlite3() {
     local better_sqlite3_dir=""
 
-    pnpm rebuild better-sqlite3 >/dev/null 2>&1 || true
+    run_pnpm rebuild better-sqlite3 >/dev/null 2>&1 || true
     if check_better_sqlite3; then
         return 0
     fi
 
-    better_sqlite3_dir="$(pnpm exec node -p "require('path').dirname(require.resolve('better-sqlite3/package.json'))" 2>/dev/null || true)"
+    better_sqlite3_dir="$(run_pnpm exec node -p "require('path').dirname(require.resolve('better-sqlite3/package.json'))" 2>/dev/null || true)"
     if [ -n "$better_sqlite3_dir" ] && [ -d "$better_sqlite3_dir" ]; then
         (cd "$better_sqlite3_dir" && npm run build-release >/dev/null 2>&1) || true
     fi
@@ -139,13 +162,7 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
-if ! command -v pnpm &> /dev/null; then
-    log "Error: 'pnpm' is not installed."
-    log "Install pnpm 10.33.0 or activate it with Corepack:"
-    log "  corepack enable"
-    log "  corepack prepare pnpm@10.33.0 --activate"
-    exit 1
-fi
+configure_pnpm
 
 # 3. Determine mode
 MODE="${1:-normal}"
@@ -186,12 +203,12 @@ if [ "$MODE" == "test" ]; then
     export NODE_ENV=production
 
     log "Building application..."
-    pnpm run build
+    run_pnpm run build
 
     if [ $? -eq 0 ]; then
         log "Build successful."
         log "Starting server..."
-        pnpm run start
+        run_pnpm run start
     else
         log "Build failed. Aborting."
         exit 1
@@ -202,10 +219,10 @@ elif [ "$MODE" == "dev" ]; then
 
     # Start both server and client via pnpm scripts
     log "Starting server (tsx watch) and client (vite)..."
-    pnpm run dev:server &
+    run_pnpm run dev:server &
     SERVER_PID=$!
 
-    pnpm run dev:client &
+    run_pnpm run dev:client &
     CLIENT_PID=$!
 
     log "Services started. Server PID: $SERVER_PID, Client PID: $CLIENT_PID"
@@ -231,12 +248,12 @@ else
 
     # Build
     log "Building application..."
-    pnpm run build
+    run_pnpm run build
 
     if [ $? -eq 0 ]; then
         log "Build successful."
         log "Starting server..."
-        pnpm run start
+        run_pnpm run start
     else
         log "Build failed. Aborting."
         exit 1
