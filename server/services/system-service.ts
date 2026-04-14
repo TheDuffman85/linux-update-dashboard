@@ -430,6 +430,20 @@ export function deleteSystem(systemId: number): void {
   db.delete(systems).where(eq(systems.id, systemId)).run();
 }
 
+export function dismissNeedsReboot(systemId: number): void {
+  const db = getDb();
+  const existing = getSystem(systemId);
+  if (!existing) throw new Error("System not found");
+
+  db.update(systems)
+    .set({
+      needsReboot: 0,
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
 export function reorderSystems(systemIds: number[]): void {
   const db = getDb();
   const existingSystems = db
