@@ -5,7 +5,7 @@ import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSystem, useRebootSystem } from "../lib/systems";
+import { useSystem, useRebootSystem, useDismissNeedsReboot } from "../lib/systems";
 import { useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
@@ -1100,10 +1100,12 @@ export default function SystemDetail() {
   const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading } = useUpgrade();
   const { addToast } = useToast();
   const rebootSystem = useRebootSystem();
+  const dismissNeedsReboot = useDismissNeedsReboot();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showUpgradeSelectedConfirm, setShowUpgradeSelectedConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const [showDismissNeedsRebootConfirm, setShowDismissNeedsRebootConfirm] = useState(false);
   const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
   const [selectedPackageNames, setSelectedPackageNames] = useState<string[]>([]);
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
@@ -1137,6 +1139,7 @@ export default function SystemDetail() {
   const checking = checkUpdates.isPending || activeOp?.type === "check";
   const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "full_upgrade_all" || activeOp?.type === "upgrade_package";
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
+  const dismissingNeedsReboot = dismissNeedsReboot.isPending;
   const updatesSignature = data?.updates
     .map((update) => `${update.pkgManager}:${update.packageName}:${update.newVersion || ""}`)
     .join("|") ?? "";
@@ -1257,6 +1260,14 @@ export default function SystemDetail() {
     rebootSystem.mutate(systemId, {
       onSuccess: (d) =>
         addToast(d.success ? "Reboot command sent" : d.message, d.success ? "success" : "danger"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleDismissNeedsReboot = () => {
+    setShowDismissNeedsRebootConfirm(false);
+    dismissNeedsReboot.mutate(systemId, {
+      onSuccess: () => addToast("Reboot warning dismissed", "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -1494,8 +1505,8 @@ export default function SystemDetail() {
           <span className="text-amber-600 dark:text-amber-500 flex-1">A kernel update has been installed. Reboot this system to apply it.</span>
           <button
             onClick={() => setShowRebootConfirm(true)}
-            disabled={rebooting || upgrading || checking}
-            className="ml-auto px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+            disabled={rebooting || upgrading || checking || dismissingNeedsReboot}
+            className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {rebooting ? (
               <span className="flex items-center gap-1.5">
@@ -1503,6 +1514,18 @@ export default function SystemDetail() {
                 Rebooting...
               </span>
             ) : "Reboot"}
+          </button>
+          <button
+            onClick={() => setShowDismissNeedsRebootConfirm(true)}
+            disabled={dismissingNeedsReboot || rebooting || upgrading || checking}
+            className="px-3 py-1 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-900/30 text-amber-700 dark:text-amber-400 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            {dismissingNeedsReboot ? (
+              <span className="flex items-center gap-1.5">
+                <span className="spinner spinner-sm" />
+                Dismissing...
+              </span>
+            ) : "Dismiss"}
           </button>
         </div>
       )}
@@ -1606,6 +1629,15 @@ export default function SystemDetail() {
         confirmLabel="Reboot"
         danger
         loading={rebooting}
+      />
+      <ConfirmDialog
+        open={showDismissNeedsRebootConfirm}
+        onClose={() => setShowDismissNeedsRebootConfirm(false)}
+        onConfirm={handleDismissNeedsReboot}
+        title="Dismiss Reboot Warning"
+        message={`Dismiss the reboot warning for ${system.name}? A later system scan can show it again if the host still reports a reboot-required state or another update requires a reboot.`}
+        confirmLabel="Dismiss Warning"
+        loading={dismissingNeedsReboot}
       />
       <ConfirmDialog
         open={pendingHideUpdate !== null}

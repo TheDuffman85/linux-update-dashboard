@@ -7,6 +7,7 @@ export const SYSTEM_INFO_CMD =
   'echo "===KERNEL==="; uname -r 2>/dev/null; ' +
   'echo "===HOSTNAME==="; (hostname 2>/dev/null || cat /etc/hostname 2>/dev/null); ' +
   'echo "===UPTIME==="; (uptime -p 2>/dev/null || uptime 2>/dev/null); ' +
+  'echo "===UPTIME_SECONDS==="; cut -d " " -f1 /proc/uptime 2>/dev/null; ' +
   'echo "===ARCH==="; uname -m 2>/dev/null; ' +
   'echo "===CPU==="; nproc 2>/dev/null; ' +
   'echo "===MEM==="; free -h 2>/dev/null | grep Mem; ' +
@@ -27,6 +28,7 @@ export interface SystemInfo {
   kernel: string;
   hostname: string;
   uptime: string;
+  uptimeSeconds: number | null;
   arch: string;
   cpuCores: string;
   memory: string;
@@ -40,7 +42,10 @@ export interface SystemInfo {
 
 export interface PreviousRebootState {
   bootId?: string | null;
+  lastSeenAt?: string | null;
 }
+
+const STALE_REBOOT_UPTIME_TOLERANCE_SECONDS = 120;
 
 const KERNEL_VERSION_COLLATOR = new Intl.Collator(undefined, {
   numeric: true,
@@ -126,9 +131,44 @@ export function hasPendingKernelUpdate(
   return familyKernels[familyKernels.length - 1] !== running;
 }
 
+function parseDbTimestampAsUtcMillis(value: string | null | undefined): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/
+  );
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second] = match;
+  return Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+}
+
+function rebootCanBeInferredFromUptime(
+  previous: PreviousRebootState | null | undefined,
+  info: SystemInfo,
+  now = Date.now()
+): boolean {
+  if (info.uptimeSeconds == null) return false;
+
+  const lastSeenAtMs = parseDbTimestampAsUtcMillis(previous?.lastSeenAt);
+  if (lastSeenAtMs == null) return false;
+
+  const elapsedSeconds = (now - lastSeenAtMs) / 1000;
+  return elapsedSeconds > info.uptimeSeconds + STALE_REBOOT_UPTIME_TOLERANCE_SECONDS;
+}
+
 export function resolveRebootRequired(
   previous: PreviousRebootState | null | undefined,
-  info: SystemInfo
+  info: SystemInfo,
+  now = Date.now()
 ): boolean {
   if (info.needsRestartingStatus === "required") {
     return true;
@@ -149,6 +189,13 @@ export function resolveRebootRequired(
     return false;
   }
 
+  if (
+    (!previousBootId || !currentBootId || previousBootId === currentBootId) &&
+    rebootCanBeInferredFromUptime(previous, info, now)
+  ) {
+    return false;
+  }
+
   return true;
 }
 
@@ -159,6 +206,7 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     kernel: "",
     hostname: "",
     uptime: "",
+    uptimeSeconds: null,
     arch: "",
     cpuCores: "",
     memory: "",
@@ -208,6 +256,12 @@ export function parseSystemInfo(stdout: string): SystemInfo {
   info.kernel = (sections["KERNEL"] || "").trim();
   info.hostname = (sections["HOSTNAME"] || "").trim();
   info.uptime = (sections["UPTIME"] || "").trim();
+
+  const uptimeSeconds = Number.parseFloat((sections["UPTIME_SECONDS"] || "").trim());
+  if (Number.isFinite(uptimeSeconds) && uptimeSeconds >= 0) {
+    info.uptimeSeconds = uptimeSeconds;
+  }
+
   info.arch = (sections["ARCH"] || "").trim();
   info.cpuCores = (sections["CPU"] || "").trim();
 

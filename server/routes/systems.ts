@@ -692,6 +692,24 @@ systems.post("/:id/reboot", async (c) => {
   return c.json(result, result.success ? 200 : 500);
 });
 
+systems.post("/:id/dismiss-needs-reboot", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const system = systemService.getSystem(id);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  try {
+    systemService.dismissNeedsReboot(id);
+  } catch (error) {
+    const response = getSystemWriteErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
+
+  await notificationRuntime.syncSystemState(id);
+  return c.json({ status: "ok" });
+});
+
 systems.post("/:id/revoke-host-key", (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);

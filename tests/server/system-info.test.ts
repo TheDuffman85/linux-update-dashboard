@@ -19,6 +19,8 @@ ID=ubuntu
 web-server-01
 ===UPTIME===
 up 14 days, 3 hours, 22 minutes
+===UPTIME_SECONDS===
+1234567.89
 ===ARCH===
 x86_64
 ===CPU===
@@ -43,6 +45,7 @@ PRESENT
     expect(info.kernel).toBe("6.8.0-45-generic");
     expect(info.hostname).toBe("web-server-01");
     expect(info.uptime).toContain("14 days");
+    expect(info.uptimeSeconds).toBe(1234567.89);
     expect(info.arch).toBe("x86_64");
     expect(info.cpuCores).toBe("4");
     expect(info.memory).toBe("7.7Gi");
@@ -65,6 +68,8 @@ NAME="Unknown"
 srv
 ===UPTIME===
 up 1 hour
+===UPTIME_SECONDS===
+3600.12
 ===ARCH===
 aarch64
 ===CPU===
@@ -76,6 +81,7 @@ aarch64
     expect(info.osName).toBe("Unknown");
     expect(info.kernel).toBe("5.0");
     expect(info.hostname).toBe("srv");
+    expect(info.uptimeSeconds).toBe(3600.12);
     expect(info.arch).toBe("aarch64");
   });
 
@@ -101,6 +107,8 @@ Raspberry Pi reference 2025-02-12
 pi
 ===UPTIME===
 up 2 days
+===UPTIME_SECONDS===
+172800
 ===ARCH===
 aarch64
 ===CPU===
@@ -132,6 +140,8 @@ pve-manager/9.0.3/abc12345
 proxmox
 ===UPTIME===
 up 7 days
+===UPTIME_SECONDS===
+604800
 ===ARCH===
 x86_64
 ===CPU===
@@ -162,6 +172,8 @@ ID=debian
 domain
 ===UPTIME===
 up 3 days
+===UPTIME_SECONDS===
+259200
 ===ARCH===
 x86_64
 ===CPU===
@@ -208,6 +220,8 @@ NAME="Debian"
 pi
 ===UPTIME===
 up 1 hour
+===UPTIME_SECONDS===
+3600
 ===ARCH===
 x86_64
 ===CPU===
@@ -238,6 +252,8 @@ NAME="Debian"
 pi
 ===UPTIME===
 up 4 minutes
+===UPTIME_SECONDS===
+240
 ===ARCH===
 x86_64
 ===CPU===
@@ -259,6 +275,124 @@ UNAVAILABLE
     expect(resolveRebootRequired({ bootId: "boot-a" }, info)).toBe(false);
   });
 
+  test("clears stale reboot-required file when boot id is unchanged but uptime proves a reboot", () => {
+    const info = parseSystemInfo(`===OS===
+NAME="Debian"
+===KERNEL===
+6.1.0-30-amd64
+===HOSTNAME===
+pi
+===UPTIME===
+up 4 minutes
+===UPTIME_SECONDS===
+240
+===ARCH===
+x86_64
+===CPU===
+4
+===MEM===
+Mem: 1Gi
+===DISK===
+/dev/root 20G 5G 15G 25% /
+===BOOT_ID===
+boot-a
+===REBOOT_FILE===
+PRESENT
+===NEEDS_RESTARTING===
+UNAVAILABLE
+===INSTALLED_KERNELS===
+6.1.0-30-amd64
+`);
+
+    const now = Date.UTC(2026, 3, 14, 12, 0, 0);
+    expect(
+      resolveRebootRequired(
+        { bootId: "boot-a", lastSeenAt: "2026-04-14 11:50:00" },
+        info,
+        now
+      )
+    ).toBe(false);
+  });
+
+  test("keeps reboot required when boot id is unchanged and uptime does not prove a reboot", () => {
+    const info = parseSystemInfo(`===OS===
+NAME="Debian"
+===KERNEL===
+6.1.0-30-amd64
+===HOSTNAME===
+pi
+===UPTIME===
+up 9 minutes
+===UPTIME_SECONDS===
+540
+===ARCH===
+x86_64
+===CPU===
+4
+===MEM===
+Mem: 1Gi
+===DISK===
+/dev/root 20G 5G 15G 25% /
+===BOOT_ID===
+boot-a
+===REBOOT_FILE===
+PRESENT
+===NEEDS_RESTARTING===
+UNAVAILABLE
+===INSTALLED_KERNELS===
+6.1.0-30-amd64
+`);
+
+    const now = Date.UTC(2026, 3, 14, 12, 0, 0);
+    expect(
+      resolveRebootRequired(
+        { bootId: "boot-a", lastSeenAt: "2026-04-14 11:50:00" },
+        info,
+        now
+      )
+    ).toBe(true);
+  });
+
+  test("keeps reboot required for pending kernel updates even if uptime suggests a reboot", () => {
+    const info = parseSystemInfo(`===OS===
+NAME="Debian"
+===KERNEL===
+6.1.0-30-amd64
+===HOSTNAME===
+pi
+===UPTIME===
+up 4 minutes
+===UPTIME_SECONDS===
+240
+===ARCH===
+x86_64
+===CPU===
+4
+===MEM===
+Mem: 1Gi
+===DISK===
+/dev/root 20G 5G 15G 25% /
+===BOOT_ID===
+boot-a
+===REBOOT_FILE===
+PRESENT
+===NEEDS_RESTARTING===
+UNAVAILABLE
+===INSTALLED_KERNELS===
+6.1.0-30-amd64
+6.1.0-31-amd64
+`);
+
+    const now = Date.UTC(2026, 3, 14, 12, 0, 0);
+    expect(
+      resolveRebootRequired(
+        { bootId: "boot-a", lastSeenAt: "2026-04-14 11:50:00" },
+        info,
+        now
+      )
+    ).toBe(true);
+  });
+
   test("keeps reboot required when needs-restarting reports it", () => {
     const info = parseSystemInfo(`===OS===
 NAME="Rocky Linux"
@@ -268,6 +402,8 @@ NAME="Rocky Linux"
 db
 ===UPTIME===
 up 1 day
+===UPTIME_SECONDS===
+240
 ===ARCH===
 x86_64
 ===CPU===
@@ -286,6 +422,13 @@ ABSENT
 5.14.0-503.14.1.el9_5.x86_64
 `);
 
-    expect(resolveRebootRequired({ bootId: "boot-b" }, info)).toBe(true);
+    const now = Date.UTC(2026, 3, 14, 12, 0, 0);
+    expect(
+      resolveRebootRequired(
+        { bootId: "boot-b", lastSeenAt: "2026-04-14 11:50:00" },
+        info,
+        now
+      )
+    ).toBe(true);
   });
 });

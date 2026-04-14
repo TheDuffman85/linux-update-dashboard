@@ -8,6 +8,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
+  dismissNeedsReboot,
   filterVisibleSystemIds,
   filterVisibleSystemItems,
   isSystemVisible,
@@ -50,6 +51,8 @@ VERSION_ID="12"
 pi
 ===UPTIME===
 up 3 days
+===UPTIME_SECONDS===
+259200
 ===ARCH===
 aarch64
 ===CPU===
@@ -77,6 +80,8 @@ VERSION_ID="12"
 pi
 ===UPTIME===
 up 2 minutes
+===UPTIME_SECONDS===
+120
 ===ARCH===
 aarch64
 ===CPU===
@@ -86,7 +91,7 @@ Mem:           7.7Gi       2.1Gi       4.2Gi       256Mi       1.4Gi       5.3Gi
 ===DISK===
 /dev/root        50G   12G   35G  26% /
 ===BOOT_ID===
-boot-new
+boot-old
 ===REBOOT_FILE===
 PRESENT
 ===NEEDS_RESTARTING===
@@ -111,11 +116,54 @@ UNAVAILABLE
     expect(system?.needsReboot).toBe(1);
     expect(system?.bootId).toBe("boot-old");
 
-    await updateSystemInfo(inserted.id, sshManager, {} as never);
+    db.update(systems)
+      .set({ lastSeenAt: "2026-04-14 10:00:00" })
+      .where(eq(systems.id, inserted.id))
+      .run();
+
+    const realDateNow = Date.now;
+    Date.now = () => Date.UTC(2026, 3, 14, 12, 30, 0);
+    try {
+      await updateSystemInfo(inserted.id, sshManager, {} as never);
+    } finally {
+      Date.now = realDateNow;
+    }
 
     system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
     expect(system?.needsReboot).toBe(0);
-    expect(system?.bootId).toBe("boot-new");
+    expect(system?.bootId).toBe("boot-old");
+  });
+});
+
+describe("dismissNeedsReboot", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-dismiss-reboot-test-"));
+    initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("clears the stored reboot-required flag", () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Pi",
+      hostname: "pi.local",
+      port: 22,
+      authType: "password",
+      username: "pi",
+      needsReboot: 1,
+    }).returning({ id: systems.id }).get();
+
+    dismissNeedsReboot(inserted.id);
+
+    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
+    expect(system?.needsReboot).toBe(0);
   });
 });
 

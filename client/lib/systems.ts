@@ -282,6 +282,19 @@ export function useRebootSystem() {
   });
 }
 
+export function useDismissNeedsReboot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ status: string }>(`/systems/${id}/dismiss-needs-reboot`, { method: "POST" }),
+    onSuccess: async (_data, id) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
 export function useTestConnection() {
   return useMutation({
     mutationFn: (data: {
