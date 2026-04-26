@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { createNodeWebSocket } from "@hono/node-ws";
+import { upgradeWebSocket } from "@hono/node-server";
 import { authMiddleware } from "./middleware/auth";
 import { csrfMiddleware } from "./middleware/csrf";
 import { getTrustedPublicOrigin, rememberTrustedPublicOrigin } from "./request-security";
@@ -19,7 +19,6 @@ import credentialsRoutes from "./routes/credentials";
 
 export function createApp() {
   const app = new Hono();
-  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   // Security headers
   app.use("*", async (c, next) => {
@@ -111,5 +110,5 @@ export function createApp() {
     app.get("*", serveStatic({ root: "./dist/client", path: "index.html" }));
   }
 
-  return { app, injectWebSocket };
+  return app;
 }

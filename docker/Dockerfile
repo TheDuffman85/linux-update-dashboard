@@ -1,4 +1,4 @@
-FROM node:24.14.1-trixie-slim AS base
+FROM node:24.15.0-trixie-slim AS base
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade libc6 libc-bin \
