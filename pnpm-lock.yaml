@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: 2.0.0
-        version: 2.0.0(hono@4.12.9)
+        version: 2.0.0(hono@4.12.15)
       '@simplewebauthn/server':
         specifier: ^13.3.0
         version: 13.3.0
@@ -30,8 +30,8 @@ importers:
         specifier: ^0.45.1
         version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)
       hono:
-        specifier: ^4.12.9
-        version: 4.12.9
+        specifier: ^4.12.15
+        version: 4.12.15
       jose:
         specifier: ^6.2.2
         version: 6.2.2
@@ -1099,8 +1099,8 @@ packages:
   help-me@5.0.0:
     resolution: {integrity: sha512-7xgomUX6ADmcYzFik0HzAxh/73YlKR9bmFzf51CZwR+b6YtzU2m0u49hQCqV6SvlqIqsaxovfwdvbnsw3b/zpg==}
 
-  hono@4.12.9:
-    resolution: {integrity: sha512-wy3T8Zm2bsEvxKZM5w21VdHDDcwVS1yUFFY6i8UobSsKfFceT7TOwhbhfKsDyx7tYQlmRM5FLpIuYvNFyjctiA==}
+  hono@4.12.15:
+    resolution: {integrity: sha512-qM0jDhFEaCBb4TxoW7f53Qrpv9RBiayUHo0S52JudprkhvpjIrGoU1mnnr29Fvd1U335ZFPZQY1wlkqgfGXyLg==}
     engines: {node: '>=16.9.0'}
 
   ieee754@1.2.1:
@@ -1807,9 +1807,9 @@ snapshots:
 
   '@hexagon/base64@1.1.28': {}
 
-  '@hono/node-server@2.0.0(hono@4.12.9)':
+  '@hono/node-server@2.0.0(hono@4.12.15)':
     dependencies:
-      hono: 4.12.9
+      hono: 4.12.15
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -2468,7 +2468,7 @@ snapshots:
 
   help-me@5.0.0: {}
 
-  hono@4.12.9: {}
+  hono@4.12.15: {}
 
   ieee754@1.2.1: {}
 
