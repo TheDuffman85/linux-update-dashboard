@@ -1,6 +1,7 @@
 import { mkdirSync, chmodSync } from "fs";
 import { dirname } from "path";
 import { serve } from "@hono/node-server";
+import { WebSocketServer } from "ws";
 import { eq } from "drizzle-orm";
 import { config, getEncryptionSalt, hasConfiguredBaseUrl } from "./config";
 import { initDatabase, closeDatabase, getDb } from "./db";
@@ -69,7 +70,8 @@ logger.info("Starting update scheduler");
 scheduler.start();
 
 // Create and start Hono app
-const { app, injectWebSocket } = createApp();
+const app = createApp();
+const wss = new WebSocketServer({ noServer: true });
 
 logger.info("Server starting", {
   host: config.host,
@@ -81,8 +83,10 @@ const server = serve({
   fetch: app.fetch,
   hostname: config.host,
   port: config.port,
+  websocket: {
+    server: wss,
+  },
 });
-injectWebSocket(server);
 
 logger.info("Starting notification runtimes");
 notificationRuntime.start().catch((error) => {

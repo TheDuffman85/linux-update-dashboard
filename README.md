@@ -110,7 +110,7 @@ Configure scheduler intervals, SSH timeouts, password settings, and other applic
 
 ### Prerequisites
 
-- Node.js 24.14.1 installed
+- Node.js 24.15.0 installed
 - pnpm 10.33.0 available via Corepack or a global install
 - SSH access to at least one Linux server
 

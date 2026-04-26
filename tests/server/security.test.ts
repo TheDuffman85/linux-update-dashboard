@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { describe, test, expect } from "vitest";
 import { CredentialEncryptor, isPassphraseKey } from "../../server/security";
 import { createCipheriv, randomBytes } from "crypto";
@@ -23,7 +25,9 @@ describe("CredentialEncryptor", () => {
   test("tampered ciphertext fails", () => {
     const enc = new CredentialEncryptor(testKey);
     const ciphertext = enc.encrypt("test");
-    const tampered = "X" + ciphertext.slice(1);
+    const tamperedBytes = Buffer.from(ciphertext, "base64");
+    tamperedBytes[tamperedBytes.length - 1] ^= 0xff;
+    const tampered = tamperedBytes.toString("base64");
     expect(() => enc.decrypt(tampered)).toThrow();
   });
 

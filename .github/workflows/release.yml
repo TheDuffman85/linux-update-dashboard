@@ -6,6 +6,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: 24.15.0
 
 jobs:
   release:
@@ -75,6 +76,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
             APP_VERSION=${{ steps.version.outputs.version }}
             APP_BUILD_DATE=${{ steps.version.outputs.date }}
             APP_COMMIT_HASH=${{ steps.version.outputs.sha8 }}
