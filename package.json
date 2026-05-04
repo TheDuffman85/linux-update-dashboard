@@ -28,7 +28,7 @@
     "mqtt": "^5.15.1",
     "mustache": "^4.2.0",
     "nodemailer": "^8.0.6",
-    "openid-client": "^6.8.3",
+    "openid-client": "^6.8.4",
     "sortablejs": "^1.15.7",
     "ssh2": "^1.16.0",
     "ws": "^8.20.0"
