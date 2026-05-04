@@ -286,6 +286,14 @@ function getActionForActiveOperation(
   return type;
 }
 
+function getLastDoneMessage(messages: WsMessage[]): Extract<WsMessage, { type: "done" }> | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.type === "done") return message;
+  }
+  return null;
+}
+
 function getActivityDisplayKey(input: {
   action: string;
   startedAt: string | null;
@@ -561,6 +569,12 @@ export function buildActivityDisplayRows({
   const startedEntry = history.find((entry) => entry.status === "started");
   const liveSteps = deriveLiveActivitySteps(messages);
   const firstStartedMessage = getFirstStartedMessage(messages);
+  const lastDoneMessage = getLastDoneMessage(messages);
+  const liveStatus = lastDoneMessage
+    ? lastDoneMessage.success
+      ? "success"
+      : "failed"
+    : "started";
   const livePackageNames = getActiveOperationPackageNames(activeOp).length > 0
     ? getActiveOperationPackageNames(activeOp)
     : currentSession?.packageNames ?? [];
@@ -589,15 +603,24 @@ export function buildActivityDisplayRows({
   const rows: ActivityDisplayRow[] = [];
   if (showCurrentRow) {
     if (currentHistoryEntry) {
+      const row = createHistoryDisplayRow(
+        currentHistoryEntry,
+        currentHistoryEntry.status === "started" ? liveSteps : [],
+        currentSession?.key,
+        currentHistoryEntry.status === "started" && currentHistoryEntry.packagesList.length === 0
+          ? livePackageNames
+          : undefined,
+      );
       rows.push(
-        createHistoryDisplayRow(
-          currentHistoryEntry,
-          currentHistoryEntry.status === "started" ? liveSteps : [],
-          currentSession?.key,
-          currentHistoryEntry.status === "started" && currentHistoryEntry.packagesList.length === 0
-            ? livePackageNames
-            : undefined,
-        ),
+        currentHistoryEntry.status === "started" && lastDoneMessage
+          ? {
+              ...row,
+              status: liveStatus,
+              completedAt: lastDoneMessage.completedAt,
+              isRunning: false,
+              useLiveDetails: liveSteps.length > 0,
+            }
+          : row,
       );
     } else if (liveAction) {
       rows.push({
@@ -611,10 +634,10 @@ export function buildActivityDisplayRows({
         steps: null,
         output: null,
         error: null,
-        status: "started",
+        status: liveStatus,
         startedAt: liveStartedAt,
-        completedAt: null,
-        isRunning: true,
+        completedAt: lastDoneMessage?.completedAt ?? null,
+        isRunning: liveStatus === "started",
         useLiveDetails: true,
         liveSteps,
         packageName: livePackageNames[0] ?? currentSession?.packageName,
@@ -1060,12 +1083,12 @@ function HistoryList({
 
             {isOpen && hasDetails && (
               <div className="ml-10 mr-2 mb-2 space-y-2">
-                {row.isRunning ? (
+                {row.useLiveDetails && displaySteps.length > 0 ? (
                   <ActivityStepViewer
                     viewerId={`activity-live-${row.key}`}
                     steps={displaySteps}
                     defaultToLastStep
-                    isLive
+                    isLive={row.isRunning}
                     phase={commandOutput.phase}
                   />
                 ) : row.steps?.length ? (
@@ -1113,11 +1136,16 @@ export default function SystemDetail() {
   const updatesSignatureRef = useRef<string | null>(null);
   const commandOutput = useCommandOutput(systemId);
   const qc = useQueryClient();
+  const wasCommandActiveRef = useRef(false);
 
   // When the WebSocket signals an active operation, kick the query into polling mode
   // (refetchInterval only activates when activeOperation is already in cached data)
   useEffect(() => {
     if (commandOutput.isActive) {
+      wasCommandActiveRef.current = true;
+      qc.invalidateQueries({ queryKey: ["system", systemId] });
+    } else if (wasCommandActiveRef.current) {
+      wasCommandActiveRef.current = false;
       qc.invalidateQueries({ queryKey: ["system", systemId] });
     }
   }, [commandOutput.isActive, systemId, qc]);
