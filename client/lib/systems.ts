@@ -6,6 +6,7 @@ import type { HostKeyStatus } from "./host-key-status";
 export interface ActiveOperation {
   type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
   startedAt: string;
+  phase?: "reconnecting" | "rechecking";
   packageName?: string;
   packageNames?: string[];
 }

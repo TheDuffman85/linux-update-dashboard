@@ -4,11 +4,19 @@ FROM archlinux:latest
 # upgradable when the dashboard checks. The current mirror is restored afterward
 # so update checks find newer versions.
 RUN cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak && \
+    cp /etc/pacman.conf /etc/pacman.conf.bak && \
+    sed -i '/^\[options\]/a DisableDownloadTimeout' /etc/pacman.conf && \
     echo 'Server = https://archive.archlinux.org/repos/2025/06/01/$repo/os/$arch' > /etc/pacman.d/mirrorlist && \
-    pacman -Syy --noconfirm \
-        openssh sudo \
-        curl wget vim git nano \
-        htop tree zip unzip jq && \
+    for attempt in 1 2 3; do \
+        pacman -Syy --noconfirm \
+            openssh sudo \
+            curl wget vim git nano \
+            htop tree zip unzip jq && break; \
+        if [ "$attempt" = 3 ]; then exit 1; fi; \
+        pacman -Scc --noconfirm || true; \
+        sleep 5; \
+    done && \
+    mv /etc/pacman.conf.bak /etc/pacman.conf && \
     mv /etc/pacman.d/mirrorlist.bak /etc/pacman.d/mirrorlist
 
 # Configure SSH

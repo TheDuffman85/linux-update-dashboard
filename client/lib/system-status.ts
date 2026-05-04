@@ -28,13 +28,17 @@ export type UpdatesPanelState =
   | { kind: "updates_available" }
   | { kind: "up_to_date" };
 
+export function isPostUpgradeRecheck(activeOperation: ActiveOperation | null | undefined): boolean {
+  return activeOperation?.phase === "rechecking" && activeOperation.type.includes("upgrade");
+}
+
 export function deriveSystemUpdateState(
   system: SystemStatusInput,
   options?: DeriveOptions,
 ): SystemUpdateState {
   const activeType = system.activeOperation?.type;
+  if (options?.checking || activeType === "check" || isPostUpgradeRecheck(system.activeOperation)) return "checking";
   if (options?.upgrading || activeType?.includes("upgrade")) return "upgrading";
-  if (options?.checking || activeType === "check") return "checking";
   if (system.isReachable === -1) return "unreachable";
   if (system.lastCheck?.status === "failed") return "check_failed";
   if (system.lastCheck?.status === "warning") return "check_warning";

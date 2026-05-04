@@ -19,7 +19,7 @@ import type {
   ActiveOperation,
   ActivityStep,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
@@ -1120,7 +1120,7 @@ export default function SystemDetail() {
   const checkUpdates = useCheckUpdates();
   const hideUpdate = useHideUpdate();
   const unhideUpdate = useUnhideUpdate();
-  const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading } = useUpgrade();
+  const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading, removeUpgrading } = useUpgrade();
   const { addToast } = useToast();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
@@ -1151,6 +1151,12 @@ export default function SystemDetail() {
   }, [commandOutput.isActive, systemId, qc]);
 
   useEffect(() => {
+    if (commandOutput.phase === "rechecking" && isUpgrading(systemId)) {
+      removeUpgrading(systemId);
+    }
+  }, [commandOutput.phase, isUpgrading, removeUpgrading, systemId]);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowUpgradeDropdown(false);
@@ -1164,8 +1170,14 @@ export default function SystemDetail() {
 
   // Combine client-side mutation state with server-side active operation
   const activeOp = data?.system?.activeOperation;
-  const checking = checkUpdates.isPending || activeOp?.type === "check";
-  const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "full_upgrade_all" || activeOp?.type === "upgrade_package";
+  const postUpgradeRechecking = isPostUpgradeRecheck(activeOp) || commandOutput.phase === "rechecking";
+  const checking = checkUpdates.isPending || activeOp?.type === "check" || postUpgradeRechecking;
+  const upgrading = !postUpgradeRechecking && (
+    isUpgrading(systemId) ||
+    activeOp?.type === "upgrade_all" ||
+    activeOp?.type === "full_upgrade_all" ||
+    activeOp?.type === "upgrade_package"
+  );
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
   const updatesSignature = data?.updates
