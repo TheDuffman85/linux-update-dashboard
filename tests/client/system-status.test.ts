@@ -77,6 +77,24 @@ describe("deriveSystemUpdateState", () => {
       ),
     ).toBe("upgrading");
   });
+
+  test("returns checking during a post-upgrade recheck phase", () => {
+    expect(
+      deriveSystemUpdateState(
+        makeSystem({
+          lastCheck: makeLastCheck("success"),
+          activeOperation: {
+            type: "upgrade_package",
+            startedAt: "2026-01-01 10:02:00",
+            phase: "rechecking",
+            packageName: "jq",
+            packageNames: ["jq"],
+          },
+        }),
+        { upgrading: true },
+      ),
+    ).toBe("checking");
+  });
 });
 
 describe("getUpdatesPanelState", () => {

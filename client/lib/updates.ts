@@ -1,5 +1,11 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch, pollJob } from "./client";
+
+async function invalidateSystemOperationQueries(qc: QueryClient, systemId: number): Promise<void> {
+  await qc.invalidateQueries({ queryKey: ["system", systemId] });
+  await qc.invalidateQueries({ queryKey: ["systems"] });
+  await qc.invalidateQueries({ queryKey: ["dashboard"] });
+}
 
 export function useCheckUpdates() {
   const qc = useQueryClient();
@@ -11,10 +17,10 @@ export function useCheckUpdates() {
       );
       return pollJob<{ updateCount: number }>(jobId);
     },
-    onSuccess: async (_data, systemId) => {
-      await qc.invalidateQueries({ queryKey: ["system", systemId] });
-      await qc.invalidateQueries({ queryKey: ["systems"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSettled: async (_data, _error, systemId) => {
+      if (systemId !== undefined) {
+        await invalidateSystemOperationQueries(qc, systemId);
+      }
     },
   });
 }
@@ -44,10 +50,10 @@ export function useUpgradeAll() {
       );
       return pollJob<{ status: string; output: string }>(jobId, 3000);
     },
-    onSuccess: async (_data, systemId) => {
-      await qc.invalidateQueries({ queryKey: ["system", systemId] });
-      await qc.invalidateQueries({ queryKey: ["systems"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSettled: async (_data, _error, systemId) => {
+      if (systemId !== undefined) {
+        await invalidateSystemOperationQueries(qc, systemId);
+      }
     },
   });
 }
@@ -62,10 +68,10 @@ export function useFullUpgradeAll() {
       );
       return pollJob<{ status: string; output: string }>(jobId, 3000);
     },
-    onSuccess: async (_data, systemId) => {
-      await qc.invalidateQueries({ queryKey: ["system", systemId] });
-      await qc.invalidateQueries({ queryKey: ["systems"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSettled: async (_data, _error, systemId) => {
+      if (systemId !== undefined) {
+        await invalidateSystemOperationQueries(qc, systemId);
+      }
     },
   });
 }
@@ -90,10 +96,10 @@ export function useUpgradePackage() {
         package: packageName,
       };
     },
-    onSuccess: async (_data, vars) => {
-      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
-      await qc.invalidateQueries({ queryKey: ["systems"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSettled: async (_data, _error, vars) => {
+      if (vars) {
+        await invalidateSystemOperationQueries(qc, vars.systemId);
+      }
     },
   });
 }
@@ -117,10 +123,10 @@ export function useUpgradePackages() {
       );
       return pollJob<{ status: string; packageCount: number; packages: string[]; output: string }>(jobId, 3000);
     },
-    onSuccess: async (_data, vars) => {
-      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
-      await qc.invalidateQueries({ queryKey: ["systems"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSettled: async (_data, _error, vars) => {
+      if (vars) {
+        await invalidateSystemOperationQueries(qc, vars.systemId);
+      }
     },
   });
 }

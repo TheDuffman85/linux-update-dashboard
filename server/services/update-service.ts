@@ -196,6 +196,12 @@ function getCurrentTimestamp(): string {
   return new Date().toISOString().replace("T", " ").replace("Z", "");
 }
 
+function setActiveOperationPhase(systemId: number, phase: ActiveOperation["phase"]): void {
+  const current = getStoredActiveOperation(systemId);
+  if (!current || !phase) return;
+  setActiveOperation(systemId, { ...current, phase });
+}
+
 function trimSanitizedOutput(value: string | null | undefined, limit: number): string | null {
   if (!value) return null;
   const sanitized = sanitizeOutput(value).slice(0, limit);
@@ -982,6 +988,8 @@ export async function applyUpgradeAll(
         conn = undefined;
       }
       if (!reconnectionUsed) {
+        setActiveOperationPhase(systemId, "rechecking");
+        await requestNotificationRuntimeSystemSync(systemId);
         outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
         await checkUpdatesUnlocked(systemId, true);
       }
@@ -1166,6 +1174,8 @@ export async function applyFullUpgradeAll(
         conn = undefined;
       }
       if (!reconnectionUsed) {
+        setActiveOperationPhase(systemId, "rechecking");
+        await requestNotificationRuntimeSystemSync(systemId);
         outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
         await checkUpdatesUnlocked(systemId, true);
       }
@@ -1356,6 +1366,8 @@ export async function applyUpgradePackages(
         }
 
         if (!reconnectionUsed) {
+          setActiveOperationPhase(systemId, "rechecking");
+          await requestNotificationRuntimeSystemSync(systemId);
           outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
           await checkUpdatesUnlocked(systemId, true);
         }

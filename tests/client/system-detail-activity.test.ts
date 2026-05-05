@@ -335,6 +335,121 @@ describe("buildActivityDisplayRows", () => {
       "Upgraded curl, firefox"
     );
   });
+
+  test("marks a failed live check as stopped while waiting for failed history", () => {
+    const history = [
+      createHistoryEntry({
+        id: 4,
+        action: "check",
+        pkgManager: "apt",
+        status: "success",
+        packageCount: 0,
+        startedAt: "2026-03-25 19:00:00",
+        completedAt: "2026-03-25 19:00:04",
+      }),
+    ];
+    const messages: WsMessage[] = [
+      {
+        type: "started",
+        command: "apt-get update",
+        pkgManager: "apt",
+        startedAt: "2026-03-25 20:00:00",
+      },
+      {
+        type: "error",
+        message: "E: Could not get lock /var/lib/apt/lists/lock",
+      },
+      {
+        type: "done",
+        success: false,
+        completedAt: "2026-03-25 20:00:02",
+      },
+    ];
+
+    const session = resolveCurrentActivitySession({
+      previousSession: null,
+      nextSessionKey: () => "activity-current-11",
+      history,
+      activeOp: null,
+      actionHint: "check",
+      messages,
+      isCommandActive: false,
+      pendingTransition: true,
+    });
+    const rows = buildActivityDisplayRows({
+      history,
+      activeOp: null,
+      messages,
+      isCommandActive: false,
+      pendingTransition: true,
+      currentSession: session,
+    });
+
+    expect(rows[0]?.historyId).toBeNull();
+    expect(rows[0]?.status).toBe("failed");
+    expect(rows[0]?.isRunning).toBe(false);
+    expect(rows[0]?.completedAt).toBe("2026-03-25 20:00:02");
+  });
+
+  test("lets websocket completion stop a stale started history row", () => {
+    const history = [
+      createHistoryEntry({
+        id: 12,
+        action: "upgrade_package",
+        pkgManager: "apt",
+        status: "started",
+        command: "apt-get install --only-upgrade -y jq",
+        startedAt: "2026-03-25 20:00:00",
+      }),
+    ];
+    const messages: WsMessage[] = [
+      {
+        type: "started",
+        command: "apt-get install --only-upgrade -y jq",
+        pkgManager: "apt",
+        startedAt: "2026-03-25 20:00:00",
+      },
+      {
+        type: "output",
+        data: "E: Could not get lock /var/lib/apt/lists/lock\n",
+        stream: "stdout",
+      },
+      {
+        type: "error",
+        message: "E: Could not get lock /var/lib/apt/lists/lock",
+      },
+      {
+        type: "done",
+        success: false,
+        completedAt: "2026-03-25 20:00:03",
+      },
+    ];
+
+    const session = resolveCurrentActivitySession({
+      previousSession: null,
+      nextSessionKey: () => "activity-current-12",
+      history,
+      activeOp: null,
+      actionHint: null,
+      messages,
+      isCommandActive: false,
+      pendingTransition: true,
+    });
+    const rows = buildActivityDisplayRows({
+      history,
+      activeOp: null,
+      messages,
+      isCommandActive: false,
+      pendingTransition: true,
+      currentSession: session,
+    });
+
+    expect(rows[0]?.historyId).toBe(12);
+    expect(rows[0]?.status).toBe("failed");
+    expect(rows[0]?.isRunning).toBe(false);
+    expect(rows[0]?.useLiveDetails).toBe(true);
+    expect(rows[0]?.completedAt).toBe("2026-03-25 20:00:03");
+  });
 });
 
 describe("matchesHistoryEntryToSession", () => {

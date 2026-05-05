@@ -20,7 +20,7 @@ import { useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
-import { deriveSystemUpdateState } from "../lib/system-status";
+import { deriveSystemUpdateState, isPostUpgradeRecheck } from "../lib/system-status";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
@@ -199,8 +199,9 @@ export default function SystemsList() {
             </thead>
             <tbody ref={tbodyRef}>
               {orderedSystems.map((s) => {
-                const upgrading = isUpgrading(s.id) || !!s.activeOperation?.type?.startsWith("upgrade");
-                const checking = s.activeOperation?.type === "check";
+                const postUpgradeRechecking = isPostUpgradeRecheck(s.activeOperation);
+                const upgrading = !postUpgradeRechecking && (isUpgrading(s.id) || !!s.activeOperation?.type?.startsWith("upgrade"));
+                const checking = postUpgradeRechecking || s.activeOperation?.type === "check";
                 const updateState = deriveSystemUpdateState(s, { upgrading, checking });
 
                 return (

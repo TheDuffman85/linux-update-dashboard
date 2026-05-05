@@ -8,7 +8,7 @@ import { useDashboardStats, useDashboardSystems } from "../lib/dashboard";
 import { useRefreshCache } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
-import { deriveSystemUpdateState } from "../lib/system-status";
+import { deriveSystemUpdateState, isPostUpgradeRecheck } from "../lib/system-status";
 
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
@@ -19,7 +19,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; securityCount: number; keptBackCount: number; needsReboot?: number; cacheAge: string | null; cacheTimestamp?: string | null; isStale?: boolean; lastCheck: { status: "success" | "warning" | "failed"; error: string | null; startedAt: string; completedAt: string | null } | null; activeOperation?: { type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot"; startedAt: string; packageName?: string; packageNames?: string[] } | null }; upgrading: boolean; checking: boolean }) {
+function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; securityCount: number; keptBackCount: number; needsReboot?: number; cacheAge: string | null; cacheTimestamp?: string | null; isStale?: boolean; lastCheck: { status: "success" | "warning" | "failed"; error: string | null; startedAt: string; completedAt: string | null } | null; activeOperation?: { type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot"; startedAt: string; phase?: "reconnecting" | "rechecking"; packageName?: string; packageNames?: string[] } | null }; upgrading: boolean; checking: boolean }) {
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
@@ -118,7 +118,7 @@ export default function Dashboard() {
     for (const [systemId, entry] of upgradingSystems) {
       if (dataUpdatedAt < entry.addedAt) continue;
       const serverSystem = systems.find((s) => s.id === systemId);
-      if (serverSystem && !serverSystem.activeOperation) {
+      if (serverSystem && (!serverSystem.activeOperation || isPostUpgradeRecheck(serverSystem.activeOperation))) {
         removeUpgrading(systemId);
       }
     }
@@ -227,7 +227,12 @@ export default function Dashboard() {
       {systems && systems.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {systems.map((s) => (
-            <SystemCard key={s.id} system={s} upgrading={isUpgrading(s.id) || !!s.activeOperation?.type?.includes("upgrade")} checking={!!s.activeOperation && !s.activeOperation.type.includes("upgrade")} />
+            <SystemCard
+              key={s.id}
+              system={s}
+              upgrading={!isPostUpgradeRecheck(s.activeOperation) && (isUpgrading(s.id) || !!s.activeOperation?.type?.includes("upgrade"))}
+              checking={isPostUpgradeRecheck(s.activeOperation) || (!!s.activeOperation && !s.activeOperation.type.includes("upgrade"))}
+            />
           ))}
         </div>
       ) : (

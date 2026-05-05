@@ -6,6 +6,7 @@ import type { HostKeyStatus } from "./host-key-status";
 export interface ActiveOperation {
   type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
   startedAt: string;
+  phase?: "reconnecting" | "rechecking";
   packageName?: string;
   packageNames?: string[];
 }
@@ -44,10 +45,15 @@ export interface System {
   kernel: string | null;
   hostnameRemote: string | null;
   uptime: string | null;
+  uptimeSeconds: number | null;
   arch: string | null;
   cpuCores: string | null;
   memory: string | null;
   disk: string | null;
+  bootId: string | null;
+  rebootDismissedBootId: string | null;
+  rebootDismissedUptimeSeconds: number | null;
+  rebootDismissedAt: string | null;
   excludeFromUpgradeAll: number;
   hidden: number;
   needsReboot: number;

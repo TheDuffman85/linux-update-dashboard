@@ -9,6 +9,7 @@ import type { ApprovedHostKeyInput } from "./system-connection-validation";
 import {
   SYSTEM_INFO_CMD,
   parseSystemInfo,
+  resolveRebootDismissal,
   resolveRebootRequired,
 } from "../ssh/system-info";
 import { detectPackageManagers } from "../ssh/detector";
@@ -48,6 +49,13 @@ export class ProxyJumpDependencyError extends Error {
     );
     this.name = "ProxyJumpDependencyError";
     this.dependents = dependents;
+  }
+}
+
+export class RebootDismissalSnapshotRequiredError extends Error {
+  constructor() {
+    super("Run a system check before dismissing this reboot warning.");
+    this.name = "RebootDismissalSnapshotRequiredError";
   }
 }
 
@@ -435,10 +443,20 @@ export function dismissNeedsReboot(systemId: number): void {
   const existing = getSystem(systemId);
   if (!existing) throw new Error("System not found");
 
+  const bootId = existing.bootId?.trim() || "";
+  const uptimeSeconds = existing.uptimeSeconds ?? null;
+  if (!bootId && uptimeSeconds == null) {
+    throw new RebootDismissalSnapshotRequiredError();
+  }
+
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   db.update(systems)
     .set({
       needsReboot: 0,
-      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+      rebootDismissedBootId: bootId || null,
+      rebootDismissedUptimeSeconds: uptimeSeconds,
+      rebootDismissedAt: now,
+      updatedAt: now,
     })
     .where(eq(systems.id, systemId))
     .run();
@@ -486,7 +504,8 @@ export async function updateSystemInfo(
   if (!stdout.includes("===OS===")) return;
 
   const info = parseSystemInfo(stdout);
-  const needsReboot = resolveRebootRequired(previous, info);
+  const rawNeedsReboot = resolveRebootRequired(previous, info);
+  const rebootDismissal = resolveRebootDismissal(previous, info, rawNeedsReboot);
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const db = getDb();
 
@@ -497,12 +516,22 @@ export async function updateSystemInfo(
       kernel: info.kernel,
       hostnameRemote: info.hostname,
       uptime: info.uptime,
+      uptimeSeconds: info.uptimeSeconds,
       arch: info.arch,
       cpuCores: info.cpuCores,
       memory: info.memory,
       disk: info.disk,
       bootId: info.bootId || previous?.bootId || null,
-      needsReboot: needsReboot ? 1 : 0,
+      needsReboot: rebootDismissal.needsReboot ? 1 : 0,
+      rebootDismissedBootId: rebootDismissal.dismissalExpired
+        ? null
+        : previous?.rebootDismissedBootId ?? null,
+      rebootDismissedUptimeSeconds: rebootDismissal.dismissalExpired
+        ? null
+        : previous?.rebootDismissedUptimeSeconds ?? null,
+      rebootDismissedAt: rebootDismissal.dismissalExpired
+        ? null
+        : previous?.rebootDismissedAt ?? null,
       systemInfoUpdatedAt: now,
       isReachable: 1,
       lastSeenAt: now,

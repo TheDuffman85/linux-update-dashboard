@@ -138,6 +138,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     kernel TEXT,
     hostname_remote TEXT,
     uptime TEXT,
+    uptime_seconds REAL,
     arch TEXT,
     cpu_cores TEXT,
     memory TEXT,
@@ -146,6 +147,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
     boot_id TEXT,
+    reboot_dismissed_boot_id TEXT,
+    reboot_dismissed_uptime_seconds REAL,
+    reboot_dismissed_at TEXT,
     system_info_updated_at TEXT,
     is_reachable INTEGER NOT NULL DEFAULT 0,
     last_seen_at TEXT,
@@ -360,6 +364,11 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN uptime_seconds REAL`);
+  } catch {
+    // Column already exists
+  }
+  try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN arch TEXT`);
   } catch {
     // Column already exists
@@ -415,6 +424,21 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   }
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN boot_id TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN reboot_dismissed_boot_id TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN reboot_dismissed_uptime_seconds REAL`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN reboot_dismissed_at TEXT`);
   } catch {
     // Column already exists
   }
@@ -719,6 +743,7 @@ function rebuildSystemsTable(
       kernel TEXT,
       hostname_remote TEXT,
       uptime TEXT,
+      uptime_seconds REAL,
       arch TEXT,
       cpu_cores TEXT,
       memory TEXT,
@@ -727,6 +752,9 @@ function rebuildSystemsTable(
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
       boot_id TEXT,
+      reboot_dismissed_boot_id TEXT,
+      reboot_dismissed_uptime_seconds REAL,
+      reboot_dismissed_at TEXT,
       system_info_updated_at TEXT,
       is_reachable INTEGER NOT NULL DEFAULT 0,
       last_seen_at TEXT,
@@ -764,6 +792,7 @@ function rebuildSystemsTable(
     "kernel",
     "hostname_remote",
     "uptime",
+    "uptime_seconds",
     "arch",
     "cpu_cores",
     "memory",
@@ -772,6 +801,9 @@ function rebuildSystemsTable(
     "hidden",
     "needs_reboot",
     "boot_id",
+    "reboot_dismissed_boot_id",
+    "reboot_dismissed_uptime_seconds",
+    "reboot_dismissed_at",
     "system_info_updated_at",
     "is_reachable",
     "last_seen_at",
@@ -812,6 +844,7 @@ function rebuildSystemsTable(
     "kernel",
     "hostname_remote",
     "uptime",
+    "uptime_seconds",
     "arch",
     "cpu_cores",
     "memory",
@@ -820,6 +853,9 @@ function rebuildSystemsTable(
     "hidden",
     "needs_reboot",
     "boot_id",
+    "reboot_dismissed_boot_id",
+    "reboot_dismissed_uptime_seconds",
+    "reboot_dismissed_at",
     "system_info_updated_at",
     "is_reachable",
     "last_seen_at",

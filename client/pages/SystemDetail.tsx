@@ -19,7 +19,7 @@ import type {
   ActiveOperation,
   ActivityStep,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
@@ -284,6 +284,14 @@ function getActionForActiveOperation(
   type: ActiveOperation["type"],
 ): HistoryEntry["action"] {
   return type;
+}
+
+function getLastDoneMessage(messages: WsMessage[]): Extract<WsMessage, { type: "done" }> | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.type === "done") return message;
+  }
+  return null;
 }
 
 function getActivityDisplayKey(input: {
@@ -561,6 +569,12 @@ export function buildActivityDisplayRows({
   const startedEntry = history.find((entry) => entry.status === "started");
   const liveSteps = deriveLiveActivitySteps(messages);
   const firstStartedMessage = getFirstStartedMessage(messages);
+  const lastDoneMessage = getLastDoneMessage(messages);
+  const liveStatus = lastDoneMessage
+    ? lastDoneMessage.success
+      ? "success"
+      : "failed"
+    : "started";
   const livePackageNames = getActiveOperationPackageNames(activeOp).length > 0
     ? getActiveOperationPackageNames(activeOp)
     : currentSession?.packageNames ?? [];
@@ -589,15 +603,24 @@ export function buildActivityDisplayRows({
   const rows: ActivityDisplayRow[] = [];
   if (showCurrentRow) {
     if (currentHistoryEntry) {
+      const row = createHistoryDisplayRow(
+        currentHistoryEntry,
+        currentHistoryEntry.status === "started" ? liveSteps : [],
+        currentSession?.key,
+        currentHistoryEntry.status === "started" && currentHistoryEntry.packagesList.length === 0
+          ? livePackageNames
+          : undefined,
+      );
       rows.push(
-        createHistoryDisplayRow(
-          currentHistoryEntry,
-          currentHistoryEntry.status === "started" ? liveSteps : [],
-          currentSession?.key,
-          currentHistoryEntry.status === "started" && currentHistoryEntry.packagesList.length === 0
-            ? livePackageNames
-            : undefined,
-        ),
+        currentHistoryEntry.status === "started" && lastDoneMessage
+          ? {
+              ...row,
+              status: liveStatus,
+              completedAt: lastDoneMessage.completedAt,
+              isRunning: false,
+              useLiveDetails: liveSteps.length > 0,
+            }
+          : row,
       );
     } else if (liveAction) {
       rows.push({
@@ -611,10 +634,10 @@ export function buildActivityDisplayRows({
         steps: null,
         output: null,
         error: null,
-        status: "started",
+        status: liveStatus,
         startedAt: liveStartedAt,
-        completedAt: null,
-        isRunning: true,
+        completedAt: lastDoneMessage?.completedAt ?? null,
+        isRunning: liveStatus === "started",
         useLiveDetails: true,
         liveSteps,
         packageName: livePackageNames[0] ?? currentSession?.packageName,
@@ -1060,12 +1083,12 @@ function HistoryList({
 
             {isOpen && hasDetails && (
               <div className="ml-10 mr-2 mb-2 space-y-2">
-                {row.isRunning ? (
+                {row.useLiveDetails && displaySteps.length > 0 ? (
                   <ActivityStepViewer
                     viewerId={`activity-live-${row.key}`}
                     steps={displaySteps}
                     defaultToLastStep
-                    isLive
+                    isLive={row.isRunning}
                     phase={commandOutput.phase}
                   />
                 ) : row.steps?.length ? (
@@ -1097,7 +1120,7 @@ export default function SystemDetail() {
   const checkUpdates = useCheckUpdates();
   const hideUpdate = useHideUpdate();
   const unhideUpdate = useUnhideUpdate();
-  const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading } = useUpgrade();
+  const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading, removeUpgrading } = useUpgrade();
   const { addToast } = useToast();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
@@ -1113,14 +1136,25 @@ export default function SystemDetail() {
   const updatesSignatureRef = useRef<string | null>(null);
   const commandOutput = useCommandOutput(systemId);
   const qc = useQueryClient();
+  const wasCommandActiveRef = useRef(false);
 
   // When the WebSocket signals an active operation, kick the query into polling mode
   // (refetchInterval only activates when activeOperation is already in cached data)
   useEffect(() => {
     if (commandOutput.isActive) {
+      wasCommandActiveRef.current = true;
+      qc.invalidateQueries({ queryKey: ["system", systemId] });
+    } else if (wasCommandActiveRef.current) {
+      wasCommandActiveRef.current = false;
       qc.invalidateQueries({ queryKey: ["system", systemId] });
     }
   }, [commandOutput.isActive, systemId, qc]);
+
+  useEffect(() => {
+    if (commandOutput.phase === "rechecking" && isUpgrading(systemId)) {
+      removeUpgrading(systemId);
+    }
+  }, [commandOutput.phase, isUpgrading, removeUpgrading, systemId]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -1136,8 +1170,14 @@ export default function SystemDetail() {
 
   // Combine client-side mutation state with server-side active operation
   const activeOp = data?.system?.activeOperation;
-  const checking = checkUpdates.isPending || activeOp?.type === "check";
-  const upgrading = isUpgrading(systemId) || activeOp?.type === "upgrade_all" || activeOp?.type === "full_upgrade_all" || activeOp?.type === "upgrade_package";
+  const postUpgradeRechecking = isPostUpgradeRecheck(activeOp) || commandOutput.phase === "rechecking";
+  const checking = checkUpdates.isPending || activeOp?.type === "check" || postUpgradeRechecking;
+  const upgrading = !postUpgradeRechecking && (
+    isUpgrading(systemId) ||
+    activeOp?.type === "upgrade_all" ||
+    activeOp?.type === "full_upgrade_all" ||
+    activeOp?.type === "upgrade_package"
+  );
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
   const updatesSignature = data?.updates
@@ -1635,7 +1675,7 @@ export default function SystemDetail() {
         onClose={() => setShowDismissNeedsRebootConfirm(false)}
         onConfirm={handleDismissNeedsReboot}
         title="Dismiss Reboot Warning"
-        message={`Dismiss the reboot warning for ${system.name}? A later system scan can show it again if the host still reports a reboot-required state or another update requires a reboot.`}
+        message={`Dismiss the reboot warning for ${system.name}? It will stay hidden until a later system scan detects that the host has rebooted.`}
         confirmLabel="Dismiss Warning"
         loading={dismissingNeedsReboot}
       />
