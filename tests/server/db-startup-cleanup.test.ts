@@ -258,11 +258,11 @@ describe("database startup cleanup", () => {
       INSERT INTO systems (
         sort_order, name, hostname, port, auth_type, username,
         pkg_manager, detected_pkg_managers, ignore_kept_back_packages,
-        exclude_from_upgrade_all, hidden, needs_reboot, is_reachable
+        exclude_from_upgrade_all, hidden, needs_reboot, boot_id, is_reachable
       ) VALUES (
         0, 'Legacy Debian', 'legacy.local', 22, 'password', 'root',
         'apt', '["apt"]', 1,
-        1, 0, 1, 1
+        1, 0, 1, 'boot-legacy', 1
       );
     `);
     sqlite.close();
@@ -276,6 +276,10 @@ describe("database startup cleanup", () => {
     restartedSqlite.close();
     expect(columns.some((column) => column.name === "ignore_kept_back_packages")).toBe(false);
     expect(columns.some((column) => column.name === "auto_hide_kept_back_updates")).toBe(true);
+    expect(columns.some((column) => column.name === "uptime_seconds")).toBe(true);
+    expect(columns.some((column) => column.name === "reboot_dismissed_boot_id")).toBe(true);
+    expect(columns.some((column) => column.name === "reboot_dismissed_uptime_seconds")).toBe(true);
+    expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
 
     const restarted = listSystems();
     expect(restarted).toHaveLength(1);
@@ -289,6 +293,11 @@ describe("database startup cleanup", () => {
     }));
     expect(restarted[0].excludeFromUpgradeAll).toBe(1);
     expect(restarted[0].needsReboot).toBe(1);
+    expect(restarted[0].bootId).toBe("boot-legacy");
+    expect(restarted[0].uptimeSeconds).toBeNull();
+    expect(restarted[0].rebootDismissedBootId).toBeNull();
+    expect(restarted[0].rebootDismissedUptimeSeconds).toBeNull();
+    expect(restarted[0].rebootDismissedAt).toBeNull();
     expect(restarted[0].isReachable).toBe(1);
   });
 
@@ -311,5 +320,18 @@ describe("database startup cleanup", () => {
     sqlite.close();
 
     expect(columns.some((column) => column.name === "pkg_manager_configs")).toBe(true);
+  });
+
+  test("adds reboot dismissal tracking columns for systems", () => {
+    const sqlite = new Database(dbPath, { readonly: true });
+    const columns = sqlite
+      .prepare("PRAGMA table_info(systems)")
+      .all() as Array<{ name?: string }>;
+    sqlite.close();
+
+    expect(columns.some((column) => column.name === "uptime_seconds")).toBe(true);
+    expect(columns.some((column) => column.name === "reboot_dismissed_boot_id")).toBe(true);
+    expect(columns.some((column) => column.name === "reboot_dismissed_uptime_seconds")).toBe(true);
+    expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
   });
 });

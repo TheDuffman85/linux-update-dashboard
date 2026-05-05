@@ -42,7 +42,17 @@ export interface SystemInfo {
 
 export interface PreviousRebootState {
   bootId?: string | null;
+  uptimeSeconds?: number | null;
   lastSeenAt?: string | null;
+  rebootDismissedBootId?: string | null;
+  rebootDismissedUptimeSeconds?: number | null;
+  rebootDismissedAt?: string | null;
+}
+
+export interface RebootDismissalResolution {
+  needsReboot: boolean;
+  dismissalActive: boolean;
+  dismissalExpired: boolean;
 }
 
 const STALE_REBOOT_UPTIME_TOLERANCE_SECONDS = 120;
@@ -158,6 +168,13 @@ function rebootCanBeInferredFromUptime(
 ): boolean {
   if (info.uptimeSeconds == null) return false;
 
+  if (
+    previous?.uptimeSeconds != null &&
+    previous.uptimeSeconds > info.uptimeSeconds + STALE_REBOOT_UPTIME_TOLERANCE_SECONDS
+  ) {
+    return true;
+  }
+
   const lastSeenAtMs = parseDbTimestampAsUtcMillis(previous?.lastSeenAt);
   if (lastSeenAtMs == null) return false;
 
@@ -197,6 +214,54 @@ export function resolveRebootRequired(
   }
 
   return true;
+}
+
+export function resolveRebootDismissal(
+  previous: PreviousRebootState | null | undefined,
+  info: SystemInfo,
+  rawNeedsReboot: boolean
+): RebootDismissalResolution {
+  const dismissedBootId = previous?.rebootDismissedBootId?.trim() || "";
+  const dismissedUptimeSeconds = previous?.rebootDismissedUptimeSeconds ?? null;
+  const currentBootId = info.bootId.trim();
+  const hasDismissal =
+    !!previous?.rebootDismissedAt ||
+    !!dismissedBootId ||
+    dismissedUptimeSeconds != null;
+
+  if (!hasDismissal) {
+    return {
+      needsReboot: rawNeedsReboot,
+      dismissalActive: false,
+      dismissalExpired: false,
+    };
+  }
+
+  if (dismissedBootId && currentBootId && dismissedBootId !== currentBootId) {
+    return {
+      needsReboot: rawNeedsReboot,
+      dismissalActive: false,
+      dismissalExpired: true,
+    };
+  }
+
+  if (
+    dismissedUptimeSeconds != null &&
+    info.uptimeSeconds != null &&
+    info.uptimeSeconds < dismissedUptimeSeconds
+  ) {
+    return {
+      needsReboot: rawNeedsReboot,
+      dismissalActive: false,
+      dismissalExpired: true,
+    };
+  }
+
+  return {
+    needsReboot: false,
+    dismissalActive: true,
+    dismissalExpired: false,
+  };
 }
 
 export function parseSystemInfo(stdout: string): SystemInfo {

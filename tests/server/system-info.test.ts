@@ -2,8 +2,51 @@ import { describe, test, expect } from "vitest";
 import {
   hasPendingKernelUpdate,
   parseSystemInfo,
+  resolveRebootDismissal,
   resolveRebootRequired,
 } from "../../server/ssh/system-info";
+
+function buildSystemInfo(options: {
+  bootId?: string;
+  uptimeSeconds?: number;
+  rebootFile?: "PRESENT" | "ABSENT";
+  needsRestarting?: "required" | "not_required" | "unsupported";
+  kernel?: string;
+  installedKernels?: string[];
+}) {
+  const needsRestartingOutput = options.needsRestarting === "required"
+    ? "1"
+    : options.needsRestarting === "not_required"
+      ? "0"
+      : "UNAVAILABLE";
+  return parseSystemInfo(`===OS===
+NAME="Debian"
+===KERNEL===
+${options.kernel ?? "6.1.0-30-amd64"}
+===HOSTNAME===
+pi
+===UPTIME===
+up 1 hour
+===UPTIME_SECONDS===
+${options.uptimeSeconds ?? 3600}
+===ARCH===
+x86_64
+===CPU===
+4
+===MEM===
+Mem: 1Gi
+===DISK===
+/dev/root 20G 5G 15G 25% /
+===BOOT_ID===
+${options.bootId ?? "boot-a"}
+===REBOOT_FILE===
+${options.rebootFile ?? "PRESENT"}
+===NEEDS_RESTARTING===
+${needsRestartingOutput}
+===INSTALLED_KERNELS===
+${(options.installedKernels ?? [options.kernel ?? "6.1.0-30-amd64"]).join("\n")}
+`);
+}
 
 describe("parseSystemInfo", () => {
   test("parse full output", () => {
@@ -430,5 +473,133 @@ ABSENT
         now
       )
     ).toBe(true);
+  });
+
+  test("uses persisted uptime to clear a stale reboot-required file", () => {
+    const info = buildSystemInfo({
+      bootId: "boot-a",
+      uptimeSeconds: 240,
+      rebootFile: "PRESENT",
+      needsRestarting: "unsupported",
+    });
+
+    expect(
+      resolveRebootRequired(
+        { bootId: "boot-a", uptimeSeconds: 3600, lastSeenAt: "2026-04-14 11:59:00" },
+        info
+      )
+    ).toBe(false);
+  });
+});
+
+describe("resolveRebootDismissal", () => {
+  test("suppresses reboot-required detection on the dismissed boot", () => {
+    const info = buildSystemInfo({
+      bootId: "boot-a",
+      uptimeSeconds: 4200,
+      rebootFile: "PRESENT",
+      needsRestarting: "required",
+    });
+
+    expect(
+      resolveRebootDismissal(
+        {
+          rebootDismissedBootId: "boot-a",
+          rebootDismissedUptimeSeconds: 3600,
+          rebootDismissedAt: "2026-04-14 12:00:00",
+        },
+        info,
+        true
+      )
+    ).toEqual({
+      needsReboot: false,
+      dismissalActive: true,
+      dismissalExpired: false,
+    });
+  });
+
+  test("expires dismissal when the boot id changes", () => {
+    const info = buildSystemInfo({
+      bootId: "boot-b",
+      uptimeSeconds: 120,
+      rebootFile: "PRESENT",
+    });
+
+    expect(
+      resolveRebootDismissal(
+        {
+          rebootDismissedBootId: "boot-a",
+          rebootDismissedUptimeSeconds: 3600,
+          rebootDismissedAt: "2026-04-14 12:00:00",
+        },
+        info,
+        true
+      )
+    ).toEqual({
+      needsReboot: true,
+      dismissalActive: false,
+      dismissalExpired: true,
+    });
+  });
+
+  test("expires dismissal when uptime is lower than the dismissed uptime", () => {
+    const info = buildSystemInfo({
+      bootId: "",
+      uptimeSeconds: 120,
+      rebootFile: "PRESENT",
+    });
+
+    expect(
+      resolveRebootDismissal(
+        {
+          rebootDismissedUptimeSeconds: 3600,
+          rebootDismissedAt: "2026-04-14 12:00:00",
+        },
+        info,
+        true
+      )
+    ).toEqual({
+      needsReboot: true,
+      dismissalActive: false,
+      dismissalExpired: true,
+    });
+  });
+
+  test("keeps dismissal active when uptime increases on the same boot", () => {
+    const info = buildSystemInfo({
+      bootId: "boot-a",
+      uptimeSeconds: 7200,
+      rebootFile: "PRESENT",
+    });
+
+    expect(
+      resolveRebootDismissal(
+        {
+          rebootDismissedBootId: "boot-a",
+          rebootDismissedUptimeSeconds: 3600,
+          rebootDismissedAt: "2026-04-14 12:00:00",
+        },
+        info,
+        true
+      )
+    ).toEqual({
+      needsReboot: false,
+      dismissalActive: true,
+      dismissalExpired: false,
+    });
+  });
+
+  test("returns raw reboot detection when no dismissal exists", () => {
+    const info = buildSystemInfo({
+      bootId: "boot-a",
+      uptimeSeconds: 3600,
+      rebootFile: "PRESENT",
+    });
+
+    expect(resolveRebootDismissal(null, info, true)).toEqual({
+      needsReboot: true,
+      dismissalActive: false,
+      dismissalExpired: false,
+    });
   });
 });

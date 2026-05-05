@@ -3,6 +3,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   unique,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
@@ -88,11 +89,15 @@ export const systems = sqliteTable(
     kernel: text("kernel"),
     hostnameRemote: text("hostname_remote"),
     uptime: text("uptime"),
+    uptimeSeconds: real("uptime_seconds"),
     arch: text("arch"),
     cpuCores: text("cpu_cores"),
     memory: text("memory"),
     disk: text("disk"),
     bootId: text("boot_id"),
+    rebootDismissedBootId: text("reboot_dismissed_boot_id"),
+    rebootDismissedUptimeSeconds: real("reboot_dismissed_uptime_seconds"),
+    rebootDismissedAt: text("reboot_dismissed_at"),
     excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
       .notNull()
       .default(0),

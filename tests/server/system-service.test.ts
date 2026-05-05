@@ -12,9 +12,56 @@ import {
   filterVisibleSystemIds,
   filterVisibleSystemItems,
   isSystemVisible,
+  RebootDismissalSnapshotRequiredError,
   updateSystemInfo,
 } from "../../server/services/system-service";
 import type { SSHConnectionManager } from "../../server/ssh/connection";
+
+function buildSystemInfoOutput(options: {
+  bootId?: string;
+  uptimeSeconds?: number;
+  rebootFile?: "PRESENT" | "ABSENT";
+  needsRestarting?: "required" | "not_required" | "unsupported";
+  kernel?: string;
+  installedKernels?: string[];
+}) {
+  const kernel = options.kernel ?? "6.6.74+rpt-rpi-v8";
+  const needsRestartingOutput = options.needsRestarting === "required"
+    ? "1"
+    : options.needsRestarting === "not_required"
+      ? "0"
+      : "UNAVAILABLE";
+
+  return `===OS===
+NAME="Debian GNU/Linux"
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+VERSION_ID="12"
+===KERNEL===
+${kernel}
+===HOSTNAME===
+pi
+===UPTIME===
+up 1 hour
+===UPTIME_SECONDS===
+${options.uptimeSeconds ?? 3600}
+===ARCH===
+aarch64
+===CPU===
+4
+===MEM===
+Mem:           7.7Gi       2.1Gi       4.2Gi       256Mi       1.4Gi       5.3Gi
+===DISK===
+/dev/root        50G   12G   35G  26% /
+===BOOT_ID===
+${options.bootId ?? "boot-a"}
+===REBOOT_FILE===
+${options.rebootFile ?? "PRESENT"}
+===NEEDS_RESTARTING===
+${needsRestartingOutput}
+===INSTALLED_KERNELS===
+${(options.installedKernels ?? [kernel]).join("\n")}
+`;
+}
 
 describe("updateSystemInfo reboot detection", () => {
   let tempDir: string;
@@ -115,6 +162,7 @@ UNAVAILABLE
     let system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
     expect(system?.needsReboot).toBe(1);
     expect(system?.bootId).toBe("boot-old");
+    expect(system?.uptimeSeconds).toBe(259200);
 
     db.update(systems)
       .set({ lastSeenAt: "2026-04-14 10:00:00" })
@@ -132,6 +180,73 @@ UNAVAILABLE
     system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
     expect(system?.needsReboot).toBe(0);
     expect(system?.bootId).toBe("boot-old");
+    expect(system?.uptimeSeconds).toBe(120);
+  });
+
+  test("persists uptime seconds during system info updates", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Pi",
+      hostname: "pi.local",
+      port: 22,
+      authType: "password",
+      username: "pi",
+    }).returning({ id: systems.id }).get();
+    const sshManager = {
+      runCommand: async () => ({
+        stdout: buildSystemInfoOutput({
+          bootId: "boot-a",
+          uptimeSeconds: 123.45,
+          rebootFile: "ABSENT",
+          needsRestarting: "unsupported",
+        }),
+        stderr: "",
+        exitCode: 0,
+      }),
+    } as unknown as SSHConnectionManager;
+
+    await updateSystemInfo(inserted.id, sshManager, {} as never);
+
+    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
+    expect(system?.uptimeSeconds).toBe(123.45);
+  });
+
+  test("clears dismissal metadata after reboot and shows a new raw reboot requirement", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Pi",
+      hostname: "pi.local",
+      port: 22,
+      authType: "password",
+      username: "pi",
+      bootId: "boot-a",
+      uptimeSeconds: 3600,
+      needsReboot: 0,
+      rebootDismissedBootId: "boot-a",
+      rebootDismissedUptimeSeconds: 3600,
+      rebootDismissedAt: "2026-04-14 12:00:00",
+    }).returning({ id: systems.id }).get();
+    const sshManager = {
+      runCommand: async () => ({
+        stdout: buildSystemInfoOutput({
+          bootId: "boot-b",
+          uptimeSeconds: 120,
+          rebootFile: "ABSENT",
+          needsRestarting: "required",
+        }),
+        stderr: "",
+        exitCode: 0,
+      }),
+    } as unknown as SSHConnectionManager;
+
+    await updateSystemInfo(inserted.id, sshManager, {} as never);
+
+    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
+    expect(system?.needsReboot).toBe(1);
+    expect(system?.bootId).toBe("boot-b");
+    expect(system?.rebootDismissedBootId).toBeNull();
+    expect(system?.rebootDismissedUptimeSeconds).toBeNull();
+    expect(system?.rebootDismissedAt).toBeNull();
   });
 });
 
@@ -149,7 +264,29 @@ describe("dismissNeedsReboot", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test("clears the stored reboot-required flag", () => {
+  test("stores the reboot dismissal snapshot and clears the visible flag", () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Pi",
+      hostname: "pi.local",
+      port: 22,
+      authType: "password",
+      username: "pi",
+      needsReboot: 1,
+      bootId: "boot-a",
+      uptimeSeconds: 3600,
+    }).returning({ id: systems.id }).get();
+
+    dismissNeedsReboot(inserted.id);
+
+    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
+    expect(system?.needsReboot).toBe(0);
+    expect(system?.rebootDismissedBootId).toBe("boot-a");
+    expect(system?.rebootDismissedUptimeSeconds).toBe(3600);
+    expect(system?.rebootDismissedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  test("rejects dismissal without a boot id or uptime snapshot", () => {
     const db = getDb();
     const inserted = db.insert(systems).values({
       name: "Pi",
@@ -160,10 +297,9 @@ describe("dismissNeedsReboot", () => {
       needsReboot: 1,
     }).returning({ id: systems.id }).get();
 
-    dismissNeedsReboot(inserted.id);
-
-    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
-    expect(system?.needsReboot).toBe(0);
+    expect(() => dismissNeedsReboot(inserted.id)).toThrow(
+      RebootDismissalSnapshotRequiredError
+    );
   });
 });
 

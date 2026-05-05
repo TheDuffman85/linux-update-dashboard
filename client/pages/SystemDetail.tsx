@@ -1675,7 +1675,7 @@ export default function SystemDetail() {
         onClose={() => setShowDismissNeedsRebootConfirm(false)}
         onConfirm={handleDismissNeedsReboot}
         title="Dismiss Reboot Warning"
-        message={`Dismiss the reboot warning for ${system.name}? A later system scan can show it again if the host still reports a reboot-required state or another update requires a reboot.`}
+        message={`Dismiss the reboot warning for ${system.name}? It will stay hidden until a later system scan detects that the host has rebooted.`}
         confirmLabel="Dismiss Warning"
         loading={dismissingNeedsReboot}
       />

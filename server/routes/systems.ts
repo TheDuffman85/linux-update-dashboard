@@ -143,6 +143,16 @@ function getSystemWriteErrorResponse(error: unknown): Response | null {
     );
   }
 
+  if (error instanceof systemService.RebootDismissalSnapshotRequiredError) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
   if (error instanceof Error && error.message.includes("credential")) {
     return new Response(
       JSON.stringify({ error: error.message }),
