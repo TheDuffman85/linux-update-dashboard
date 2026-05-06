@@ -108,6 +108,9 @@ Configure scheduler intervals, SSH timeouts, password settings, and other applic
 > [!CAUTION]
 > **This application is designed for use on trusted local networks only.** It is **not** intended to be exposed directly to the internet. If you need remote access, place it behind a reverse proxy with proper TLS termination, authentication, and network-level access controls (e.g. VPN, firewall rules).
 
+> [!IMPORTANT]
+> **HTTPS is recommended for normal use.** Plain HTTP works for basic dashboard access on trusted local networks, but browsers restrict some features outside secure contexts. On HTTP, passkeys/WebAuthn will not be available, clipboard copy actions may fail or require manual copying, and browser security rules can vary by hostname or IP address. If you use a reverse proxy, set `LUDASH_BASE_URL` to the public `https://...` URL and enable `LUDASH_TRUST_PROXY=true`.
+
 ### Prerequisites
 
 - Node.js 24.15.0 installed
