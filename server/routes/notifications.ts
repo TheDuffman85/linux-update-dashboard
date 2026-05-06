@@ -30,18 +30,29 @@ function isValidSchedule(value: unknown): boolean {
   }
 }
 
-function parseDigestScheduleId(value: unknown): number | null | undefined {
+function parseScheduleId(value: unknown): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null || value === "immediate" || value === "") return null;
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : undefined;
 }
 
-function validateDigestScheduleId(id: number | null | undefined): string | null {
-  if (id === undefined || id === null) return null;
-  const schedule = scheduleService.getSchedule(id);
-  if (!schedule || schedule.type !== "notification_digest") {
-    return "digestScheduleId must reference an existing notification schedule";
+function parseScheduleIds(value: unknown): number[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const ids = value.map((entry) => Number(entry));
+  return ids.every((id) => Number.isInteger(id) && id > 0)
+    ? Array.from(new Set(ids))
+    : undefined;
+}
+
+function validateScheduleIds(ids: number[] | null | undefined): string | null {
+  if (ids === undefined || ids === null) return null;
+  for (const id of ids) {
+    const schedule = scheduleService.getSchedule(id);
+    if (!schedule || schedule.type !== "notification_digest") {
+      return "schedule IDs must reference existing notification schedules";
+    }
   }
   return null;
 }
@@ -260,12 +271,18 @@ notificationsRouter.post("/", async (c) => {
   if (schedule !== undefined && !isValidSchedule(schedule)) {
     return c.json({ error: "schedule must be null, \"immediate\", or a valid cron expression" }, 400);
   }
-  const digestScheduleId = parseDigestScheduleId(body.digestScheduleId);
-  if (digestScheduleId === undefined && body.digestScheduleId !== undefined) {
-    return c.json({ error: "digestScheduleId must be null or a positive integer" }, 400);
+  const scheduleId = parseScheduleId(body.scheduleId);
+  if (scheduleId === undefined && body.scheduleId !== undefined) {
+    return c.json({ error: "scheduleId must be null or a positive integer" }, 400);
   }
-  const digestScheduleError = validateDigestScheduleId(digestScheduleId);
-  if (digestScheduleError) return c.json({ error: digestScheduleError }, 400);
+  const scheduleIds = parseScheduleIds(body.scheduleIds);
+  if (scheduleIds === undefined && body.scheduleIds !== undefined) {
+    return c.json({ error: "scheduleIds must be an array of positive integers" }, 400);
+  }
+  const effectiveScheduleIds =
+    scheduleIds ?? (scheduleId === undefined ? undefined : scheduleId === null ? [] : [scheduleId]);
+  const scheduleError = validateScheduleIds(effectiveScheduleIds);
+  if (scheduleError) return c.json({ error: scheduleError }, 400);
 
   const id = notificationService.createNotification({
     name: name.trim(),
@@ -275,9 +292,10 @@ notificationsRouter.post("/", async (c) => {
     systemIds,
     config,
     schedule: schedule ?? null,
-    digestScheduleId,
+    scheduleId,
+    scheduleIds: effectiveScheduleIds,
   });
-  if (digestScheduleId !== undefined) scheduler.restart();
+  if (effectiveScheduleIds !== undefined) scheduler.restart();
 
   const created = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   await notificationRuntime.reconcileNotificationChange(null, created, getActorUserId(c));
@@ -354,14 +372,24 @@ notificationsRouter.put("/:id", async (c) => {
     allowed.schedule = body.schedule;
   }
 
-  if (body.digestScheduleId !== undefined) {
-    const digestScheduleId = parseDigestScheduleId(body.digestScheduleId);
-    if (digestScheduleId === undefined) {
-      return c.json({ error: "digestScheduleId must be null or a positive integer" }, 400);
+  if (body.scheduleId !== undefined) {
+    const scheduleId = parseScheduleId(body.scheduleId);
+    if (scheduleId === undefined) {
+      return c.json({ error: "scheduleId must be null or a positive integer" }, 400);
     }
-    const digestScheduleError = validateDigestScheduleId(digestScheduleId);
-    if (digestScheduleError) return c.json({ error: digestScheduleError }, 400);
-    allowed.digestScheduleId = digestScheduleId;
+    const scheduleError = validateScheduleIds(scheduleId === null ? [] : [scheduleId]);
+    if (scheduleError) return c.json({ error: scheduleError }, 400);
+    allowed.scheduleId = scheduleId;
+  }
+
+  if (body.scheduleIds !== undefined) {
+    const scheduleIds = parseScheduleIds(body.scheduleIds);
+    if (scheduleIds === undefined) {
+      return c.json({ error: "scheduleIds must be an array of positive integers" }, 400);
+    }
+    const scheduleError = validateScheduleIds(scheduleIds);
+    if (scheduleError) return c.json({ error: scheduleError }, 400);
+    allowed.scheduleIds = scheduleIds;
   }
 
   if (body.type !== undefined || body.config !== undefined) {
@@ -387,7 +415,7 @@ notificationsRouter.put("/:id", async (c) => {
   const previous = existing;
   const ok = notificationService.updateNotification(id, allowed as any);
   if (!ok) return c.json({ error: "Not found" }, 404);
-  if (body.digestScheduleId !== undefined) scheduler.restart();
+  if (body.scheduleId !== undefined || body.scheduleIds !== undefined) scheduler.restart();
 
   const current = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   await notificationRuntime.reconcileNotificationChange(previous, current, getActorUserId(c));

@@ -49,7 +49,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **System duplication:** clone an existing system entry (including encrypted credentials) to quickly add similar servers
 - **Exclude from Upgrade All:** make individual systems start unchecked in the Upgrade All Systems dialog
 - **Visibility controls:** hide systems from the main dashboard without deleting them
-- **Notification digests:** schedule notification delivery on a cron expression for batched digest summaries instead of immediate alerts
+- **Notification schedules:** deliver notifications immediately or batch them on one or more cron-based schedules
 - **Dark mode:** dark/light theme with OS preference detection
 - **Update history:** logs every check and upgrade operation per system
 - **Real-time status:** see which systems are online, up to date, or need attention at a glance
@@ -326,8 +326,11 @@ cache duration settings.
 
 - **Refresh schedules:** run on a cron expression and re-check scoped systems whose cached results are stale
 - **Update schedules:** run on a cron expression, refresh scoped systems first, then run the normal per-system Upgrade action where visible updates remain
+- **Notification schedules:** run on a cron expression and deliver batched events for every assigned notification channel
 
-Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger immediate checks outside configured schedules.
+Schedules use standard five-field cron expressions in the container timezone. Set the Docker `TZ` environment variable, such as `TZ=Europe/Berlin`, when you want schedules to follow a local timezone instead of UTC. The supported minimum interval is **5 minutes**; schedules that run more frequently are flagged in the UI.
+
+Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger immediate checks outside configured schedules. Notification channels can be assigned to multiple notification schedules, and the same pending event batch is delivered when any selected schedule runs.
 
 ## Debugging SSH Connection Failures
 
@@ -404,7 +407,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 
 ## Notification Channels
 
-Notification channels are configured from the **Notifications** page. You can create multiple channels of different types, subscribe each one to different events, limit them to specific systems, and choose whether they deliver immediately or on a cron-based digest schedule.
+Notification channels are configured from the **Notifications** page. You can create multiple channels of different types, subscribe each one to different events, limit them to specific systems, and choose whether they deliver immediately or on one or more cron-based schedules.
 
 ### Common Channel Options
 
@@ -414,11 +417,11 @@ Every channel supports the same high-level behavior:
 - **Events:** `updates`, `unreachable`, and `appUpdates`
 - **Default events:** new channels default to `updates` and `appUpdates`
 - **System scope:** `All systems` or a selected list of system IDs
-- **Schedule:** `immediate` delivery or a cron expression for digest delivery
+- **Schedule:** `immediate` delivery or one or more notification schedules
 - **Test send:** use **Send Test** to validate a saved channel or inline config
 - **Secrets:** passwords, tokens, and webhook secrets are encrypted at rest
 
-Digest schedules buffer matching events until the next cron run. Immediate channels send as soon as the event is detected. Delivery diagnostics are stored with the channel, including the last status, response code, and a short response/error summary.
+Scheduled delivery buffers matching events until the next selected schedule runs. Immediate channels send as soon as the event is detected. Delivery diagnostics are stored with the channel, including the last status, response code, and a short response/error summary.
 
 ### Channel Overview
 
@@ -456,7 +459,7 @@ Home Assistant mode details:
 
 - discovery topics use retained config payloads
 - entity state is synced immediately after checks, upgrades, reconnects, startup, notification edits, and system edits
-- digest schedules only affect the generic MQTT event topic, not Home Assistant state
+- notification schedules only affect the generic MQTT event topic, not Home Assistant state
 - the Home Assistant device name is configured explicitly in the MQTT channel settings
 - discovery config includes `icon: mdi:linux`, `entity_picture`, and `origin.url`
 - `entity_picture` points to the local dashboard logo URL (`{LUDASH_BASE_URL}/assets/logo.png` in production)

@@ -140,7 +140,8 @@ function truncateDiagnosticMessage(value: string | undefined): string | null {
 
 function serializeNotification(row: typeof notifications.$inferSelect) {
   const config = loadSanitizedConfig(row);
-  const digestSchedule = scheduleService.getNotificationDigestScheduleAssignment(row.id);
+  const notificationSchedules = scheduleService.getNotificationScheduleAssignments(row.id);
+  const primarySchedule = notificationSchedules[0] ?? null;
   return {
     id: row.id,
     name: row.name,
@@ -149,9 +150,12 @@ function serializeNotification(row: typeof notifications.$inferSelect) {
     notifyOn: parseNotifyOn(row.notifyOn),
     systemIds: parseSystemIds(row.systemIds),
     config: maskConfig(row.type, config),
-    schedule: row.schedule || digestSchedule?.cron || null,
-    digestScheduleId: digestSchedule?.id ?? null,
-    digestScheduleName: digestSchedule?.name ?? null,
+    schedule: row.schedule || primarySchedule?.cron || null,
+    scheduleId: primarySchedule?.id ?? null,
+    scheduleName: primarySchedule?.name ?? null,
+    scheduleIds: notificationSchedules.map((schedule) => schedule.id),
+    scheduleNames: notificationSchedules.map((schedule) => schedule.name),
+    schedules: notificationSchedules,
     lastSentAt: row.lastSentAt || null,
     lastAppVersionNotified: row.lastAppVersionNotified || null,
     lastDeliveryStatus: row.lastDeliveryStatus || null,
@@ -188,7 +192,8 @@ export function createNotification(data: {
   systemIds?: number[] | null;
   config: NotificationConfig;
   schedule?: string | null;
-  digestScheduleId?: number | null;
+  scheduleId?: number | null;
+  scheduleIds?: number[];
 }) {
   const db = getDb();
   const nextSortOrder =
@@ -200,6 +205,10 @@ export function createNotification(data: {
       .at(-1)?.sortOrder ?? -1;
   const encConfig = prepareConfigForStorage(data.type, data.config);
   const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
+  const hasSchedules =
+    data.scheduleIds !== undefined
+      ? data.scheduleIds.length > 0
+      : data.scheduleId !== undefined && data.scheduleId !== null;
   const now = nowSql();
   const result = db.insert(notifications).values({
     sortOrder: nextSortOrder + 1,
@@ -210,10 +219,12 @@ export function createNotification(data: {
     systemIds: data.systemIds ? JSON.stringify(data.systemIds) : null,
     config: JSON.stringify(encConfig),
     schedule,
-    lastSentAt: schedule || data.digestScheduleId ? now : null,
+    lastSentAt: schedule || hasSchedules ? now : null,
   }).returning({ id: notifications.id }).get();
-  if (data.digestScheduleId !== undefined) {
-    scheduleService.updateNotificationDigestScheduleAssignment(result.id, data.digestScheduleId);
+  if (data.scheduleIds !== undefined) {
+    scheduleService.updateNotificationScheduleAssignments(result.id, data.scheduleIds);
+  } else if (data.scheduleId !== undefined) {
+    scheduleService.updateNotificationScheduleAssignment(result.id, data.scheduleId);
   }
   return result.id;
 }
@@ -228,7 +239,8 @@ export function updateNotification(
     systemIds?: number[] | null;
     config?: NotificationConfig;
     schedule?: string | null;
-    digestScheduleId?: number | null;
+    scheduleId?: number | null;
+    scheduleIds?: number[];
   }
 ) {
   const db = getDb();
@@ -263,15 +275,25 @@ export function updateNotification(
   }
 
   db.update(notifications).set(updates).where(eq(notifications.id, id)).run();
-  if (data.digestScheduleId !== undefined) {
-    const previousDigestScheduleId = scheduleService.getNotificationDigestScheduleAssignment(id)?.id ?? null;
-    scheduleService.updateNotificationDigestScheduleAssignment(id, data.digestScheduleId);
-    if (previousDigestScheduleId !== data.digestScheduleId) {
+  if (data.scheduleIds !== undefined || data.scheduleId !== undefined) {
+    const previousScheduleIds = scheduleService
+      .getNotificationScheduleAssignments(id)
+      .map((schedule) => schedule.id);
+    const nextScheduleIds =
+      data.scheduleIds !== undefined
+        ? data.scheduleIds
+        : data.scheduleId
+          ? [data.scheduleId]
+          : [];
+    scheduleService.updateNotificationScheduleAssignments(id, nextScheduleIds);
+    const previousKey = [...previousScheduleIds].sort((a, b) => a - b).join(",");
+    const nextKey = [...new Set(nextScheduleIds)].sort((a, b) => a - b).join(",");
+    if (previousKey !== nextKey) {
       getDb()
         .update(notifications)
         .set({
           pendingEvents: null,
-          lastSentAt: data.digestScheduleId ? nowSql() : null,
+          lastSentAt: nextScheduleIds.length > 0 ? nowSql() : null,
           updatedAt: nowSql(),
         })
         .where(eq(notifications.id, id))
@@ -285,7 +307,7 @@ export function deleteNotification(id: number) {
   const db = getDb();
   const existing = db.select({ id: notifications.id }).from(notifications).where(eq(notifications.id, id)).get();
   if (!existing) return false;
-  scheduleService.updateNotificationDigestScheduleAssignment(id, null);
+  scheduleService.updateNotificationScheduleAssignment(id, null);
   db.delete(notifications).where(eq(notifications.id, id)).run();
   return true;
 }
@@ -618,7 +640,7 @@ export async function processScheduledResults(
 
   const visibleResults = systemService.filterVisibleSystemItems(results);
   if (visibleResults.length === 0) return;
-  const digestNotificationIds = scheduleService.getEnabledDigestNotificationIds();
+  const scheduledNotificationIds = scheduleService.getEnabledScheduledNotificationIds();
 
   for (const channel of channels) {
     const notifyOn = parseNotifyOn(channel.notifyOn);
@@ -642,7 +664,7 @@ export async function processScheduledResults(
 
     if (channelUpdates.length === 0 && channelUnreachable.length === 0) continue;
 
-    if (digestNotificationIds.has(channel.id) || isScheduled(channel.schedule)) {
+    if (scheduledNotificationIds.has(channel.id) || isScheduled(channel.schedule)) {
       appendPendingEvents(channel.id, channelUpdates, channelUnreachable);
       continue;
     }
@@ -690,7 +712,7 @@ export async function processAppUpdateNotifications(): Promise<void> {
     releaseUrl: status.releaseUrl,
     repoUrl: status.repoUrl,
   };
-  const digestNotificationIds = scheduleService.getEnabledDigestNotificationIds();
+  const scheduledNotificationIds = scheduleService.getEnabledScheduledNotificationIds();
 
   for (const channel of subscribedChannels) {
     if (channel.lastAppVersionNotified === event.remoteVersion) continue;
@@ -698,7 +720,7 @@ export async function processAppUpdateNotifications(): Promise<void> {
     const pending = parsePendingEvents(channel.pendingEvents);
     if (pending.appUpdate?.remoteVersion === event.remoteVersion) continue;
 
-    if (digestNotificationIds.has(channel.id) || isScheduled(channel.schedule)) {
+    if (scheduledNotificationIds.has(channel.id) || isScheduled(channel.schedule)) {
       appendPendingAppUpdate(channel.id, event);
       continue;
     }
@@ -1027,12 +1049,12 @@ function shouldSendNow(cronExpr: string, lastSentAt: string | null): boolean {
   }
 }
 
-export async function processScheduledDigests(): Promise<void> {
-  const digestNotificationIds = Array.from(scheduleService.getEnabledDigestNotificationIds());
-  await processScheduledDigestNotifications(digestNotificationIds, { includeLegacyDueChannels: true });
+export async function processScheduledNotifications(): Promise<void> {
+  const scheduledNotificationIds = Array.from(scheduleService.getEnabledScheduledNotificationIds());
+  await processScheduledNotificationDeliveries(scheduledNotificationIds, { includeLegacyDueChannels: true });
 }
 
-export async function processScheduledDigestNotifications(
+export async function processScheduledNotificationDeliveries(
   notificationIds: number[],
   options: { includeLegacyDueChannels?: boolean } = {},
 ): Promise<{ sent: number; skipped: number; failed: number }> {

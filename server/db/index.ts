@@ -71,7 +71,7 @@ const DEFAULT_SETTINGS = [
 ];
 
 const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";
-const NOTIFICATION_DIGEST_SCHEDULE_MIGRATION_KEY = "notification_digest_schedules_migrated";
+const NOTIFICATION_SCHEDULE_MIGRATION_KEY = "notification_digest_schedules_migrated";
 
 export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schema> {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -693,7 +693,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   }
 
   migrateRefreshScheduleSettings(_db);
-  migrateNotificationDigestSchedules(_db);
+  migrateNotificationSchedules(_db);
 
   // Cleanup: remove obsolete notification settings
   _db.run(sql`DELETE FROM settings WHERE key IN (
@@ -790,11 +790,11 @@ function parseScheduleConfigJson(value: string): Record<string, unknown> {
   }
 }
 
-function migrateNotificationDigestSchedules(db: BetterSQLite3Database<typeof schema>): void {
+function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>): void {
   const marker = db
     .select({ value: schema.settings.value })
     .from(schema.settings)
-    .where(eq(schema.settings.key, NOTIFICATION_DIGEST_SCHEDULE_MIGRATION_KEY))
+    .where(eq(schema.settings.key, NOTIFICATION_SCHEDULE_MIGRATION_KEY))
     .get();
   if (marker) return;
 
@@ -807,14 +807,14 @@ function migrateNotificationDigestSchedules(db: BetterSQLite3Database<typeof sch
     .all()
     .filter((row) => row.schedule && row.schedule !== "immediate");
 
-  const existingDigestSchedules = db
+  const existingNotificationSchedules = db
     .select()
     .from(schema.schedules)
     .all()
     .filter((row) => row.type === "notification_digest");
 
   const assignedNotificationIds = new Set<number>();
-  for (const schedule of existingDigestSchedules) {
+  for (const schedule of existingNotificationSchedules) {
     const config = parseScheduleConfigJson(schedule.config);
     const ids = Array.isArray(config.notificationIds)
       ? config.notificationIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
@@ -853,7 +853,7 @@ function migrateNotificationDigestSchedules(db: BetterSQLite3Database<typeof sch
   }
 
   db.insert(schema.settings).values({
-    key: NOTIFICATION_DIGEST_SCHEDULE_MIGRATION_KEY,
+    key: NOTIFICATION_SCHEDULE_MIGRATION_KEY,
     value: "true",
     description: "Notification schedules were migrated to the schedules table",
   }).run();

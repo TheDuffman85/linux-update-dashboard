@@ -89,10 +89,10 @@ describe("schedules routes and migration", () => {
     expect(getDb().select().from(schedules).all()).toHaveLength(0);
   });
 
-  test("migrates legacy notification cron values into digest schedules", () => {
+  test("migrates legacy notification cron values into notification schedules", () => {
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
-    tempDir = mkdtempSync(join(tmpdir(), "ludash-schedules-routes-digest-legacy-"));
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-schedules-routes-notification-legacy-"));
     dbPath = join(tempDir, "dashboard.db");
 
     const sqlite = new BetterSqlite3(dbPath);
@@ -133,15 +133,15 @@ describe("schedules routes and migration", () => {
 
     initDatabase(dbPath);
 
-    const digest = getDb()
+    const notificationSchedule = getDb()
       .select()
       .from(schedules)
       .where(eq(schedules.type, "notification_digest"))
       .get();
     const notification = getDb().select().from(notifications).get();
 
-    expect(digest?.name).toBe("Notification schedule 0 9 * * 1");
-    expect(JSON.parse(digest?.config || "{}")).toEqual({
+    expect(notificationSchedule?.name).toBe("Notification schedule 0 9 * * 1");
+    expect(JSON.parse(notificationSchedule?.config || "{}")).toEqual({
       cron: "0 9 * * 1",
       notificationIds: [notification?.id],
     });
@@ -191,7 +191,7 @@ describe("schedules routes and migration", () => {
     });
   });
 
-  test("creates notification digest schedules with notification targets", async () => {
+  test("creates notification schedules with notification targets", async () => {
     const notification = getDb().insert(notifications).values({
       name: "Ops webhook",
       type: "webhook",
@@ -205,7 +205,7 @@ describe("schedules routes and migration", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "Morning digest",
+        name: "Morning schedule",
         type: "notification_digest",
         enabled: true,
         systemIds: [1],
@@ -224,7 +224,7 @@ describe("schedules routes and migration", () => {
     });
   });
 
-  test("rejects assigning one notification channel to multiple digest schedules", async () => {
+  test("allows assigning one notification channel to multiple schedules", async () => {
     const notification = getDb().insert(notifications).values({
       name: "Ops webhook",
       type: "webhook",
@@ -238,7 +238,7 @@ describe("schedules routes and migration", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "Morning digest",
+        name: "Morning schedule",
         type: "notification_digest",
         enabled: true,
         systemIds: null,
@@ -251,7 +251,7 @@ describe("schedules routes and migration", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "Evening digest",
+        name: "Evening schedule",
         type: "notification_digest",
         enabled: true,
         systemIds: null,
@@ -259,8 +259,18 @@ describe("schedules routes and migration", () => {
       }),
     });
 
-    expect(second.status).toBe(400);
-    expect((await second.json()).error).toContain("already assigned");
+    expect(second.status).toBe(201);
+
+    const scheduleConfigs = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.type, "notification_digest"))
+      .all()
+      .map((schedule) => JSON.parse(schedule.config));
+    expect(scheduleConfigs.map((config) => config.notificationIds)).toEqual([
+      [notification.id],
+      [notification.id],
+    ]);
   });
 
   test("rejects invalid refresh cron expressions", async () => {

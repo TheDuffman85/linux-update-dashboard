@@ -17,12 +17,12 @@ export interface UpdateScheduleConfig {
   cron: string;
 }
 
-export interface NotificationDigestScheduleConfig {
+export interface NotificationScheduleConfig {
   cron: string;
   notificationIds: number[];
 }
 
-export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig | NotificationDigestScheduleConfig;
+export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig | NotificationScheduleConfig;
 
 export interface SerializedSchedule {
   id: number;
@@ -49,7 +49,7 @@ const DEFAULT_REFRESH_CONFIG: RefreshScheduleConfig = {
 const DEFAULT_UPDATE_CONFIG: UpdateScheduleConfig = {
   cron: "0 3 * * 0",
 };
-const DEFAULT_NOTIFICATION_DIGEST_CONFIG: NotificationDigestScheduleConfig = {
+const DEFAULT_NOTIFICATION_SCHEDULE_CONFIG: NotificationScheduleConfig = {
   cron: "0 9 * * 1",
   notificationIds: [],
 };
@@ -151,7 +151,7 @@ function normalizeScheduleConfig(
 
   if (type === "notification_digest") {
     return {
-      cron: cron || DEFAULT_NOTIFICATION_DIGEST_CONFIG.cron,
+      cron: cron || DEFAULT_NOTIFICATION_SCHEDULE_CONFIG.cron,
       notificationIds: normalizePositiveIntegerArray(source.notificationIds),
     };
   }
@@ -263,13 +263,12 @@ function getExistingNotificationIds(ids: number[]): Set<number> {
   return new Set(ids.filter((id) => allIds.has(id)));
 }
 
-function getDigestNotificationIds(config: ScheduleConfig): number[] {
+function getScheduleNotificationIds(config: ScheduleConfig): number[] {
   return "notificationIds" in config ? config.notificationIds : [];
 }
 
-function validateDigestNotificationTargets(
+function validateNotificationScheduleTargets(
   notificationIds: number[],
-  excludeScheduleId?: number,
 ): string | null {
   const uniqueIds = Array.from(new Set(notificationIds));
   if (uniqueIds.length !== notificationIds.length) {
@@ -280,14 +279,6 @@ function validateDigestNotificationTargets(
   const missing = uniqueIds.filter((id) => !existingIds.has(id));
   if (missing.length > 0) {
     return `notificationIds include unknown notification channel IDs: ${missing.join(", ")}`;
-  }
-
-  const conflicting = listSchedules()
-    .filter((schedule) => schedule.type === "notification_digest" && schedule.id !== excludeScheduleId)
-    .flatMap((schedule) => getDigestNotificationIds(schedule.config));
-  const conflictingIds = uniqueIds.filter((id) => conflicting.includes(id));
-  if (conflictingIds.length > 0) {
-    return `notification channel already assigned to a schedule: ${Array.from(new Set(conflictingIds)).join(", ")}`;
   }
 
   return null;
@@ -324,7 +315,7 @@ export function createSchedule(data: {
       .at(-1)?.sortOrder ?? -1;
   const config = normalizeScheduleConfig(data.type, data.config);
   if (data.type === "notification_digest") {
-    const targetError = validateDigestNotificationTargets(getDigestNotificationIds(config));
+    const targetError = validateNotificationScheduleTargets(getScheduleNotificationIds(config));
     if (targetError) throw new Error(targetError);
   }
   const result = db.insert(schedules).values({
@@ -356,7 +347,7 @@ export function updateSchedule(
   const configSource = data.config ?? (data.type ? {} : parseConfig(existing.config));
   const nextConfig = normalizeScheduleConfig(type, configSource);
   if (type === "notification_digest") {
-    const targetError = validateDigestNotificationTargets(getDigestNotificationIds(nextConfig), id);
+    const targetError = validateNotificationScheduleTargets(getScheduleNotificationIds(nextConfig));
     if (targetError) throw new Error(targetError);
   }
   const updates: Record<string, unknown> = {
@@ -431,42 +422,68 @@ export function listEnabledSchedulesByType(type: ScheduleType): SerializedSchedu
   return rows.map(serializeSchedule);
 }
 
-export function listNotificationDigestSchedules(enabledOnly = false): SerializedSchedule[] {
+export function listNotificationSchedules(enabledOnly = false): SerializedSchedule[] {
   return listSchedules().filter(
     (schedule) => schedule.type === "notification_digest" && (!enabledOnly || schedule.enabled),
   );
 }
 
-export function getNotificationDigestScheduleAssignment(notificationId: number): {
+export function getNotificationScheduleAssignments(notificationId: number): Array<{
+  id: number;
+  name: string;
+  cron: string;
+  enabled: boolean;
+}> {
+  const assignments: Array<{
+    id: number;
+    name: string;
+    cron: string;
+    enabled: boolean;
+  }> = [];
+
+  for (const schedule of listNotificationSchedules()) {
+    if (!("notificationIds" in schedule.config)) continue;
+    if (!schedule.config.notificationIds.includes(notificationId)) continue;
+    assignments.push({
+      id: schedule.id,
+      name: schedule.name,
+      cron: schedule.config.cron,
+      enabled: schedule.enabled,
+    });
+  }
+  return assignments;
+}
+
+export function getNotificationScheduleAssignment(notificationId: number): {
   id: number;
   name: string;
   cron: string;
   enabled: boolean;
 } | null {
-  for (const schedule of listNotificationDigestSchedules()) {
-    if (!("notificationIds" in schedule.config)) continue;
-    if (!schedule.config.notificationIds.includes(notificationId)) continue;
-    return {
-      id: schedule.id,
-      name: schedule.name,
-      cron: schedule.config.cron,
-      enabled: schedule.enabled,
-    };
-  }
-  return null;
+  return getNotificationScheduleAssignments(notificationId)[0] ?? null;
 }
 
-export function getEnabledDigestNotificationIds(): Set<number> {
+export function getEnabledScheduledNotificationIds(): Set<number> {
   return new Set(
-    listNotificationDigestSchedules(true).flatMap((schedule) =>
+    listNotificationSchedules(true).flatMap((schedule) =>
       "notificationIds" in schedule.config ? schedule.config.notificationIds : [],
     ),
   );
 }
 
-export function updateNotificationDigestScheduleAssignment(
+export function updateNotificationScheduleAssignment(
   notificationId: number,
-  digestScheduleId: number | null,
+  scheduleId: number | null,
+): void {
+  updateNotificationScheduleAssignments(
+    notificationId,
+    scheduleId === null ? [] : [scheduleId],
+  );
+}
+
+export function updateNotificationScheduleAssignments(
+  notificationId: number,
+  scheduleIds: number[],
 ): void {
   const db = getDb();
   const notification = db
@@ -476,30 +493,31 @@ export function updateNotificationDigestScheduleAssignment(
     .get();
   if (!notification) throw new Error("Notification channel not found");
 
+  const targetIds = new Set(
+    scheduleIds.filter((id) => Number.isInteger(id) && id > 0),
+  );
   const rows = db.select().from(schedules).all();
-  const digestRows = rows.filter((row) => {
+  const notificationScheduleRows = rows.filter((row) => {
     const type = VALID_TYPES.includes(row.type as ScheduleType)
       ? (row.type as ScheduleType)
       : "refresh";
     return type === "notification_digest";
   });
-  const targetRow = digestScheduleId
-    ? digestRows.find((row) => row.id === digestScheduleId)
-    : null;
-
-  if (digestScheduleId && !targetRow) {
-    throw new Error("Schedule not found");
+  const existingScheduleIds = new Set(notificationScheduleRows.map((row) => row.id));
+  const missingIds = Array.from(targetIds).filter((id) => !existingScheduleIds.has(id));
+  if (missingIds.length > 0) {
+    throw new Error(`Schedule not found: ${missingIds.join(", ")}`);
   }
 
   const now = nowSql();
-  for (const row of digestRows) {
+  for (const row of notificationScheduleRows) {
     const config = normalizeScheduleConfig("notification_digest", parseConfig(row.config));
     if (!("notificationIds" in config)) continue;
 
     const ids = config.notificationIds.filter((id) => id !== notificationId);
-    if (row.id === digestScheduleId) ids.push(notificationId);
+    if (targetIds.has(row.id)) ids.push(notificationId);
 
-    const nextConfig: NotificationDigestScheduleConfig = {
+    const nextConfig: NotificationScheduleConfig = {
       cron: config.cron,
       notificationIds: Array.from(new Set(ids)),
     };

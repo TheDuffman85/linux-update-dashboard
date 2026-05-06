@@ -9,7 +9,7 @@ import { notifications } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
   processAppUpdateNotifications,
-  processScheduledDigests,
+  processScheduledNotifications,
 } from "../../server/services/notification-service";
 import { resetAppUpdateStatusCache } from "../../server/services/app-update-service";
 
@@ -95,7 +95,7 @@ describe("app update notifications", () => {
     expect(row?.lastAppVersionNotified).toBe("2026.3.2");
   });
 
-  test("buffers scheduled app update notifications until the digest runs", async () => {
+  test("buffers scheduled app update notifications until the schedule runs", async () => {
     const db = getDb();
     const inserted = db.insert(notifications).values({
       name: "Scheduled ntfy",
@@ -144,7 +144,7 @@ describe("app update notifications", () => {
     expect(row?.pendingEvents).toContain('"remoteVersion":"2026.3.2"');
     expect(row?.lastAppVersionNotified).toBeNull();
 
-    await processScheduledDigests();
+    await processScheduledNotifications();
 
     row = db
       .select()

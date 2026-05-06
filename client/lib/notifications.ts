@@ -99,8 +99,16 @@ export interface NotificationChannel {
   systemIds: number[] | null;
   config: NotificationConfig;
   schedule: string | null;
-  digestScheduleId: number | null;
-  digestScheduleName: string | null;
+  scheduleId: number | null;
+  scheduleName: string | null;
+  scheduleIds: number[];
+  scheduleNames: string[];
+  schedules: Array<{
+    id: number;
+    name: string;
+    cron: string;
+    enabled: boolean;
+  }>;
   lastSentAt: string | null;
   lastAppVersionNotified?: string | null;
   lastDeliveryStatus?: string | null;
@@ -132,7 +140,8 @@ export function useCreateNotification() {
       systemIds?: number[] | null;
       config: NotificationConfig;
       schedule?: string | null;
-      digestScheduleId?: number | null;
+      scheduleId?: number | null;
+      scheduleIds?: number[];
     }) =>
       apiFetch<{ id: number }>("/notifications", {
         method: "POST",
@@ -160,7 +169,8 @@ export function useUpdateNotification() {
       systemIds?: number[] | null;
       config?: NotificationConfig;
       schedule?: string | null;
-      digestScheduleId?: number | null;
+      scheduleId?: number | null;
+      scheduleIds?: number[];
     }) =>
       apiFetch(`/notifications/${id}`, {
         method: "PUT",

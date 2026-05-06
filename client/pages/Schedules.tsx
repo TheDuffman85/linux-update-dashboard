@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import Sortable from "sortablejs";
+import { Cron } from "croner";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import {
   isRefreshConfig,
-  isNotificationDigestConfig,
+  isNotificationScheduleConfig,
   isUpdateConfig,
   useCreateSchedule,
   useDeleteSchedule,
@@ -26,6 +27,8 @@ const labelClass =
   "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
 const checkboxClass =
   "w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500";
+const MIN_SCHEDULE_INTERVAL_MINUTES = 5;
+const MIN_SCHEDULE_INTERVAL_MS = MIN_SCHEDULE_INTERVAL_MINUTES * 60 * 1000;
 
 const TYPE_LABELS: Record<ScheduleType, string> = {
   refresh: "Refresh",
@@ -62,6 +65,37 @@ function formatDate(value: string | null): string {
   return parsed.toLocaleString();
 }
 
+function getCronMinimumIntervalMs(cronExpression: string): number | null {
+  try {
+    const cron = new Cron(cronExpression);
+    let previous = cron.nextRun(new Date("2026-01-01T00:00:00Z"));
+    if (!previous) return null;
+
+    let minimum: number | null = null;
+    for (let index = 0; index < 20; index += 1) {
+      const next = cron.nextRun(previous);
+      if (!next) break;
+      const interval = next.getTime() - previous.getTime();
+      if (interval > 0) {
+        minimum = minimum === null ? interval : Math.min(minimum, interval);
+      }
+      previous = next;
+    }
+    return minimum;
+  } catch {
+    return null;
+  }
+}
+
+function isBelowMinimumScheduleInterval(cronExpression: string): boolean {
+  const minimumInterval = getCronMinimumIntervalMs(cronExpression);
+  return minimumInterval !== null && minimumInterval < MIN_SCHEDULE_INTERVAL_MS;
+}
+
+function getScheduleCron(schedule: Schedule): string | null {
+  return "cron" in schedule.config ? schedule.config.cron : null;
+}
+
 function describeSchedule(schedule: Schedule): string {
   if (schedule.type === "refresh" && isRefreshConfig(schedule.config)) {
     const config = schedule.config;
@@ -79,13 +113,23 @@ function describeSchedule(schedule: Schedule): string {
     return preset ? preset.label : config.cron;
   }
 
-  if (schedule.type === "notification_digest" && isNotificationDigestConfig(schedule.config)) {
+  if (schedule.type === "notification_digest" && isNotificationScheduleConfig(schedule.config)) {
     const config = schedule.config;
     const preset = CRON_PRESETS.find((item) => item.value === config.cron);
     return preset ? preset.label : config.cron;
   }
 
   return "Invalid config";
+}
+
+function ScheduleMinimumWarning({ cron }: { cron: string }) {
+  if (!isBelowMinimumScheduleInterval(cron)) return null;
+
+  return (
+    <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+      Runs more often than the supported {MIN_SCHEDULE_INTERVAL_MINUTES} minute minimum.
+    </p>
+  );
 }
 
 function statusClass(status: string | null): string {
@@ -101,19 +145,6 @@ type ScheduleFormData = {
   enabled: boolean;
   systemIds: number[] | null;
   config: ScheduleConfig;
-};
-
-type NotificationScheduleConflict = {
-  notificationId: number;
-  notificationName: string;
-  scheduleId: number;
-  scheduleName: string;
-};
-
-type PendingScheduleSave = {
-  mode: "create" | "update";
-  data: ScheduleFormData;
-  conflicts: NotificationScheduleConflict[];
 };
 
 function ScheduleForm({
@@ -138,15 +169,15 @@ function ScheduleForm({
     initial?.config && isUpdateConfig(initial.config)
       ? initial.config
       : { cron: "0 3 * * 0" };
-  const initialNotificationDigestConfig =
-    initial?.config && isNotificationDigestConfig(initial.config)
+  const initialNotificationScheduleConfig =
+    initial?.config && isNotificationScheduleConfig(initial.config)
       ? initial.config
       : { cron: "0 9 * * 1", notificationIds: [] };
   const initialCron =
     initialType === "refresh"
       ? initialRefreshConfig.cron
       : initialType === "notification_digest"
-        ? initialNotificationDigestConfig.cron
+        ? initialNotificationScheduleConfig.cron
         : initialUpdateConfig.cron;
   const initialCronPreset = CRON_PRESETS.find((preset) => preset.value === initialCron)
     ? initialCron
@@ -158,12 +189,13 @@ function ScheduleForm({
   const [scope, setScope] = useState<"all" | "selected">(initial?.systemIds === null || !initial ? "all" : "selected");
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>(initial?.systemIds ?? []);
   const [selectedNotificationIds, setSelectedNotificationIds] = useState<number[]>(
-    initialNotificationDigestConfig.notificationIds,
+    initialNotificationScheduleConfig.notificationIds,
   );
   const [cacheDurationHours, setCacheDurationHours] = useState(String(initialRefreshConfig.cacheDurationHours));
   const [cronPreset, setCronPreset] = useState(initialCronPreset);
   const [customCron, setCustomCron] = useState(initialCronPreset === "custom" ? initialCron : "");
   const [error, setError] = useState("");
+  const activeCron = cronPreset === "custom" ? customCron.trim() : cronPreset;
 
   const toggleSystem = (id: number) => {
     setSelectedSystemIds((prev) =>
@@ -367,6 +399,7 @@ function ScheduleForm({
               placeholder={type === "refresh" ? "*/15 * * * *" : "0 3 * * 0"}
             />
           )}
+          {activeCron && <ScheduleMinimumWarning cron={activeCron} />}
         </div>
         {type === "refresh" && (
           <div>
@@ -403,63 +436,6 @@ function ScheduleForm({
   );
 }
 
-function ScheduleMoveConfirmDialog({
-  pendingSave,
-  onClose,
-  onConfirm,
-  loading,
-}: {
-  pendingSave: PendingScheduleSave | null;
-  onClose: () => void;
-  onConfirm: () => void;
-  loading: boolean;
-}) {
-  const conflicts = pendingSave?.conflicts ?? [];
-
-  return (
-    <Modal open={pendingSave !== null} onClose={onClose} title="Change Notification Schedule">
-      <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
-        {conflicts.length === 1
-          ? "This notification channel is already assigned to another schedule."
-          : "These notification channels are already assigned to another schedule."}
-      </p>
-      <div className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border mb-5">
-        {conflicts.map((conflict) => (
-          <div
-            key={`${conflict.scheduleId}-${conflict.notificationId}`}
-            className="grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-1 sm:gap-4 px-3 py-2 text-sm"
-          >
-            <span className="font-medium text-slate-900 dark:text-slate-100">
-              {conflict.notificationName}
-            </span>
-            <span className="text-slate-500 dark:text-slate-400">
-              Current: {conflict.scheduleName}
-            </span>
-          </div>
-        ))}
-      </div>
-      <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">
-        Move {conflicts.length === 1 ? "it" : "them"} to this schedule?
-      </p>
-      <div className="flex justify-end gap-3">
-        <button
-          onClick={onClose}
-          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={loading}
-          className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-        >
-          {loading ? <span className="spinner spinner-sm" /> : "Move"}
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
 export default function Schedules() {
   const { data: schedules, isLoading } = useSchedules();
   const { data: systemsList } = useVisibleSystems();
@@ -472,7 +448,6 @@ export default function Schedules() {
   const [showForm, setShowForm] = useState(false);
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [pendingSave, setPendingSave] = useState<PendingScheduleSave | null>(null);
   const [orderedSchedules, setOrderedSchedules] = useState<Schedule[]>([]);
   const orderedSchedulesRef = useRef<Schedule[]>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
@@ -560,7 +535,7 @@ export default function Schedules() {
       return getSystemScopeLabel(schedule.systemIds);
     }
 
-    if (!isNotificationDigestConfig(schedule.config)) return "Invalid";
+    if (!isNotificationScheduleConfig(schedule.config)) return "Invalid";
     const notificationIds = schedule.config.notificationIds;
     if (notificationIds.length === 0) return "None";
     if (!notificationsList) return `${notificationIds.length} channel${notificationIds.length !== 1 ? "s" : ""}`;
@@ -572,75 +547,7 @@ export default function Schedules() {
     return `${names.length} channels`;
   };
 
-  const getNotificationScheduleConflicts = (
-    data: ScheduleFormData,
-    targetScheduleId: number | null,
-  ): NotificationScheduleConflict[] => {
-    if (data.type !== "notification_digest" || !isNotificationDigestConfig(data.config)) return [];
-    const selectedIds = new Set(data.config.notificationIds);
-    if (selectedIds.size === 0) return [];
-
-    const conflicts: NotificationScheduleConflict[] = [];
-    for (const schedule of schedules ?? []) {
-      if (schedule.id === targetScheduleId || schedule.type !== "notification_digest") continue;
-      if (!isNotificationDigestConfig(schedule.config)) continue;
-      for (const notificationId of schedule.config.notificationIds) {
-        if (!selectedIds.has(notificationId)) continue;
-        const notificationName =
-          notificationsList?.find((channel) => channel.id === notificationId)?.name ??
-          `Notification ${notificationId}`;
-        conflicts.push({
-          notificationId,
-          notificationName,
-          scheduleId: schedule.id,
-          scheduleName: schedule.name,
-        });
-      }
-    }
-    return conflicts;
-  };
-
-  const removeConflictsFromExistingSchedules = async (
-    conflicts: NotificationScheduleConflict[],
-  ): Promise<void> => {
-    const conflictIds = new Set(conflicts.map((conflict) => conflict.notificationId));
-    for (const schedule of schedules ?? []) {
-      if (schedule.type !== "notification_digest" || !isNotificationDigestConfig(schedule.config)) continue;
-      const nextNotificationIds = schedule.config.notificationIds.filter((id) => !conflictIds.has(id));
-      if (nextNotificationIds.length === schedule.config.notificationIds.length) continue;
-      await updateSchedule.mutateAsync({
-        id: schedule.id,
-        config: {
-          ...schedule.config,
-          notificationIds: nextNotificationIds,
-        },
-      });
-    }
-  };
-
-  const createScheduleWithConflictMoves = async (
-    data: ScheduleFormData,
-    conflicts: NotificationScheduleConflict[],
-  ) => {
-    await removeConflictsFromExistingSchedules(conflicts);
-    await createSchedule.mutateAsync(data);
-  };
-
-  const updateScheduleWithConflictMoves = async (
-    id: number,
-    data: ScheduleFormData,
-    conflicts: NotificationScheduleConflict[],
-  ) => {
-    await removeConflictsFromExistingSchedules(conflicts);
-    await updateSchedule.mutateAsync({ id, ...data });
-  };
-
   const handleCreate = (data: ScheduleFormData) => {
-    const conflicts = getNotificationScheduleConflicts(data, null);
-    if (conflicts.length > 0) {
-      setPendingSave({ mode: "create", data, conflicts });
-      return;
-    }
     createSchedule.mutate(data, {
       onSuccess: () => {
         setShowForm(false);
@@ -652,11 +559,6 @@ export default function Schedules() {
 
   const handleUpdate = (data: ScheduleFormData) => {
     if (!editSchedule) return;
-    const conflicts = getNotificationScheduleConflicts(data, editSchedule.id);
-    if (conflicts.length > 0) {
-      setPendingSave({ mode: "update", data, conflicts });
-      return;
-    }
     updateSchedule.mutate(
       { id: editSchedule.id, ...data },
       {
@@ -667,25 +569,6 @@ export default function Schedules() {
         onError: (err) => addToast(err.message, "danger"),
       },
     );
-  };
-
-  const handleConfirmScheduleMove = async () => {
-    if (!pendingSave) return;
-    try {
-      if (pendingSave.mode === "create") {
-        await createScheduleWithConflictMoves(pendingSave.data, pendingSave.conflicts);
-        setShowForm(false);
-        addToast("Schedule created", "success");
-      } else {
-        if (!editSchedule) return;
-        await updateScheduleWithConflictMoves(editSchedule.id, pendingSave.data, pendingSave.conflicts);
-        setEditSchedule(null);
-        addToast("Schedule updated", "success");
-      }
-      setPendingSave(null);
-    } catch (error) {
-      addToast(error instanceof Error ? error.message : "Failed to save schedule", "danger");
-    }
   };
 
   const handleDelete = () => {
@@ -774,7 +657,13 @@ export default function Schedules() {
                     {getTargetLabel(schedule)}
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
-                    {describeSchedule(schedule)}
+                    <div>
+                      <div>{describeSchedule(schedule)}</div>
+                      {(() => {
+                        const cron = getScheduleCron(schedule);
+                        return cron ? <ScheduleMinimumWarning cron={cron} /> : null;
+                      })()}
+                    </div>
                   </td>
                   <td className="px-4 py-3 hidden xl:table-cell">
                     <div className="flex items-center gap-2">
@@ -881,12 +770,6 @@ export default function Schedules() {
         loading={deleteSchedule.isPending}
       />
 
-      <ScheduleMoveConfirmDialog
-        pendingSave={pendingSave}
-        onClose={() => setPendingSave(null)}
-        onConfirm={handleConfirmScheduleMove}
-        loading={createSchedule.isPending || updateSchedule.isPending}
-      />
     </Layout>
   );
 }

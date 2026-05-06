@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Sortable from "sortablejs";
+import { Cron } from "croner";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -31,7 +32,7 @@ import {
 } from "../lib/notification-form-validation";
 import { useVisibleSystems } from "../lib/systems";
 import {
-  isNotificationDigestConfig,
+  isNotificationScheduleConfig,
   useCreateSchedule,
   useSchedules,
 } from "../lib/schedules";
@@ -114,12 +115,19 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];
+const MIN_SCHEDULE_INTERVAL_MINUTES = 5;
+const MIN_SCHEDULE_INTERVAL_MS = MIN_SCHEDULE_INTERVAL_MINUTES * 60 * 1000;
 const SCHEDULE_PRESETS: { label: string; value: string }[] = [
+  { label: "Every 15 minutes", value: "*/15 * * * *" },
+  { label: "Every 30 minutes", value: "*/30 * * * *" },
   { label: "Every hour", value: "0 * * * *" },
   { label: "Every 3 hours", value: "0 */3 * * *" },
   { label: "Every 6 hours", value: "0 */6 * * *" },
   { label: "Daily at 00:00", value: "0 0 * * *" },
+  { label: "Daily at 03:00", value: "0 3 * * *" },
+  { label: "Weekly Sunday 03:00", value: "0 3 * * 0" },
   { label: "Weekly Monday 09:00", value: "0 9 * * 1" },
+  { label: "Monthly on the 1st", value: "0 3 1 * *" },
   { label: "Custom", value: "custom" },
 ];
 
@@ -202,9 +210,58 @@ function normalizeGotifyPriorityOverride(value: string | undefined): string {
 }
 
 function describeNotificationSchedule(channel: NotificationChannel): string {
-  if (channel.digestScheduleName) return channel.digestScheduleName;
+  const scheduleNames =
+    channel.scheduleNames?.length
+      ? channel.scheduleNames
+      : channel.scheduleName
+        ? [channel.scheduleName]
+        : [];
+  if (scheduleNames.length === 1) return scheduleNames[0];
+  if (scheduleNames.length === 2) return scheduleNames.join(", ");
+  if (scheduleNames.length > 2) return `${scheduleNames.length} schedules`;
   if (channel.schedule) return channel.schedule;
   return "Immediate";
+}
+
+function describeCron(cron: string): string {
+  return SCHEDULE_PRESETS.find((preset) => preset.value === cron)?.label ?? cron;
+}
+
+function getCronMinimumIntervalMs(cronExpression: string): number | null {
+  try {
+    const cron = new Cron(cronExpression);
+    let previous = cron.nextRun(new Date("2026-01-01T00:00:00Z"));
+    if (!previous) return null;
+
+    let minimum: number | null = null;
+    for (let index = 0; index < 20; index += 1) {
+      const next = cron.nextRun(previous);
+      if (!next) break;
+      const interval = next.getTime() - previous.getTime();
+      if (interval > 0) {
+        minimum = minimum === null ? interval : Math.min(minimum, interval);
+      }
+      previous = next;
+    }
+    return minimum;
+  } catch {
+    return null;
+  }
+}
+
+function isBelowMinimumScheduleInterval(cronExpression: string): boolean {
+  const minimumInterval = getCronMinimumIntervalMs(cronExpression);
+  return minimumInterval !== null && minimumInterval < MIN_SCHEDULE_INTERVAL_MS;
+}
+
+function ScheduleMinimumWarning({ cron }: { cron: string }) {
+  if (!isBelowMinimumScheduleInterval(cron)) return null;
+
+  return (
+    <span className="text-xs text-amber-600 dark:text-amber-400">
+      Below {MIN_SCHEDULE_INTERVAL_MINUTES} min minimum
+    </span>
+  );
 }
 
 function NewNotificationScheduleForm({
@@ -220,6 +277,7 @@ function NewNotificationScheduleForm({
   const [cronPreset, setCronPreset] = useState(SCHEDULE_PRESETS[3].value);
   const [customCron, setCustomCron] = useState("");
   const [error, setError] = useState("");
+  const activeCron = cronPreset === "custom" ? customCron.trim() : cronPreset;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -273,6 +331,11 @@ function NewNotificationScheduleForm({
             className={`${inputClass} mt-3 font-mono`}
             placeholder="0 9 * * 1"
           />
+        )}
+        {activeCron && (
+          <p className="mt-2">
+            <ScheduleMinimumWarning cron={activeCron} />
+          </p>
         )}
       </div>
       <div className="flex justify-end gap-3 pt-2">
@@ -623,7 +686,8 @@ function NotificationForm({
     systemIds: number[] | null;
     config: NotificationConfig;
     schedule: string | null;
-    digestScheduleId: number | null;
+    scheduleId: number | null;
+    scheduleIds: number[];
   }) => void;
   onCancel: () => void;
   loading: boolean;
@@ -699,27 +763,39 @@ function NotificationForm({
   const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>(initialWebhook);
   const [mqttConfig, setMqttConfig] = useState<MqttConfig>(initialMqtt);
 
-  const digestSchedules = (schedules ?? []).filter(
-    (schedule) => schedule.type === "notification_digest" && isNotificationDigestConfig(schedule.config),
+  const notificationSchedules = (schedules ?? []).filter(
+    (schedule) => schedule.type === "notification_digest" && isNotificationScheduleConfig(schedule.config),
   );
-  const [deliveryMode, setDeliveryMode] = useState<"immediate" | "digest">(
-    initial?.digestScheduleId ? "digest" : "immediate",
+  const initialScheduleIds =
+    initial?.scheduleIds?.length
+      ? initial.scheduleIds
+      : initial?.scheduleId
+        ? [initial.scheduleId]
+        : [];
+  const [deliveryMode, setDeliveryMode] = useState<"immediate" | "scheduled">(
+    initialScheduleIds.length > 0 ? "scheduled" : "immediate",
   );
-  const [digestScheduleId, setDigestScheduleId] = useState<number | null>(
-    initial?.digestScheduleId ?? null,
+  const [selectedScheduleIds, setSelectedScheduleIds] = useState<number[]>(
+    initialScheduleIds,
   );
   const [showScheduleForm, setShowScheduleForm] = useState(false);
   const [localScheduleOptions, setLocalScheduleOptions] = useState<Array<{ id: number; name: string; cron: string }>>([]);
   const scheduleOptions = [
-    ...digestSchedules.map((schedule) => ({
+    ...notificationSchedules.map((schedule) => ({
       id: schedule.id,
       name: schedule.name,
-      cron: isNotificationDigestConfig(schedule.config) ? schedule.config.cron : "",
+      cron: isNotificationScheduleConfig(schedule.config) ? schedule.config.cron : "",
     })),
     ...localScheduleOptions.filter(
-      (localSchedule) => !digestSchedules.some((schedule) => schedule.id === localSchedule.id),
+      (localSchedule) => !notificationSchedules.some((schedule) => schedule.id === localSchedule.id),
     ),
   ];
+
+  const toggleSchedule = (id: number) => {
+    setSelectedScheduleIds((prev) =>
+      prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id],
+    );
+  };
 
   const toggleNotifyOn = (event: string) => {
     setNotifyOn((prev) =>
@@ -830,8 +906,12 @@ function NotificationForm({
       return;
     }
 
-    const selectedDigestScheduleId =
-      deliveryMode === "digest" ? digestScheduleId ?? scheduleOptions[0]?.id ?? null : null;
+    if (deliveryMode === "scheduled" && selectedScheduleIds.length === 0) {
+      addToast("Select at least one schedule", "danger");
+      return;
+    }
+
+    const nextScheduleIds = deliveryMode === "scheduled" ? selectedScheduleIds : [];
     onSubmit({
       name,
       type,
@@ -840,7 +920,8 @@ function NotificationForm({
       systemIds: allSystems ? null : selectedSystemIds,
       config,
       schedule: null,
-      digestScheduleId: selectedDigestScheduleId,
+      scheduleId: nextScheduleIds[0] ?? null,
+      scheduleIds: nextScheduleIds,
     });
   };
 
@@ -922,8 +1003,8 @@ function NotificationForm({
             ...prev,
             { id: result.id, name: data.name, cron: data.cron },
           ]);
-          setDigestScheduleId(result.id);
-          setDeliveryMode("digest");
+          setSelectedScheduleIds((prev) => Array.from(new Set([...prev, result.id])));
+          setDeliveryMode("scheduled");
           setShowScheduleForm(false);
           addToast("Schedule created", "success");
         },
@@ -1048,38 +1129,49 @@ function NotificationForm({
             <input
               type="radio"
               name="deliveryMode"
-              checked={deliveryMode === "digest"}
-              onChange={() => setDeliveryMode("digest")}
+              checked={deliveryMode === "scheduled"}
+              onChange={() => setDeliveryMode("scheduled")}
               className="w-4 h-4 text-blue-600 focus:ring-blue-500"
             />
             <span className="text-sm">Schedule</span>
           </label>
         </div>
-        {deliveryMode === "digest" && (
+        {deliveryMode === "scheduled" && (
         <div className="space-y-2">
-          <div className="flex flex-col sm:flex-row gap-2">
-            <select
-              value={digestScheduleId ?? scheduleOptions[0]?.id ?? ""}
-              onChange={(e) => setDigestScheduleId(Number(e.target.value))}
-              className={inputClass}
-              disabled={scheduleOptions.length === 0}
-            >
-              {scheduleOptions.map((schedule) => (
-                <option key={schedule.id} value={schedule.id}>
-                  {schedule.name}
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-col gap-2">
+            <div className="max-h-40 overflow-y-auto border border-border rounded-lg p-2 space-y-1">
+              {scheduleOptions.length === 0 ? (
+                <p className="text-xs text-slate-400 p-1">No schedules configured</p>
+              ) : (
+                scheduleOptions.map((schedule) => (
+                  <label
+                    key={schedule.id}
+                    title={schedule.cron}
+                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-50 dark:hover:bg-slate-700/50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedScheduleIds.includes(schedule.id)}
+                      onChange={() => toggleSchedule(schedule.id)}
+                      className={checkboxClass}
+                    />
+                    <span className="text-sm">{schedule.name}</span>
+                    <span className="text-xs text-slate-400">{describeCron(schedule.cron)}</span>
+                    <ScheduleMinimumWarning cron={schedule.cron} />
+                  </label>
+                ))
+              )}
+            </div>
             <button
               type="button"
               onClick={() => setShowScheduleForm(true)}
-              className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
+              className="self-start px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
             >
               New schedule
             </button>
           </div>
           <p className={mutedTextClass}>
-            Events are batched and sent when this schedule runs.
+            Events are batched and sent when any selected schedule runs.
           </p>
         </div>
         )}
@@ -1969,7 +2061,8 @@ export default function Notifications() {
     systemIds: number[] | null;
     config: NotificationConfig;
     schedule: string | null;
-    digestScheduleId: number | null;
+    scheduleId: number | null;
+    scheduleIds: number[];
   }) => {
     createNotification.mutate(data, {
       onSuccess: () => {
@@ -1988,7 +2081,8 @@ export default function Notifications() {
     systemIds: number[] | null;
     config: NotificationConfig;
     schedule: string | null;
-    digestScheduleId: number | null;
+    scheduleId: number | null;
+    scheduleIds: number[];
   }) => {
     if (!editChannel) return;
     updateNotification.mutate(

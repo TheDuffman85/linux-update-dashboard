@@ -118,9 +118,9 @@ describe("notifications routes validation", () => {
     expect(stored?.notifyOn).toBe('["updates","appUpdates"]');
   });
 
-  test("assigns notification delivery to an existing digest schedule", async () => {
-    const digestSchedule = getDb().insert(schedules).values({
-      name: "Morning digest",
+  test("assigns notification delivery to an existing schedule", async () => {
+    const notificationSchedule = getDb().insert(schedules).values({
+      name: "Morning schedule",
       type: "notification_digest",
       enabled: 1,
       systemIds: null,
@@ -131,12 +131,12 @@ describe("notifications routes validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "Digest email",
+        name: "Scheduled email",
         type: "email",
         enabled: true,
         notifyOn: ["updates"],
         systemIds: null,
-        digestScheduleId: digestSchedule.id,
+        scheduleId: notificationSchedule.id,
         config: {
           smtpHost: "smtp.example.com",
           smtpPort: "587",
@@ -152,16 +152,123 @@ describe("notifications routes validation", () => {
 
     expect(res.status).toBe(201);
     const notification = getDb().select().from(notifications).get();
-    const schedule = getDb().select().from(schedules).where(eq(schedules.id, digestSchedule.id)).get();
+    const schedule = getDb().select().from(schedules).where(eq(schedules.id, notificationSchedule.id)).get();
     expect(notification?.schedule).toBeNull();
     expect(JSON.parse(schedule?.config || "{}").notificationIds).toEqual([notification?.id]);
 
     const listRes = await app.request("/api/notifications");
     const body = await listRes.json() as {
-      notifications: Array<{ digestScheduleId: number | null; digestScheduleName: string | null }>;
+      notifications: Array<{ scheduleId: number | null; scheduleName: string | null }>;
     };
-    expect(body.notifications[0].digestScheduleId).toBe(digestSchedule.id);
-    expect(body.notifications[0].digestScheduleName).toBe("Morning digest");
+    expect(body.notifications[0].scheduleId).toBe(notificationSchedule.id);
+    expect(body.notifications[0].scheduleName).toBe("Morning schedule");
+  });
+
+  test("assigns notification delivery to multiple schedules", async () => {
+    const morning = getDb().insert(schedules).values({
+      sortOrder: 0,
+      name: "Morning schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 9 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+    const evening = getDb().insert(schedules).values({
+      sortOrder: 1,
+      name: "Evening schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 18 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Scheduled email",
+        type: "email",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        scheduleIds: [morning.id, evening.id],
+        config: {
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpTlsMode: "starttls",
+          allowInsecureTls: "false",
+          smtpUser: "mailer",
+          smtpPassword: "smtp-secret",
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const notification = getDb().select().from(notifications).get();
+    const configs = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.type, "notification_digest"))
+      .all()
+      .map((schedule) => JSON.parse(schedule.config));
+    expect(configs.map((config) => config.notificationIds)).toEqual([
+      [notification?.id],
+      [notification?.id],
+    ]);
+
+    const listRes = await app.request("/api/notifications");
+    const body = await listRes.json() as {
+      notifications: Array<{ scheduleIds: number[]; scheduleNames: string[] }>;
+    };
+    expect(body.notifications[0].scheduleIds).toEqual([morning.id, evening.id]);
+    expect(body.notifications[0].scheduleNames).toEqual(["Morning schedule", "Evening schedule"]);
+  });
+
+  test("updates notification delivery across multiple schedules", async () => {
+    const notification = getDb().insert(notifications).values({
+      name: "Scheduled email",
+      type: "email",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: null,
+      config: "{}",
+    }).returning({ id: notifications.id }).get();
+    const first = getDb().insert(schedules).values({
+      sortOrder: 0,
+      name: "First schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 8 * * 1", notificationIds: [notification.id] }),
+    }).returning({ id: schedules.id }).get();
+    const second = getDb().insert(schedules).values({
+      sortOrder: 1,
+      name: "Second schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 16 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const res = await app.request(`/api/notifications/${notification.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scheduleIds: [first.id, second.id] }),
+    });
+
+    expect(res.status).toBe(200);
+    const configs = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.type, "notification_digest"))
+      .all()
+      .map((schedule) => JSON.parse(schedule.config));
+    expect(configs.map((config) => config.notificationIds)).toEqual([
+      [notification.id],
+      [notification.id],
+    ]);
   });
 
   test("creates gotify notifications", async () => {

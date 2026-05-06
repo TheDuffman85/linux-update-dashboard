@@ -13,12 +13,12 @@ export interface UpdateScheduleConfig {
   cron: string;
 }
 
-export interface NotificationDigestScheduleConfig {
+export interface NotificationScheduleConfig {
   cron: string;
   notificationIds: number[];
 }
 
-export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig | NotificationDigestScheduleConfig;
+export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig | NotificationScheduleConfig;
 
 export interface Schedule {
   id: number;
@@ -43,9 +43,9 @@ export function isUpdateConfig(config: ScheduleConfig): config is UpdateSchedule
   return "cron" in config && !("cacheDurationHours" in config) && !("notificationIds" in config);
 }
 
-export function isNotificationDigestConfig(
+export function isNotificationScheduleConfig(
   config: ScheduleConfig,
-): config is NotificationDigestScheduleConfig {
+): config is NotificationScheduleConfig {
   return "cron" in config && "notificationIds" in config;
 }
 

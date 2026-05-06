@@ -8,7 +8,7 @@ import * as scheduleService from "./schedule-service";
 import * as updateService from "./update-service";
 import { logger } from "../logger";
 import type {
-  NotificationDigestScheduleConfig,
+  NotificationScheduleConfig,
   RefreshScheduleConfig,
   SerializedSchedule,
   UpdateScheduleConfig,
@@ -28,9 +28,9 @@ function isUpdateConfig(config: SerializedSchedule["config"]): config is UpdateS
   return "cron" in config && !("cacheDurationHours" in config) && !("notificationIds" in config);
 }
 
-function isNotificationDigestConfig(
+function isNotificationScheduleConfig(
   config: SerializedSchedule["config"],
-): config is NotificationDigestScheduleConfig {
+): config is NotificationScheduleConfig {
   return "cron" in config && "notificationIds" in config;
 }
 
@@ -217,34 +217,34 @@ async function runUpdateSchedule(
   }
 }
 
-async function runNotificationDigestSchedule(
+async function runNotificationSchedule(
   schedule: SerializedSchedule,
   generation: number,
 ): Promise<void> {
-  if (generation !== schedulerGeneration || !isNotificationDigestConfig(schedule.config)) return;
+  if (generation !== schedulerGeneration || !isNotificationScheduleConfig(schedule.config)) return;
 
   scheduleService.markScheduleStarted(schedule.id);
   try {
     const notificationIds = schedule.config.notificationIds;
-    logger.info("Notification digest schedule running", {
+    logger.info("Notification schedule running", {
       scheduleId: schedule.id,
       scheduleName: schedule.name,
       count: notificationIds.length,
     });
 
-    const result = await notificationService.processScheduledDigestNotifications(notificationIds);
+    const result = await notificationService.processScheduledNotificationDeliveries(notificationIds);
     const status =
       result.failed === 0
         ? "success"
         : result.sent > 0
           ? "warning"
           : "failed";
-    const message = `Sent ${result.sent} digest${result.sent === 1 ? "" : "s"}, skipped ${result.skipped}${
+    const message = `Sent ${result.sent} notification${result.sent === 1 ? "" : "s"}, skipped ${result.skipped}${
       result.failed ? `, ${result.failed} failed` : ""
     }`;
     scheduleService.markScheduleFinished(schedule.id, status, message);
   } catch (error) {
-    logger.error("Notification digest schedule error", {
+    logger.error("Notification schedule error", {
       scheduleId: schedule.id,
       error: String(error),
     });
@@ -264,12 +264,12 @@ function startRuntime(options: { startupRefresh: boolean }): void {
   const generation = ++schedulerGeneration;
   const refreshSchedules = scheduleService.listEnabledSchedulesByType("refresh");
   const updateSchedules = scheduleService.listEnabledSchedulesByType("update");
-  const digestSchedules = scheduleService.listEnabledSchedulesByType("notification_digest");
+  const notificationSchedules = scheduleService.listEnabledSchedulesByType("notification_digest");
 
   logger.info("Schedule runtime configured", {
     refreshSchedules: refreshSchedules.length,
     updateSchedules: updateSchedules.length,
-    digestSchedules: digestSchedules.length,
+    notificationSchedules: notificationSchedules.length,
   });
 
   for (const schedule of refreshSchedules) {
@@ -306,16 +306,16 @@ function startRuntime(options: { startupRefresh: boolean }): void {
     }
   }
 
-  for (const schedule of digestSchedules) {
-    if (!isNotificationDigestConfig(schedule.config)) continue;
+  for (const schedule of notificationSchedules) {
+    if (!isNotificationScheduleConfig(schedule.config)) continue;
     try {
       scheduleCrons.push(
         new Cron(schedule.config.cron, () => {
-          void runNotificationDigestSchedule(schedule, generation);
+          void runNotificationSchedule(schedule, generation);
         }),
       );
     } catch (error) {
-      logger.error("Failed to start notification digest schedule", {
+      logger.error("Failed to start notification schedule", {
         scheduleId: schedule.id,
         error: String(error),
       });

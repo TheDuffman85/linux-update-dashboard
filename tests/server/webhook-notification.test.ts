@@ -11,7 +11,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { notifications, systems, updateCache } from "../../server/db/schema";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import {
-  processScheduledDigests,
+  processScheduledNotifications,
   processScheduledResults,
 } from "../../server/services/notification-service";
 import { webhookProvider } from "../../server/services/notifications/webhook";
@@ -596,14 +596,14 @@ ABSENT
     }
   });
 
-  test("drops hidden systems from scheduled digests before sending", async () => {
+  test("drops hidden systems from scheduled notifications before sending", async () => {
     const requestMock = mockHttpRequest(200, "ok");
 
     try {
       const db = getDb();
       const insertedSystem = db.insert(systems).values({
-        name: "digest-web",
-        hostname: "digest-web.local",
+        name: "scheduled-web",
+        hostname: "scheduled-web.local",
         port: 22,
         credentialId: null,
         authType: "password",
@@ -620,7 +620,7 @@ ABSENT
       }).run();
 
       const insertedNotification = db.insert(notifications).values({
-        name: "Webhook digest",
+        name: "Webhook schedule",
         type: "webhook",
         enabled: 1,
         notifyOn: '["updates"]',
@@ -644,7 +644,7 @@ ABSENT
       await processScheduledResults([
         {
           systemId: insertedSystem.id,
-          systemName: "digest-web",
+          systemName: "scheduled-web",
           updateCount: 1,
           securityCount: 1,
           keptBackCount: 0,
@@ -658,7 +658,7 @@ ABSENT
         .where(eq(systems.id, insertedSystem.id))
         .run();
 
-      await processScheduledDigests();
+      await processScheduledNotifications();
 
       const row = db
         .select()
