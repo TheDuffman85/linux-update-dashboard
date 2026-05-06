@@ -104,13 +104,19 @@ schedulesRouter.post("/", async (c) => {
   const configError = scheduleService.validateScheduleConfig(type, config);
   if (configError) return c.json({ error: configError }, 400);
 
-  const id = scheduleService.createSchedule({
-    name: (name as string).trim(),
-    type,
-    enabled: enabled as boolean | undefined,
-    systemIds: (systemIds as number[] | null | undefined) ?? null,
-    config,
-  });
+  let id: number;
+  try {
+    id = scheduleService.createSchedule({
+      name: (name as string).trim(),
+      type,
+      enabled: enabled as boolean | undefined,
+      systemIds: (systemIds as number[] | null | undefined) ?? null,
+      config,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create schedule";
+    return c.json({ error: message }, 400);
+  }
   restartScheduler();
 
   return c.json({ id }, 201);
@@ -176,7 +182,13 @@ schedulesRouter.put("/:id", async (c) => {
     if (configError) return c.json({ error: configError }, 400);
   }
 
-  const ok = scheduleService.updateSchedule(id, allowed);
+  let ok = false;
+  try {
+    ok = scheduleService.updateSchedule(id, allowed);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update schedule";
+    return c.json({ error: message }, 400);
+  }
   if (!ok) return c.json({ error: "Not found" }, 404);
   restartScheduler();
 

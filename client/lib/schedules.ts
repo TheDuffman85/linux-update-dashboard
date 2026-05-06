@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
-export type ScheduleType = "refresh" | "update";
+export type ScheduleType = "refresh" | "update" | "notification_digest";
 export type ScheduleRunStatus = "success" | "warning" | "failed";
 
 export interface RefreshScheduleConfig {
@@ -13,7 +13,12 @@ export interface UpdateScheduleConfig {
   cron: string;
 }
 
-export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig;
+export interface NotificationDigestScheduleConfig {
+  cron: string;
+  notificationIds: number[];
+}
+
+export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig | NotificationDigestScheduleConfig;
 
 export interface Schedule {
   id: number;
@@ -35,7 +40,13 @@ export function isRefreshConfig(config: ScheduleConfig): config is RefreshSchedu
 }
 
 export function isUpdateConfig(config: ScheduleConfig): config is UpdateScheduleConfig {
-  return "cron" in config && !("cacheDurationHours" in config);
+  return "cron" in config && !("cacheDurationHours" in config) && !("notificationIds" in config);
+}
+
+export function isNotificationDigestConfig(
+  config: ScheduleConfig,
+): config is NotificationDigestScheduleConfig {
+  return "cron" in config && "notificationIds" in config;
 }
 
 export function useSchedules() {
@@ -62,6 +73,7 @@ export function useCreateSchedule() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["schedules"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 }
@@ -86,6 +98,7 @@ export function useUpdateSchedule() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["schedules"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 }
@@ -100,6 +113,7 @@ export function useReorderSchedules() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["schedules"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 }
@@ -111,6 +125,7 @@ export function useDeleteSchedule() {
       apiFetch(`/schedules/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["schedules"] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 }

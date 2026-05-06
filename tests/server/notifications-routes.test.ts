@@ -7,8 +7,9 @@ import { randomBytes } from "crypto";
 import nodemailer from "nodemailer";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { notificationDeliveredUpdates, notifications, systems } from "../../server/db/schema";
+import { notificationDeliveredUpdates, notifications, schedules, systems } from "../../server/db/schema";
 import notificationsRoutes from "../../server/routes/notifications";
+import * as scheduler from "../../server/services/scheduler";
 import { getEncryptor, initEncryptor } from "../../server/security";
 
 describe("notifications routes validation", () => {
@@ -25,6 +26,7 @@ describe("notifications routes validation", () => {
   });
 
   afterEach(() => {
+    scheduler.stop();
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -114,6 +116,52 @@ describe("notifications routes validation", () => {
 
     const stored = getDb().select().from(notifications).get();
     expect(stored?.notifyOn).toBe('["updates","appUpdates"]');
+  });
+
+  test("assigns notification delivery to an existing digest schedule", async () => {
+    const digestSchedule = getDb().insert(schedules).values({
+      name: "Morning digest",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 9 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Digest email",
+        type: "email",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        digestScheduleId: digestSchedule.id,
+        config: {
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpTlsMode: "starttls",
+          allowInsecureTls: "false",
+          smtpUser: "mailer",
+          smtpPassword: "smtp-secret",
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const notification = getDb().select().from(notifications).get();
+    const schedule = getDb().select().from(schedules).where(eq(schedules.id, digestSchedule.id)).get();
+    expect(notification?.schedule).toBeNull();
+    expect(JSON.parse(schedule?.config || "{}").notificationIds).toEqual([notification?.id]);
+
+    const listRes = await app.request("/api/notifications");
+    const body = await listRes.json() as {
+      notifications: Array<{ digestScheduleId: number | null; digestScheduleName: string | null }>;
+    };
+    expect(body.notifications[0].digestScheduleId).toBe(digestSchedule.id);
+    expect(body.notifications[0].digestScheduleName).toBe("Morning digest");
   });
 
   test("creates gotify notifications", async () => {

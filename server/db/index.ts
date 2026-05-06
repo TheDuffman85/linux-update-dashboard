@@ -71,6 +71,7 @@ const DEFAULT_SETTINGS = [
 ];
 
 const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";
+const NOTIFICATION_DIGEST_SCHEDULE_MIGRATION_KEY = "notification_digest_schedules_migrated";
 
 export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schema> {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -692,6 +693,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   }
 
   migrateRefreshScheduleSettings(_db);
+  migrateNotificationDigestSchedules(_db);
 
   // Cleanup: remove obsolete notification settings
   _db.run(sql`DELETE FROM settings WHERE key IN (
@@ -774,6 +776,86 @@ function migrateRefreshScheduleSettings(db: BetterSQLite3Database<typeof schema>
     key: SCHEDULE_REFRESH_MIGRATION_KEY,
     value: "true",
     description: "Refresh settings were migrated to the schedules table",
+  }).run();
+}
+
+function parseScheduleConfigJson(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function migrateNotificationDigestSchedules(db: BetterSQLite3Database<typeof schema>): void {
+  const marker = db
+    .select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, NOTIFICATION_DIGEST_SCHEDULE_MIGRATION_KEY))
+    .get();
+  if (marker) return;
+
+  const legacyChannels = db
+    .select({
+      id: schema.notifications.id,
+      schedule: schema.notifications.schedule,
+    })
+    .from(schema.notifications)
+    .all()
+    .filter((row) => row.schedule && row.schedule !== "immediate");
+
+  const existingDigestSchedules = db
+    .select()
+    .from(schema.schedules)
+    .all()
+    .filter((row) => row.type === "notification_digest");
+
+  const assignedNotificationIds = new Set<number>();
+  for (const schedule of existingDigestSchedules) {
+    const config = parseScheduleConfigJson(schedule.config);
+    const ids = Array.isArray(config.notificationIds)
+      ? config.notificationIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    for (const id of ids) assignedNotificationIds.add(id);
+  }
+
+  const byCron = new Map<string, number[]>();
+  for (const channel of legacyChannels) {
+    if (!channel.schedule || assignedNotificationIds.has(channel.id)) continue;
+    const ids = byCron.get(channel.schedule) ?? [];
+    ids.push(channel.id);
+    byCron.set(channel.schedule, ids);
+  }
+
+  if (byCron.size > 0) {
+    let nextSortOrder =
+      (db.all(sql`SELECT COALESCE(MAX(sort_order), -1) as value FROM schedules`)[0] as { value?: number } | undefined)?.value ?? -1;
+    for (const [cron, notificationIds] of byCron.entries()) {
+      nextSortOrder += 1;
+      db.insert(schema.schedules).values({
+        sortOrder: nextSortOrder,
+        name: `Notification schedule ${cron}`,
+        type: "notification_digest",
+        enabled: 1,
+        systemIds: null,
+        config: JSON.stringify({ cron, notificationIds }),
+      }).run();
+      for (const notificationId of notificationIds) {
+        db.update(schema.notifications)
+          .set({ schedule: null })
+          .where(eq(schema.notifications.id, notificationId))
+          .run();
+      }
+    }
+  }
+
+  db.insert(schema.settings).values({
+    key: NOTIFICATION_DIGEST_SCHEDULE_MIGRATION_KEY,
+    value: "true",
+    description: "Notification schedules were migrated to the schedules table",
   }).run();
 }
 

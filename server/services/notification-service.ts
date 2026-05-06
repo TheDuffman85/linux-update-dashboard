@@ -1,4 +1,4 @@
-import { eq, and, isNotNull, asc, inArray } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import { createHash } from "crypto";
 import { Cron } from "croner";
 import { getDb } from "../db";
@@ -19,6 +19,7 @@ import { sanitizeOutput } from "../utils/sanitize";
 import { getAppUpdateStatus } from "./app-update-service";
 import { requestNotificationRuntimeAppUpdateSync } from "./notification-runtime-events";
 import { migrateLegacyMqttDeviceName } from "./notifications/mqtt-shared";
+import * as scheduleService from "./schedule-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
 
@@ -139,6 +140,7 @@ function truncateDiagnosticMessage(value: string | undefined): string | null {
 
 function serializeNotification(row: typeof notifications.$inferSelect) {
   const config = loadSanitizedConfig(row);
+  const digestSchedule = scheduleService.getNotificationDigestScheduleAssignment(row.id);
   return {
     id: row.id,
     name: row.name,
@@ -147,7 +149,9 @@ function serializeNotification(row: typeof notifications.$inferSelect) {
     notifyOn: parseNotifyOn(row.notifyOn),
     systemIds: parseSystemIds(row.systemIds),
     config: maskConfig(row.type, config),
-    schedule: row.schedule || null,
+    schedule: row.schedule || digestSchedule?.cron || null,
+    digestScheduleId: digestSchedule?.id ?? null,
+    digestScheduleName: digestSchedule?.name ?? null,
     lastSentAt: row.lastSentAt || null,
     lastAppVersionNotified: row.lastAppVersionNotified || null,
     lastDeliveryStatus: row.lastDeliveryStatus || null,
@@ -184,6 +188,7 @@ export function createNotification(data: {
   systemIds?: number[] | null;
   config: NotificationConfig;
   schedule?: string | null;
+  digestScheduleId?: number | null;
 }) {
   const db = getDb();
   const nextSortOrder =
@@ -205,8 +210,11 @@ export function createNotification(data: {
     systemIds: data.systemIds ? JSON.stringify(data.systemIds) : null,
     config: JSON.stringify(encConfig),
     schedule,
-    lastSentAt: schedule ? now : null,
+    lastSentAt: schedule || data.digestScheduleId ? now : null,
   }).returning({ id: notifications.id }).get();
+  if (data.digestScheduleId !== undefined) {
+    scheduleService.updateNotificationDigestScheduleAssignment(result.id, data.digestScheduleId);
+  }
   return result.id;
 }
 
@@ -220,6 +228,7 @@ export function updateNotification(
     systemIds?: number[] | null;
     config?: NotificationConfig;
     schedule?: string | null;
+    digestScheduleId?: number | null;
   }
 ) {
   const db = getDb();
@@ -254,6 +263,21 @@ export function updateNotification(
   }
 
   db.update(notifications).set(updates).where(eq(notifications.id, id)).run();
+  if (data.digestScheduleId !== undefined) {
+    const previousDigestScheduleId = scheduleService.getNotificationDigestScheduleAssignment(id)?.id ?? null;
+    scheduleService.updateNotificationDigestScheduleAssignment(id, data.digestScheduleId);
+    if (previousDigestScheduleId !== data.digestScheduleId) {
+      getDb()
+        .update(notifications)
+        .set({
+          pendingEvents: null,
+          lastSentAt: data.digestScheduleId ? nowSql() : null,
+          updatedAt: nowSql(),
+        })
+        .where(eq(notifications.id, id))
+        .run();
+    }
+  }
   return true;
 }
 
@@ -261,6 +285,7 @@ export function deleteNotification(id: number) {
   const db = getDb();
   const existing = db.select({ id: notifications.id }).from(notifications).where(eq(notifications.id, id)).get();
   if (!existing) return false;
+  scheduleService.updateNotificationDigestScheduleAssignment(id, null);
   db.delete(notifications).where(eq(notifications.id, id)).run();
   return true;
 }
@@ -593,6 +618,7 @@ export async function processScheduledResults(
 
   const visibleResults = systemService.filterVisibleSystemItems(results);
   if (visibleResults.length === 0) return;
+  const digestNotificationIds = scheduleService.getEnabledDigestNotificationIds();
 
   for (const channel of channels) {
     const notifyOn = parseNotifyOn(channel.notifyOn);
@@ -616,7 +642,7 @@ export async function processScheduledResults(
 
     if (channelUpdates.length === 0 && channelUnreachable.length === 0) continue;
 
-    if (isScheduled(channel.schedule)) {
+    if (digestNotificationIds.has(channel.id) || isScheduled(channel.schedule)) {
       appendPendingEvents(channel.id, channelUpdates, channelUnreachable);
       continue;
     }
@@ -664,6 +690,7 @@ export async function processAppUpdateNotifications(): Promise<void> {
     releaseUrl: status.releaseUrl,
     repoUrl: status.repoUrl,
   };
+  const digestNotificationIds = scheduleService.getEnabledDigestNotificationIds();
 
   for (const channel of subscribedChannels) {
     if (channel.lastAppVersionNotified === event.remoteVersion) continue;
@@ -671,7 +698,7 @@ export async function processAppUpdateNotifications(): Promise<void> {
     const pending = parsePendingEvents(channel.pendingEvents);
     if (pending.appUpdate?.remoteVersion === event.remoteVersion) continue;
 
-    if (isScheduled(channel.schedule)) {
+    if (digestNotificationIds.has(channel.id) || isScheduled(channel.schedule)) {
       appendPendingAppUpdate(channel.id, event);
       continue;
     }
@@ -1001,21 +1028,33 @@ function shouldSendNow(cronExpr: string, lastSentAt: string | null): boolean {
 }
 
 export async function processScheduledDigests(): Promise<void> {
-  const db = getDb();
+  const digestNotificationIds = Array.from(scheduleService.getEnabledDigestNotificationIds());
+  await processScheduledDigestNotifications(digestNotificationIds, { includeLegacyDueChannels: true });
+}
 
-  const channels = db
-    .select()
-    .from(notifications)
-    .where(
-      and(
-        eq(notifications.enabled, 1),
-        isNotNull(notifications.schedule),
-      )
-    )
-    .all();
+export async function processScheduledDigestNotifications(
+  notificationIds: number[],
+  options: { includeLegacyDueChannels?: boolean } = {},
+): Promise<{ sent: number; skipped: number; failed: number }> {
+  const db = getDb();
+  const uniqueNotificationIds = Array.from(new Set(notificationIds));
+
+  const allChannels = db.select().from(notifications).where(eq(notifications.enabled, 1)).all();
+  const channels = allChannels.filter((channel) => {
+    if (uniqueNotificationIds.includes(channel.id)) return true;
+    return options.includeLegacyDueChannels === true && isScheduled(channel.schedule);
+  });
+
+  let sentCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
 
   for (const channel of channels) {
-    if (!channel.schedule || channel.schedule === "immediate") continue;
+    const explicitTarget = uniqueNotificationIds.includes(channel.id);
+    if (!explicitTarget && (!channel.schedule || channel.schedule === "immediate")) {
+      skippedCount += 1;
+      continue;
+    }
 
     const pending = parsePendingEvents(channel.pendingEvents);
     const visibleUpdates = systemService.filterVisibleSystemItems(pending.updates);
@@ -1050,9 +1089,15 @@ export async function processScheduledDigests(): Promise<void> {
       deliverableUpdates.length === 0 &&
       visibleUnreachable.length === 0 &&
       !pending.appUpdate
-    ) continue;
+    ) {
+      skippedCount += 1;
+      continue;
+    }
 
-    if (!shouldSendNow(channel.schedule, channel.lastSentAt)) continue;
+    if (!explicitTarget && channel.schedule && !shouldSendNow(channel.schedule, channel.lastSentAt)) {
+      skippedCount += 1;
+      continue;
+    }
 
     const sent = await sendChannelNotification(
       channel,
@@ -1060,7 +1105,11 @@ export async function processScheduledDigests(): Promise<void> {
       visibleUnreachable,
       pending.appUpdate
     );
-    if (!sent) continue;
+    if (!sent) {
+      failedCount += 1;
+      continue;
+    }
+    sentCount += 1;
 
     markDeliveredUpdateVersions(channel.id, deliverableUpdates);
 
@@ -1074,6 +1123,8 @@ export async function processScheduledDigests(): Promise<void> {
       .where(eq(notifications.id, channel.id))
       .run();
   }
+
+  return { sent: sentCount, skipped: skippedCount, failed: failedCount };
 }
 
 function buildEventTypes(

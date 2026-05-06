@@ -30,6 +30,11 @@ import {
   validateNotificationFormAction,
 } from "../lib/notification-form-validation";
 import { useVisibleSystems } from "../lib/systems";
+import {
+  isNotificationDigestConfig,
+  useCreateSchedule,
+  useSchedules,
+} from "../lib/schedules";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -71,15 +76,6 @@ const TYPE_LABELS: Record<string, string> = {
   webhook: "Webhook",
 };
 
-const SCHEDULE_PRESETS: { label: string; value: string }[] = [
-  { label: "Every hour", value: "0 * * * *" },
-  { label: "Every 3 hours", value: "0 */3 * * *" },
-  { label: "Every 6 hours", value: "0 */6 * * *" },
-  { label: "Daily at 00:00", value: "0 0 * * *" },
-  { label: "Weekly Monday 09:00", value: "0 9 * * 1" },
-  { label: "Custom", value: "custom" },
-];
-
 const PUSH_PRIORITY_OPTIONS = [
   { value: "auto", label: "Automatic" },
   { value: "min", label: "Min" },
@@ -118,6 +114,14 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];
+const SCHEDULE_PRESETS: { label: string; value: string }[] = [
+  { label: "Every hour", value: "0 * * * *" },
+  { label: "Every 3 hours", value: "0 */3 * * *" },
+  { label: "Every 6 hours", value: "0 */6 * * *" },
+  { label: "Daily at 00:00", value: "0 0 * * *" },
+  { label: "Weekly Monday 09:00", value: "0 9 * * 1" },
+  { label: "Custom", value: "custom" },
+];
 
 function moveNotification<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -197,11 +201,98 @@ function normalizeGotifyPriorityOverride(value: string | undefined): string {
   }
 }
 
-function describeSchedule(cron: string | null): string {
-  if (!cron) return "Immediate";
-  const presetMatch = SCHEDULE_PRESETS.find((preset) => preset.value === cron);
-  if (presetMatch) return presetMatch.label;
-  return cron;
+function describeNotificationSchedule(channel: NotificationChannel): string {
+  if (channel.digestScheduleName) return channel.digestScheduleName;
+  if (channel.schedule) return channel.schedule;
+  return "Immediate";
+}
+
+function NewNotificationScheduleForm({
+  onSubmit,
+  onCancel,
+  loading,
+}: {
+  onSubmit: (data: { name: string; cron: string }) => void;
+  onCancel: () => void;
+  loading?: boolean;
+}) {
+  const [name, setName] = useState("Notification schedule");
+  const [cronPreset, setCronPreset] = useState(SCHEDULE_PRESETS[3].value);
+  const [customCron, setCustomCron] = useState("");
+  const [error, setError] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    const cron = cronPreset === "custom" ? customCron.trim() : cronPreset;
+    if (!name.trim()) {
+      setError("Name is required");
+      return;
+    }
+    if (!cron) {
+      setError("Cron expression is required");
+      return;
+    }
+    onSubmit({ name: name.trim(), cron });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {error && (
+        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 text-sm">
+          {error}
+        </div>
+      )}
+      <div>
+        <label className={labelClass}>Name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className={inputClass}
+          maxLength={100}
+          autoFocus
+        />
+      </div>
+      <div>
+        <label className={labelClass}>Schedule</label>
+        <select
+          value={cronPreset}
+          onChange={(e) => setCronPreset(e.target.value)}
+          className={inputClass}
+        >
+          {SCHEDULE_PRESETS.map((preset) => (
+            <option key={preset.value} value={preset.value}>
+              {preset.label}
+            </option>
+          ))}
+        </select>
+        {cronPreset === "custom" && (
+          <input
+            value={customCron}
+            onChange={(e) => setCustomCron(e.target.value)}
+            className={`${inputClass} mt-3 font-mono`}
+            placeholder="0 9 * * 1"
+          />
+        )}
+      </div>
+      <div className="flex justify-end gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={loading}
+          className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+        >
+          {loading ? <span className="spinner spinner-sm" /> : "Save"}
+        </button>
+      </div>
+    </form>
+  );
 }
 
 function defaultWebhookConfig(): WebhookConfig {
@@ -532,11 +623,14 @@ function NotificationForm({
     systemIds: number[] | null;
     config: NotificationConfig;
     schedule: string | null;
+    digestScheduleId: number | null;
   }) => void;
   onCancel: () => void;
   loading: boolean;
 }) {
   const { data: systemsList } = useVisibleSystems();
+  const { data: schedules } = useSchedules();
+  const createSchedule = useCreateSchedule();
   const testConfig = useTestNotificationConfig();
   const createTelegramLink = useCreateTelegramLink();
   const reissueTelegramCommandToken = useReissueTelegramCommandToken();
@@ -605,21 +699,27 @@ function NotificationForm({
   const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>(initialWebhook);
   const [mqttConfig, setMqttConfig] = useState<MqttConfig>(initialMqtt);
 
-  const initialScheduleMode = initial?.schedule ? "scheduled" : "immediate";
-  const initialPreset = initial?.schedule
-    ? SCHEDULE_PRESETS.find((preset) => preset.value === initial.schedule)
-      ? initial.schedule
-      : "custom"
-    : SCHEDULE_PRESETS[0].value;
-  const [scheduleMode, setScheduleMode] = useState<"immediate" | "scheduled">(
-    initialScheduleMode
+  const digestSchedules = (schedules ?? []).filter(
+    (schedule) => schedule.type === "notification_digest" && isNotificationDigestConfig(schedule.config),
   );
-  const [schedulePreset, setSchedulePreset] = useState(initialPreset);
-  const [customCron, setCustomCron] = useState(
-    initial?.schedule && !SCHEDULE_PRESETS.find((preset) => preset.value === initial.schedule)
-      ? initial.schedule
-      : ""
+  const [deliveryMode, setDeliveryMode] = useState<"immediate" | "digest">(
+    initial?.digestScheduleId ? "digest" : "immediate",
   );
+  const [digestScheduleId, setDigestScheduleId] = useState<number | null>(
+    initial?.digestScheduleId ?? null,
+  );
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [localScheduleOptions, setLocalScheduleOptions] = useState<Array<{ id: number; name: string; cron: string }>>([]);
+  const scheduleOptions = [
+    ...digestSchedules.map((schedule) => ({
+      id: schedule.id,
+      name: schedule.name,
+      cron: isNotificationDigestConfig(schedule.config) ? schedule.config.cron : "",
+    })),
+    ...localScheduleOptions.filter(
+      (localSchedule) => !digestSchedules.some((schedule) => schedule.id === localSchedule.id),
+    ),
+  ];
 
   const toggleNotifyOn = (event: string) => {
     setNotifyOn((prev) =>
@@ -721,12 +821,6 @@ function NotificationForm({
     return finalizeWebhookConfig(webhookConfig, initial ? coerceWebhookConfig(initial.config) : undefined);
   };
 
-  const getScheduleValue = (): string | null => {
-    if (scheduleMode === "immediate") return null;
-    if (schedulePreset === "custom") return customCron || null;
-    return schedulePreset;
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const config = buildConfig();
@@ -736,6 +830,8 @@ function NotificationForm({
       return;
     }
 
+    const selectedDigestScheduleId =
+      deliveryMode === "digest" ? digestScheduleId ?? scheduleOptions[0]?.id ?? null : null;
     onSubmit({
       name,
       type,
@@ -743,7 +839,8 @@ function NotificationForm({
       notifyOn,
       systemIds: allSystems ? null : selectedSystemIds,
       config,
-      schedule: getScheduleValue(),
+      schedule: null,
+      digestScheduleId: selectedDigestScheduleId,
     });
   };
 
@@ -807,10 +904,39 @@ function NotificationForm({
     });
   };
 
+  const handleCreateSchedule = (data: { name: string; cron: string }) => {
+    createSchedule.mutate(
+      {
+        name: data.name,
+        type: "notification_digest",
+        enabled: true,
+        systemIds: null,
+        config: {
+          cron: data.cron,
+          notificationIds: [],
+        },
+      },
+      {
+        onSuccess: (result) => {
+          setLocalScheduleOptions((prev) => [
+            ...prev,
+            { id: result.id, name: data.name, cron: data.cron },
+          ]);
+          setDigestScheduleId(result.id);
+          setDeliveryMode("digest");
+          setShowScheduleForm(false);
+          addToast("Schedule created", "success");
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
+
   const destinationWarning = type === "webhook" ? getWebhookDestinationWarning(webhookConfig.url) : null;
   const canSendTest = canSendNotificationFormTest(type, buildConfig());
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
@@ -906,14 +1032,14 @@ function NotificationForm({
       </div>
 
       <div>
-        <span className={labelClass}>Schedule</span>
+        <span className={labelClass}>Delivery</span>
         <div className="flex gap-4 mb-2">
           <label className="flex items-center gap-2">
             <input
               type="radio"
-              name="scheduleMode"
-              checked={scheduleMode === "immediate"}
-              onChange={() => setScheduleMode("immediate")}
+              name="deliveryMode"
+              checked={deliveryMode === "immediate"}
+              onChange={() => setDeliveryMode("immediate")}
               className="w-4 h-4 text-blue-600 focus:ring-blue-500"
             />
             <span className="text-sm">Immediate</span>
@@ -921,45 +1047,41 @@ function NotificationForm({
           <label className="flex items-center gap-2">
             <input
               type="radio"
-              name="scheduleMode"
-              checked={scheduleMode === "scheduled"}
-              onChange={() => setScheduleMode("scheduled")}
+              name="deliveryMode"
+              checked={deliveryMode === "digest"}
+              onChange={() => setDeliveryMode("digest")}
               className="w-4 h-4 text-blue-600 focus:ring-blue-500"
             />
-            <span className="text-sm">Scheduled (digest)</span>
+            <span className="text-sm">Schedule</span>
           </label>
         </div>
-        {scheduleMode === "scheduled" && (
-          <div className="space-y-2">
+        {deliveryMode === "digest" && (
+        <div className="space-y-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <select
-              value={schedulePreset}
-              onChange={(e) => setSchedulePreset(e.target.value)}
+              value={digestScheduleId ?? scheduleOptions[0]?.id ?? ""}
+              onChange={(e) => setDigestScheduleId(Number(e.target.value))}
               className={inputClass}
+              disabled={scheduleOptions.length === 0}
             >
-              {SCHEDULE_PRESETS.map((preset) => (
-                <option key={preset.value} value={preset.value}>
-                  {preset.label}
+              {scheduleOptions.map((schedule) => (
+                <option key={schedule.id} value={schedule.id}>
+                  {schedule.name}
                 </option>
               ))}
             </select>
-            {schedulePreset === "custom" && (
-              <div>
-                <input
-                  type="text"
-                  value={customCron}
-                  onChange={(e) => setCustomCron(e.target.value)}
-                  className={inputClass}
-                  placeholder="e.g. 0 23 * * 1 (Mon 23:00)"
-                />
-                <p className="text-xs text-slate-400 mt-1">
-                  Standard cron format: minute hour day-of-month month day-of-week
-                </p>
-              </div>
-            )}
-            <p className={mutedTextClass}>
-              Events are batched and sent as a digest at the scheduled time.
-            </p>
+            <button
+              type="button"
+              onClick={() => setShowScheduleForm(true)}
+              className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
+            >
+              New schedule
+            </button>
           </div>
+          <p className={mutedTextClass}>
+            Events are batched and sent when this schedule runs.
+          </p>
+        </div>
         )}
       </div>
 
@@ -1304,7 +1426,7 @@ function NotificationForm({
                       The app update entity is visibility-only. Per-system entities use synthetic fingerprint versions for the current pending update set, not real package version pairs.
                     </p>
                     <p className="text-xs text-amber-700 dark:text-amber-300">
-                      Home Assistant discovery and retained state sync update immediately and are not affected by digest schedules.
+                      Home Assistant discovery and retained state sync update immediately and are not affected by scheduled delivery.
                     </p>
                   </div>
                 </div>
@@ -1738,6 +1860,19 @@ function NotificationForm({
         </button>
       </div>
     </form>
+    <Modal
+      open={showScheduleForm}
+      onClose={() => setShowScheduleForm(false)}
+      title="New Schedule"
+      dismissible={!createSchedule.isPending}
+    >
+      <NewNotificationScheduleForm
+        onSubmit={handleCreateSchedule}
+        onCancel={() => setShowScheduleForm(false)}
+        loading={createSchedule.isPending}
+      />
+    </Modal>
+    </>
   );
 }
 
@@ -1834,6 +1969,7 @@ export default function Notifications() {
     systemIds: number[] | null;
     config: NotificationConfig;
     schedule: string | null;
+    digestScheduleId: number | null;
   }) => {
     createNotification.mutate(data, {
       onSuccess: () => {
@@ -1852,6 +1988,7 @@ export default function Notifications() {
     systemIds: number[] | null;
     config: NotificationConfig;
     schedule: string | null;
+    digestScheduleId: number | null;
   }) => {
     if (!editChannel) return;
     updateNotification.mutate(
@@ -1950,7 +2087,7 @@ export default function Notifications() {
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3 hidden sm:table-cell">Events</th>
                 <th className="px-4 py-3 hidden md:table-cell">Systems</th>
-                <th className="px-4 py-3 hidden lg:table-cell">Schedule</th>
+                <th className="px-4 py-3 hidden lg:table-cell">Delivery</th>
                 <th className="px-4 py-3">Enabled</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -1996,7 +2133,7 @@ export default function Notifications() {
                     {getSystemScopeLabel(channel.systemIds)}
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
-                    {describeSchedule(channel.schedule)}
+                    {describeNotificationSchedule(channel)}
                   </td>
                   <td className="px-4 py-3">
                     <button

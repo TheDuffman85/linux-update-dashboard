@@ -5,6 +5,8 @@ import * as notificationService from "../services/notification-service";
 import * as notificationRuntime from "../services/notification-runtime";
 import { getDb } from "../db";
 import { notifications } from "../db/schema";
+import * as scheduleService from "../services/schedule-service";
+import * as scheduler from "../services/scheduler";
 import { getProvider, getProviderNames, type NotificationConfig } from "../services/notifications";
 import {
   sanitizeNotificationConfig,
@@ -26,6 +28,22 @@ function isValidSchedule(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function parseDigestScheduleId(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "immediate" || value === "") return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+function validateDigestScheduleId(id: number | null | undefined): string | null {
+  if (id === undefined || id === null) return null;
+  const schedule = scheduleService.getSchedule(id);
+  if (!schedule || schedule.type !== "notification_digest") {
+    return "digestScheduleId must reference an existing notification schedule";
+  }
+  return null;
 }
 
 function parseId(raw: string): number | null {
@@ -242,6 +260,12 @@ notificationsRouter.post("/", async (c) => {
   if (schedule !== undefined && !isValidSchedule(schedule)) {
     return c.json({ error: "schedule must be null, \"immediate\", or a valid cron expression" }, 400);
   }
+  const digestScheduleId = parseDigestScheduleId(body.digestScheduleId);
+  if (digestScheduleId === undefined && body.digestScheduleId !== undefined) {
+    return c.json({ error: "digestScheduleId must be null or a positive integer" }, 400);
+  }
+  const digestScheduleError = validateDigestScheduleId(digestScheduleId);
+  if (digestScheduleError) return c.json({ error: digestScheduleError }, 400);
 
   const id = notificationService.createNotification({
     name: name.trim(),
@@ -251,7 +275,9 @@ notificationsRouter.post("/", async (c) => {
     systemIds,
     config,
     schedule: schedule ?? null,
+    digestScheduleId,
   });
+  if (digestScheduleId !== undefined) scheduler.restart();
 
   const created = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   await notificationRuntime.reconcileNotificationChange(null, created, getActorUserId(c));
@@ -328,6 +354,16 @@ notificationsRouter.put("/:id", async (c) => {
     allowed.schedule = body.schedule;
   }
 
+  if (body.digestScheduleId !== undefined) {
+    const digestScheduleId = parseDigestScheduleId(body.digestScheduleId);
+    if (digestScheduleId === undefined) {
+      return c.json({ error: "digestScheduleId must be null or a positive integer" }, 400);
+    }
+    const digestScheduleError = validateDigestScheduleId(digestScheduleId);
+    if (digestScheduleError) return c.json({ error: digestScheduleError }, 400);
+    allowed.digestScheduleId = digestScheduleId;
+  }
+
   if (body.type !== undefined || body.config !== undefined) {
     const mergedType = typeof body.type === "string" ? body.type : existing.type;
     const storedConfig =
@@ -351,6 +387,7 @@ notificationsRouter.put("/:id", async (c) => {
   const previous = existing;
   const ok = notificationService.updateNotification(id, allowed as any);
   if (!ok) return c.json({ error: "Not found" }, 404);
+  if (body.digestScheduleId !== undefined) scheduler.restart();
 
   const current = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   await notificationRuntime.reconcileNotificationChange(previous, current, getActorUserId(c));
