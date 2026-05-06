@@ -317,12 +317,14 @@ If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`
 
 ## Update Scheduling
 
-The update schedule uses two values:
+Scheduling is managed from the **Schedules** page. Existing installs are migrated
+to an enabled **Default refresh** schedule using the previous refresh interval and
+cache duration settings.
 
-- **Scheduler Interval:** how often the backend wakes up and looks for systems whose cached results have expired
-- **Cache Duration:** how long to reuse the last successful check result before a system is considered stale again
+- **Refresh schedules:** run on a cron expression and re-check scoped systems whose cached results are stale
+- **Update schedules:** run on a cron expression, refresh scoped systems first, then run the normal per-system Upgrade action where visible updates remain
 
-Set **Cache Duration** to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger immediate checks outside the regular scheduler interval.
+Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger immediate checks outside configured schedules.
 
 ## Debugging SSH Connection Failures
 
@@ -874,6 +876,17 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/notifications/:id/telegram/reissue-command-token` | Rotate the Telegram command token for a linked channel with commands enabled |
 | POST | `/api/notifications/test` | Test a notification config inline (before saving) |
 | POST | `/api/notifications/:id/test` | Send a test notification |
+
+### Schedules (`/api/schedules/*`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/schedules` | List all schedules |
+| PUT | `/api/schedules/reorder` | Reorder schedules |
+| GET | `/api/schedules/:id` | Get a schedule |
+| POST | `/api/schedules` | Create a schedule |
+| PUT | `/api/schedules/:id` | Update a schedule |
+| DELETE | `/api/schedules/:id` | Delete a schedule |
 
 ### Credentials (`/api/credentials/*`)
 
