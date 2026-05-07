@@ -796,7 +796,6 @@ function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>):
     .from(schema.settings)
     .where(eq(schema.settings.key, NOTIFICATION_SCHEDULE_MIGRATION_KEY))
     .get();
-  if (marker) return;
 
   const legacyChannels = db
     .select({
@@ -807,56 +806,92 @@ function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>):
     .all()
     .filter((row) => row.schedule && row.schedule !== "immediate");
 
+  db.update(schema.notifications)
+    .set({ schedule: null })
+    .where(eq(schema.notifications.schedule, "immediate"))
+    .run();
+
+  if (marker && legacyChannels.length === 0) return;
+
   const existingNotificationSchedules = db
     .select()
     .from(schema.schedules)
     .all()
     .filter((row) => row.type === "notification_digest");
 
-  const assignedNotificationIds = new Set<number>();
+  const schedulesByCron = new Map<
+    string,
+    {
+      id: number;
+      cron: string;
+      notificationIds: Set<number>;
+    }
+  >();
   for (const schedule of existingNotificationSchedules) {
     const config = parseScheduleConfigJson(schedule.config);
+    const cron = typeof config.cron === "string" ? config.cron.trim() : "";
+    if (!cron || schedulesByCron.has(cron)) continue;
     const ids = Array.isArray(config.notificationIds)
       ? config.notificationIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
       : [];
-    for (const id of ids) assignedNotificationIds.add(id);
+    schedulesByCron.set(cron, {
+      id: schedule.id,
+      cron,
+      notificationIds: new Set(ids),
+    });
   }
 
-  const byCron = new Map<string, number[]>();
+  let nextSortOrder =
+    (db.all(sql`SELECT COALESCE(MAX(sort_order), -1) as value FROM schedules`)[0] as { value?: number } | undefined)?.value ?? -1;
+
   for (const channel of legacyChannels) {
-    if (!channel.schedule || assignedNotificationIds.has(channel.id)) continue;
-    const ids = byCron.get(channel.schedule) ?? [];
-    ids.push(channel.id);
-    byCron.set(channel.schedule, ids);
-  }
+    const cron = channel.schedule?.trim();
+    if (!cron) continue;
 
-  if (byCron.size > 0) {
-    let nextSortOrder =
-      (db.all(sql`SELECT COALESCE(MAX(sort_order), -1) as value FROM schedules`)[0] as { value?: number } | undefined)?.value ?? -1;
-    for (const [cron, notificationIds] of byCron.entries()) {
+    let target = schedulesByCron.get(cron);
+    if (!target) {
       nextSortOrder += 1;
-      db.insert(schema.schedules).values({
+      const inserted = db.insert(schema.schedules).values({
         sortOrder: nextSortOrder,
         name: `Notification schedule ${cron}`,
         type: "notification_digest",
         enabled: 1,
         systemIds: null,
-        config: JSON.stringify({ cron, notificationIds }),
-      }).run();
-      for (const notificationId of notificationIds) {
-        db.update(schema.notifications)
-          .set({ schedule: null })
-          .where(eq(schema.notifications.id, notificationId))
-          .run();
-      }
+        config: JSON.stringify({ cron, notificationIds: [channel.id] }),
+      }).returning({ id: schema.schedules.id }).get();
+      target = {
+        id: inserted.id,
+        cron,
+        notificationIds: new Set([channel.id]),
+      };
+      schedulesByCron.set(cron, target);
+    } else if (!target.notificationIds.has(channel.id)) {
+      target.notificationIds.add(channel.id);
+      db.update(schema.schedules)
+        .set({
+          config: JSON.stringify({
+            cron: target.cron,
+            notificationIds: Array.from(target.notificationIds),
+          }),
+        })
+        .where(eq(schema.schedules.id, target.id))
+        .run();
     }
+
+    db.update(schema.notifications)
+      .set({ schedule: null })
+      .where(eq(schema.notifications.id, channel.id))
+      .run();
   }
 
-  db.insert(schema.settings).values({
-    key: NOTIFICATION_SCHEDULE_MIGRATION_KEY,
-    value: "true",
-    description: "Notification schedules were migrated to the schedules table",
-  }).run();
+  db.run(sql`
+    INSERT OR IGNORE INTO settings (key, value, description)
+    VALUES (
+      ${NOTIFICATION_SCHEDULE_MIGRATION_KEY},
+      'true',
+      'Notification schedules were migrated to the schedules table'
+    )
+  `);
 }
 
 function migrateLegacyAptAutoHideIntoPackageManagerConfigs(): void {

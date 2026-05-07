@@ -148,6 +148,144 @@ describe("schedules routes and migration", () => {
     expect(notification?.schedule).toBeNull();
   });
 
+  test("migrates legacy notification cron values even when the migration marker already exists", () => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-schedules-routes-notification-marker-"));
+    dbPath = join(tempDir, "dashboard.db");
+
+    const sqlite = new BetterSqlite3(dbPath);
+    sqlite.exec(`
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        description TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO settings (key, value, description) VALUES
+        ('schedules_refresh_migrated', 'true', ''),
+        ('notification_digest_schedules_migrated', 'true', '');
+
+      CREATE TABLE notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        notify_on TEXT NOT NULL DEFAULT '["updates","appUpdates"]',
+        system_ids TEXT,
+        config TEXT NOT NULL,
+        schedule TEXT,
+        pending_events TEXT,
+        last_sent_at TEXT,
+        last_app_version_notified TEXT,
+        last_delivery_status TEXT,
+        last_delivery_at TEXT,
+        last_delivery_code INTEGER,
+        last_delivery_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config, schedule)
+        VALUES ('Ops email', 'email', 1, '["updates"]', NULL, '{}', '0 10 * * 1');
+    `);
+    sqlite.close();
+
+    initDatabase(dbPath);
+
+    const notificationSchedule = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.type, "notification_digest"))
+      .get();
+    const notification = getDb().select().from(notifications).get();
+
+    expect(JSON.parse(notificationSchedule?.config || "{}")).toEqual({
+      cron: "0 10 * * 1",
+      notificationIds: [notification?.id],
+    });
+    expect(notification?.schedule).toBeNull();
+  });
+
+  test("adds legacy notification cron targets to an existing matching unified schedule", () => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-schedules-routes-notification-merge-"));
+    dbPath = join(tempDir, "dashboard.db");
+
+    const sqlite = new BetterSqlite3(dbPath);
+    sqlite.exec(`
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        description TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO settings (key, value, description) VALUES
+        ('schedules_refresh_migrated', 'true', ''),
+        ('notification_digest_schedules_migrated', 'true', '');
+
+      CREATE TABLE notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        notify_on TEXT NOT NULL DEFAULT '["updates","appUpdates"]',
+        system_ids TEXT,
+        config TEXT NOT NULL,
+        schedule TEXT,
+        pending_events TEXT,
+        last_sent_at TEXT,
+        last_app_version_notified TEXT,
+        last_delivery_status TEXT,
+        last_delivery_at TEXT,
+        last_delivery_code INTEGER,
+        last_delivery_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO notifications (name, type, enabled, notify_on, system_ids, config, schedule)
+        VALUES ('Ops email', 'email', 1, '["updates"]', NULL, '{}', '0 9 * * 1');
+
+      CREATE TABLE schedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        system_ids TEXT,
+        config TEXT NOT NULL,
+        last_started_at TEXT,
+        last_run_at TEXT,
+        last_run_status TEXT,
+        last_run_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO schedules (name, type, enabled, system_ids, config)
+        VALUES ('Morning notifications', 'notification_digest', 1, NULL, '{"cron":"0 9 * * 1","notificationIds":[]}');
+    `);
+    sqlite.close();
+
+    initDatabase(dbPath);
+
+    const notification = getDb().select().from(notifications).get();
+    const notificationSchedules = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.type, "notification_digest"))
+      .all();
+
+    expect(notificationSchedules).toHaveLength(1);
+    expect(notificationSchedules[0]?.name).toBe("Morning notifications");
+    expect(JSON.parse(notificationSchedules[0]?.config || "{}")).toEqual({
+      cron: "0 9 * * 1",
+      notificationIds: [notification?.id],
+    });
+    expect(notification?.schedule).toBeNull();
+  });
+
   test("creates update schedules with selected system scope", async () => {
     const res = await app.request("/api/schedules", {
       method: "POST",
