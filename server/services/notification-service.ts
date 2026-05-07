@@ -26,7 +26,6 @@ import * as systemService from "./system-service";
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
 const DEFAULT_NOTIFY_ON_JSON = JSON.stringify(DEFAULT_NOTIFY_ON);
 const DIAGNOSTIC_MESSAGE_LIMIT = 500;
-const STORED_SENTINEL = "(stored)";
 
 function getProviderOrThrow(type: string) {
   const provider = getProvider(type);
@@ -194,6 +193,7 @@ export function createNotification(data: {
   schedule?: string | null;
   scheduleId?: number | null;
   scheduleIds?: number[];
+  sourceNotificationId?: number;
 }) {
   const db = getDb();
   const nextSortOrder =
@@ -203,7 +203,16 @@ export function createNotification(data: {
       .orderBy(asc(notifications.sortOrder), asc(notifications.id))
       .all()
       .at(-1)?.sortOrder ?? -1;
-  const encConfig = prepareConfigForStorage(data.type, data.config);
+  const sourceNotification =
+    data.sourceNotificationId !== undefined
+      ? db.select().from(notifications).where(eq(notifications.id, data.sourceNotificationId)).get()
+      : null;
+  const sourceConfig =
+    sourceNotification && sourceNotification.type === data.type
+      ? loadSanitizedConfig(sourceNotification)
+      : {};
+  const mergedConfig = mergeStoredSensitiveConfig(data.type, sourceConfig, data.config);
+  const encConfig = prepareConfigForStorage(data.type, mergedConfig);
   const schedule = data.schedule === "immediate" ? null : (data.schedule || null);
   const hasSchedules =
     data.scheduleIds !== undefined

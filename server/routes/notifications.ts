@@ -81,6 +81,15 @@ function parseConfigJson(raw: string): NotificationConfig {
   }
 }
 
+function containsStoredSentinel(value: unknown): boolean {
+  if (value === "(stored)") return true;
+  if (Array.isArray(value)) return value.some(containsStoredSentinel);
+  if (value && typeof value === "object") {
+    return Object.values(value).some(containsStoredSentinel);
+  }
+  return false;
+}
+
 function validateConfigShape(config: unknown): string | null {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     return "config must be an object";
@@ -225,10 +234,20 @@ notificationsRouter.post("/", async (c) => {
   }
 
   const { name, type, enabled, notifyOn, systemIds, config } = body;
+  const sourceNotificationId =
+    body.sourceNotificationId === undefined
+      ? undefined
+      : Number.isInteger(body.sourceNotificationId) && body.sourceNotificationId > 0
+        ? body.sourceNotificationId
+        : null;
 
   // Validate name
   if (typeof name !== "string" || !name.trim() || name.length > MAX_NAME_LENGTH) {
     return c.json({ error: "name is required and must be 1-100 characters" }, 400);
+  }
+
+  if (sourceNotificationId === null) {
+    return c.json({ error: "sourceNotificationId must be a positive integer" }, 400);
   }
 
   // Validate type
@@ -242,9 +261,38 @@ notificationsRouter.post("/", async (c) => {
     return c.json({ error: configShapeError }, 400);
   }
 
-  const providerConfigError = validateProviderConfig(type, config);
-  if (providerConfigError) {
-    return c.json({ error: providerConfigError }, 400);
+  if (sourceNotificationId !== undefined) {
+    const source = getDb().select().from(notifications).where(eq(notifications.id, sourceNotificationId)).get();
+    if (!source) {
+      return c.json({ error: "sourceNotificationId must reference an existing notification channel" }, 400);
+    }
+    if (source.type !== type) {
+      return c.json({ error: "sourceNotificationId type must match the notification type" }, 400);
+    }
+  }
+
+  const rawProviderConfigError = validateProviderConfig(type, config);
+  if (rawProviderConfigError) {
+    const canReuseSourceConfig =
+      type === "telegram" &&
+      sourceNotificationId !== undefined &&
+      containsStoredSentinel(config);
+    if (!canReuseSourceConfig) {
+      return c.json({ error: rawProviderConfigError }, 400);
+    }
+
+    const sourceConfig = parseConfigJson(
+      getDb().select({ config: notifications.config }).from(notifications).where(eq(notifications.id, sourceNotificationId)).get()?.config || "{}",
+    );
+    const effectiveConfig = notificationService.mergeStoredSensitiveConfig(
+      type,
+      sourceConfig,
+      config,
+    );
+    const mergedProviderConfigError = validateProviderConfig(type, effectiveConfig);
+    if (mergedProviderConfigError) {
+      return c.json({ error: mergedProviderConfigError }, 400);
+    }
   }
 
   // Validate notifyOn
@@ -294,6 +342,7 @@ notificationsRouter.post("/", async (c) => {
     schedule: schedule ?? null,
     scheduleId,
     scheduleIds: effectiveScheduleIds,
+    sourceNotificationId: sourceNotificationId ?? undefined,
   });
   if (effectiveScheduleIds !== undefined) scheduler.restart();
 

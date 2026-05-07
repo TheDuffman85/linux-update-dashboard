@@ -885,6 +885,74 @@ describe("notifications routes validation", () => {
     ]);
   });
 
+  test("creates notification channels from a duplicated draft using stored sensitive config", async () => {
+    const notificationSchedule = getDb().insert(schedules).values({
+      name: "Morning digest",
+      type: "notification_digest",
+      enabled: 1,
+      config: JSON.stringify({ cron: "0 9 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const createRes = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops gotify",
+        type: "gotify",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        scheduleIds: [notificationSchedule.id],
+        config: {
+          gotifyUrl: "https://gotify.example.com",
+          gotifyToken: "gotify-secret",
+        },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+
+    const duplicateRes = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops gotify (Copy)",
+        type: "gotify",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        scheduleIds: [notificationSchedule.id],
+        sourceNotificationId: created.id,
+        config: {
+          gotifyUrl: "https://gotify.example.com",
+          gotifyToken: "(stored)",
+        },
+      }),
+    });
+    expect(duplicateRes.status).toBe(201);
+    const duplicated = await duplicateRes.json();
+
+    const rows = getDb()
+      .select()
+      .from(notifications)
+      .orderBy(notifications.id)
+      .all();
+    expect(rows.map((row) => row.name)).toEqual(["Ops gotify", "Ops gotify (Copy)"]);
+
+    const copiedConfig = JSON.parse(rows.find((row) => row.id === duplicated.id)?.config || "{}");
+    expect(getEncryptor().decrypt(copiedConfig.gotifyToken)).toBe("gotify-secret");
+
+    const copiedSchedule = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.id, notificationSchedule.id))
+      .get();
+    expect(JSON.parse(copiedSchedule?.config || "{}").notificationIds).toEqual([
+      created.id,
+      duplicated.id,
+    ]);
+  });
+
   test("rejects notification reorder payloads that omit notifications", async () => {
     const inserted = getDb().insert(notifications).values([
       {

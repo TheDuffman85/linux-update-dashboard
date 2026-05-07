@@ -447,6 +447,7 @@ export default function Schedules() {
   const reorderSchedules = useReorderSchedules();
   const { addToast } = useToast();
   const [showForm, setShowForm] = useState(false);
+  const [duplicateSchedule, setDuplicateSchedule] = useState<Schedule | null>(null);
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [orderedSchedules, setOrderedSchedules] = useState<Schedule[]>([]);
@@ -552,6 +553,7 @@ export default function Schedules() {
     createSchedule.mutate(data, {
       onSuccess: () => {
         setShowForm(false);
+        setDuplicateSchedule(null);
         addToast("Schedule created", "success");
       },
       onError: (err) => addToast(err.message, "danger"),
@@ -608,7 +610,7 @@ export default function Schedules() {
         </div>
       ) : schedules && schedules.length > 0 ? (
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-x-auto overflow-y-hidden">
-          <table className="min-w-full w-max text-sm">
+          <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                 <th className="px-4 py-3">Name</th>
@@ -655,7 +657,9 @@ export default function Schedules() {
                     {TYPE_LABELS[schedule.type]}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400">
-                    {getTargetLabel(schedule)}
+                    <span className="block max-w-md truncate" title={getTargetLabel(schedule)}>
+                      {getTargetLabel(schedule)}
+                    </span>
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
                     <div>
@@ -693,9 +697,21 @@ export default function Schedules() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <button
+                        onClick={() => {
+                          setDuplicateSchedule(schedule);
+                          setShowForm(true);
+                        }}
+                        className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        title="Copy schedule"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                      <button
                         onClick={() => setEditSchedule(schedule)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Edit"
+                        title="Edit schedule"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -704,7 +720,7 @@ export default function Schedules() {
                       <button
                         onClick={() => setDeleteId(schedule.id)}
                         className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                        title="Delete"
+                        title="Delete schedule"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -733,13 +749,25 @@ export default function Schedules() {
 
       <Modal
         open={showForm}
-        onClose={() => setShowForm(false)}
-        title="Add Schedule"
+        onClose={() => {
+          setShowForm(false);
+          setDuplicateSchedule(null);
+        }}
+        title={duplicateSchedule ? "Duplicate Schedule" : "Add Schedule"}
         dismissible={!createSchedule.isPending}
       >
         <ScheduleForm
+          key={duplicateSchedule?.id ?? "new"}
+          initial={duplicateSchedule ? {
+            ...duplicateSchedule,
+            id: 0,
+            name: `${duplicateSchedule.name} (Copy)`,
+          } : undefined}
           onSubmit={handleCreate}
-          onCancel={() => setShowForm(false)}
+          onCancel={() => {
+            setShowForm(false);
+            setDuplicateSchedule(null);
+          }}
           loading={createSchedule.isPending}
         />
       </Modal>

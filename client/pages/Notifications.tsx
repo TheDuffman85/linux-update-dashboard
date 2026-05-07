@@ -228,6 +228,40 @@ function describeCron(cron: string): string {
   return SCHEDULE_PRESETS.find((preset) => preset.value === cron)?.label ?? cron;
 }
 
+function buildDuplicateNotification(channel: NotificationChannel): NotificationChannel {
+  const config = { ...channel.config };
+  if (channel.type === "telegram") {
+    delete config.chatId;
+    delete config.chatDisplayName;
+    delete config.chatBoundAt;
+    delete config.commandApiTokenEncrypted;
+    delete config.commandApiTokenId;
+    delete config.commandTokenStatus;
+    delete config.commandTokenName;
+    delete config.commandTokenCreatedAt;
+    delete config.commandTokenLastUsedAt;
+    delete config.commandTokenExpiresAt;
+    config.chatBindingStatus = "unbound";
+  }
+
+  return {
+    ...channel,
+    id: 0,
+    name: `${channel.name} (Copy)`,
+    config,
+    scheduleId: channel.scheduleId,
+    scheduleIds: [...channel.scheduleIds],
+    scheduleName: channel.scheduleName,
+    scheduleNames: [...channel.scheduleNames],
+    schedules: channel.schedules.map((schedule) => ({ ...schedule })),
+    lastSentAt: null,
+    lastDeliveryStatus: null,
+    lastDeliveryAt: null,
+    lastDeliveryCode: null,
+    lastDeliveryMessage: null,
+  };
+}
+
 function getCronMinimumIntervalMs(cronExpression: string): number | null {
   try {
     const cron = new Cron(cronExpression);
@@ -689,6 +723,7 @@ function NotificationForm({
     schedule: string | null;
     scheduleId: number | null;
     scheduleIds: number[];
+    sourceNotificationId?: number;
   }) => void;
   onCancel: () => void;
   loading: boolean;
@@ -1980,6 +2015,7 @@ export default function Notifications() {
   const testNotification = useTestNotification();
   const { addToast } = useToast();
   const [showForm, setShowForm] = useState(false);
+  const [duplicateChannel, setDuplicateChannel] = useState<NotificationChannel | null>(null);
   const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [resetDedupeId, setResetDedupeId] = useState<number | null>(null);
@@ -2064,10 +2100,12 @@ export default function Notifications() {
     schedule: string | null;
     scheduleId: number | null;
     scheduleIds: number[];
+    sourceNotificationId?: number;
   }) => {
     createNotification.mutate(data, {
       onSuccess: () => {
         setShowForm(false);
+        setDuplicateChannel(null);
         addToast("Notification channel created", "success");
       },
       onError: (err) => addToast(err.message, "danger"),
@@ -2154,6 +2192,9 @@ export default function Notifications() {
     return `${names.length} systems`;
   };
 
+  const getEventLabel = (channel: NotificationChannel): string =>
+    channel.notifyOn.map((event) => EVENT_LABELS[event] || event).join(", ");
+
   const canResetUpdateDedupe = (channel: NotificationChannel): boolean =>
     channel.notifyOn.includes("updates");
 
@@ -2175,7 +2216,7 @@ export default function Notifications() {
         </div>
       ) : channels && channels.length > 0 ? (
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-x-auto overflow-y-hidden">
-          <table className="min-w-full w-max text-sm">
+          <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                 <th className="px-4 py-3">Name</th>
@@ -2222,13 +2263,19 @@ export default function Notifications() {
                     {TYPE_LABELS[channel.type] || channel.type}
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
-                    {channel.notifyOn.map((event) => EVENT_LABELS[event] || event).join(", ")}
+                    <span className="block max-w-md truncate" title={getEventLabel(channel)}>
+                      {getEventLabel(channel)}
+                    </span>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400">
-                    {getSystemScopeLabel(channel.systemIds)}
+                    <span className="block max-w-md truncate" title={getSystemScopeLabel(channel.systemIds)}>
+                      {getSystemScopeLabel(channel.systemIds)}
+                    </span>
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
-                    {describeNotificationSchedule(channel)}
+                    <span className="block max-w-md truncate" title={describeNotificationSchedule(channel)}>
+                      {describeNotificationSchedule(channel)}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     <button
@@ -2280,9 +2327,21 @@ export default function Notifications() {
                         </svg>
                       </button>
                       <button
+                        onClick={() => {
+                          setDuplicateChannel(channel);
+                          setShowForm(true);
+                        }}
+                        className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        title="Copy notification"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                      <button
                         onClick={() => setEditChannel(channel)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Edit"
+                        title="Edit notification"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -2291,7 +2350,7 @@ export default function Notifications() {
                       <button
                         onClick={() => setDeleteId(channel.id)}
                         className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                        title="Delete"
+                        title="Delete notification"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -2320,13 +2379,24 @@ export default function Notifications() {
 
       <Modal
         open={showForm}
-        onClose={() => setShowForm(false)}
-        title="Add Notification"
+        onClose={() => {
+          setShowForm(false);
+          setDuplicateChannel(null);
+        }}
+        title={duplicateChannel ? "Duplicate Notification" : "Add Notification"}
         dismissible={!createNotification.isPending}
       >
         <NotificationForm
-          onSubmit={handleCreate}
-          onCancel={() => setShowForm(false)}
+          key={duplicateChannel?.id ?? "new"}
+          initial={duplicateChannel ? buildDuplicateNotification(duplicateChannel) : undefined}
+          onSubmit={(data) => handleCreate({
+            ...data,
+            sourceNotificationId: duplicateChannel?.id,
+          })}
+          onCancel={() => {
+            setShowForm(false);
+            setDuplicateChannel(null);
+          }}
           loading={createNotification.isPending}
         />
       </Modal>

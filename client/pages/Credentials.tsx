@@ -26,6 +26,11 @@ function moveCredential<T>(items: T[], fromIndex: number, toIndex: number): T[] 
   return nextItems;
 }
 
+function getReferenceLabel(credential: CredentialSummary): string {
+  if (credential.referenceCount === 0) return "Unused";
+  return credential.references.map((ref) => ref.name).join(", ");
+}
+
 export default function Credentials() {
   const { data: credentials, isLoading } = useCredentials();
   const createCredential = useCreateCredential();
@@ -160,7 +165,7 @@ export default function Credentials() {
           <span className="spinner !w-6 !h-6 text-blue-500" />
         </div>
       ) : credentials && credentials.length > 0 ? (
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-hidden">
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-x-auto overflow-y-hidden">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
@@ -198,21 +203,14 @@ export default function Credentials() {
                     {CREDENTIAL_KIND_LABELS[credential.kind]}
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                    {credential.referenceCount > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {credential.references.map((ref) => (
-                          <span
-                            key={`${ref.type}-${ref.id}`}
-                            className="inline-flex items-center rounded-full border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 text-xs text-slate-700 dark:text-slate-200"
-                          >
-                            {ref.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {credential.referenceCount === 0 && (
-                      <span className="text-xs text-slate-400">Unused</span>
-                    )}
+                    <span
+                      className={`block max-w-md truncate ${
+                        credential.referenceCount === 0 ? "text-xs text-slate-400" : ""
+                      }`}
+                      title={getReferenceLabel(credential)}
+                    >
+                      {getReferenceLabel(credential)}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">

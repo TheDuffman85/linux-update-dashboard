@@ -142,6 +142,7 @@ export function useCreateNotification() {
       schedule?: string | null;
       scheduleId?: number | null;
       scheduleIds?: number[];
+      sourceNotificationId?: number;
     }) =>
       apiFetch<{ id: number }>("/notifications", {
         method: "POST",
