@@ -313,6 +313,7 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
 | `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
 | `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Max simultaneous SSH connections |
+| `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES` | No | `5` | Minimum allowed interval for cron-based schedules |
 | `NODE_EXTRA_CA_CERTS` | No | - | Path to a PEM CA bundle to trust additional/self-signed certificates for outbound TLS (OIDC, SMTP, Gotify, ntfy, webhooks, etc.) |
 | `NODE_ENV` | No | - | Set to `production` for static file serving |
 
@@ -328,7 +329,7 @@ cache duration settings.
 - **Update schedules:** run on a cron expression, refresh scoped systems first, then run the normal per-system Upgrade action where visible updates remain
 - **Notification schedules:** run on a cron expression and deliver batched events for every assigned notification channel
 
-Schedules use standard five-field cron expressions in the container timezone. Set the Docker `TZ` environment variable, such as `TZ=Europe/Berlin`, when you want schedules to follow a local timezone instead of UTC. The supported minimum interval is **5 minutes**; schedules that run more frequently are flagged in the UI.
+Schedules use standard five-field cron expressions in the container timezone. Set the Docker `TZ` environment variable, such as `TZ=Europe/Berlin`, when you want schedules to follow a local timezone instead of UTC. The default minimum interval is **5 minutes**; schedules that run more frequently are rejected by the API. Set `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES` to adjust the server-side limit. If you build the client yourself and change the server limit, set `VITE_MIN_SCHEDULE_INTERVAL_MINUTES` to the same value so UI warnings match.
 
 Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger immediate checks outside configured schedules. Notification channels can be assigned to multiple notification schedules, and the same pending event batch is delivered when any selected schedule runs.
 

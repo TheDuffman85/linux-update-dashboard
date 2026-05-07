@@ -42,6 +42,7 @@ export interface SerializedSchedule {
 const VALID_TYPES: ScheduleType[] = ["refresh", "update", "notification_digest"];
 const MAX_NAME_LENGTH = 100;
 const MAX_RUN_MESSAGE_LENGTH = 500;
+const DEFAULT_MIN_SCHEDULE_INTERVAL_MINUTES = 5;
 const DEFAULT_REFRESH_CONFIG: RefreshScheduleConfig = {
   cron: "*/15 * * * *",
   cacheDurationHours: 12,
@@ -67,6 +68,15 @@ function normalizeInteger(
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function getMinScheduleIntervalMinutes(): number {
+  return normalizeInteger(
+    process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES,
+    1,
+    1440,
+    DEFAULT_MIN_SCHEDULE_INTERVAL_MINUTES,
+  );
 }
 
 export function legacyIntervalMinutesToCron(intervalMinutes: number): string {
@@ -197,6 +207,28 @@ function truncateRunMessage(message: string): string {
     : compact;
 }
 
+function getCronMinimumIntervalMs(cronExpression: string): number | null {
+  try {
+    const cron = new Cron(cronExpression);
+    let previous = cron.nextRun(new Date("2026-01-01T00:00:00Z"));
+    if (!previous) return null;
+
+    let minimum: number | null = null;
+    for (let index = 0; index < 20; index += 1) {
+      const next = cron.nextRun(previous);
+      if (!next) break;
+      const interval = next.getTime() - previous.getTime();
+      if (interval > 0) {
+        minimum = minimum === null ? interval : Math.min(minimum, interval);
+      }
+      previous = next;
+    }
+    return minimum;
+  } catch {
+    return null;
+  }
+}
+
 export function getValidScheduleTypes(): ScheduleType[] {
   return [...VALID_TYPES];
 }
@@ -236,6 +268,11 @@ export function validateScheduleConfig(type: ScheduleType, config: unknown): str
     new Cron(cron);
   } catch {
     return "cron must be a valid cron expression";
+  }
+  const minScheduleIntervalMinutes = getMinScheduleIntervalMinutes();
+  const minIntervalMs = getCronMinimumIntervalMs(cron);
+  if (minIntervalMs !== null && minIntervalMs < minScheduleIntervalMinutes * 60_000) {
+    return `cron must not run more often than every ${minScheduleIntervalMinutes} minute${minScheduleIntervalMinutes === 1 ? "" : "s"}`;
   }
 
   if (type === "notification_digest") {

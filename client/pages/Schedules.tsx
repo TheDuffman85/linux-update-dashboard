@@ -19,6 +19,7 @@ import {
 } from "../lib/schedules";
 import { useNotifications } from "../lib/notifications";
 import { useVisibleSystems } from "../lib/systems";
+import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -27,7 +28,7 @@ const labelClass =
   "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
 const checkboxClass =
   "w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500";
-const MIN_SCHEDULE_INTERVAL_MINUTES = 5;
+const MIN_SCHEDULE_INTERVAL_MINUTES = getMinScheduleIntervalMinutes();
 const MIN_SCHEDULE_INTERVAL_MS = MIN_SCHEDULE_INTERVAL_MINUTES * 60 * 1000;
 
 const TYPE_LABELS: Record<ScheduleType, string> = {

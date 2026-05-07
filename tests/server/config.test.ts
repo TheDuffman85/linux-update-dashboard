@@ -134,4 +134,16 @@ describe("config secret env loading", () => {
     expect(hasConfiguredBaseUrl()).toBe(true);
     expect(config.baseUrl).toBe("https://dashboard.example.com");
   });
+
+  test("loads minimum schedule interval from environment", async () => {
+    const dir = createTempDir();
+
+    resetLudashEnv();
+    process.env.LUDASH_DB_PATH = join(dir, "dashboard.db");
+    process.env.LUDASH_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES = "10";
+
+    const { config } = await importFreshConfig();
+    expect(config.minScheduleIntervalMinutes).toBe(10);
+  });
 });

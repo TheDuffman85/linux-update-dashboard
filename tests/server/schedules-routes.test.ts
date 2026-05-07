@@ -7,8 +7,10 @@ import { join } from "path";
 import { randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { notifications, schedules, settings } from "../../server/db/schema";
+import { apiTokens, notifications, schedules, settings, users } from "../../server/db/schema";
 import schedulesRoutes from "../../server/routes/schedules";
+import { authMiddleware } from "../../server/middleware/auth";
+import { hashToken } from "../../server/auth/api-token";
 import * as scheduler from "../../server/services/scheduler";
 import { initEncryptor } from "../../server/security";
 
@@ -445,6 +447,55 @@ describe("schedules routes and migration", () => {
     expect(await res.json()).toEqual({ error: "cron must be a valid cron expression" });
   });
 
+  test("rejects schedules below the default minimum interval", async () => {
+    const previous = process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES;
+    delete process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES;
+    try {
+      const res = await app.request("/api/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Too frequent",
+          type: "refresh",
+          enabled: true,
+          systemIds: null,
+          config: { cron: "* * * * *", cacheDurationHours: 2 },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "cron must not run more often than every 5 minutes",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES;
+      else process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES = previous;
+    }
+  });
+
+  test("uses LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES for minimum interval validation", async () => {
+    const previous = process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES;
+    process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES = "1";
+    try {
+      const res = await app.request("/api/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Every minute",
+          type: "refresh",
+          enabled: true,
+          systemIds: null,
+          config: { cron: "* * * * *", cacheDurationHours: 2 },
+        }),
+      });
+
+      expect(res.status).toBe(201);
+    } finally {
+      if (previous === undefined) delete process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES;
+      else process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES = previous;
+    }
+  });
+
   test("reorders schedules when given every schedule ID exactly once", async () => {
     const first = getDb().select().from(schedules).get();
     const createRes = await app.request("/api/schedules", {
@@ -482,5 +533,56 @@ describe("schedules routes and migration", () => {
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("include every schedule exactly once");
+  });
+
+  test("blocks bearer tokens from managing schedules", async () => {
+    const token = "ludash_schedule_management_test";
+    const user = getDb().insert(users).values({
+      username: "api-user",
+      passwordHash: "unused",
+      isAdmin: 1,
+    }).returning({ id: users.id }).get();
+    getDb().insert(apiTokens).values({
+      userId: user.id,
+      name: "writer",
+      tokenHash: await hashToken(token),
+      readOnly: 0,
+    }).run();
+
+    const protectedApp = new Hono();
+    protectedApp.use("/api/*", authMiddleware);
+    protectedApp.route("/api/schedules", schedulesRoutes);
+
+    const res = await protectedApp.request(
+      "/api/schedules",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Blocked schedule",
+          type: "update",
+          enabled: true,
+          systemIds: null,
+          config: { cron: "0 3 * * *" },
+        }),
+      },
+      {
+        incoming: {
+          socket: {
+            remoteAddress: "127.0.0.1",
+            remotePort: 12345,
+            remoteFamily: "IPv4",
+          },
+        },
+      },
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "API tokens cannot access management endpoints",
+    });
   });
 });

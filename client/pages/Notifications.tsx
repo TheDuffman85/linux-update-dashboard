@@ -36,6 +36,7 @@ import {
   useCreateSchedule,
   useSchedules,
 } from "../lib/schedules";
+import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -115,7 +116,7 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];
-const MIN_SCHEDULE_INTERVAL_MINUTES = 5;
+const MIN_SCHEDULE_INTERVAL_MINUTES = getMinScheduleIntervalMinutes();
 const MIN_SCHEDULE_INTERVAL_MS = MIN_SCHEDULE_INTERVAL_MINUTES * 60 * 1000;
 const SCHEDULE_PRESETS: { label: string; value: string }[] = [
   { label: "Every 15 minutes", value: "*/15 * * * *" },
