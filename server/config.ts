@@ -15,6 +15,7 @@ export interface Config {
   defaultSshTimeout: number;
   defaultCmdTimeout: number;
   maxConcurrentConnections: number;
+  minScheduleIntervalMinutes: number;
   baseUrl: string;
   trustProxy: boolean;
 }
@@ -91,6 +92,10 @@ function loadConfig(): Config {
     ),
     maxConcurrentConnections: parseInt(
       process.env.LUDASH_MAX_CONCURRENT_CONNECTIONS || "5",
+      10
+    ),
+    minScheduleIntervalMinutes: parseInt(
+      process.env.LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES || "5",
       10
     ),
     baseUrl: process.env.LUDASH_BASE_URL || "http://localhost:3001",

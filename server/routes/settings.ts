@@ -4,7 +4,6 @@ import { getDb } from "../db";
 import { settings, webauthnCredentials } from "../db/schema";
 import { configureOidc } from "../auth/oidc";
 import { getEncryptor } from "../security";
-import * as scheduler from "../services/scheduler";
 import * as updateService from "../services/update-service";
 import {
   isNumericSettingKey,
@@ -97,11 +96,6 @@ settingsRouter.put("/", async (c) => {
       })
       .where(eq(settings.key, key))
       .run();
-  }
-
-  // Restart scheduler if check interval was changed
-  if ("check_interval_minutes" in normalizedBody) {
-    scheduler.restart();
   }
 
   if ("activity_history_limit" in normalizedBody) {

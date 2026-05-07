@@ -99,6 +99,16 @@ export interface NotificationChannel {
   systemIds: number[] | null;
   config: NotificationConfig;
   schedule: string | null;
+  scheduleId: number | null;
+  scheduleName: string | null;
+  scheduleIds: number[];
+  scheduleNames: string[];
+  schedules: Array<{
+    id: number;
+    name: string;
+    cron: string;
+    enabled: boolean;
+  }>;
   lastSentAt: string | null;
   lastAppVersionNotified?: string | null;
   lastDeliveryStatus?: string | null;
@@ -130,6 +140,9 @@ export function useCreateNotification() {
       systemIds?: number[] | null;
       config: NotificationConfig;
       schedule?: string | null;
+      scheduleId?: number | null;
+      scheduleIds?: number[];
+      sourceNotificationId?: number;
     }) =>
       apiFetch<{ id: number }>("/notifications", {
         method: "POST",
@@ -137,6 +150,7 @@ export function useCreateNotification() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["schedules"] });
     },
   });
 }
@@ -156,6 +170,8 @@ export function useUpdateNotification() {
       systemIds?: number[] | null;
       config?: NotificationConfig;
       schedule?: string | null;
+      scheduleId?: number | null;
+      scheduleIds?: number[];
     }) =>
       apiFetch(`/notifications/${id}`, {
         method: "PUT",
@@ -163,6 +179,7 @@ export function useUpdateNotification() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["schedules"] });
     },
   });
 }
@@ -177,6 +194,7 @@ export function useReorderNotifications() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["schedules"] });
     },
   });
 }
@@ -188,6 +206,7 @@ export function useDeleteNotification() {
       apiFetch(`/notifications/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["schedules"] });
     },
   });
 }

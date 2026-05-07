@@ -9,6 +9,7 @@ const SystemsList = lazy(() => import("./pages/SystemsList"));
 const SystemDetail = lazy(() => import("./pages/SystemDetail"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Notifications = lazy(() => import("./pages/Notifications"));
+const Schedules = lazy(() => import("./pages/Schedules"));
 const Credentials = lazy(() => import("./pages/Credentials"));
 
 function PageLoader() {
@@ -83,6 +84,14 @@ export default function App() {
           element={
             <AuthGuard>
               <Notifications />
+            </AuthGuard>
+          }
+        />
+        <Route
+          path="/schedules"
+          element={
+            <AuthGuard>
+              <Schedules />
             </AuthGuard>
           }
         />

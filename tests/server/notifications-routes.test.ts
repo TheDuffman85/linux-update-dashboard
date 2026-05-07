@@ -7,8 +7,9 @@ import { randomBytes } from "crypto";
 import nodemailer from "nodemailer";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { notificationDeliveredUpdates, notifications, systems } from "../../server/db/schema";
+import { notificationDeliveredUpdates, notifications, schedules, systems } from "../../server/db/schema";
 import notificationsRoutes from "../../server/routes/notifications";
+import * as scheduler from "../../server/services/scheduler";
 import { getEncryptor, initEncryptor } from "../../server/security";
 
 describe("notifications routes validation", () => {
@@ -25,6 +26,7 @@ describe("notifications routes validation", () => {
   });
 
   afterEach(() => {
+    scheduler.stop();
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -114,6 +116,159 @@ describe("notifications routes validation", () => {
 
     const stored = getDb().select().from(notifications).get();
     expect(stored?.notifyOn).toBe('["updates","appUpdates"]');
+  });
+
+  test("assigns notification delivery to an existing schedule", async () => {
+    const notificationSchedule = getDb().insert(schedules).values({
+      name: "Morning schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 9 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Scheduled email",
+        type: "email",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        scheduleId: notificationSchedule.id,
+        config: {
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpTlsMode: "starttls",
+          allowInsecureTls: "false",
+          smtpUser: "mailer",
+          smtpPassword: "smtp-secret",
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const notification = getDb().select().from(notifications).get();
+    const schedule = getDb().select().from(schedules).where(eq(schedules.id, notificationSchedule.id)).get();
+    expect(notification?.schedule).toBeNull();
+    expect(JSON.parse(schedule?.config || "{}").notificationIds).toEqual([notification?.id]);
+
+    const listRes = await app.request("/api/notifications");
+    const body = await listRes.json() as {
+      notifications: Array<{ scheduleId: number | null; scheduleName: string | null }>;
+    };
+    expect(body.notifications[0].scheduleId).toBe(notificationSchedule.id);
+    expect(body.notifications[0].scheduleName).toBe("Morning schedule");
+  });
+
+  test("assigns notification delivery to multiple schedules", async () => {
+    const morning = getDb().insert(schedules).values({
+      sortOrder: 0,
+      name: "Morning schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 9 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+    const evening = getDb().insert(schedules).values({
+      sortOrder: 1,
+      name: "Evening schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 18 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const res = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Scheduled email",
+        type: "email",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        scheduleIds: [morning.id, evening.id],
+        config: {
+          smtpHost: "smtp.example.com",
+          smtpPort: "587",
+          smtpTlsMode: "starttls",
+          allowInsecureTls: "false",
+          smtpUser: "mailer",
+          smtpPassword: "smtp-secret",
+          smtpFrom: "dashboard@example.com",
+          emailTo: "admin@example.com",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const notification = getDb().select().from(notifications).get();
+    const configs = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.type, "notification_digest"))
+      .all()
+      .map((schedule) => JSON.parse(schedule.config));
+    expect(configs.map((config) => config.notificationIds)).toEqual([
+      [notification?.id],
+      [notification?.id],
+    ]);
+
+    const listRes = await app.request("/api/notifications");
+    const body = await listRes.json() as {
+      notifications: Array<{ scheduleIds: number[]; scheduleNames: string[] }>;
+    };
+    expect(body.notifications[0].scheduleIds).toEqual([morning.id, evening.id]);
+    expect(body.notifications[0].scheduleNames).toEqual(["Morning schedule", "Evening schedule"]);
+  });
+
+  test("updates notification delivery across multiple schedules", async () => {
+    const notification = getDb().insert(notifications).values({
+      name: "Scheduled email",
+      type: "email",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      systemIds: null,
+      config: "{}",
+    }).returning({ id: notifications.id }).get();
+    const first = getDb().insert(schedules).values({
+      sortOrder: 0,
+      name: "First schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 8 * * 1", notificationIds: [notification.id] }),
+    }).returning({ id: schedules.id }).get();
+    const second = getDb().insert(schedules).values({
+      sortOrder: 1,
+      name: "Second schedule",
+      type: "notification_digest",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({ cron: "0 16 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const res = await app.request(`/api/notifications/${notification.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scheduleIds: [first.id, second.id] }),
+    });
+
+    expect(res.status).toBe(200);
+    const configs = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.type, "notification_digest"))
+      .all()
+      .map((schedule) => JSON.parse(schedule.config));
+    expect(configs.map((config) => config.notificationIds)).toEqual([
+      [notification.id],
+      [notification.id],
+    ]);
   });
 
   test("creates gotify notifications", async () => {
@@ -727,6 +882,74 @@ describe("notifications routes validation", () => {
       "Charlie",
       "Alpha",
       "Bravo",
+    ]);
+  });
+
+  test("creates notification channels from a duplicated draft using stored sensitive config", async () => {
+    const notificationSchedule = getDb().insert(schedules).values({
+      name: "Morning digest",
+      type: "notification_digest",
+      enabled: 1,
+      config: JSON.stringify({ cron: "0 9 * * 1", notificationIds: [] }),
+    }).returning({ id: schedules.id }).get();
+
+    const createRes = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops gotify",
+        type: "gotify",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        scheduleIds: [notificationSchedule.id],
+        config: {
+          gotifyUrl: "https://gotify.example.com",
+          gotifyToken: "gotify-secret",
+        },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+
+    const duplicateRes = await app.request("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ops gotify (Copy)",
+        type: "gotify",
+        enabled: true,
+        notifyOn: ["updates"],
+        systemIds: null,
+        scheduleIds: [notificationSchedule.id],
+        sourceNotificationId: created.id,
+        config: {
+          gotifyUrl: "https://gotify.example.com",
+          gotifyToken: "(stored)",
+        },
+      }),
+    });
+    expect(duplicateRes.status).toBe(201);
+    const duplicated = await duplicateRes.json();
+
+    const rows = getDb()
+      .select()
+      .from(notifications)
+      .orderBy(notifications.id)
+      .all();
+    expect(rows.map((row) => row.name)).toEqual(["Ops gotify", "Ops gotify (Copy)"]);
+
+    const copiedConfig = JSON.parse(rows.find((row) => row.id === duplicated.id)?.config || "{}");
+    expect(getEncryptor().decrypt(copiedConfig.gotifyToken)).toBe("gotify-secret");
+
+    const copiedSchedule = getDb()
+      .select()
+      .from(schedules)
+      .where(eq(schedules.id, notificationSchedule.id))
+      .get();
+    expect(JSON.parse(copiedSchedule?.config || "{}").notificationIds).toEqual([
+      created.id,
+      duplicated.id,
     ]);
   });
 

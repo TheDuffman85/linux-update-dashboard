@@ -5,6 +5,8 @@ import * as notificationService from "../services/notification-service";
 import * as notificationRuntime from "../services/notification-runtime";
 import { getDb } from "../db";
 import { notifications } from "../db/schema";
+import * as scheduleService from "../services/schedule-service";
+import * as scheduler from "../services/scheduler";
 import { getProvider, getProviderNames, type NotificationConfig } from "../services/notifications";
 import {
   sanitizeNotificationConfig,
@@ -26,6 +28,33 @@ function isValidSchedule(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function parseScheduleId(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "immediate" || value === "") return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+function parseScheduleIds(value: unknown): number[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const ids = value.map((entry) => Number(entry));
+  return ids.every((id) => Number.isInteger(id) && id > 0)
+    ? Array.from(new Set(ids))
+    : undefined;
+}
+
+function validateScheduleIds(ids: number[] | null | undefined): string | null {
+  if (ids === undefined || ids === null) return null;
+  for (const id of ids) {
+    const schedule = scheduleService.getSchedule(id);
+    if (!schedule || schedule.type !== "notification_digest") {
+      return "schedule IDs must reference existing notification schedules";
+    }
+  }
+  return null;
 }
 
 function parseId(raw: string): number | null {
@@ -50,6 +79,15 @@ function parseConfigJson(raw: string): NotificationConfig {
   } catch {
     return {};
   }
+}
+
+function containsStoredSentinel(value: unknown): boolean {
+  if (value === "(stored)") return true;
+  if (Array.isArray(value)) return value.some(containsStoredSentinel);
+  if (value && typeof value === "object") {
+    return Object.values(value).some(containsStoredSentinel);
+  }
+  return false;
 }
 
 function validateConfigShape(config: unknown): string | null {
@@ -196,10 +234,20 @@ notificationsRouter.post("/", async (c) => {
   }
 
   const { name, type, enabled, notifyOn, systemIds, config } = body;
+  const sourceNotificationId =
+    body.sourceNotificationId === undefined
+      ? undefined
+      : Number.isInteger(body.sourceNotificationId) && body.sourceNotificationId > 0
+        ? body.sourceNotificationId
+        : null;
 
   // Validate name
   if (typeof name !== "string" || !name.trim() || name.length > MAX_NAME_LENGTH) {
     return c.json({ error: "name is required and must be 1-100 characters" }, 400);
+  }
+
+  if (sourceNotificationId === null) {
+    return c.json({ error: "sourceNotificationId must be a positive integer" }, 400);
   }
 
   // Validate type
@@ -213,9 +261,38 @@ notificationsRouter.post("/", async (c) => {
     return c.json({ error: configShapeError }, 400);
   }
 
-  const providerConfigError = validateProviderConfig(type, config);
-  if (providerConfigError) {
-    return c.json({ error: providerConfigError }, 400);
+  if (sourceNotificationId !== undefined) {
+    const source = getDb().select().from(notifications).where(eq(notifications.id, sourceNotificationId)).get();
+    if (!source) {
+      return c.json({ error: "sourceNotificationId must reference an existing notification channel" }, 400);
+    }
+    if (source.type !== type) {
+      return c.json({ error: "sourceNotificationId type must match the notification type" }, 400);
+    }
+  }
+
+  const rawProviderConfigError = validateProviderConfig(type, config);
+  if (rawProviderConfigError) {
+    const canReuseSourceConfig =
+      type === "telegram" &&
+      sourceNotificationId !== undefined &&
+      containsStoredSentinel(config);
+    if (!canReuseSourceConfig) {
+      return c.json({ error: rawProviderConfigError }, 400);
+    }
+
+    const sourceConfig = parseConfigJson(
+      getDb().select({ config: notifications.config }).from(notifications).where(eq(notifications.id, sourceNotificationId)).get()?.config || "{}",
+    );
+    const effectiveConfig = notificationService.mergeStoredSensitiveConfig(
+      type,
+      sourceConfig,
+      config,
+    );
+    const mergedProviderConfigError = validateProviderConfig(type, effectiveConfig);
+    if (mergedProviderConfigError) {
+      return c.json({ error: mergedProviderConfigError }, 400);
+    }
   }
 
   // Validate notifyOn
@@ -242,6 +319,18 @@ notificationsRouter.post("/", async (c) => {
   if (schedule !== undefined && !isValidSchedule(schedule)) {
     return c.json({ error: "schedule must be null, \"immediate\", or a valid cron expression" }, 400);
   }
+  const scheduleId = parseScheduleId(body.scheduleId);
+  if (scheduleId === undefined && body.scheduleId !== undefined) {
+    return c.json({ error: "scheduleId must be null or a positive integer" }, 400);
+  }
+  const scheduleIds = parseScheduleIds(body.scheduleIds);
+  if (scheduleIds === undefined && body.scheduleIds !== undefined) {
+    return c.json({ error: "scheduleIds must be an array of positive integers" }, 400);
+  }
+  const effectiveScheduleIds =
+    scheduleIds ?? (scheduleId === undefined ? undefined : scheduleId === null ? [] : [scheduleId]);
+  const scheduleError = validateScheduleIds(effectiveScheduleIds);
+  if (scheduleError) return c.json({ error: scheduleError }, 400);
 
   const id = notificationService.createNotification({
     name: name.trim(),
@@ -251,7 +340,11 @@ notificationsRouter.post("/", async (c) => {
     systemIds,
     config,
     schedule: schedule ?? null,
+    scheduleId,
+    scheduleIds: effectiveScheduleIds,
+    sourceNotificationId: sourceNotificationId ?? undefined,
   });
+  if (effectiveScheduleIds !== undefined) scheduler.restart();
 
   const created = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   await notificationRuntime.reconcileNotificationChange(null, created, getActorUserId(c));
@@ -328,6 +421,26 @@ notificationsRouter.put("/:id", async (c) => {
     allowed.schedule = body.schedule;
   }
 
+  if (body.scheduleId !== undefined) {
+    const scheduleId = parseScheduleId(body.scheduleId);
+    if (scheduleId === undefined) {
+      return c.json({ error: "scheduleId must be null or a positive integer" }, 400);
+    }
+    const scheduleError = validateScheduleIds(scheduleId === null ? [] : [scheduleId]);
+    if (scheduleError) return c.json({ error: scheduleError }, 400);
+    allowed.scheduleId = scheduleId;
+  }
+
+  if (body.scheduleIds !== undefined) {
+    const scheduleIds = parseScheduleIds(body.scheduleIds);
+    if (scheduleIds === undefined) {
+      return c.json({ error: "scheduleIds must be an array of positive integers" }, 400);
+    }
+    const scheduleError = validateScheduleIds(scheduleIds);
+    if (scheduleError) return c.json({ error: scheduleError }, 400);
+    allowed.scheduleIds = scheduleIds;
+  }
+
   if (body.type !== undefined || body.config !== undefined) {
     const mergedType = typeof body.type === "string" ? body.type : existing.type;
     const storedConfig =
@@ -351,6 +464,7 @@ notificationsRouter.put("/:id", async (c) => {
   const previous = existing;
   const ok = notificationService.updateNotification(id, allowed as any);
   if (!ok) return c.json({ error: "Not found" }, 404);
+  if (body.scheduleId !== undefined || body.scheduleIds !== undefined) scheduler.restart();
 
   const current = getDb().select().from(notifications).where(eq(notifications.id, id)).get() || null;
   await notificationRuntime.reconcileNotificationChange(previous, current, getActorUserId(c));

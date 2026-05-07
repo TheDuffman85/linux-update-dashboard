@@ -70,6 +70,9 @@ const DEFAULT_SETTINGS = [
   },
 ];
 
+const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";
+const NOTIFICATION_SCHEDULE_MIGRATION_KEY = "notification_digest_schedules_migrated";
+
 export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schema> {
   mkdirSync(dirname(dbPath), { recursive: true });
 
@@ -232,6 +235,22 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     last_delivery_at TEXT,
     last_delivery_code INTEGER,
     last_delivery_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    system_ids TEXT,
+    config TEXT NOT NULL,
+    last_started_at TEXT,
+    last_run_at TEXT,
+    last_run_status TEXT,
+    last_run_message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -604,6 +623,38 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   _db.run(sql`UPDATE notifications SET config = json_remove(config, '$.ntfyPriority')
     WHERE type = 'ntfy' AND json_extract(config, '$.ntfyPriority') IS NOT NULL`);
 
+  // Migration: add schedule runtime columns
+  try {
+    _db.run(sql`ALTER TABLE schedules ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE schedules ADD COLUMN system_ids TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE schedules ADD COLUMN last_started_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE schedules ADD COLUMN last_run_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE schedules ADD COLUMN last_run_status TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE schedules ADD COLUMN last_run_message TEXT`);
+  } catch {
+    // Column already exists
+  }
+
   // Cleanup: if the dashboard restarted mid-operation, SSH-safe upgrades are
   // expected to continue remotely and should show a warning instead of failure.
   _db.run(sql`UPDATE update_history
@@ -641,6 +692,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     );
   }
 
+  migrateRefreshScheduleSettings(_db);
+  migrateNotificationSchedules(_db);
+
   // Cleanup: remove obsolete notification settings
   _db.run(sql`DELETE FROM settings WHERE key IN (
     'notifications_enabled', 'notification_methods', 'notify_on_updates', 'notify_on_unreachable',
@@ -651,6 +705,193 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   migrateNotificationUpdateDedupeState(_db);
 
   return _db;
+}
+
+function normalizeLegacyInteger(
+  value: string | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(value || "", 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function legacyIntervalMinutesToCron(intervalMinutes: number): string {
+  if (intervalMinutes <= 59) return `*/${intervalMinutes} * * * *`;
+  if (intervalMinutes === 1440) return "0 0 * * *";
+  if (intervalMinutes % 60 === 0) {
+    const hours = Math.min(23, Math.max(1, intervalMinutes / 60));
+    return `0 */${hours} * * *`;
+  }
+
+  const roundedHours = Math.min(23, Math.max(1, Math.round(intervalMinutes / 60)));
+  return `0 */${roundedHours} * * *`;
+}
+
+function migrateRefreshScheduleSettings(db: BetterSQLite3Database<typeof schema>): void {
+  const marker = db
+    .select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, SCHEDULE_REFRESH_MIGRATION_KEY))
+    .get();
+  if (marker) return;
+
+  const rows = db
+    .select({ key: schema.settings.key, value: schema.settings.value })
+    .from(schema.settings)
+    .where(sql`${schema.settings.key} IN ('check_interval_minutes', 'cache_duration_hours')`)
+    .all();
+  const legacySettings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  const intervalMinutes = normalizeLegacyInteger(
+    legacySettings.check_interval_minutes,
+    5,
+    1440,
+    15,
+  );
+  const cacheDurationHours = normalizeLegacyInteger(
+    legacySettings.cache_duration_hours,
+    0,
+    168,
+    12,
+  );
+  const existingCount = (db.all(sql`SELECT COUNT(*) as count FROM schedules`)[0] as { count?: number } | undefined)?.count ?? 0;
+
+  if (existingCount === 0) {
+    db.insert(schema.schedules).values({
+      sortOrder: 0,
+      name: "Default refresh",
+      type: "refresh",
+      enabled: 1,
+      systemIds: null,
+      config: JSON.stringify({
+        cron: legacyIntervalMinutesToCron(intervalMinutes),
+        cacheDurationHours,
+      }),
+    }).run();
+  }
+
+  db.insert(schema.settings).values({
+    key: SCHEDULE_REFRESH_MIGRATION_KEY,
+    value: "true",
+    description: "Refresh settings were migrated to the schedules table",
+  }).run();
+}
+
+function parseScheduleConfigJson(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>): void {
+  const marker = db
+    .select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, NOTIFICATION_SCHEDULE_MIGRATION_KEY))
+    .get();
+
+  const legacyChannels = db
+    .select({
+      id: schema.notifications.id,
+      schedule: schema.notifications.schedule,
+    })
+    .from(schema.notifications)
+    .all()
+    .filter((row) => row.schedule && row.schedule !== "immediate");
+
+  db.update(schema.notifications)
+    .set({ schedule: null })
+    .where(eq(schema.notifications.schedule, "immediate"))
+    .run();
+
+  if (marker && legacyChannels.length === 0) return;
+
+  const existingNotificationSchedules = db
+    .select()
+    .from(schema.schedules)
+    .all()
+    .filter((row) => row.type === "notification_digest");
+
+  const schedulesByCron = new Map<
+    string,
+    {
+      id: number;
+      cron: string;
+      notificationIds: Set<number>;
+    }
+  >();
+  for (const schedule of existingNotificationSchedules) {
+    const config = parseScheduleConfigJson(schedule.config);
+    const cron = typeof config.cron === "string" ? config.cron.trim() : "";
+    if (!cron || schedulesByCron.has(cron)) continue;
+    const ids = Array.isArray(config.notificationIds)
+      ? config.notificationIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    schedulesByCron.set(cron, {
+      id: schedule.id,
+      cron,
+      notificationIds: new Set(ids),
+    });
+  }
+
+  let nextSortOrder =
+    (db.all(sql`SELECT COALESCE(MAX(sort_order), -1) as value FROM schedules`)[0] as { value?: number } | undefined)?.value ?? -1;
+
+  for (const channel of legacyChannels) {
+    const cron = channel.schedule?.trim();
+    if (!cron) continue;
+
+    let target = schedulesByCron.get(cron);
+    if (!target) {
+      nextSortOrder += 1;
+      const inserted = db.insert(schema.schedules).values({
+        sortOrder: nextSortOrder,
+        name: `Notification schedule ${cron}`,
+        type: "notification_digest",
+        enabled: 1,
+        systemIds: null,
+        config: JSON.stringify({ cron, notificationIds: [channel.id] }),
+      }).returning({ id: schema.schedules.id }).get();
+      target = {
+        id: inserted.id,
+        cron,
+        notificationIds: new Set([channel.id]),
+      };
+      schedulesByCron.set(cron, target);
+    } else if (!target.notificationIds.has(channel.id)) {
+      target.notificationIds.add(channel.id);
+      db.update(schema.schedules)
+        .set({
+          config: JSON.stringify({
+            cron: target.cron,
+            notificationIds: Array.from(target.notificationIds),
+          }),
+        })
+        .where(eq(schema.schedules.id, target.id))
+        .run();
+    }
+
+    db.update(schema.notifications)
+      .set({ schedule: null })
+      .where(eq(schema.notifications.id, channel.id))
+      .run();
+  }
+
+  db.run(sql`
+    INSERT OR IGNORE INTO settings (key, value, description)
+    VALUES (
+      ${NOTIFICATION_SCHEDULE_MIGRATION_KEY},
+      'true',
+      'Notification schedules were migrated to the schedules table'
+    )
+  `);
 }
 
 function migrateLegacyAptAutoHideIntoPackageManagerConfigs(): void {

@@ -17,7 +17,7 @@ import {
 } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
-  processScheduledDigests,
+  processScheduledNotifications,
   processScheduledResults,
 } from "../../server/services/notification-service";
 import { webhookProvider } from "../../server/services/notifications/webhook";
@@ -282,7 +282,7 @@ describe("update notification dedupe", () => {
     }
   });
 
-  test("scheduled digests dedupe repeated pending package versions", async () => {
+  test("scheduled notifications dedupe repeated pending package versions", async () => {
     const requestMock = mockHttpRequest(200, "ok");
 
     try {
@@ -307,7 +307,7 @@ describe("update notification dedupe", () => {
       expect(pending.updates).toHaveLength(1);
       expect(pending.updates?.[0]?.packageVersions).toHaveLength(1);
 
-      await processScheduledDigests();
+      await processScheduledNotifications();
 
       const delivered = getDb()
         .select()

@@ -206,6 +206,26 @@ export const settings = sqliteTable("settings", {
     .default(sql`(datetime('now'))`),
 });
 
+export const schedules = sqliteTable("schedules", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  enabled: integer("enabled").notNull().default(1),
+  systemIds: text("system_ids"),
+  config: text("config").notNull(),
+  lastStartedAt: text("last_started_at"),
+  lastRunAt: text("last_run_at"),
+  lastRunStatus: text("last_run_status"),
+  lastRunMessage: text("last_run_message"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
 export const apiTokens = sqliteTable("api_tokens", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id")
