@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Sortable from "sortablejs";
 import { Cron } from "croner";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -20,6 +20,7 @@ import {
 import { useNotifications } from "../lib/notifications";
 import { useVisibleSystems } from "../lib/systems";
 import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
+import { getCronPreview } from "../lib/cron-preview";
 import { useToast } from "../context/ToastContext";
 
 const inputClass =
@@ -30,6 +31,7 @@ const checkboxClass =
   "w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500";
 const MIN_SCHEDULE_INTERVAL_MINUTES = getMinScheduleIntervalMinutes();
 const MIN_SCHEDULE_INTERVAL_MS = MIN_SCHEDULE_INTERVAL_MINUTES * 60 * 1000;
+const MAX_SCHEDULE_NAME_LENGTH = 100;
 
 const TYPE_LABELS: Record<ScheduleType, string> = {
   refresh: "Refresh",
@@ -93,6 +95,17 @@ function isBelowMinimumScheduleInterval(cronExpression: string): boolean {
   return minimumInterval !== null && minimumInterval < MIN_SCHEDULE_INTERVAL_MS;
 }
 
+function truncateScheduleName(value: string): string {
+  if (value.length <= MAX_SCHEDULE_NAME_LENGTH) return value;
+  return `${value.slice(0, MAX_SCHEDULE_NAME_LENGTH - 3).trimEnd()}...`;
+}
+
+function generateScheduleName(type: ScheduleType, cron: string): string | null {
+  const preview = getCronPreview(cron);
+  if ("error" in preview) return null;
+  return truncateScheduleName(`${TYPE_LABELS[type]} - ${preview.description}`);
+}
+
 function getScheduleCron(schedule: Schedule): string | null {
   return "cron" in schedule.config ? schedule.config.cron : null;
 }
@@ -129,6 +142,70 @@ function ScheduleMinimumWarning({ cron }: { cron: string }) {
   return (
     <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
       Runs more often than the supported {MIN_SCHEDULE_INTERVAL_MINUTES} minute minimum.
+    </p>
+  );
+}
+
+function ScheduleCronPreview({
+  cron,
+  showCronString,
+  className = "",
+}: {
+  cron: string;
+  showCronString: boolean;
+  className?: string;
+}) {
+  const preview = useMemo(() => getCronPreview(cron), [cron]);
+
+  if (!cron.trim()) return null;
+
+  if ("error" in preview) return null;
+
+  const nextRuns = preview.nextRuns.map((date) =>
+    date.toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+  );
+
+  return (
+    <div
+      className={`rounded-lg border border-border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900/40 ${className}`}
+    >
+      {showCronString && (
+        <div className="mb-2 flex flex-wrap items-center">
+          <code className="break-all rounded bg-white px-1.5 py-0.5 font-mono text-slate-700 dark:bg-slate-950/60 dark:text-slate-200">
+            {cron}
+          </code>
+        </div>
+      )}
+      <div className="font-medium text-slate-700 dark:text-slate-200">
+        {preview.description}
+      </div>
+      {preview.nextRuns.length > 0 && (
+        <div className="mt-2 space-y-1 text-slate-500 dark:text-slate-400">
+          <div className="font-medium">Next runs</div>
+          {nextRuns.map((run) => (
+            <div key={run}>{run}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScheduleCronError({ cron }: { cron: string }) {
+  const preview = useMemo(() => getCronPreview(cron), [cron]);
+
+  if (!cron.trim() || !("error" in preview)) return null;
+
+  return (
+    <p className="mt-2 text-xs text-red-600 dark:text-red-300">
+      {preview.error}
     </p>
   );
 }
@@ -221,6 +298,16 @@ function ScheduleForm({
     return Math.min(max, Math.max(min, parsed));
   };
 
+  const handleGenerateName = () => {
+    setError("");
+    const generatedName = generateScheduleName(type, activeCron);
+    if (!generatedName) {
+      setError("Enter a valid cron expression before generating a name");
+      return;
+    }
+    setName(generatedName);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -248,6 +335,10 @@ function ScheduleForm({
       setError("Cron expression is required");
       return;
     }
+    if ("error" in getCronPreview(config.cron)) {
+      setError("Cron expression is invalid");
+      return;
+    }
 
     onSubmit({
       name: name.trim(),
@@ -269,13 +360,27 @@ function ScheduleForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Name</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className={inputClass}
-            maxLength={100}
-            autoFocus
-          />
+          <div className="relative">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={`${inputClass} pr-11`}
+              maxLength={MAX_SCHEDULE_NAME_LENGTH}
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={handleGenerateName}
+              className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors"
+              title="Generate schedule name"
+              aria-label="Generate schedule name"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7L19 16z" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div>
           <label className={labelClass}>Type</label>
@@ -378,7 +483,7 @@ function ScheduleForm({
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
         <div>
           <label className={labelClass}>Cron</label>
           <select
@@ -401,20 +506,30 @@ function ScheduleForm({
             />
           )}
           {activeCron && <ScheduleMinimumWarning cron={activeCron} />}
-        </div>
-        {type === "refresh" && (
-          <div>
-            <label className={labelClass}>Cache duration hours</label>
-            <input
-              type="number"
-              min={0}
-              max={168}
-              value={cacheDurationHours}
-              onChange={(e) => setCacheDurationHours(e.target.value)}
-              className={inputClass}
+          {activeCron && <ScheduleCronError cron={activeCron} />}
+          {activeCron && (
+            <ScheduleCronPreview
+              cron={activeCron}
+              showCronString={cronPreset !== "custom"}
+              className="mt-3"
             />
-          </div>
-        )}
+          )}
+        </div>
+        <div className="space-y-4">
+          {type === "refresh" && (
+            <div>
+              <label className={labelClass}>Cache duration hours</label>
+              <input
+                type="number"
+                min={0}
+                max={168}
+                value={cacheDurationHours}
+                onChange={(e) => setCacheDurationHours(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex justify-end gap-3 pt-2">

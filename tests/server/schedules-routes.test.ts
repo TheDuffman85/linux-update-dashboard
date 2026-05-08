@@ -142,7 +142,7 @@ describe("schedules routes and migration", () => {
       .get();
     const notification = getDb().select().from(notifications).get();
 
-    expect(notificationSchedule?.name).toBe("Notification schedule 0 9 * * 1");
+    expect(notificationSchedule?.name).toBe("Notification - At 09:00, only on Monday");
     expect(JSON.parse(notificationSchedule?.config || "{}")).toEqual({
       cron: "0 9 * * 1",
       notificationIds: [notification?.id],
