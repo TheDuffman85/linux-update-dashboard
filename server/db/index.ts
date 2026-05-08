@@ -1,4 +1,5 @@
 import BetterSqlite3 from "better-sqlite3";
+import cronstrue from "cronstrue";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { eq, sql } from "drizzle-orm";
 import { mkdirSync } from "fs";
@@ -72,6 +73,7 @@ const DEFAULT_SETTINGS = [
 
 const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";
 const NOTIFICATION_SCHEDULE_MIGRATION_KEY = "notification_digest_schedules_migrated";
+const MAX_SCHEDULE_NAME_LENGTH = 100;
 
 export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schema> {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -730,6 +732,23 @@ function legacyIntervalMinutesToCron(intervalMinutes: number): string {
   return `0 */${roundedHours} * * *`;
 }
 
+function truncateScheduleName(value: string): string {
+  if (value.length <= MAX_SCHEDULE_NAME_LENGTH) return value;
+  return `${value.slice(0, MAX_SCHEDULE_NAME_LENGTH - 3).trimEnd()}...`;
+}
+
+function generateMigratedNotificationScheduleName(cron: string): string {
+  try {
+    const description = cronstrue.toString(cron, {
+      verbose: true,
+      use24HourTimeFormat: true,
+    });
+    return truncateScheduleName(`Notification - ${description}`);
+  } catch {
+    return truncateScheduleName(`Notification schedule ${cron}`);
+  }
+}
+
 function migrateRefreshScheduleSettings(db: BetterSQLite3Database<typeof schema>): void {
   const marker = db
     .select({ value: schema.settings.value })
@@ -853,7 +872,7 @@ function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>):
       nextSortOrder += 1;
       const inserted = db.insert(schema.schedules).values({
         sortOrder: nextSortOrder,
-        name: `Notification schedule ${cron}`,
+        name: generateMigratedNotificationScheduleName(cron),
         type: "notification_digest",
         enabled: 1,
         systemIds: null,
