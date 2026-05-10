@@ -66,4 +66,47 @@ describe("rebootSystem", () => {
       },
     ]);
   });
+
+  test("treats an SSH reset during reboot as a sent reboot command", async () => {
+    const db = getDb();
+    const encryptor = getEncryptor();
+    const inserted = db.insert(systems).values({
+      name: "Debian",
+      hostname: "localhost",
+      port: 2004,
+      authType: "password",
+      username: "testuser",
+      encryptedPassword: encryptor.encrypt("testpass"),
+    }).returning({ id: systems.id }).get();
+
+    const sshManager = initSSHManager(1, 1, 1, encryptor);
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async () => ({
+      stdout: "",
+      stderr: "read ECONNRESET",
+      exitCode: -1,
+    });
+
+    const result = await rebootSystem(inserted.id);
+    expect(result).toEqual({ success: true, message: "Reboot command sent" });
+
+    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
+    expect(system?.isReachable).toBe(-1);
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, inserted.id))
+      .all()
+      .at(-1);
+    expect(history?.status).toBe("success");
+    expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      {
+        pkgManager: "system",
+        status: "success",
+        command: expect.stringContaining("reboot"),
+        error: null,
+      },
+    ]);
+  });
 });

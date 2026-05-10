@@ -138,6 +138,14 @@ interface SSHConnectionError extends Error {
   debugRef?: string;
 }
 
+function getSSHErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message || String(err) : String(err);
+}
+
+function appendConnectionError(stderr: string, message: string): string {
+  return stderr ? `${stderr}\n${message}` : message;
+}
+
 export interface TestConnectionResult {
   success: boolean;
   message: string;
@@ -569,6 +577,19 @@ export class SSHConnectionManager {
     return new Promise<Client>((resolve, reject) => {
       const onReady = () => {
         conn.removeListener("error", onError);
+        conn.on("error", (err: SSHConnectionError) => {
+          logger.debug("SSH client error after connection ready", {
+            attemptId,
+            hopIndex: hopIndex + 1,
+            hopCount,
+            hopRole: hop.role,
+            errorLevel: err.level,
+            errorDescription: err.description
+              ? sanitizeOutput(err.description)
+              : undefined,
+            error: sanitizeOutput(getSSHErrorMessage(err)),
+          });
+        });
         logger.debug("SSH connect attempt succeeded", {
           attemptId,
           hopIndex: hopIndex + 1,
@@ -643,23 +664,65 @@ export class SSHConnectionManager {
     const wrappedCommand = wrapRemoteCommand(command);
 
     return new Promise<CommandResult>((resolve) => {
+      let settled = false;
+      let stdout = "";
+      let stderr = "";
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        conn.removeListener("error", onConnectionError);
+        conn.removeListener("close", onConnectionClose);
+        conn.removeListener("end", onConnectionEnd);
+      };
+
+      const settle = (result: CommandResult) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+
+      const onConnectionError = (err: SSHConnectionError) => {
+        settle({
+          stdout,
+          stderr: appendConnectionError(stderr, getSSHErrorMessage(err)),
+          exitCode: -1,
+        });
+      };
+
+      const onConnectionClose = () => {
+        settle({
+          stdout,
+          stderr: appendConnectionError(stderr, "SSH connection closed"),
+          exitCode: -1,
+        });
+      };
+
+      const onConnectionEnd = () => {
+        settle({
+          stdout,
+          stderr: appendConnectionError(stderr, "SSH connection ended"),
+          exitCode: -1,
+        });
+      };
+
       const timer = setTimeout(() => {
-        resolve({
+        settle({
           stdout: "",
           stderr: `Command timed out after ${cmdTimeout}s`,
           exitCode: -1,
         });
       }, cmdTimeout * 1000);
 
+      conn.on("error", onConnectionError);
+      conn.once("close", onConnectionClose);
+      conn.once("end", onConnectionEnd);
+
       conn.exec(wrappedCommand, (err, stream) => {
         if (err) {
-          clearTimeout(timer);
-          resolve({ stdout: "", stderr: String(err), exitCode: -1 });
+          settle({ stdout: "", stderr: String(err), exitCode: -1 });
           return;
         }
-
-        let stdout = "";
-        let stderr = "";
 
         stream.on("data", (data: Buffer) => {
           const text = data.toString();
@@ -672,8 +735,7 @@ export class SSHConnectionManager {
           onData?.(text, "stderr");
         });
         stream.on("close", (code: number | null) => {
-          clearTimeout(timer);
-          resolve({ stdout, stderr, exitCode: code ?? 0 });
+          settle({ stdout, stderr, exitCode: code ?? 0 });
         });
 
         // Always close stdin so non-interactive commands cannot block on prompts.
