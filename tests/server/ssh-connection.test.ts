@@ -149,10 +149,11 @@ describe("SSHConnectionManager.runCommand", () => {
       queueMicrotask(() => stream.emit("close", 0));
     };
 
-    const conn = {
-      exec: (_command: string, callback: (err: Error | null, stream: typeof stream) => void) => {
-        callback(null, stream);
-      },
+    const conn = new EventEmitter() as EventEmitter & {
+      exec: (command: string, callback: (err: Error | null, stream: typeof stream) => void) => void;
+    };
+    conn.exec = (_command, callback) => {
+      callback(null, stream);
     };
 
     const result = await manager.runCommand(conn as any, "echo ok", 1);
@@ -175,16 +176,44 @@ describe("SSHConnectionManager.runCommand", () => {
       queueMicrotask(() => stream.emit("close", 0));
     };
 
-    const conn = {
-      exec: (_command: string, callback: (err: Error | null, stream: typeof stream) => void) => {
-        callback(null, stream);
-      },
+    const conn = new EventEmitter() as EventEmitter & {
+      exec: (command: string, callback: (err: Error | null, stream: typeof stream) => void) => void;
+    };
+    conn.exec = (_command, callback) => {
+      callback(null, stream);
     };
 
     const result = await manager.runCommand(conn as any, "sudo -S -p '' true", 1, "secret");
 
     expect(result.exitCode).toBe(0);
     expect(endedWith).toBe("secret\n");
+  });
+
+  test("returns a command failure when the SSH connection resets during execution", async () => {
+    initEncryptor(randomBytes(32).toString("base64"));
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const conn = new EventEmitter() as EventEmitter & {
+      exec: (command: string, callback: (err: Error | null, stream: EventEmitter & {
+        stderr: EventEmitter;
+        end: () => void;
+      }) => void) => void;
+    };
+    const stream = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter;
+      end: () => void;
+    };
+    stream.stderr = new EventEmitter();
+    stream.end = () => {
+      queueMicrotask(() => conn.emit("error", new Error("read ECONNRESET")));
+    };
+    conn.exec = (_command, callback) => {
+      callback(null, stream);
+    };
+
+    const result = await manager.runCommand(conn as any, "sudo reboot", 1);
+
+    expect(result.exitCode).toBe(-1);
+    expect(result.stderr).toContain("ECONNRESET");
   });
 });
 

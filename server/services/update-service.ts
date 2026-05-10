@@ -169,6 +169,10 @@ async function withLock<T>(
 const RECONNECT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const RECONNECT_INTERVAL_MS = 15 * 1000;     // retry every 15 seconds
 
+function isExpectedRebootDisconnect(message: string): boolean {
+  return /ECONNRESET|connection reset|SSH connection (?:closed|ended)|connection (?:closed|ended)|\bclosed\b|\bended\b/i.test(message);
+}
+
 interface ReconnectionResult {
   exitCode: number;
   stdout: string;
@@ -1448,6 +1452,26 @@ export async function rebootSystem(
 
         if (result.exitCode !== 0) {
           const errorText = result.stderr || result.stdout || `reboot exited with code ${result.exitCode}`;
+          if (isExpectedRebootDisconnect(errorText)) {
+            const outputText = streamedOutput || result.stdout || "Reboot command sent (connection closed)";
+            systemService.markUnreachable(systemId);
+            finishEntry(histId, "success", {
+              steps: createSingleStepHistory({
+                label: null,
+                pkgManager: "system",
+                command: cmd,
+                output: outputText,
+                error: null,
+                status: "success",
+                startedAt: stepStartedAt,
+                completedAt: stepCompletedAt,
+              }),
+              output: outputText,
+            });
+            outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
+            return { success: true, message: "Reboot command sent" };
+          }
+
           finishEntry(histId, "failed", {
             steps: createSingleStepHistory({
               label: null,
@@ -1487,7 +1511,7 @@ export async function rebootSystem(
         const errMsg = String(e);
         const stepCompletedAt = getCurrentTimestamp();
         // A closed connection after reboot is expected
-        if (errMsg.includes("ECONNRESET") || errMsg.includes("closed") || errMsg.includes("end")) {
+        if (isExpectedRebootDisconnect(errMsg)) {
           systemService.markUnreachable(systemId);
           finishEntry(histId, "success", {
             steps: createSingleStepHistory({
