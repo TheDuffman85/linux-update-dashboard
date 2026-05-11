@@ -6,7 +6,6 @@ import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName } from "../ssh/parsers/types";
 import { getDnfLikeEulaPromptMessage, hasDnfLikeEulaPrompt } from "../ssh/parsers/dnf";
-import { getRebootCommand } from "../ssh/reboot";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
@@ -29,6 +28,13 @@ import {
 } from "./active-operation-store";
 import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
 import { syncSystemNotificationHash } from "./notification-service";
+import {
+  getCustomCheckErrorMessage,
+  isCustomPackageManager,
+  parseCustomUpdates,
+  resolveRuntimeSteps,
+  resolveScript,
+} from "./script-service";
 
 type VisibleCachedUpdate = ReturnType<typeof hiddenUpdateService.getVisibleCachedUpdates>[number];
 
@@ -681,11 +687,15 @@ async function checkUpdatesUnlocked(
     for (const pmName of pkgManagers) {
       try {
         const parser = getParser(pmName);
-        if (!parser) continue;
-
         const managerConfig = getManagerConfig(pkgManagerConfigs, pmName);
-        const commands = parser.getCheckCommands(managerConfig);
-        const labels = parser.getCheckCommandLabels?.(managerConfig) ?? [];
+        const steps = resolveRuntimeSteps({
+          systemId,
+          operation: "check_updates",
+          pkgManager: pmName,
+          pkgManagerConfig: managerConfig,
+        });
+        if (!steps.length || (!parser && !isCustomPackageManager(pmName))) continue;
+        const commands = steps.map((step) => step.command);
         allCommands.push(...commands);
         let lastStdout = "";
         let lastStderr = "";
@@ -693,7 +703,7 @@ async function checkUpdatesUnlocked(
         const commandResults: CheckCommandResult[] = [];
 
         for (let i = 0; i < commands.length; i++) {
-          const label = labels[i] ?? `Step ${i + 1}`;
+          const label = steps[i]?.label ?? `Step ${i + 1}`;
           let streamedOutput = "";
           const stepStartedAt = getCurrentTimestamp();
           pub({ type: "started", command: commands[i], pkgManager: pmName, startedAt: stepStartedAt });
@@ -710,8 +720,10 @@ async function checkUpdatesUnlocked(
           );
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
+          const customScript = parser ? null : resolveScript(systemId, "check_updates", pmName);
           const parserReportedError =
-            parser.getCheckErrorMessage?.(result.stdout, result.stderr, result.exitCode) ?? null;
+            parser?.getCheckErrorMessage?.(result.stdout, result.stderr, result.exitCode)
+            ?? getCustomCheckErrorMessage(customScript?.parserConfig, result.stdout, result.stderr, result.exitCode);
           const checkErrorMessage =
             parserReportedError
             || (result.exitCode !== 0
@@ -752,9 +764,12 @@ async function checkUpdatesUnlocked(
           }
         }
 
-        let updates = parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode, {
-          commandResults,
-        });
+        const customScript = parser ? null : resolveScript(systemId, "check_updates", pmName);
+        let updates = parser
+          ? parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode, {
+              commandResults,
+            })
+          : parseCustomUpdates(pmName, customScript?.parserConfig, commandResults);
         allUpdates.push(...updates);
         successfulChecks++;
         successfulPkgManagers.push(pmName);
@@ -908,10 +923,14 @@ export async function applyUpgradeAll(
       });
 
       for (const pmName of pkgManagers) {
-        const parser = getParser(pmName);
-        if (!parser) continue;
-
-        const cmd = parser.getUpgradeAllCommand(getManagerConfig(pkgManagerConfigs, pmName));
+        const steps = resolveRuntimeSteps({
+          systemId,
+          operation: "upgrade_all",
+          pkgManager: pmName,
+          pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+        });
+        const cmd = steps[0]?.command;
+        if (!cmd) continue;
         allCommands.push(cmd);
         const stepStartedAt = getCurrentTimestamp();
         const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd, stepStartedAt);
@@ -1043,7 +1062,15 @@ export function supportsFullUpgrade(systemId: number): boolean {
   const pkgManagers = systemService.getActivePkgManagers(system);
   return pkgManagers.some((pmName) => {
     const parser = getParser(pmName);
-    return parser?.getFullUpgradeAllCommand(getManagerConfig(pkgManagerConfigs, pmName)) != null;
+    if (parser?.getFullUpgradeAllCommand(getManagerConfig(pkgManagerConfigs, pmName)) != null) {
+      return true;
+    }
+    return resolveRuntimeSteps({
+      systemId,
+      operation: "full_upgrade_all",
+      pkgManager: pmName,
+      pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+    }).length > 0;
   });
 }
 
@@ -1095,11 +1122,23 @@ export async function applyFullUpgradeAll(
       });
 
       for (const pmName of pkgManagers) {
-        const parser = getParser(pmName);
-        if (!parser) continue;
-
         const managerConfig = getManagerConfig(pkgManagerConfigs, pmName);
-        const cmd = parser.getFullUpgradeAllCommand(managerConfig) ?? parser.getUpgradeAllCommand(managerConfig);
+        let steps = resolveRuntimeSteps({
+          systemId,
+          operation: "full_upgrade_all",
+          pkgManager: pmName,
+          pkgManagerConfig: managerConfig,
+        });
+        if (!steps.length) {
+          steps = resolveRuntimeSteps({
+            systemId,
+            operation: "upgrade_all",
+            pkgManager: pmName,
+            pkgManagerConfig: managerConfig,
+          });
+        }
+        const cmd = steps[0]?.command;
+        if (!cmd) continue;
         allCommands.push(cmd);
         const stepStartedAt = getCurrentTimestamp();
         const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd, stepStartedAt);
@@ -1280,17 +1319,19 @@ export async function applyUpgradePackages(
         });
 
         for (const [pmName, packagesForManager] of groupedUpdates) {
-          const parser = getParser(pmName);
-          if (!parser) {
+          const steps = resolveRuntimeSteps({
+            systemId,
+            operation: "upgrade_selected",
+            pkgManager: pmName,
+            pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+            packages: packagesForManager,
+          });
+          const cmd = steps[0]?.command;
+          if (!cmd) {
             overallSuccess = false;
-            allOutputs.push(`[${pmName}] Unknown package manager`);
+            allOutputs.push(`[${pmName}] No selected-package upgrade script`);
             continue;
           }
-
-          const cmd = parser.getUpgradePackagesCommand(
-            packagesForManager,
-            getManagerConfig(pkgManagerConfigs, pmName),
-          );
           allCommands.push(cmd);
 
           const stepStartedAt = getCurrentTimestamp();
@@ -1433,7 +1474,8 @@ export async function rebootSystem(
 
       const sshManager = getSSHManager();
       const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
-      const cmd = getRebootCommand();
+      const cmd = resolveRuntimeSteps({ systemId, operation: "reboot" })[0]?.command;
+      if (!cmd) return { success: false, message: "No reboot script configured" };
       const stepStartedAt = getCurrentTimestamp();
       const histId = insertStartedEntry(systemId, "reboot", "system", cmd, stepStartedAt);
       outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: "system", startedAt: stepStartedAt });

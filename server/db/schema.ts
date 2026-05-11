@@ -226,6 +226,60 @@ export const schedules = sqliteTable("schedules", {
     .default(sql`(datetime('now'))`),
 });
 
+export const customPackageManagers = sqliteTable("custom_package_managers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  label: text("label").notNull(),
+  color: text("color"),
+  parserConfig: text("parser_config"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
+export const customScripts = sqliteTable("custom_scripts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  description: text("description"),
+  type: text("type").notNull(),
+  operation: text("operation").notNull(),
+  pkgManager: text("pkg_manager"),
+  steps: text("steps").notNull(),
+  parserConfig: text("parser_config"),
+  systemInfoConfig: text("system_info_config"),
+  sourceScriptId: text("source_script_id"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
+export const systemScriptOverrides = sqliteTable(
+  "system_script_overrides",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    operationKey: text("operation_key").notNull(),
+    scriptId: text("script_id").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    unique().on(table.systemId, table.operationKey),
+  ],
+);
+
 export const apiTokens = sqliteTable("api_tokens", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id")

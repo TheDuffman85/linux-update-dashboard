@@ -11,6 +11,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Notifications = lazy(() => import("./pages/Notifications"));
 const Schedules = lazy(() => import("./pages/Schedules"));
 const Credentials = lazy(() => import("./pages/Credentials"));
+const Scripts = lazy(() => import("./pages/Scripts"));
 
 function PageLoader() {
   return (
@@ -100,6 +101,14 @@ export default function App() {
           element={
             <AuthGuard>
               <Credentials />
+            </AuthGuard>
+          }
+        />
+        <Route
+          path="/scripts"
+          element={
+            <AuthGuard>
+              <Scripts />
             </AuthGuard>
           }
         />

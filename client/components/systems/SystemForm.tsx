@@ -21,6 +21,11 @@ import {
   getHostKeyStatusBadgeLabel,
   type HostKeyStatus,
 } from "../../lib/host-key-status";
+import {
+  buildOperationKey,
+  useScripts,
+  type ScriptOperation,
+} from "../../lib/scripts";
 
 interface SystemFormData {
   name: string;
@@ -36,6 +41,7 @@ interface SystemFormData {
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
+  scriptOverrides?: Record<string, string | null | undefined>;
   sourceSystemId?: number;
 }
 
@@ -77,6 +83,7 @@ export function SystemForm({
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
     hostKeyStatus?: HostKeyStatus;
+    scriptOverrides?: Record<string, string>;
   };
   systemId?: number;
   sourceSystemId?: number;
@@ -89,6 +96,7 @@ export function SystemForm({
   const createCredential = useCreateCredential();
   const { data: allCredentials } = useCredentials();
   const { data: allSystems } = useSystems();
+  const { data: scriptsData } = useScripts();
   const { addToast } = useToast();
   const credentials =
     allCredentials?.filter((credential) =>
@@ -131,6 +139,9 @@ export function SystemForm({
     initial?.excludeFromUpgradeAll === 1
   );
   const [hidden, setHidden] = useState(initial?.hidden === true);
+  const [scriptOverrides, setScriptOverrides] = useState<Record<string, string>>(
+    initial?.scriptOverrides ?? {}
+  );
   const selectedProxyJumpSystem =
     availableSystems.find((system) => system.id === proxyJumpSystemId) ?? null;
   const getChallengeSystemName = (challengeSystemId?: number) => {
@@ -249,6 +260,7 @@ export function SystemForm({
       pkgManagerConfigs: normalizePackageManagerConfigs(pkgManagerConfigs) ?? {},
       excludeFromUpgradeAll,
       hidden,
+      scriptOverrides,
       sourceSystemId,
     });
   };
@@ -272,6 +284,9 @@ export function SystemForm({
     new Set([
       ...detectedManagers,
       ...Object.keys(pkgManagerConfigs),
+      ...Object.keys(scriptOverrides)
+        .map((key) => key.split("/")[0])
+        .filter((manager) => manager && manager !== "system"),
     ]),
   ).sort((a, b) => {
     const order = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
@@ -282,6 +297,36 @@ export function SystemForm({
     if (rightIndex === -1) return -1;
     return leftIndex - rightIndex;
   });
+  const packageScriptOperations: ScriptOperation[] = [
+    "detect",
+    "check_updates",
+    "upgrade_all",
+    "full_upgrade_all",
+    "upgrade_selected",
+  ];
+  const systemScriptOperations: ScriptOperation[] = ["system_info", "reboot"];
+  const operationLabels: Record<ScriptOperation, string> = {
+    detect: "Detection",
+    check_updates: "Check updates",
+    upgrade_all: "Upgrade all",
+    full_upgrade_all: "Full upgrade",
+    upgrade_selected: "Upgrade selected",
+    system_info: "System info",
+    reboot: "Reboot",
+  };
+  const compatibleScripts = (operation: ScriptOperation, pkgManager: string | null) =>
+    (scriptsData?.scripts ?? []).filter(
+      (script) => script.operation === operation && script.pkgManager === pkgManager,
+    );
+  const setScriptOverride = (operation: ScriptOperation, pkgManager: string | null, scriptId: string) => {
+    const key = buildOperationKey(operation, pkgManager);
+    setScriptOverrides((prev) => {
+      const next = { ...prev };
+      if (scriptId) next[key] = scriptId;
+      else delete next[key];
+      return next;
+    });
+  };
 
   const runConnectionTest = (extra?: {
     trustChallengeToken?: string;
@@ -1070,6 +1115,80 @@ export function SystemForm({
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {(scriptsData?.scripts.length ?? 0) > 0 && (
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Scripts
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Leave operations on Standard unless this system needs a custom script override.
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border p-3 space-y-3">
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                System Operations
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {systemScriptOperations.map((operation) => {
+                  const key = buildOperationKey(operation, null);
+                  const options = compatibleScripts(operation, null);
+                  return (
+                    <div key={key}>
+                      <label className={labelClass}>{operationLabels[operation]}</label>
+                      <select
+                        value={scriptOverrides[key] ?? ""}
+                        onChange={(e) => setScriptOverride(operation, null, e.target.value)}
+                        className={inputClass}
+                      >
+                        <option value="">Standard</option>
+                        {options.map((script) => (
+                          <option key={script.id} value={script.id}>
+                            {script.name}{script.readonly ? " (built-in)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {visiblePackageManagers.map((manager) => (
+              <div key={`scripts-${manager}`} className="rounded-lg border border-border p-3 space-y-3">
+                <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {PACKAGE_MANAGER_LABELS[manager] ?? manager}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {packageScriptOperations.map((operation) => {
+                    const key = buildOperationKey(operation, manager);
+                    const options = compatibleScripts(operation, manager);
+                    if (options.length === 0 && !scriptOverrides[key]) return null;
+                    return (
+                      <div key={key}>
+                        <label className={labelClass}>{operationLabels[operation]}</label>
+                        <select
+                          value={scriptOverrides[key] ?? ""}
+                          onChange={(e) => setScriptOverride(operation, manager, e.target.value)}
+                          className={inputClass}
+                        >
+                          <option value="">Standard</option>
+                          {options.map((script) => (
+                            <option key={script.id} value={script.id}>
+                              {script.name}{script.readonly ? " (built-in)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

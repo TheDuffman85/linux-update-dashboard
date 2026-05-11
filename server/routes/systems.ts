@@ -5,6 +5,7 @@ import { buildCommandReference } from "../services/command-reference";
 import * as hiddenUpdateService from "../services/hidden-update-service";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
+import * as scriptService from "../services/script-service";
 import { getSSHManager } from "../ssh/connection";
 import { detectPackageManagers } from "../ssh/detector";
 import { validatePackageName } from "../ssh/parsers/types";
@@ -105,6 +106,16 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     typeof body.validatedConfigToken !== "string"
   ) {
     return "validatedConfigToken must be a string";
+  }
+  if (
+    body.scriptOverrides !== undefined &&
+    (
+      !body.scriptOverrides ||
+      typeof body.scriptOverrides !== "object" ||
+      Array.isArray(body.scriptOverrides)
+    )
+  ) {
+    return "scriptOverrides must be an object";
   }
   return null;
 }
@@ -225,6 +236,8 @@ function serializeSystem(s: Record<string, unknown>) {
             proxyJumpSystemId: s.proxyJumpSystemId as number | null,
           })
         : [],
+    scriptOverrides:
+      typeof s.id === "number" ? scriptService.getSystemOverrides(s.id) : {},
   };
 }
 
@@ -571,6 +584,12 @@ systems.post("/", async (c) => {
       sourceSystemId,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
+    if (body.scriptOverrides) {
+      scriptService.setSystemOverrides(
+        systemId,
+        body.scriptOverrides as Record<string, string | null | undefined>,
+      );
+    }
   } catch (error) {
     const response = getSystemWriteErrorResponse(error);
     if (response) return response;
@@ -676,6 +695,12 @@ systems.put("/:id", async (c) => {
       hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
+    if (body.scriptOverrides) {
+      scriptService.setSystemOverrides(
+        id,
+        body.scriptOverrides as Record<string, string | null | undefined>,
+      );
+    }
   } catch (error) {
     const response = getSystemWriteErrorResponse(error);
     if (response) return response;
@@ -700,6 +725,25 @@ systems.post("/:id/reboot", async (c) => {
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const result = await updateService.rebootSystem(id);
   return c.json(result, result.success ? 200 : 500);
+});
+
+systems.put("/:id/script-overrides", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (!systemService.getSystem(id)) return c.json({ error: "System not found" }, 404);
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body || !asObject(body.scriptOverrides)) {
+    return c.json({ error: "scriptOverrides must be an object" }, 400);
+  }
+  try {
+    const scriptOverrides = scriptService.setSystemOverrides(
+      id,
+      body.scriptOverrides as Record<string, string | null | undefined>,
+    );
+    return c.json({ scriptOverrides });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Failed to update script overrides" }, 400);
+  }
 });
 
 systems.post("/:id/dismiss-needs-reboot", async (c) => {

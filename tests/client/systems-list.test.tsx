@@ -115,6 +115,7 @@ describe("SystemsList", () => {
           isStale: false,
           activeOperation: null,
           supportsFullUpgrade: true,
+          scriptOverrides: {},
         },
       ],
       isLoading: false,
@@ -134,14 +135,14 @@ describe("SystemsList", () => {
     mockUseAuth.mockReturnValue({ user: { username: "tester" } });
   });
 
-  test("renders a potential commands action and keeps its modal closed by default", () => {
+  test("does not render the removed potential commands action", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <SystemsList />
       </MemoryRouter>,
     );
 
-    expect(html).toContain('title="Potential commands"');
+    expect(html).not.toContain('title="Potential commands"');
     expect(html).not.toContain("Potential Commands for Alpha");
   });
 });

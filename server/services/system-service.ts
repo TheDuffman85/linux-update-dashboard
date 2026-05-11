@@ -8,15 +8,17 @@ import * as hiddenUpdateService from "./hidden-update-service";
 import type { ApprovedHostKeyInput } from "./system-connection-validation";
 import {
   SYSTEM_INFO_CMD,
-  parseSystemInfo,
-  resolveRebootDismissal,
-  resolveRebootRequired,
 } from "../ssh/system-info";
-import { detectPackageManagers } from "../ssh/detector";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
 import type { PackageManagerConfigs } from "../package-manager-configs";
 import { serializePackageManagerConfigs } from "../package-manager-configs";
+import {
+  detectPackageManagersWithScripts,
+  parseSystemInfoWithScript,
+  resolveRuntimeSteps,
+  resolveScript,
+} from "./script-service";
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
@@ -495,17 +497,20 @@ export async function updateSystemInfo(
   conn: Client
 ): Promise<void> {
   const previous = getSystem(systemId);
-  const { stdout } = await sshManager.runCommand(
-    conn,
-    SYSTEM_INFO_CMD
-  );
+  const script = resolveScript(systemId, "system_info", null);
+  const steps = resolveRuntimeSteps({ systemId, operation: "system_info" });
+  const sudoPassword = previous ? getSudoPassword(previous as Record<string, unknown>) : undefined;
+  let stdout = "";
+  for (const step of steps.length ? steps : [{ label: "Collect system information", command: SYSTEM_INFO_CMD }]) {
+    const result = await sshManager.runCommand(conn, step.command, undefined, sudoPassword);
+    stdout += `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}\n`;
+  }
   // Don't bail on non-zero exit: individual sections may fail on minimal
   // containers (e.g. missing hostname) while the rest still provides data.
-  if (!stdout.includes("===OS===")) return;
+  const parsed = parseSystemInfoWithScript(stdout, script, previous);
+  if (!parsed) return;
 
-  const info = parseSystemInfo(stdout);
-  const rawNeedsReboot = resolveRebootRequired(previous, info);
-  const rebootDismissal = resolveRebootDismissal(previous, info, rawNeedsReboot);
+  const { info } = parsed;
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const db = getDb();
 
@@ -522,14 +527,14 @@ export async function updateSystemInfo(
       memory: info.memory,
       disk: info.disk,
       bootId: info.bootId || previous?.bootId || null,
-      needsReboot: rebootDismissal.needsReboot ? 1 : 0,
-      rebootDismissedBootId: rebootDismissal.dismissalExpired
+      needsReboot: parsed.needsReboot ? 1 : 0,
+      rebootDismissedBootId: parsed.dismissalExpired
         ? null
         : previous?.rebootDismissedBootId ?? null,
-      rebootDismissedUptimeSeconds: rebootDismissal.dismissalExpired
+      rebootDismissedUptimeSeconds: parsed.dismissalExpired
         ? null
         : previous?.rebootDismissedUptimeSeconds ?? null,
-      rebootDismissedAt: rebootDismissal.dismissalExpired
+      rebootDismissedAt: parsed.dismissalExpired
         ? null
         : previous?.rebootDismissedAt ?? null,
       systemInfoUpdatedAt: now,
@@ -545,7 +550,7 @@ export async function detectAndStorePkgManager(
   sshManager: SSHConnectionManager,
   conn: Client
 ): Promise<string[]> {
-  const detected = await detectPackageManagers(sshManager, conn);
+  const detected = await detectPackageManagersWithScripts(systemId, sshManager, conn);
   const db = getDb();
 
   if (detected.length > 0) {
