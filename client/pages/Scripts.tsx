@@ -371,7 +371,10 @@ function ScriptEditor({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          No support is given for custom scripts whatsoever.
+        </p>
         <button
           type="button"
           onClick={onShowHelp}
