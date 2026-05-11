@@ -3,8 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
 
 const {
-  mockUseCopyBuiltinPackageManager,
-  mockUseCopyScript,
   mockUseCreatePackageManager,
   mockUseCreateScript,
   mockUseDeleteScript,
@@ -12,8 +10,6 @@ const {
   mockUseToast,
   mockUseUpdateScript,
 } = vi.hoisted(() => ({
-  mockUseCopyBuiltinPackageManager: vi.fn(),
-  mockUseCopyScript: vi.fn(),
   mockUseCreatePackageManager: vi.fn(),
   mockUseCreateScript: vi.fn(),
   mockUseDeleteScript: vi.fn(),
@@ -28,8 +24,6 @@ vi.mock("../../client/lib/scripts", async () => {
   );
   return {
     ...actual,
-    useCopyBuiltinPackageManager: mockUseCopyBuiltinPackageManager,
-    useCopyScript: mockUseCopyScript,
     useCreatePackageManager: mockUseCreatePackageManager,
     useCreateScript: mockUseCreateScript,
     useDeleteScript: mockUseDeleteScript,
@@ -65,8 +59,6 @@ import Scripts from "../../client/pages/Scripts";
 describe("Scripts page", () => {
   beforeEach(() => {
     const mutation = { mutate: vi.fn(), isPending: false };
-    mockUseCopyBuiltinPackageManager.mockReturnValue(mutation);
-    mockUseCopyScript.mockReturnValue(mutation);
     mockUseCreatePackageManager.mockReturnValue(mutation);
     mockUseCreateScript.mockReturnValue(mutation);
     mockUseDeleteScript.mockReturnValue(mutation);
@@ -82,9 +74,40 @@ describe("Scripts page", () => {
     });
   });
 
-  test("offers a built-in package-manager copy action", () => {
+  test("offers package-manager creation without the old built-in copy action", () => {
     const html = renderToStaticMarkup(<Scripts />);
 
-    expect(html).toContain("Copy Built-In");
+    expect(html).toContain("New Package Manager");
+    expect(html).not.toContain("Copy Built-In");
+    expect(html).not.toContain("Placeholder Help");
+  });
+
+  test("shows sudo badges for scripts with sudo helpers", () => {
+    mockUseScripts.mockReturnValue({
+      data: {
+        scripts: [
+          {
+            id: "builtin:apt:upgrade_all",
+            readonly: true,
+            name: "Upgrade all APT packages",
+            description: "Installs updates.",
+            type: "package_manager",
+            operation: "upgrade_all",
+            pkgManager: "apt",
+            steps: [{ label: "Upgrade", command: "{{sudo:apt-get upgrade -y}}" }],
+            parserConfig: null,
+            systemInfoConfig: null,
+            sourceScriptId: null,
+          },
+        ],
+        packageManagers: [],
+        placeholders: [],
+      },
+      isLoading: false,
+    });
+
+    const html = renderToStaticMarkup(<Scripts />);
+
+    expect(html).toContain("sudo");
   });
 });

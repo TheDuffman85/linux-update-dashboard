@@ -15,7 +15,7 @@ import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
 import { getRebootCommand } from "../../server/ssh/reboot";
 import { closeDatabase, initDatabase } from "../../server/db";
 import { initEncryptor } from "../../server/security";
-import { copyBuiltinPackageManager, createCustomPackageManager, createScript } from "../../server/services/script-service";
+import { createCustomPackageManager, createScript } from "../../server/services/script-service";
 
 function createSystem(overrides?: Partial<{
   pkgManager: string | null;
@@ -185,11 +185,6 @@ describe("buildCommandReference with custom scripts", () => {
   });
 
   test("includes custom package-manager commands through runtime scripts", () => {
-    copyBuiltinPackageManager({
-      sourceManager: "apt",
-      name: "custom-apt",
-      label: "Custom APT",
-    });
     createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
     createScript({
       name: "Detect Linuxbrew",
@@ -211,26 +206,11 @@ describe("buildCommandReference with custom scripts", () => {
 
     const reference = buildCommandReference(createSystem({
       pkgManager: "apt",
-      detectedPkgManagers: JSON.stringify(["apt", "custom-apt", "brewlinux"]),
+      detectedPkgManagers: JSON.stringify(["apt", "brewlinux"]),
       disabledPkgManagers: JSON.stringify([]),
       id: 42,
     } as Parameters<typeof createSystem>[0] & { id: number }));
 
-    expect(reference.exact.some((entry) =>
-      entry.category === "detection" &&
-      entry.pkgManager === "custom-apt" &&
-      entry.command.includes("command -v apt")
-    )).toBe(true);
-    expect(reference.exact.some((entry) =>
-      entry.category === "check" &&
-      entry.pkgManager === "custom-apt" &&
-      entry.command.includes("apt list --upgradable")
-    )).toBe(true);
-    expect(reference.exact.some((entry) =>
-      entry.category === "upgrade_selected" &&
-      entry.pkgManager === "custom-apt" &&
-      entry.command.includes("install --only-upgrade -y <package1> <package2>")
-    )).toBe(true);
     expect(reference.exact.some((entry) =>
       entry.category === "detection" &&
       entry.pkgManager === "brewlinux" &&

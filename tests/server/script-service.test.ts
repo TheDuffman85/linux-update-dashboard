@@ -8,7 +8,6 @@ import { systems } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
   buildOperationKey,
-  copyScript,
   createCustomPackageManager,
   createScript,
   deleteScript,
@@ -45,6 +44,18 @@ describe("script service", () => {
     }).run();
   }
 
+  function createBuiltinCopy(scriptId: string) {
+    const source = getBuiltinScripts().find((script) => script.id === scriptId);
+    if (!source) throw new Error(`Missing built-in script ${scriptId}`);
+    return createScript({
+      ...source,
+      id: undefined,
+      readonly: false,
+      name: `${source.name} (Copy)`,
+      sourceScriptId: source.id,
+    });
+  }
+
   test("exposes built-in package manager and system scripts as read-only", () => {
     const scripts = getBuiltinScripts();
 
@@ -54,8 +65,8 @@ describe("script service", () => {
     expect(scripts.some((script) => script.id === "builtin:system:reboot" && script.readonly)).toBe(true);
   });
 
-  test("copies built-ins into editable custom scripts and blocks deleting assigned scripts", () => {
-    const copy = copyScript("builtin:apt:check_updates");
+  test("drafted built-in copies are editable custom scripts and assigned scripts cannot be deleted", () => {
+    const copy = createBuiltinCopy("builtin:apt:check_updates");
     expect(copy.readonly).toBe(false);
     expect(copy.sourceScriptId).toBe("builtin:apt:check_updates");
 
@@ -68,7 +79,7 @@ describe("script service", () => {
   });
 
   test("unmodified built-in copies keep built-in runtime behavior", () => {
-    const copy = copyScript("builtin:apt:upgrade_all");
+    const copy = createBuiltinCopy("builtin:apt:upgrade_all");
     insertSystem(7);
     setSystemOverrides(7, {
       [buildOperationKey("upgrade_all", "apt")]: copy.id,
@@ -84,12 +95,12 @@ describe("script service", () => {
     expect(copy.systemInfoConfig).toBeNull();
     expect(steps[0]?.command).toContain("full-upgrade -y");
 
-    const systemInfoCopy = copyScript("builtin:system:system_info");
+    const systemInfoCopy = createBuiltinCopy("builtin:system:system_info");
     expect(systemInfoCopy.systemInfoConfig).toEqual({ mode: "builtin" });
   });
 
   test("edited built-in copies use their custom step commands", () => {
-    const copy = copyScript("builtin:apt:upgrade_all");
+    const copy = createBuiltinCopy("builtin:apt:upgrade_all");
     const edited = createScript({
       name: "Custom upgrade",
       type: copy.type,

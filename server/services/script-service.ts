@@ -90,11 +90,6 @@ export interface PlaceholderHelpEntry {
   example: string;
 }
 
-export interface CopiedPackageManagerResult {
-  manager: CustomPackageManagerDefinition;
-  scripts: ScriptDefinition[];
-}
-
 const BUILTIN_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
 const MANAGER_LABELS: Record<string, string> = {
   apt: "APT",
@@ -405,18 +400,6 @@ export function createScript(input: Partial<ScriptDefinition>): ScriptDefinition
   return serializeCustomScript(row);
 }
 
-export function copyScript(scriptId: string): ScriptDefinition {
-  const source = getScriptById(scriptId);
-  if (!source) throw new Error("Script not found");
-  return createScript({
-    ...source,
-    id: undefined,
-    readonly: false,
-    name: `${source.name} copy`,
-    sourceScriptId: source.id,
-  });
-}
-
 export function updateScript(scriptId: string, input: Partial<ScriptDefinition>): ScriptDefinition {
   const parsed = parseScriptId(scriptId);
   if (!parsed || parsed.kind !== "custom") throw new Error("Built-in scripts are read-only");
@@ -482,42 +465,6 @@ export function createCustomPackageManager(input: {
     .returning()
     .get();
   return serializeCustomPackageManager(row);
-}
-
-export function copyBuiltinPackageManager(input: {
-  sourceManager: string;
-  name: string;
-  label: string;
-  color?: string | null;
-}): CopiedPackageManagerResult {
-  const sourceManager = input.sourceManager.trim().toLowerCase();
-  if (!BUILTIN_MANAGER_ORDER.includes(sourceManager)) {
-    throw new Error("sourceManager must be a built-in package manager");
-  }
-
-  const sourceScripts = getBuiltinScripts().filter((script) =>
-    script.type === "package_manager" && script.pkgManager === sourceManager
-  );
-  if (!sourceScripts.length) {
-    throw new Error(`No built-in scripts found for ${sourceManager}`);
-  }
-
-  const manager = createCustomPackageManager({
-    name: input.name,
-    label: input.label,
-    color: input.color,
-  });
-  const scripts = sourceScripts.map((script) => createScript({
-    ...script,
-    id: undefined,
-    readonly: false,
-    name: `${manager.label} ${script.operation}`,
-    pkgManager: manager.name,
-    parserConfig: null,
-    sourceScriptId: script.id,
-  }));
-
-  return { manager, scripts };
 }
 
 export function getSystemOverrides(systemId: number): Record<string, string> {

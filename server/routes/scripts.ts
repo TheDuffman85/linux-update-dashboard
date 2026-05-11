@@ -40,22 +40,6 @@ scripts.post("/package-managers", async (c) => {
   }
 });
 
-scripts.post("/package-managers/copy-builtin", async (c) => {
-  const body = asObject(await c.req.json().catch(() => null));
-  if (!body) return c.json({ error: "Invalid request body" }, 400);
-  try {
-    const result = scriptService.copyBuiltinPackageManager({
-      sourceManager: typeof body.sourceManager === "string" ? body.sourceManager : "",
-      name: typeof body.name === "string" ? body.name : "",
-      label: typeof body.label === "string" ? body.label : "",
-      color: typeof body.color === "string" ? body.color : null,
-    });
-    return c.json(result, 201);
-  } catch (error) {
-    return c.json({ error: error instanceof Error ? error.message : "Failed to copy package manager" }, 400);
-  }
-});
-
 scripts.post("/validate-parser", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) return c.json({ error: "Invalid request body" }, 400);
@@ -72,15 +56,6 @@ scripts.post("/validate-parser", async (c) => {
     return c.json({ updates });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Parser validation failed" }, 400);
-  }
-});
-
-scripts.post("/:id/copy", (c) => {
-  try {
-    const script = scriptService.copyScript(c.req.param("id"));
-    return c.json({ script }, 201);
-  } catch (error) {
-    return c.json({ error: error instanceof Error ? error.message : "Failed to copy script" }, 400);
   }
 });
 

@@ -9,7 +9,7 @@ import { credentials } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import systemsRoutes from "../../server/routes/systems";
-import { copyBuiltinPackageManager, createCustomPackageManager, createScript } from "../../server/services/script-service";
+import { createCustomPackageManager, createScript } from "../../server/services/script-service";
 
 describe("systems test-connection route", () => {
   let tempDir: string;
@@ -71,11 +71,6 @@ describe("systems test-connection route", () => {
         password: "encrypted-password",
       }),
     }).returning({ id: credentials.id }).get().id;
-    copyBuiltinPackageManager({
-      sourceManager: "apt",
-      name: "custom-apt",
-      label: "Custom APT",
-    });
     createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
     createScript({
       name: "Detect Linuxbrew",
@@ -117,6 +112,6 @@ describe("systems test-connection route", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.detectedManagers).toEqual(expect.arrayContaining(["apt", "custom-apt", "brewlinux"]));
+    expect(body.detectedManagers).toEqual(expect.arrayContaining(["apt", "brewlinux"]));
   });
 });

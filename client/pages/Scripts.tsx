@@ -6,13 +6,12 @@ import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../context/ToastContext";
 import {
-  useCopyScript,
-  useCopyBuiltinPackageManager,
   useCreatePackageManager,
   useCreateScript,
   useDeleteScript,
   useScripts,
   useUpdateScript,
+  type PlaceholderHelpEntry,
   type ScriptDefinition,
   type ScriptOperation,
   type ScriptStep,
@@ -91,12 +90,53 @@ function emptyScript(): ScriptDefinition {
     description: "",
     type: "package_manager",
     operation: "detect",
-    pkgManager: "",
+    pkgManager: "apt",
     steps: [{ label: "Run command", command: "" }],
     parserConfig: null,
     systemInfoConfig: null,
     sourceScriptId: null,
   };
+}
+
+function emptyPackageManager() {
+  return {
+    name: "",
+    label: "",
+    color: "",
+  };
+}
+
+function copyScriptDraft(script: ScriptDefinition): ScriptDefinition {
+  return {
+    ...script,
+    id: "",
+    readonly: false,
+    name: `${script.name} (Copy)`,
+    steps: script.steps.map((step) => ({ ...step })),
+    parserConfig: script.parserConfig ? { ...script.parserConfig } : null,
+    systemInfoConfig: script.systemInfoConfig
+      ? {
+          ...script.systemInfoConfig,
+          fieldSections: script.systemInfoConfig.fieldSections
+            ? { ...script.systemInfoConfig.fieldSections }
+            : undefined,
+        }
+      : null,
+    sourceScriptId: script.id,
+    createdAt: undefined,
+    updatedAt: undefined,
+  };
+}
+
+function commandUsesSudo(command: string): boolean {
+  return /\{\{sudo:/i.test(command) ||
+    /\bsudo\s/.test(command) ||
+    /\bsudo -S\b/.test(command) ||
+    /command -v sudo/.test(command);
+}
+
+function scriptUsesSudo(script: ScriptDefinition): boolean {
+  return script.steps.some((step) => commandUsesSudo(step.command));
 }
 
 function joinExitCodes(value: number[] | undefined): string {
@@ -161,15 +201,14 @@ function ScriptEditor({
   packageManagers,
   onSave,
   onCancel,
+  onShowHelp,
   busy,
 }: {
   script: ScriptDefinition;
   packageManagers: Array<{ name: string; label: string }>;
-  onSave: (payload: {
-    script: ScriptDefinition;
-    newPackageManager?: { name: string; label: string; color?: string | null };
-  }) => void;
+  onSave: (script: ScriptDefinition) => void;
   onCancel: () => void;
+  onShowHelp: () => void;
   busy?: boolean;
 }) {
   const { addToast } = useToast();
@@ -198,14 +237,8 @@ function ScriptEditor({
   const stepsRef = useRef<ScriptStep[]>(steps);
   const stepsListRef = useRef<HTMLDivElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
-  const [managerMode, setManagerMode] = useState<"existing" | "new">("existing");
-  const [newManager, setNewManager] = useState({
-    name: "",
-    label: "",
-    color: "",
-  });
   const operationOptions = draft.type === "system" ? SYSTEM_OPERATIONS : PACKAGE_MANAGER_OPERATIONS;
-  const selectedPackageManager = managerMode === "new" ? newManager.name.trim() : draft.pkgManager ?? "";
+  const selectedPackageManager = draft.pkgManager ?? "";
   const usesBuiltinParser = selectedPackageManager ? BUILTIN_PACKAGE_MANAGERS.includes(selectedPackageManager) : false;
   const configKeys = selectedPackageManager ? PACKAGE_MANAGER_CONFIG_KEYS[selectedPackageManager] ?? [] : [];
   const showPackageManagerControls = draft.type === "package_manager";
@@ -283,27 +316,17 @@ function ScriptEditor({
       if (normalizedSteps.some((step) => !step.label || !step.command)) {
         throw new Error("Each step needs a label and command");
       }
-      const newPackageManager = draft.type === "package_manager" && managerMode === "new"
-        ? {
-            name: newManager.name.trim(),
-            label: newManager.label.trim(),
-            color: newManager.color.trim() || null,
-          }
-        : undefined;
       const pkgManager = draft.type === "package_manager"
-        ? newPackageManager?.name || draft.pkgManager?.trim() || null
+        ? draft.pkgManager?.trim() || null
         : null;
       onSave({
-        script: {
-          ...draft,
-          pkgManager,
-          steps: normalizedSteps,
-          parserConfig: showParserConfig ? buildParserConfig(parserConfig) : null,
-          systemInfoConfig: showSystemInfoConfig
-            ? buildSystemInfoConfig(systemInfoMode, systemInfoSections, rebootRequiredRegex)
-            : null,
-        },
-        newPackageManager,
+        ...draft,
+        pkgManager,
+        steps: normalizedSteps,
+        parserConfig: showParserConfig ? buildParserConfig(parserConfig) : null,
+        systemInfoConfig: showSystemInfoConfig
+          ? buildSystemInfoConfig(systemInfoMode, systemInfoSections, rebootRequiredRegex)
+          : null,
       });
     } catch (error) {
       addToast(error instanceof Error ? error.message : "Invalid script", "danger");
@@ -312,6 +335,19 @@ function ScriptEditor({
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onShowHelp}
+          className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          title="Show script placeholders"
+          aria-label="Show script placeholders"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.09 9a3 3 0 115.82 1c0 2-2.91 2-2.91 4m0 4h.01" />
+          </svg>
+        </button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Name</label>
@@ -352,13 +388,8 @@ function ScriptEditor({
           <div>
             <label className={labelClass}>Package Manager</label>
             <select
-              value={managerMode === "new" ? "__new__" : draft.pkgManager ?? ""}
+              value={draft.pkgManager ?? ""}
               onChange={(e) => {
-                if (e.target.value === "__new__") {
-                  setManagerMode("new");
-                  return;
-                }
-                setManagerMode("existing");
                 setDraft({ ...draft, pkgManager: e.target.value });
               }}
               className={inputClass}
@@ -368,45 +399,10 @@ function ScriptEditor({
                   {manager.label} ({manager.name})
                 </option>
               ))}
-              <option value="__new__">Create new package manager...</option>
             </select>
           </div>
         )}
       </div>
-
-      {showPackageManagerControls && managerMode === "new" && (
-        <div className="rounded-lg border border-border p-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className={labelClass}>New Manager Key</label>
-              <input
-                value={newManager.name}
-                onChange={(e) => setNewManager({ ...newManager, name: e.target.value })}
-                className={inputClass}
-                placeholder="custom-pm"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Display Label</label>
-              <input
-                value={newManager.label}
-                onChange={(e) => setNewManager({ ...newManager, label: e.target.value })}
-                className={inputClass}
-                placeholder="Custom PM"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Color</label>
-              <input
-                value={newManager.color}
-                onChange={(e) => setNewManager({ ...newManager, color: e.target.value })}
-                className={inputClass}
-                placeholder="#2563eb"
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       <div>
         <label className={labelClass}>Description</label>
@@ -651,10 +647,86 @@ function ScriptEditor({
   );
 }
 
+function PlaceholderHelpContent({ placeholders }: { placeholders: PlaceholderHelpEntry[] }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-600 dark:text-slate-300">
+        Placeholders are resolved immediately before SSH execution. Package placeholders are validated with the same package-name rules used by selected upgrades.
+      </p>
+      <div className="space-y-3">
+        {placeholders.map((placeholder) => (
+          <div key={placeholder.name} className="rounded-lg border border-border p-3">
+            <div className="font-mono text-sm text-slate-900 dark:text-slate-100">{placeholder.name}</div>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{placeholder.description}</p>
+            <pre className="mt-2 rounded bg-slate-900 px-3 py-2 text-xs text-slate-100 overflow-x-auto">{placeholder.example}</pre>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-lg border border-border p-3 text-sm text-slate-600 dark:text-slate-300">
+        Parser regexes for custom package managers should use named groups such as <span className="font-mono">packageName</span>, <span className="font-mono">currentVersion</span>, <span className="font-mono">newVersion</span>, <span className="font-mono">architecture</span>, and <span className="font-mono">repository</span>.
+      </div>
+    </div>
+  );
+}
+
+function PackageManagerEditor({
+  draft,
+  setDraft,
+  onSave,
+  onCancel,
+  busy,
+}: {
+  draft: { name: string; label: string; color: string };
+  setDraft: (draft: { name: string; label: string; color: string }) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className={labelClass}>Manager Key</label>
+          <input
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            className={inputClass}
+            placeholder="custom-pm"
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Display Label</label>
+          <input
+            value={draft.label}
+            onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+            className={inputClass}
+            placeholder="Custom PM"
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Color</label>
+          <input
+            value={draft.color}
+            onChange={(e) => setDraft({ ...draft, color: e.target.value })}
+            className={inputClass}
+            placeholder="#2563eb"
+          />
+        </div>
+      </div>
+      <div className="flex justify-end gap-3">
+        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
+          Cancel
+        </button>
+        <button type="button" disabled={busy} onClick={onSave} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+          {busy ? <span className="spinner spinner-sm" /> : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Scripts() {
   const { data, isLoading } = useScripts();
-  const copyScript = useCopyScript();
-  const copyBuiltinPackageManager = useCopyBuiltinPackageManager();
   const createScript = useCreateScript();
   const updateScript = useUpdateScript();
   const deleteScript = useDeleteScript();
@@ -664,14 +736,9 @@ export default function Scripts() {
   const [sourceFilter, setSourceFilter] = useState<"all" | "builtin" | "custom">("all");
   const [editing, setEditing] = useState<ScriptDefinition | null>(null);
   const [showHelp, setShowHelp] = useState(false);
-  const [showCopyManager, setShowCopyManager] = useState(false);
+  const [showPackageManager, setShowPackageManager] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ScriptDefinition | null>(null);
-  const [copyManagerDraft, setCopyManagerDraft] = useState({
-    sourceManager: "apt",
-    name: "custom-apt",
-    label: "Custom APT",
-    color: "#2563eb",
-  });
+  const [packageManagerDraft, setPackageManagerDraft] = useState(emptyPackageManager());
 
   const scripts = useMemo(() => {
     const all = data?.scripts ?? [];
@@ -703,39 +770,6 @@ export default function Scripts() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [data]);
 
-  const handleCopy = (script: ScriptDefinition) => {
-    copyScript.mutate(script.id, {
-      onSuccess: () => addToast("Script copied", "success"),
-      onError: (err) => addToast(err.message, "danger"),
-    });
-  };
-
-  const setCopyManagerSource = (sourceManager: string) => {
-    setCopyManagerDraft({
-      sourceManager,
-      name: `custom-${sourceManager}`,
-      label: `Custom ${sourceManager.toUpperCase()}`,
-      color: "#2563eb",
-    });
-  };
-
-  const handleCopyManager = () => {
-    copyBuiltinPackageManager.mutate(
-      {
-        ...copyManagerDraft,
-        color: copyManagerDraft.color.trim() || null,
-      },
-      {
-        onSuccess: (result) => {
-          setShowCopyManager(false);
-          setSourceFilter("custom");
-          addToast(`Copied ${result.scripts.length} scripts`, "success");
-        },
-        onError: (err) => addToast(err.message, "danger"),
-      },
-    );
-  };
-
   const saveScript = (script: ScriptDefinition) => {
     const callbacks = {
       onSuccess: () => {
@@ -751,18 +785,30 @@ export default function Scripts() {
     }
   };
 
-  const handleSave = (payload: {
-    script: ScriptDefinition;
-    newPackageManager?: { name: string; label: string; color?: string | null };
-  }) => {
-    if (!payload.newPackageManager) {
-      saveScript(payload.script);
-      return;
-    }
-    createPackageManager.mutate(payload.newPackageManager, {
-      onSuccess: () => saveScript(payload.script),
-      onError: (err) => addToast(err.message, "danger"),
-    });
+  const handleSavePackageManager = () => {
+    createPackageManager.mutate(
+      {
+        ...packageManagerDraft,
+        color: packageManagerDraft.color.trim() || null,
+      },
+      {
+        onSuccess: () => {
+          setShowPackageManager(false);
+          setPackageManagerDraft(emptyPackageManager());
+          addToast("Package manager saved", "success");
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
+
+  const openPackageManagerModal = () => {
+    setPackageManagerDraft(emptyPackageManager());
+    setShowPackageManager(true);
+  };
+
+  const handleCopy = (script: ScriptDefinition) => {
+    setEditing(copyScriptDraft(script));
   };
 
   return (
@@ -770,11 +816,8 @@ export default function Scripts() {
       title="Scripts"
       actions={
         <>
-          <button onClick={() => setShowHelp(true)} className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
-            Placeholder Help
-          </button>
-          <button onClick={() => setShowCopyManager(true)} className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
-            Copy Built-In
+          <button onClick={openPackageManagerModal} className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
+            New Package Manager
           </button>
           <button onClick={() => setEditing(emptyScript())} className="px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white">
             New Script
@@ -806,10 +849,10 @@ export default function Scripts() {
                 {sourceFilter === "custom" && (
                   <button
                     type="button"
-                    onClick={() => setShowCopyManager(true)}
+                    onClick={() => setEditing(emptyScript())}
                     className="mt-3 px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200"
                   >
-                    Copy Built-In
+                    New Script
                   </button>
                 )}
               </div>
@@ -822,17 +865,42 @@ export default function Scripts() {
                       <h2 className="text-sm font-semibold truncate">{script.name}</h2>
                       <Badge variant={script.readonly ? "muted" : "info"} small>{script.readonly ? "built-in" : "custom"}</Badge>
                       {script.pkgManager ? <Badge variant="muted" small>{script.pkgManager}</Badge> : null}
+                      {scriptUsesSudo(script) ? <Badge variant="warning" small>sudo</Badge> : null}
                     </div>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       {OPERATION_LABELS[script.operation]} · {script.description || "No description"}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2">
-                    <button onClick={() => handleCopy(script)} className="px-2.5 py-1.5 text-xs rounded border border-border hover:bg-slate-50 dark:hover:bg-slate-700">Copy</button>
+                    <button
+                      onClick={() => handleCopy(script)}
+                      className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                      title="Copy script"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </button>
                     {!script.readonly && (
                       <>
-                        <button onClick={() => setEditing(script)} className="px-2.5 py-1.5 text-xs rounded border border-border hover:bg-slate-50 dark:hover:bg-slate-700">Edit</button>
-                        <button onClick={() => setDeleteTarget(script)} className="px-2.5 py-1.5 text-xs rounded border border-red-200/70 text-red-600 hover:bg-red-50 dark:border-red-400/30 dark:text-red-300 dark:hover:bg-red-400/10 transition-colors">Delete</button>
+                        <button
+                          onClick={() => setEditing(script)}
+                          className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                          title="Edit script"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget(script)}
+                          className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
+                          title="Delete script"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
                       </>
                     )}
                   </div>
@@ -856,82 +924,26 @@ export default function Scripts() {
           <ScriptEditor
             script={editing}
             packageManagers={packageManagerOptions}
-            onSave={handleSave}
+            onSave={saveScript}
             onCancel={() => setEditing(null)}
+            onShowHelp={() => setShowHelp(true)}
             busy={createScript.isPending || updateScript.isPending || createPackageManager.isPending}
           />
         )}
       </Modal>
 
       <Modal open={showHelp} onClose={() => setShowHelp(false)} title="Script Placeholders">
-        <div className="space-y-4">
-          <p className="text-sm text-slate-600 dark:text-slate-300">
-            Placeholders are resolved immediately before SSH execution. Package placeholders are validated with the same package-name rules used by selected upgrades.
-          </p>
-          <div className="space-y-3">
-            {(data?.placeholders ?? []).map((placeholder) => (
-              <div key={placeholder.name} className="rounded-lg border border-border p-3">
-                <div className="font-mono text-sm text-slate-900 dark:text-slate-100">{placeholder.name}</div>
-                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{placeholder.description}</p>
-                <pre className="mt-2 rounded bg-slate-900 px-3 py-2 text-xs text-slate-100 overflow-x-auto">{placeholder.example}</pre>
-              </div>
-            ))}
-          </div>
-          <div className="rounded-lg border border-border p-3 text-sm text-slate-600 dark:text-slate-300">
-            Parser regexes for custom package managers should use named groups such as <span className="font-mono">packageName</span>, <span className="font-mono">currentVersion</span>, <span className="font-mono">newVersion</span>, <span className="font-mono">architecture</span>, and <span className="font-mono">repository</span>.
-          </div>
-        </div>
+        <PlaceholderHelpContent placeholders={data?.placeholders ?? []} />
       </Modal>
 
-      <Modal open={showCopyManager} onClose={() => setShowCopyManager(false)} title="Copy Built-In Package Manager" dismissible={!copyBuiltinPackageManager.isPending}>
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>Source</label>
-              <select
-                value={copyManagerDraft.sourceManager}
-                onChange={(e) => setCopyManagerSource(e.target.value)}
-                className={inputClass}
-              >
-                {BUILTIN_PACKAGE_MANAGERS.map((manager) => (
-                  <option key={manager} value={manager}>{manager.toUpperCase()}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={labelClass}>New Manager Key</label>
-              <input
-                value={copyManagerDraft.name}
-                onChange={(e) => setCopyManagerDraft({ ...copyManagerDraft, name: e.target.value })}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Display Label</label>
-              <input
-                value={copyManagerDraft.label}
-                onChange={(e) => setCopyManagerDraft({ ...copyManagerDraft, label: e.target.value })}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Color</label>
-              <input
-                value={copyManagerDraft.color}
-                onChange={(e) => setCopyManagerDraft({ ...copyManagerDraft, color: e.target.value })}
-                className={inputClass}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-3">
-            <button type="button" onClick={() => setShowCopyManager(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
-              Cancel
-            </button>
-            <button type="button" disabled={copyBuiltinPackageManager.isPending} onClick={handleCopyManager} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-              {copyBuiltinPackageManager.isPending ? <span className="spinner spinner-sm" /> : "Copy"}
-            </button>
-          </div>
-        </div>
+      <Modal open={showPackageManager} onClose={() => setShowPackageManager(false)} title="New Package Manager" dismissible={!createPackageManager.isPending}>
+        <PackageManagerEditor
+          draft={packageManagerDraft}
+          setDraft={setPackageManagerDraft}
+          onSave={handleSavePackageManager}
+          onCancel={() => setShowPackageManager(false)}
+          busy={createPackageManager.isPending}
+        />
       </Modal>
 
       <ConfirmDialog

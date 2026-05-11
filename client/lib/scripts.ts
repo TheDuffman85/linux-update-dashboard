@@ -78,17 +78,6 @@ export function useScripts() {
   });
 }
 
-export function useCopyScript() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiFetch<{ script: ScriptDefinition }>(`/scripts/${encodeURIComponent(id)}/copy`, {
-        method: "POST",
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
-  });
-}
-
 export function useCreateScript() {
   const qc = useQueryClient();
   return useMutation({
@@ -132,26 +121,6 @@ export function useCreatePackageManager() {
       parserConfig?: CustomParserConfig | null;
     }) =>
       apiFetch<{ manager: CustomPackageManagerDefinition }>("/scripts/package-managers", {
-        method: "POST",
-        body: JSON.stringify(manager),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
-  });
-}
-
-export function useCopyBuiltinPackageManager() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (manager: {
-      sourceManager: string;
-      name: string;
-      label: string;
-      color?: string | null;
-    }) =>
-      apiFetch<{
-        manager: CustomPackageManagerDefinition;
-        scripts: ScriptDefinition[];
-      }>("/scripts/package-managers/copy-builtin", {
         method: "POST",
         body: JSON.stringify(manager),
       }),
