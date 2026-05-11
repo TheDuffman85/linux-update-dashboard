@@ -7,7 +7,6 @@ import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
 import * as scriptService from "../services/script-service";
 import { getSSHManager } from "../ssh/connection";
-import { detectPackageManagers } from "../ssh/detector";
 import { validatePackageName } from "../ssh/parsers/types";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
@@ -96,6 +95,15 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     )
   ) {
     return "disabledPkgManagers must be an array of strings";
+  }
+  if (
+    body.detectedPkgManagers !== undefined &&
+    (
+      !Array.isArray(body.detectedPkgManagers) ||
+      !body.detectedPkgManagers.every((value) => typeof value === "string")
+    )
+  ) {
+    return "detectedPkgManagers must be an array of strings";
   }
   const pkgManagerConfigError = validatePackageManagerConfigsInput(body.pkgManagerConfigs);
   if (pkgManagerConfigError) {
@@ -446,6 +454,7 @@ systems.get("/:id", (c) => {
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
     },
     commandReference: buildCommandReference({
+      id,
       pkgManager: (system.pkgManager as string | null) ?? null,
       detectedPkgManagers: (system.detectedPkgManagers as string | null) ?? null,
       disabledPkgManagers: (system.disabledPkgManagers as string | null) ?? null,
@@ -550,6 +559,9 @@ systems.post("/", async (c) => {
     const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
       ? body.disabledPkgManagers as string[]
       : undefined;
+    const detectedPkgManagers = Array.isArray(body.detectedPkgManagers)
+      ? body.detectedPkgManagers as string[]
+      : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
         ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
@@ -577,6 +589,7 @@ systems.post("/", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword,
       disabledPkgManagers,
+      detectedPkgManagers,
       pkgManagerConfigs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
@@ -662,6 +675,9 @@ systems.put("/:id", async (c) => {
     const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
       ? body.disabledPkgManagers as string[]
       : undefined;
+    const detectedPkgManagers = Array.isArray(body.detectedPkgManagers)
+      ? body.detectedPkgManagers as string[]
+      : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
         ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
@@ -689,6 +705,7 @@ systems.put("/:id", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword,
       disabledPkgManagers,
+      detectedPkgManagers,
       pkgManagerConfigs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
@@ -907,7 +924,11 @@ systems.post("/test-connection", async (c) => {
         approvedHostKeys,
       });
       try {
-        const detectedManagers = await detectPackageManagers(sshManager, conn);
+        const detectedManagers = await scriptService.detectPackageManagersWithScripts(
+          systemId ?? 0,
+          sshManager,
+          conn,
+        );
         return c.json({ ...result, detectedManagers, validatedConfigToken });
       } finally {
         sshManager.disconnect(conn);

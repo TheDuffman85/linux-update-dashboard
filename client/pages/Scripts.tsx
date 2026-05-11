@@ -7,6 +7,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../context/ToastContext";
 import {
   useCopyScript,
+  useCopyBuiltinPackageManager,
   useCreatePackageManager,
   useCreateScript,
   useDeleteScript,
@@ -653,6 +654,7 @@ function ScriptEditor({
 export default function Scripts() {
   const { data, isLoading } = useScripts();
   const copyScript = useCopyScript();
+  const copyBuiltinPackageManager = useCopyBuiltinPackageManager();
   const createScript = useCreateScript();
   const updateScript = useUpdateScript();
   const deleteScript = useDeleteScript();
@@ -662,7 +664,14 @@ export default function Scripts() {
   const [sourceFilter, setSourceFilter] = useState<"all" | "builtin" | "custom">("all");
   const [editing, setEditing] = useState<ScriptDefinition | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showCopyManager, setShowCopyManager] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ScriptDefinition | null>(null);
+  const [copyManagerDraft, setCopyManagerDraft] = useState({
+    sourceManager: "apt",
+    name: "custom-apt",
+    label: "Custom APT",
+    color: "#2563eb",
+  });
 
   const scripts = useMemo(() => {
     const all = data?.scripts ?? [];
@@ -699,6 +708,32 @@ export default function Scripts() {
       onSuccess: () => addToast("Script copied", "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
+  };
+
+  const setCopyManagerSource = (sourceManager: string) => {
+    setCopyManagerDraft({
+      sourceManager,
+      name: `custom-${sourceManager}`,
+      label: `Custom ${sourceManager.toUpperCase()}`,
+      color: "#2563eb",
+    });
+  };
+
+  const handleCopyManager = () => {
+    copyBuiltinPackageManager.mutate(
+      {
+        ...copyManagerDraft,
+        color: copyManagerDraft.color.trim() || null,
+      },
+      {
+        onSuccess: (result) => {
+          setShowCopyManager(false);
+          setSourceFilter("custom");
+          addToast(`Copied ${result.scripts.length} scripts`, "success");
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
   };
 
   const saveScript = (script: ScriptDefinition) => {
@@ -738,6 +773,9 @@ export default function Scripts() {
           <button onClick={() => setShowHelp(true)} className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
             Placeholder Help
           </button>
+          <button onClick={() => setShowCopyManager(true)} className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
+            Copy Built-In
+          </button>
           <button onClick={() => setEditing(emptyScript())} className="px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white">
             New Script
           </button>
@@ -762,6 +800,20 @@ export default function Scripts() {
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {scripts.length === 0 && (
+              <div className="xl:col-span-2 rounded-lg border border-border p-6 text-sm text-slate-500 dark:text-slate-400">
+                <div>No scripts match these filters.</div>
+                {sourceFilter === "custom" && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCopyManager(true)}
+                    className="mt-3 px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200"
+                  >
+                    Copy Built-In
+                  </button>
+                )}
+              </div>
+            )}
             {scripts.map((script) => (
               <div key={script.id} className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -827,6 +879,57 @@ export default function Scripts() {
           </div>
           <div className="rounded-lg border border-border p-3 text-sm text-slate-600 dark:text-slate-300">
             Parser regexes for custom package managers should use named groups such as <span className="font-mono">packageName</span>, <span className="font-mono">currentVersion</span>, <span className="font-mono">newVersion</span>, <span className="font-mono">architecture</span>, and <span className="font-mono">repository</span>.
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={showCopyManager} onClose={() => setShowCopyManager(false)} title="Copy Built-In Package Manager" dismissible={!copyBuiltinPackageManager.isPending}>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Source</label>
+              <select
+                value={copyManagerDraft.sourceManager}
+                onChange={(e) => setCopyManagerSource(e.target.value)}
+                className={inputClass}
+              >
+                {BUILTIN_PACKAGE_MANAGERS.map((manager) => (
+                  <option key={manager} value={manager}>{manager.toUpperCase()}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>New Manager Key</label>
+              <input
+                value={copyManagerDraft.name}
+                onChange={(e) => setCopyManagerDraft({ ...copyManagerDraft, name: e.target.value })}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Display Label</label>
+              <input
+                value={copyManagerDraft.label}
+                onChange={(e) => setCopyManagerDraft({ ...copyManagerDraft, label: e.target.value })}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Color</label>
+              <input
+                value={copyManagerDraft.color}
+                onChange={(e) => setCopyManagerDraft({ ...copyManagerDraft, color: e.target.value })}
+                className={inputClass}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setShowCopyManager(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
+              Cancel
+            </button>
+            <button type="button" disabled={copyBuiltinPackageManager.isPending} onClick={handleCopyManager} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+              {copyBuiltinPackageManager.isPending ? <span className="spinner spinner-sm" /> : "Copy"}
+            </button>
           </div>
         </div>
       </Modal>

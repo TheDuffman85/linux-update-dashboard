@@ -1,4 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { randomBytes } from "crypto";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { buildCommandReference, normalizeCommandForSudoers } from "../../server/services/command-reference";
 import { getPackageManagerDetectionCommands } from "../../server/ssh/detector";
 import { aptParser } from "../../server/ssh/parsers/apt";
@@ -9,6 +13,9 @@ import { apkParser } from "../../server/ssh/parsers/apk";
 import { flatpakParser } from "../../server/ssh/parsers/flatpak";
 import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
 import { getRebootCommand } from "../../server/ssh/reboot";
+import { closeDatabase, initDatabase } from "../../server/db";
+import { initEncryptor } from "../../server/security";
+import { copyBuiltinPackageManager, createCustomPackageManager, createScript } from "../../server/services/script-service";
 
 function createSystem(overrides?: Partial<{
   pkgManager: string | null;
@@ -160,5 +167,79 @@ describe("buildCommandReference", () => {
     expect(reference.sudoers.some((entry) => entry.command === normalized && entry.purpose === aptUpgrade!.purpose)).toBe(true);
 
     expect(reference.sudoers.some((entry) => entry.category === "check" && entry.command.includes("apt list --upgradable"))).toBe(false);
+  });
+});
+
+describe("buildCommandReference with custom scripts", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-command-reference-"));
+    initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("includes custom package-manager commands through runtime scripts", () => {
+    copyBuiltinPackageManager({
+      sourceManager: "apt",
+      name: "custom-apt",
+      label: "Custom APT",
+    });
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    createScript({
+      name: "Detect Linuxbrew",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Detect Linuxbrew", command: "command -v brew >/dev/null 2>&1 && echo 'found'" }],
+    });
+    createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check Linuxbrew", command: "brew outdated" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+->\\s+(?<newVersion>\\S+)$",
+      },
+    });
+
+    const reference = buildCommandReference(createSystem({
+      pkgManager: "apt",
+      detectedPkgManagers: JSON.stringify(["apt", "custom-apt", "brewlinux"]),
+      disabledPkgManagers: JSON.stringify([]),
+      id: 42,
+    } as Parameters<typeof createSystem>[0] & { id: number }));
+
+    expect(reference.exact.some((entry) =>
+      entry.category === "detection" &&
+      entry.pkgManager === "custom-apt" &&
+      entry.command.includes("command -v apt")
+    )).toBe(true);
+    expect(reference.exact.some((entry) =>
+      entry.category === "check" &&
+      entry.pkgManager === "custom-apt" &&
+      entry.command.includes("apt list --upgradable")
+    )).toBe(true);
+    expect(reference.exact.some((entry) =>
+      entry.category === "upgrade_selected" &&
+      entry.pkgManager === "custom-apt" &&
+      entry.command.includes("install --only-upgrade -y <package1> <package2>")
+    )).toBe(true);
+    expect(reference.exact.some((entry) =>
+      entry.category === "detection" &&
+      entry.pkgManager === "brewlinux" &&
+      entry.command.includes("command -v brew")
+    )).toBe(true);
+    expect(reference.exact.some((entry) =>
+      entry.category === "check" &&
+      entry.pkgManager === "brewlinux" &&
+      entry.command === "brew outdated"
+    )).toBe(true);
   });
 });

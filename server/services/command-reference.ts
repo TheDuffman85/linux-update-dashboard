@@ -6,6 +6,7 @@ import { getPackageManagerDetectionCommands } from "../ssh/detector";
 import { getParser } from "../ssh/parsers";
 import { getRebootCommand } from "../ssh/reboot";
 import { SYSTEM_INFO_CMD } from "../ssh/system-info";
+import { resolveRuntimeSteps } from "./script-service";
 import * as systemService from "./system-service";
 
 export type PotentialCommandCategory =
@@ -32,6 +33,7 @@ export interface CommandReference {
 }
 
 interface CommandReferenceSystem {
+  id?: number | null;
   pkgManager: string | null;
   detectedPkgManagers: string | null;
   disabledPkgManagers: string | null;
@@ -121,11 +123,122 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
   });
 
   const activeManagers = systemService.getActivePkgManagers(system);
+  if (system.id && system.id > 0) {
+    for (const manager of activeManagers) {
+      if (exact.some((entry) => entry.id === `detection:${manager}`)) continue;
+      const detectionStep = resolveRuntimeSteps({
+        systemId: system.id,
+        operation: "detect",
+        pkgManager: manager,
+      })[0];
+      if (!detectionStep) continue;
+      exact.push({
+        id: `detection:${manager}`,
+        category: "detection",
+        label: detectionStep.label || `Detect ${managerLabel(manager)}`,
+        purpose: `Checks whether ${managerLabel(manager)} is available on the remote system`,
+        pkgManager: manager,
+        command: detectionStep.command,
+      });
+    }
+  }
+
   for (const manager of activeManagers) {
+    const systemId = system.id ?? 0;
+    const config = getManagerConfig(configs, manager);
+    if (systemId > 0) {
+      const checkSteps = resolveRuntimeSteps({
+        systemId,
+        operation: "check_updates",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      });
+      for (const [index, step] of checkSteps.entries()) {
+        exact.push({
+          id: `check:${manager}:${index}`,
+          category: "check",
+          label: step.label || `Check ${managerLabel(manager)} updates`,
+          purpose: getCheckPurpose(step.label || "", manager),
+          pkgManager: manager,
+          command: normalizeCommandTemplate(step.command),
+        });
+      }
+
+      const upgradeAll = resolveRuntimeSteps({
+        systemId,
+        operation: "upgrade_all",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      })[0];
+      if (upgradeAll) {
+        exact.push({
+          id: `upgrade-all:${manager}`,
+          category: "upgrade_all",
+          label: `Upgrade all ${managerLabel(manager)} packages`,
+          purpose: `Installs all available ${managerLabel(manager)} updates for this system`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(upgradeAll.command),
+        });
+      }
+
+      const fullUpgrade = resolveRuntimeSteps({
+        systemId,
+        operation: "full_upgrade_all",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      })[0];
+      if (fullUpgrade) {
+        exact.push({
+          id: `full-upgrade:${manager}`,
+          category: "full_upgrade_all",
+          label: `Run ${managerLabel(manager)} full upgrade`,
+          purpose: `Runs the fuller ${managerLabel(manager)} upgrade mode for this system`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(fullUpgrade.command),
+        });
+      }
+
+      const upgradeOne = resolveRuntimeSteps({
+        systemId,
+        operation: "upgrade_selected",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+        packages: [SINGLE_PACKAGE_PLACEHOLDER],
+      })[0];
+      if (upgradeOne) {
+        exact.push({
+          id: `upgrade-selected-single:${manager}`,
+          category: "upgrade_selected",
+          label: `Upgrade one selected ${managerLabel(manager)} package`,
+          purpose: `Upgrades a single selected package via ${managerLabel(manager)}`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(upgradeOne.command),
+        });
+      }
+
+      const upgradeMultiple = resolveRuntimeSteps({
+        systemId,
+        operation: "upgrade_selected",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+        packages: [MULTI_PACKAGE_PLACEHOLDER_ONE, MULTI_PACKAGE_PLACEHOLDER_TWO],
+      })[0];
+      if (upgradeMultiple) {
+        exact.push({
+          id: `upgrade-selected-multiple:${manager}`,
+          category: "upgrade_selected",
+          label: `Upgrade multiple selected ${managerLabel(manager)} packages`,
+          purpose: `Upgrades multiple selected packages via ${managerLabel(manager)}`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(upgradeMultiple.command),
+        });
+      }
+      continue;
+    }
+
     const parser = getParser(manager);
     if (!parser) continue;
 
-    const config = getManagerConfig(configs, manager);
     const checkCommands = parser.getCheckCommands(config).map(normalizeCommandTemplate);
     const checkLabels = parser.getCheckCommandLabels?.(config) ?? [];
 

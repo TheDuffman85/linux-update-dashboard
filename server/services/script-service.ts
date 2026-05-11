@@ -90,6 +90,11 @@ export interface PlaceholderHelpEntry {
   example: string;
 }
 
+export interface CopiedPackageManagerResult {
+  manager: CustomPackageManagerDefinition;
+  scripts: ScriptDefinition[];
+}
+
 const BUILTIN_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
 const MANAGER_LABELS: Record<string, string> = {
   apt: "APT",
@@ -479,6 +484,42 @@ export function createCustomPackageManager(input: {
   return serializeCustomPackageManager(row);
 }
 
+export function copyBuiltinPackageManager(input: {
+  sourceManager: string;
+  name: string;
+  label: string;
+  color?: string | null;
+}): CopiedPackageManagerResult {
+  const sourceManager = input.sourceManager.trim().toLowerCase();
+  if (!BUILTIN_MANAGER_ORDER.includes(sourceManager)) {
+    throw new Error("sourceManager must be a built-in package manager");
+  }
+
+  const sourceScripts = getBuiltinScripts().filter((script) =>
+    script.type === "package_manager" && script.pkgManager === sourceManager
+  );
+  if (!sourceScripts.length) {
+    throw new Error(`No built-in scripts found for ${sourceManager}`);
+  }
+
+  const manager = createCustomPackageManager({
+    name: input.name,
+    label: input.label,
+    color: input.color,
+  });
+  const scripts = sourceScripts.map((script) => createScript({
+    ...script,
+    id: undefined,
+    readonly: false,
+    name: `${manager.label} ${script.operation}`,
+    pkgManager: manager.name,
+    parserConfig: null,
+    sourceScriptId: script.id,
+  }));
+
+  return { manager, scripts };
+}
+
 export function getSystemOverrides(systemId: number): Record<string, string> {
   const rows = getDb()
     .select()
@@ -573,11 +614,22 @@ export function resolveRuntimeSteps(args: {
     const parser = args.pkgManager ? getParser(args.pkgManager) : null;
     if (args.operation === "detect" && args.pkgManager) {
       const command = getPackageManagerDetectionCommands().find((entry) => entry.name === args.pkgManager)?.command;
-      return command ? [{ label: `Detect ${managerLabel(args.pkgManager)}`, command }] : [];
+      return command
+        ? [{ label: `Detect ${managerLabel(args.pkgManager)}`, command }]
+        : runtimeBuiltin.steps;
     }
     if (args.operation === "system_info") return [{ label: "Collect system information", command: SYSTEM_INFO_CMD }];
     if (args.operation === "reboot") return [{ label: "Reboot system", command: getRebootCommand() }];
-    if (!parser) return runtimeBuiltin.steps;
+    if (!parser) {
+      return runtimeBuiltin.steps.map((step) => ({
+        label: step.label,
+        command: renderCommandTemplate(step.command, {
+          pkgManager: args.pkgManager,
+          packages: args.packages,
+          config: args.pkgManagerConfig,
+        }),
+      }));
+    }
     if (args.operation === "check_updates") {
       const commands = parser.getCheckCommands(args.pkgManagerConfig);
       const labels = parser.getCheckCommandLabels?.(args.pkgManagerConfig) ?? [];
@@ -665,6 +717,29 @@ export function parseCustomUpdates(
     });
   }
   return updates.filter((update) => update.newVersion);
+}
+
+export function parseUpdatesWithScript(
+  pkgManager: string,
+  script: ScriptDefinition | null | undefined,
+  commandResults: CheckCommandResult[],
+): ParsedUpdate[] {
+  const runtimeBuiltin = script ? getRuntimeBuiltinScript(script) : null;
+  const sourceParser = runtimeBuiltin?.pkgManager
+    ? getParser(runtimeBuiltin.pkgManager)
+    : undefined;
+  if (sourceParser) {
+    const last = commandResults[commandResults.length - 1] ?? {
+      command: "",
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    };
+    return sourceParser.parseCheckOutput(last.stdout, last.stderr, last.exitCode, {
+      commandResults,
+    }).map((update) => ({ ...update, pkgManager }));
+  }
+  return parseCustomUpdates(pkgManager, script?.parserConfig, commandResults);
 }
 
 export function getCustomCheckErrorMessage(

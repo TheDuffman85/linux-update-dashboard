@@ -31,7 +31,7 @@ import { syncSystemNotificationHash } from "./notification-service";
 import {
   getCustomCheckErrorMessage,
   isCustomPackageManager,
-  parseCustomUpdates,
+  parseUpdatesWithScript,
   resolveRuntimeSteps,
   resolveScript,
 } from "./script-service";
@@ -769,7 +769,7 @@ async function checkUpdatesUnlocked(
           ? parser.parseCheckOutput(lastStdout, lastStderr, lastExitCode, {
               commandResults,
             })
-          : parseCustomUpdates(pmName, customScript?.parserConfig, commandResults);
+          : parseUpdatesWithScript(pmName, customScript, commandResults);
         allUpdates.push(...updates);
         successfulChecks++;
         successfulPkgManagers.push(pmName);

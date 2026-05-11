@@ -37,6 +37,7 @@ interface SystemFormData {
   validatedConfigToken?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  detectedPkgManagers?: string[];
   pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
@@ -55,6 +56,7 @@ const PACKAGE_MANAGER_LABELS: Record<string, string> = {
   flatpak: "Flatpak",
   snap: "Snap",
 };
+const PACKAGE_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
 
 function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
@@ -64,6 +66,15 @@ function isHostKeyErrorMessage(message: string | null | undefined): boolean {
   return /HostKeyVerificationError|SSH host key approval required|SSH host key verification failed/i.test(
     message ?? ""
   );
+}
+
+function sortPackageManagers(a: string, b: string): number {
+  const leftIndex = PACKAGE_MANAGER_ORDER.indexOf(a);
+  const rightIndex = PACKAGE_MANAGER_ORDER.indexOf(b);
+  if (leftIndex === -1 && rightIndex === -1) return a.localeCompare(b);
+  if (leftIndex === -1) return 1;
+  if (rightIndex === -1) return -1;
+  return leftIndex - rightIndex;
 }
 
 export function SystemForm({
@@ -207,16 +218,31 @@ export function SystemForm({
     });
   }, [hostKeyVerificationEnabled, approvedHostKey]);
 
+  const customPackageManagers = scriptsData?.packageManagers ?? [];
+  const customPackageManagerNames = new Set(customPackageManagers.map((manager) => manager.name));
+  const isManagerEnabled = (manager: string) => {
+    if (customPackageManagerNames.has(manager) && !detectedManagers.includes(manager)) {
+      return false;
+    }
+    return !disabledManagers.has(manager);
+  };
+
   const toggleManager = (manager: string) => {
+    const enabled = isManagerEnabled(manager);
     setDisabledManagers((prev) => {
       const next = new Set(prev);
-      if (next.has(manager)) {
-        next.delete(manager);
-      } else {
+      if (enabled) {
         next.add(manager);
+      } else {
+        next.delete(manager);
       }
       return next;
     });
+    if (customPackageManagerNames.has(manager) && !enabled) {
+      setDetectedManagers((prev) => (
+        prev.includes(manager) ? prev : [...prev, manager]
+      ));
+    }
   };
 
   const setManagerConfig = <T extends keyof PackageManagerConfigs>(
@@ -257,6 +283,7 @@ export function SystemForm({
       validatedConfigToken: validatedConfigToken || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: [...disabledManagers],
+      detectedPkgManagers: detectedManagers,
       pkgManagerConfigs: normalizePackageManagerConfigs(pkgManagerConfigs) ?? {},
       excludeFromUpgradeAll,
       hidden,
@@ -283,20 +310,22 @@ export function SystemForm({
   const visiblePackageManagers = Array.from(
     new Set([
       ...detectedManagers,
+      ...customPackageManagers.map((manager) => manager.name),
       ...Object.keys(pkgManagerConfigs),
       ...Object.keys(scriptOverrides)
         .map((key) => key.split("/")[0])
         .filter((manager) => manager && manager !== "system"),
     ]),
-  ).sort((a, b) => {
-    const order = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
-    const leftIndex = order.indexOf(a);
-    const rightIndex = order.indexOf(b);
-    if (leftIndex === -1 && rightIndex === -1) return a.localeCompare(b);
-    if (leftIndex === -1) return 1;
-    if (rightIndex === -1) return -1;
-    return leftIndex - rightIndex;
-  });
+  ).sort(sortPackageManagers);
+  const packageManagerLabels = new Map(
+    customPackageManagers.map((manager) => [manager.name, manager.label]),
+  );
+  const visibleScriptPackageManagers = Array.from(
+    new Set([
+      ...visiblePackageManagers,
+      ...customPackageManagers.map((manager) => manager.name),
+    ]),
+  ).sort(sortPackageManagers);
   const packageScriptOperations: ScriptOperation[] = [
     "detect",
     "check_updates",
@@ -834,8 +863,8 @@ export function SystemForm({
             </div>
 
             {visiblePackageManagers.map((manager) => {
-              const enabled = !disabledManagers.has(manager);
-              const title = PACKAGE_MANAGER_LABELS[manager] ?? manager;
+              const enabled = isManagerEnabled(manager);
+              const title = PACKAGE_MANAGER_LABELS[manager] ?? packageManagerLabels.get(manager) ?? manager;
               const hasExtraSettings = (SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager);
 
               return (
@@ -1158,10 +1187,10 @@ export function SystemForm({
               </div>
             </div>
 
-            {visiblePackageManagers.map((manager) => (
+            {visibleScriptPackageManagers.map((manager) => (
               <div key={`scripts-${manager}`} className="rounded-lg border border-border p-3 space-y-3">
                 <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                  {PACKAGE_MANAGER_LABELS[manager] ?? manager}
+                  {PACKAGE_MANAGER_LABELS[manager] ?? packageManagerLabels.get(manager) ?? manager}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {packageScriptOperations.map((operation) => {

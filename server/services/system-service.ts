@@ -78,6 +78,23 @@ function normalizeStringList(value: string[] | string | null | undefined): strin
   return Array.from(new Set(raw.filter((entry): entry is string => typeof entry === "string"))).sort();
 }
 
+function normalizeStringListPreservingOrder(value: string[] | string | null | undefined): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.length > 0
+      ? (() => {
+          try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+
+  return Array.from(new Set(raw.filter((entry): entry is string => typeof entry === "string")));
+}
+
 export function deriveHostKeyStatus(system: {
   hostKeyVerificationEnabled?: number | null;
   trustedHostKey?: string | null;
@@ -245,6 +262,7 @@ export function createSystem(data: {
   hostKeyVerificationEnabled?: boolean;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  detectedPkgManagers?: string[];
   pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
@@ -293,6 +311,11 @@ export function createSystem(data: {
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
+  if (data.detectedPkgManagers !== undefined) {
+    const detectedPkgManagers = normalizeStringListPreservingOrder(data.detectedPkgManagers);
+    values.detectedPkgManagers = JSON.stringify(detectedPkgManagers);
+    values.pkgManager = detectedPkgManagers[0] ?? null;
+  }
   if (data.pkgManagerConfigs !== undefined) {
     values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
   }
@@ -338,6 +361,7 @@ export function updateSystem(
     hostKeyVerificationEnabled?: boolean;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
+    detectedPkgManagers?: string[];
     pkgManagerConfigs?: PackageManagerConfigs | null;
     autoHideKeptBackUpdates?: boolean;
     excludeFromUpgradeAll?: boolean;
@@ -367,6 +391,10 @@ export function updateSystem(
     data.disabledPkgManagers !== undefined &&
     JSON.stringify(normalizeStringList(data.disabledPkgManagers)) !==
       JSON.stringify(normalizeStringList(existing.disabledPkgManagers));
+  const detectedPkgManagersChanged =
+    data.detectedPkgManagers !== undefined &&
+    JSON.stringify(normalizeStringList(data.detectedPkgManagers)) !==
+      JSON.stringify(normalizeStringList(existing.detectedPkgManagers));
 
   const values: Record<string, unknown> = {
     name: data.name,
@@ -384,6 +412,11 @@ export function updateSystem(
   }
   if (data.disabledPkgManagers !== undefined) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
+  }
+  if (data.detectedPkgManagers !== undefined) {
+    const detectedPkgManagers = normalizeStringListPreservingOrder(data.detectedPkgManagers);
+    values.detectedPkgManagers = JSON.stringify(detectedPkgManagers);
+    values.pkgManager = detectedPkgManagers[0] ?? null;
   }
   if (data.pkgManagerConfigs !== undefined) {
     values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
@@ -420,7 +453,7 @@ export function updateSystem(
       .set(values as Partial<typeof systems.$inferInsert>)
       .where(eq(systems.id, systemId))
       .run();
-    if (disabledPkgManagersChanged) {
+    if (disabledPkgManagersChanged || detectedPkgManagersChanged) {
       cacheService.invalidateCache(systemId);
     }
   } catch (error) {

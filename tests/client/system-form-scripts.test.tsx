@@ -1,0 +1,143 @@
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
+
+const {
+  mockUseCreateCredential,
+  mockUseCredentials,
+  mockUseRevokeHostKey,
+  mockUseSystems,
+  mockUseTestConnection,
+  mockUseScripts,
+  mockUseToast,
+} = vi.hoisted(() => ({
+  mockUseCreateCredential: vi.fn(),
+  mockUseCredentials: vi.fn(),
+  mockUseRevokeHostKey: vi.fn(),
+  mockUseSystems: vi.fn(),
+  mockUseTestConnection: vi.fn(),
+  mockUseScripts: vi.fn(),
+  mockUseToast: vi.fn(),
+}));
+
+vi.mock("../../client/lib/credentials", () => ({
+  useCreateCredential: mockUseCreateCredential,
+  useCredentials: mockUseCredentials,
+}));
+
+vi.mock("../../client/lib/systems", () => ({
+  useRevokeHostKey: mockUseRevokeHostKey,
+  useSystems: mockUseSystems,
+  useTestConnection: mockUseTestConnection,
+}));
+
+vi.mock("../../client/lib/scripts", async () => {
+  const actual = await vi.importActual<typeof import("../../client/lib/scripts")>(
+    "../../client/lib/scripts",
+  );
+  return {
+    ...actual,
+    useScripts: mockUseScripts,
+  };
+});
+
+vi.mock("../../client/context/ToastContext", () => ({
+  useToast: mockUseToast,
+}));
+
+vi.mock("../../client/components/Modal", () => ({
+  Modal: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock("../../client/components/ConfirmDialog", () => ({
+  ConfirmDialog: () => null,
+}));
+
+vi.mock("../../client/components/credentials/CredentialForm", () => ({
+  CredentialForm: () => null,
+}));
+
+vi.mock("../../client/components/Badge", () => ({
+  Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+}));
+
+import { SystemForm } from "../../client/components/systems/SystemForm";
+import type { ScriptOperation } from "../../client/lib/scripts";
+
+const customAptOperations: ScriptOperation[] = [
+  "detect",
+  "check_updates",
+  "upgrade_all",
+  "full_upgrade_all",
+  "upgrade_selected",
+];
+
+describe("SystemForm script operations", () => {
+  beforeEach(() => {
+    mockUseCreateCredential.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseCredentials.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          name: "SSH credential",
+          kind: "usernamePassword",
+        },
+      ],
+    });
+    mockUseRevokeHostKey.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseSystems.mockReturnValue({ data: [] });
+    mockUseTestConnection.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseToast.mockReturnValue({ addToast: vi.fn() });
+    mockUseScripts.mockReturnValue({
+      data: {
+        packageManagers: [
+          {
+            id: 1,
+            name: "custom-apt",
+            label: "Custom APT",
+            color: "#2563eb",
+            parserConfig: null,
+          },
+        ],
+        scripts: customAptOperations.map((operation) => ({
+          id: `custom:${operation}`,
+          readonly: false,
+          name: `Custom APT ${operation}`,
+          description: null,
+          type: "package_manager",
+          operation,
+          pkgManager: "custom-apt",
+          steps: [{ label: "Run", command: "apt-get --version" }],
+          parserConfig: null,
+          systemInfoConfig: null,
+          sourceScriptId: `builtin:apt:${operation}`,
+        })),
+        placeholders: [],
+      },
+    });
+  });
+
+  test("renders custom package-manager operation selectors even before overrides exist", () => {
+    const html = renderToStaticMarkup(
+      <SystemForm
+        initial={{
+          name: "Debian",
+          hostname: "debian.local",
+          port: 22,
+          credentialId: 1,
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          scriptOverrides: {},
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Custom APT");
+    expect(html).toContain("Saved config is shown here even though this package manager is not currently detected.");
+    for (const operation of customAptOperations) {
+      expect(html).toContain(`Custom APT ${operation}`);
+    }
+  });
+});

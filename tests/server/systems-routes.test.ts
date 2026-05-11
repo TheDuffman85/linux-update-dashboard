@@ -1322,6 +1322,42 @@ describe("systems reorder route", () => {
     expect(updated?.disabledPkgManagers).toBe("[]");
   });
 
+  test("allows enabling custom package managers on update", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Custom PM",
+      hostname: "custom-pm.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+      detectedPkgManagers: JSON.stringify(["apt"]),
+      disabledPkgManagers: JSON.stringify([]),
+    }).returning({ id: systems.id }).get().id;
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Custom PM",
+        hostname: "custom-pm.local",
+        port: 22,
+        credentialId,
+        detectedPkgManagers: ["apt", "custom-apt"],
+        disabledPkgManagers: [],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const updated = db.select().from(systems).where(eq(systems.id, systemId)).get();
+    expect(updated?.detectedPkgManagers).toBe(JSON.stringify(["apt", "custom-apt"]));
+    expect(updated?.disabledPkgManagers).toBe("[]");
+  });
+
   test("clears cached updates when disabled package managers change", async () => {
     const db = getDb();
     const credentialId = createSystemCredential("root");

@@ -210,6 +210,7 @@ export function useCreateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
@@ -238,6 +239,7 @@ export function useUpdateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;

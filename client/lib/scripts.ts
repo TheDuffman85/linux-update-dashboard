@@ -138,3 +138,23 @@ export function useCreatePackageManager() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
   });
 }
+
+export function useCopyBuiltinPackageManager() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (manager: {
+      sourceManager: string;
+      name: string;
+      label: string;
+      color?: string | null;
+    }) =>
+      apiFetch<{
+        manager: CustomPackageManagerDefinition;
+        scripts: ScriptDefinition[];
+      }>("/scripts/package-managers/copy-builtin", {
+        method: "POST",
+        body: JSON.stringify(manager),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
+  });
+}
