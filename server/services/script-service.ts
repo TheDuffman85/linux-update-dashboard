@@ -467,6 +467,62 @@ export function createCustomPackageManager(input: {
   return serializeCustomPackageManager(row);
 }
 
+export function updateCustomPackageManager(name: string, input: {
+  label?: string;
+  color?: string | null;
+  parserConfig?: CustomParserConfig | null;
+}): CustomPackageManagerDefinition {
+  const normalizedName = name.trim().toLowerCase();
+  if (BUILTIN_MANAGER_ORDER.includes(normalizedName)) {
+    throw new Error("Built-in package managers are read-only");
+  }
+  const existing = getDb()
+    .select()
+    .from(customPackageManagers)
+    .where(eq(customPackageManagers.name, normalizedName))
+    .get();
+  if (!existing) throw new Error("Package manager not found");
+  if (!input.label?.trim()) throw new Error("Package manager label is required");
+
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const row = getDb()
+    .update(customPackageManagers)
+    .set({
+      label: input.label.trim(),
+      color: input.color?.trim() || null,
+      parserConfig: input.parserConfig ? JSON.stringify(input.parserConfig) : null,
+      updatedAt: now,
+    })
+    .where(eq(customPackageManagers.name, normalizedName))
+    .returning()
+    .get();
+  return serializeCustomPackageManager(row);
+}
+
+export function deleteCustomPackageManager(name: string): void {
+  const normalizedName = name.trim().toLowerCase();
+  if (BUILTIN_MANAGER_ORDER.includes(normalizedName)) {
+    throw new Error("Built-in package managers are read-only");
+  }
+  const existing = getDb()
+    .select()
+    .from(customPackageManagers)
+    .where(eq(customPackageManagers.name, normalizedName))
+    .get();
+  if (!existing) throw new Error("Package manager not found");
+  const script = getDb()
+    .select({ id: customScripts.id })
+    .from(customScripts)
+    .where(eq(customScripts.pkgManager, normalizedName))
+    .get();
+  if (script) throw new Error("Package manager is used by one or more scripts");
+
+  getDb()
+    .delete(customPackageManagers)
+    .where(eq(customPackageManagers.name, normalizedName))
+    .run();
+}
+
 export function getSystemOverrides(systemId: number): Record<string, string> {
   const rows = getDb()
     .select()

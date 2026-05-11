@@ -40,6 +40,30 @@ scripts.post("/package-managers", async (c) => {
   }
 });
 
+scripts.put("/package-managers/:name", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) return c.json({ error: "Invalid request body" }, 400);
+  try {
+    const manager = scriptService.updateCustomPackageManager(c.req.param("name"), {
+      label: typeof body.label === "string" ? body.label : "",
+      color: typeof body.color === "string" ? body.color : null,
+      parserConfig: asObject(body.parserConfig) as scriptService.CustomParserConfig | null,
+    });
+    return c.json({ manager });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Failed to update package manager" }, 400);
+  }
+});
+
+scripts.delete("/package-managers/:name", (c) => {
+  try {
+    scriptService.deleteCustomPackageManager(c.req.param("name"));
+    return c.json({ status: "ok" });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Failed to delete package manager" }, 400);
+  }
+});
+
 scripts.post("/validate-parser", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) return c.json({ error: "Invalid request body" }, 400);

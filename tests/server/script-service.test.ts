@@ -10,6 +10,7 @@ import {
   buildOperationKey,
   createCustomPackageManager,
   createScript,
+  deleteCustomPackageManager,
   deleteScript,
   getBuiltinScripts,
   listScripts,
@@ -17,6 +18,7 @@ import {
   renderCommandTemplate,
   resolveRuntimeSteps,
   setSystemOverrides,
+  updateCustomPackageManager,
 } from "../../server/services/script-service";
 
 describe("script service", () => {
@@ -194,5 +196,41 @@ describe("script service", () => {
         pkgManager: "brewlinux",
       }),
     ]);
+  });
+
+  test("updates custom package manager display metadata", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+
+    const updated = updateCustomPackageManager("brewlinux", {
+      label: "Homebrew",
+      color: "#0f766e",
+    });
+
+    expect(updated).toMatchObject({
+      name: "brewlinux",
+      label: "Homebrew",
+      color: "#0f766e",
+    });
+  });
+
+  test("does not delete custom package managers that still have scripts", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+    });
+
+    expect(() => deleteCustomPackageManager("brewlinux")).toThrow(/used by one or more scripts/);
+  });
+
+  test("deletes unused custom package managers", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+
+    deleteCustomPackageManager("brewlinux");
+
+    expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(false);
   });
 });

@@ -53,6 +53,8 @@ export interface CustomPackageManagerDefinition {
   label: string;
   color: string | null;
   parserConfig: CustomParserConfig | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface PlaceholderHelpEntry {
@@ -123,6 +125,40 @@ export function useCreatePackageManager() {
       apiFetch<{ manager: CustomPackageManagerDefinition }>("/scripts/package-managers", {
         method: "POST",
         body: JSON.stringify(manager),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
+  });
+}
+
+export function useUpdatePackageManager() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      ...manager
+    }: {
+      name: string;
+      label: string;
+      color?: string | null;
+      parserConfig?: CustomParserConfig | null;
+    }) =>
+      apiFetch<{ manager: CustomPackageManagerDefinition }>(
+        `/scripts/package-managers/${encodeURIComponent(name)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify(manager),
+        },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
+  });
+}
+
+export function useDeletePackageManager() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiFetch(`/scripts/package-managers/${encodeURIComponent(name)}`, {
+        method: "DELETE",
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
   });

@@ -8,9 +8,12 @@ import { useToast } from "../context/ToastContext";
 import {
   useCreatePackageManager,
   useCreateScript,
+  useDeletePackageManager,
   useDeleteScript,
   useScripts,
+  useUpdatePackageManager,
   useUpdateScript,
+  type CustomPackageManagerDefinition,
   type PlaceholderHelpEntry,
   type ScriptDefinition,
   type ScriptOperation,
@@ -38,6 +41,15 @@ const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
 ];
 const SYSTEM_OPERATIONS: ScriptOperation[] = ["system_info", "reboot"];
 const BUILTIN_PACKAGE_MANAGERS = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
+const BUILTIN_PACKAGE_MANAGER_LABELS: Record<string, string> = {
+  apt: "APT",
+  dnf: "DNF",
+  yum: "YUM",
+  pacman: "Pacman",
+  apk: "APK",
+  flatpak: "Flatpak",
+  snap: "Snap",
+};
 const PACKAGE_MANAGER_CONFIG_KEYS: Record<string, Array<{ key: string; description: string }>> = {
   apt: [
     { key: "defaultUpgradeMode", description: "upgrade or full-upgrade" },
@@ -81,6 +93,21 @@ const SYSTEM_INFO_FIELDS = [
 const inputClass =
   "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
 const labelClass = "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
+const PACKAGE_MANAGERS_PANEL_STORAGE_KEY = "scripts.packageManagersPanelOpen";
+
+type PackageManagerDraft = {
+  name: string;
+  label: string;
+  color: string;
+};
+
+type ManagedPackageManager = PackageManagerDraft & {
+  builtin: boolean;
+  registered: boolean;
+  scriptCount: number;
+  customScriptCount: number;
+  operations: ScriptOperation[];
+};
 
 function emptyScript(): ScriptDefinition {
   return {
@@ -98,7 +125,7 @@ function emptyScript(): ScriptDefinition {
   };
 }
 
-function emptyPackageManager() {
+function emptyPackageManager(): PackageManagerDraft {
   return {
     name: "",
     label: "",
@@ -151,6 +178,15 @@ function parseExitCodes(value: string): number[] | undefined {
     throw new Error("Exit codes must be comma-separated non-negative integers");
   }
   return codes;
+}
+
+function colorInputValue(value: string): string {
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#2563eb";
+}
+
+function readPackageManagersPanelOpen(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(PACKAGE_MANAGERS_PANEL_STORAGE_KEY) === "1";
 }
 
 function buildParserConfig(input: {
@@ -396,7 +432,7 @@ function ScriptEditor({
             >
               {packageManagers.map((manager) => (
                 <option key={manager.name} value={manager.name}>
-                  {manager.label} ({manager.name})
+                  {manager.label}
                 </option>
               ))}
             </select>
@@ -675,12 +711,14 @@ function PackageManagerEditor({
   onSave,
   onCancel,
   busy,
+  editing,
 }: {
-  draft: { name: string; label: string; color: string };
-  setDraft: (draft: { name: string; label: string; color: string }) => void;
+  draft: PackageManagerDraft;
+  setDraft: (draft: PackageManagerDraft) => void;
   onSave: () => void;
   onCancel: () => void;
   busy?: boolean;
+  editing?: boolean;
 }) {
   return (
     <div className="space-y-4">
@@ -692,7 +730,13 @@ function PackageManagerEditor({
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             className={inputClass}
             placeholder="custom-pm"
+            disabled={editing}
           />
+          {editing && (
+            <p className="mt-1 text-xs text-slate-400">
+              Keys are used by scripts and systems, so rename by creating a new manager.
+            </p>
+          )}
         </div>
         <div>
           <label className={labelClass}>Display Label</label>
@@ -705,12 +749,22 @@ function PackageManagerEditor({
         </div>
         <div>
           <label className={labelClass}>Color</label>
-          <input
-            value={draft.color}
-            onChange={(e) => setDraft({ ...draft, color: e.target.value })}
-            className={inputClass}
-            placeholder="#2563eb"
-          />
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={colorInputValue(draft.color)}
+              onChange={(e) => setDraft({ ...draft, color: e.target.value })}
+              className="h-10 w-12 rounded-lg border border-border bg-white dark:bg-slate-900 p-1"
+              title="Package manager color"
+              aria-label="Package manager color"
+            />
+            <input
+              value={draft.color}
+              onChange={(e) => setDraft({ ...draft, color: e.target.value })}
+              className={inputClass}
+              placeholder="#2563eb"
+            />
+          </div>
         </div>
       </div>
       <div className="flex justify-end gap-3">
@@ -725,20 +779,170 @@ function PackageManagerEditor({
   );
 }
 
+function PackageManagersPanel({
+  managers,
+  open,
+  onOpenChange,
+  onEditManager,
+  onDeleteManager,
+}: {
+  managers: ManagedPackageManager[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onEditManager: (manager: ManagedPackageManager) => void;
+  onDeleteManager: (manager: ManagedPackageManager) => void;
+}) {
+  const customCount = managers.filter((manager) => !manager.builtin).length;
+  const totalScripts = managers.reduce((sum, manager) => sum + manager.scriptCount, 0);
+
+  return (
+    <section className="rounded-xl border border-border bg-white dark:bg-slate-800">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        aria-expanded={open}
+      >
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            Package Managers
+          </h2>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {managers.length} managers · {customCount} custom · {totalScripts} scripts
+          </p>
+        </div>
+        <svg
+          className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="border-t border-border px-4 pb-4 pt-3">
+          <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+            Built-ins are read-only; custom managers can be labeled and colored.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
+            {managers.map((manager) => (
+              <div
+                key={manager.name}
+                className="rounded-lg border border-border bg-slate-50/60 p-3 dark:bg-slate-900/30"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-3 w-3 shrink-0 rounded-full border border-black/10 dark:border-white/20"
+                        style={{ backgroundColor: manager.color || "#94a3b8" }}
+                      />
+                      <h3 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {manager.label}
+                      </h3>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <Badge variant={manager.builtin ? "muted" : "info"} small>
+                        {manager.builtin ? "built-in" : "custom"}
+                      </Badge>
+                      {!manager.registered && (
+                        <Badge variant="warning" small>
+                          script-only
+                        </Badge>
+                      )}
+                      <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                        {manager.name}
+                      </code>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        {manager.scriptCount} scripts · {manager.operations.length} ops
+                      </span>
+                    </div>
+                  </div>
+                  {!manager.builtin && manager.registered && (
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onEditManager(manager)}
+                        className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        title="Edit package manager"
+                        aria-label={`Edit ${manager.label}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteManager(manager)}
+                        className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
+                        title="Delete package manager"
+                        aria-label={`Delete ${manager.label}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {PACKAGE_MANAGER_OPERATIONS.map((operation) => {
+                    const exists = manager.operations.includes(operation);
+                    return (
+                      <span
+                        key={operation}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                          exists
+                            ? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                            : "bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-600"
+                        }`}
+                        title={OPERATION_LABELS[operation]}
+                      >
+                        {OPERATION_LABELS[operation]}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function Scripts() {
   const { data, isLoading } = useScripts();
   const createScript = useCreateScript();
   const updateScript = useUpdateScript();
   const deleteScript = useDeleteScript();
   const createPackageManager = useCreatePackageManager();
+  const updatePackageManager = useUpdatePackageManager();
+  const deletePackageManager = useDeletePackageManager();
   const { addToast } = useToast();
   const [typeFilter, setTypeFilter] = useState<"all" | ScriptType>("all");
   const [sourceFilter, setSourceFilter] = useState<"all" | "builtin" | "custom">("all");
+  const [managerFilter, setManagerFilter] = useState("all");
+  const [packageManagersOpen, setPackageManagersOpen] = useState(readPackageManagersPanelOpen);
   const [editing, setEditing] = useState<ScriptDefinition | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showPackageManager, setShowPackageManager] = useState(false);
+  const [editingPackageManager, setEditingPackageManager] = useState<CustomPackageManagerDefinition | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScriptDefinition | null>(null);
+  const [deleteManagerTarget, setDeleteManagerTarget] = useState<ManagedPackageManager | null>(null);
   const [packageManagerDraft, setPackageManagerDraft] = useState(emptyPackageManager());
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      PACKAGE_MANAGERS_PANEL_STORAGE_KEY,
+      packageManagersOpen ? "1" : "0",
+    );
+  }, [packageManagersOpen]);
 
   const scripts = useMemo(() => {
     const all = data?.scripts ?? [];
@@ -747,28 +951,80 @@ export default function Scripts() {
         if (typeFilter !== "all" && script.type !== typeFilter) return false;
         if (sourceFilter === "builtin" && !script.readonly) return false;
         if (sourceFilter === "custom" && script.readonly) return false;
+        if (managerFilter !== "all" && script.pkgManager !== managerFilter) return false;
         return true;
       })
       .sort((a, b) => {
         if (a.readonly !== b.readonly) return a.readonly ? 1 : -1;
         return a.name.localeCompare(b.name);
       });
-  }, [data, typeFilter, sourceFilter]);
-  const packageManagerOptions = useMemo(() => {
-    const labels = new Map<string, string>();
+  }, [data, typeFilter, sourceFilter, managerFilter]);
+  const managedPackageManagers = useMemo<ManagedPackageManager[]>(() => {
+    const managerMap = new Map<string, ManagedPackageManager>();
+    const ensureManager = (manager: string, patch: Partial<ManagedPackageManager> = {}) => {
+      const existing = managerMap.get(manager);
+      const next: ManagedPackageManager = {
+        name: manager,
+        label: BUILTIN_PACKAGE_MANAGER_LABELS[manager] ?? manager,
+        color: "",
+        builtin: BUILTIN_PACKAGE_MANAGERS.includes(manager),
+        registered: BUILTIN_PACKAGE_MANAGERS.includes(manager),
+        scriptCount: 0,
+        customScriptCount: 0,
+        operations: [],
+        ...existing,
+        ...patch,
+      };
+      managerMap.set(manager, next);
+      return next;
+    };
+
     for (const manager of BUILTIN_PACKAGE_MANAGERS) {
-      labels.set(manager, manager.toUpperCase());
-    }
-    for (const script of data?.scripts ?? []) {
-      if (script.pkgManager) labels.set(script.pkgManager, script.pkgManager);
+      ensureManager(manager, {
+        label: BUILTIN_PACKAGE_MANAGER_LABELS[manager] ?? manager,
+        builtin: true,
+        registered: true,
+      });
     }
     for (const manager of data?.packageManagers ?? []) {
+      ensureManager(manager.name, {
+        label: manager.label,
+        color: manager.color ?? "",
+        builtin: false,
+        registered: true,
+      });
+    }
+    for (const script of data?.scripts ?? []) {
+      if (!script.pkgManager) continue;
+      const manager = ensureManager(script.pkgManager);
+      manager.scriptCount += 1;
+      if (!script.readonly) manager.customScriptCount += 1;
+      if (!manager.operations.includes(script.operation)) {
+        manager.operations.push(script.operation);
+      }
+    }
+
+    return Array.from(managerMap.values())
+      .map((manager) => ({
+        ...manager,
+        operations: manager.operations.sort(
+          (a, b) => PACKAGE_MANAGER_OPERATIONS.indexOf(a) - PACKAGE_MANAGER_OPERATIONS.indexOf(b),
+        ),
+      }))
+      .sort((a, b) => {
+        if (a.builtin !== b.builtin) return a.builtin ? -1 : 1;
+        return a.label.localeCompare(b.label);
+      });
+  }, [data]);
+  const packageManagerOptions = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const manager of managedPackageManagers) {
       labels.set(manager.name, manager.label);
     }
     return Array.from(labels.entries())
       .map(([name, label]) => ({ name, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [data]);
+  }, [managedPackageManagers]);
 
   const saveScript = (script: ScriptDefinition) => {
     const callbacks = {
@@ -786,25 +1042,50 @@ export default function Scripts() {
   };
 
   const handleSavePackageManager = () => {
-    createPackageManager.mutate(
-      {
-        ...packageManagerDraft,
-        color: packageManagerDraft.color.trim() || null,
+    const payload = {
+      ...packageManagerDraft,
+      color: packageManagerDraft.color.trim() || null,
+    };
+    const callbacks = {
+      onSuccess: () => {
+        setShowPackageManager(false);
+        setEditingPackageManager(null);
+        setPackageManagerDraft(emptyPackageManager());
+        addToast("Package manager saved", "success");
       },
-      {
-        onSuccess: () => {
-          setShowPackageManager(false);
-          setPackageManagerDraft(emptyPackageManager());
-          addToast("Package manager saved", "success");
-        },
-        onError: (err) => addToast(err.message, "danger"),
-      },
-    );
+      onError: (err: Error) => addToast(err.message, "danger"),
+    };
+    if (editingPackageManager) {
+      updatePackageManager.mutate(payload, callbacks);
+    } else {
+      createPackageManager.mutate(payload, callbacks);
+    }
   };
 
   const openPackageManagerModal = () => {
+    setEditingPackageManager(null);
     setPackageManagerDraft(emptyPackageManager());
     setShowPackageManager(true);
+  };
+
+  const openEditPackageManager = (manager: ManagedPackageManager) => {
+    const existing = data?.packageManagers.find((entry) => entry.name === manager.name);
+    if (!existing) return;
+    setEditingPackageManager(existing);
+    setPackageManagerDraft({
+      name: existing.name,
+      label: existing.label,
+      color: existing.color ?? "",
+    });
+    setShowPackageManager(true);
+  };
+
+  const createScriptForManager = (manager: ManagedPackageManager) => {
+    setEditing({
+      ...emptyScript(),
+      pkgManager: manager.name,
+      name: `${manager.label} script`,
+    });
   };
 
   const handleCopy = (script: ScriptDefinition) => {
@@ -829,7 +1110,23 @@ export default function Scripts() {
         <div className="flex justify-center py-16"><span className="spinner !w-6 !h-6 text-blue-500" /></div>
       ) : (
         <div className="space-y-5">
+          <PackageManagersPanel
+            managers={managedPackageManagers}
+            open={packageManagersOpen}
+            onOpenChange={setPackageManagersOpen}
+            onEditManager={openEditPackageManager}
+            onDeleteManager={setDeleteManagerTarget}
+          />
+
           <div className="flex flex-wrap gap-2">
+            <select value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className={inputClass + " max-w-52"}>
+              <option value="all">All managers</option>
+              {managedPackageManagers.map((manager) => (
+                <option key={manager.name} value={manager.name}>
+                  {manager.label}
+                </option>
+              ))}
+            </select>
             <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)} className={inputClass + " max-w-52"}>
               <option value="all">All types</option>
               <option value="package_manager">Package manager</option>
@@ -849,7 +1146,14 @@ export default function Scripts() {
                 {sourceFilter === "custom" && (
                   <button
                     type="button"
-                    onClick={() => setEditing(emptyScript())}
+                    onClick={() => {
+                      const manager = managedPackageManagers.find((entry) => entry.name === managerFilter);
+                      if (manager) {
+                        createScriptForManager(manager);
+                      } else {
+                        setEditing(emptyScript());
+                      }
+                    }}
                     className="mt-3 px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200"
                   >
                     New Script
@@ -927,7 +1231,7 @@ export default function Scripts() {
             onSave={saveScript}
             onCancel={() => setEditing(null)}
             onShowHelp={() => setShowHelp(true)}
-            busy={createScript.isPending || updateScript.isPending || createPackageManager.isPending}
+            busy={createScript.isPending || updateScript.isPending}
           />
         )}
       </Modal>
@@ -936,13 +1240,25 @@ export default function Scripts() {
         <PlaceholderHelpContent placeholders={data?.placeholders ?? []} />
       </Modal>
 
-      <Modal open={showPackageManager} onClose={() => setShowPackageManager(false)} title="New Package Manager" dismissible={!createPackageManager.isPending}>
+      <Modal
+        open={showPackageManager}
+        onClose={() => {
+          setShowPackageManager(false);
+          setEditingPackageManager(null);
+        }}
+        title={editingPackageManager ? "Edit Package Manager" : "New Package Manager"}
+        dismissible={!createPackageManager.isPending && !updatePackageManager.isPending}
+      >
         <PackageManagerEditor
           draft={packageManagerDraft}
           setDraft={setPackageManagerDraft}
           onSave={handleSavePackageManager}
-          onCancel={() => setShowPackageManager(false)}
-          busy={createPackageManager.isPending}
+          onCancel={() => {
+            setShowPackageManager(false);
+            setEditingPackageManager(null);
+          }}
+          busy={createPackageManager.isPending || updatePackageManager.isPending}
+          editing={editingPackageManager !== null}
         />
       </Modal>
 
@@ -961,6 +1277,26 @@ export default function Scripts() {
         }}
         title="Delete Script"
         message={`Delete ${deleteTarget?.name ?? "this script"}? Assigned scripts cannot be deleted.`}
+        confirmLabel="Delete"
+        danger
+      />
+
+      <ConfirmDialog
+        open={deleteManagerTarget !== null}
+        onClose={() => setDeleteManagerTarget(null)}
+        onConfirm={() => {
+          if (!deleteManagerTarget) return;
+          deletePackageManager.mutate(deleteManagerTarget.name, {
+            onSuccess: () => {
+              if (managerFilter === deleteManagerTarget.name) setManagerFilter("all");
+              setDeleteManagerTarget(null);
+              addToast("Package manager deleted", "success");
+            },
+            onError: (err) => addToast(err.message, "danger"),
+          });
+        }}
+        title="Delete Package Manager"
+        message={`Delete ${deleteManagerTarget?.label ?? "this package manager"}? Managers with scripts must be cleared before they can be deleted.`}
         confirmLabel="Delete"
         danger
       />
