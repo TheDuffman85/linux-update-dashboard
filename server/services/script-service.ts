@@ -594,6 +594,13 @@ function isUnmodifiedBuiltinCopy(script: ScriptDefinition): boolean {
   if (script.readonly || !script.sourceScriptId?.startsWith("builtin:")) return false;
   const source = getBuiltinScripts().find((candidate) => candidate.id === script.sourceScriptId);
   if (!source) return false;
+  if (
+    source.type !== script.type ||
+    source.operation !== script.operation ||
+    source.pkgManager !== script.pkgManager
+  ) {
+    return false;
+  }
   return JSON.stringify(script.steps) === JSON.stringify(source.steps);
 }
 

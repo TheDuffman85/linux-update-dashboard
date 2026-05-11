@@ -101,6 +101,29 @@ describe("script service", () => {
     expect(systemInfoCopy.systemInfoConfig).toEqual({ mode: "builtin" });
   });
 
+  test("built-in copies moved to custom managers use their saved detection script", () => {
+    createCustomPackageManager({ name: "custom-apt", label: "Custom APT" });
+    createScript({
+      name: "Detect Custom APT",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "custom-apt",
+      steps: [{ label: "Detect Custom APT", command: "command -v apt >/dev/null 2>&1 && echo 'found'" }],
+      sourceScriptId: "builtin:apt:detect",
+    });
+    insertSystem(9);
+
+    const steps = resolveRuntimeSteps({
+      systemId: 9,
+      operation: "detect",
+      pkgManager: "custom-apt",
+    });
+
+    expect(steps).toEqual([
+      { label: "Detect Custom APT", command: "command -v apt >/dev/null 2>&1 && echo 'found'" },
+    ]);
+  });
+
   test("edited built-in copies use their custom step commands", () => {
     const copy = createBuiltinCopy("builtin:apt:upgrade_all");
     const edited = createScript({
