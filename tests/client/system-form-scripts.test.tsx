@@ -117,7 +117,7 @@ describe("SystemForm script operations", () => {
     });
   });
 
-  test("renders custom package-manager operation selectors even before overrides exist", () => {
+  test("hides custom package-manager controls until the manager is detected", () => {
     const html = renderToStaticMarkup(
       <SystemForm
         initial={{
@@ -134,10 +134,38 @@ describe("SystemForm script operations", () => {
       />,
     );
 
-    expect(html).toContain("Custom APT");
-    expect(html).toContain("Saved config is shown here even though this package manager is not currently detected.");
+    expect(html).not.toContain("Custom APT");
+    expect(html).toContain("Tests the connection and detects available package managers.");
+    expect(html).not.toContain("Saved config is shown here even though this package manager is not currently detected.");
     for (const operation of customAptOperations) {
-      expect(html).toContain(`Custom APT ${operation}`);
+      expect(html).not.toContain(`Custom APT ${operation}`);
+    }
+  });
+
+  test("keeps script override controls collapsed by default", () => {
+    const html = renderToStaticMarkup(
+      <SystemForm
+        initial={{
+          name: "Debian",
+          hostname: "debian.local",
+          port: 22,
+          credentialId: 1,
+          detectedPkgManagers: ["apt", "custom-apt"],
+          disabledPkgManagers: [],
+          scriptOverrides: {},
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Scripts");
+    expect(html).toContain("Optional overrides; Standard uses the detected package manager defaults.");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("Custom APT");
+    expect(html).not.toContain("Saved config is shown here even though this package manager is not currently detected.");
+    for (const operation of customAptOperations) {
+      expect(html).not.toContain(`Custom APT ${operation}`);
     }
   });
 });

@@ -182,6 +182,7 @@ export function SystemForm({
   );
   const [showUnapprovedSaveWarning, setShowUnapprovedSaveWarning] = useState(false);
   const [showCreateCredential, setShowCreateCredential] = useState(false);
+  const [scriptsOpen, setScriptsOpen] = useState(false);
 
   const resetValidatedState = () => {
     setValidatedConfigToken(null);
@@ -220,6 +221,8 @@ export function SystemForm({
 
   const customPackageManagers = scriptsData?.packageManagers ?? [];
   const customPackageManagerNames = new Set(customPackageManagers.map((manager) => manager.name));
+  const shouldShowManager = (manager: string) =>
+    !customPackageManagerNames.has(manager) || detectedManagers.includes(manager);
   const isManagerEnabled = (manager: string) => {
     if (customPackageManagerNames.has(manager) && !detectedManagers.includes(manager)) {
       return false;
@@ -310,22 +313,16 @@ export function SystemForm({
   const visiblePackageManagers = Array.from(
     new Set([
       ...detectedManagers,
-      ...customPackageManagers.map((manager) => manager.name),
       ...Object.keys(pkgManagerConfigs),
       ...Object.keys(scriptOverrides)
         .map((key) => key.split("/")[0])
         .filter((manager) => manager && manager !== "system"),
     ]),
-  ).sort(sortPackageManagers);
+  ).filter(shouldShowManager).sort(sortPackageManagers);
   const packageManagerLabels = new Map(
     customPackageManagers.map((manager) => [manager.name, manager.label]),
   );
-  const visibleScriptPackageManagers = Array.from(
-    new Set([
-      ...visiblePackageManagers,
-      ...customPackageManagers.map((manager) => manager.name),
-    ]),
-  ).sort(sortPackageManagers);
+  const visibleScriptPackageManagers = visiblePackageManagers;
   const packageScriptOperations: ScriptOperation[] = [
     "detect",
     "check_updates",
@@ -1148,77 +1145,98 @@ export function SystemForm({
         )}
 
         {(scriptsData?.scripts.length ?? 0) > 0 && (
-          <div className="space-y-4">
-            <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Scripts
+          <section className="rounded-xl border border-border bg-white dark:bg-slate-900">
+            <button
+              type="button"
+              aria-expanded={scriptsOpen}
+              aria-controls="system-script-overrides"
+              onClick={() => setScriptsOpen((open) => !open)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            >
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Scripts
+                </h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Optional overrides; Standard uses the detected package manager defaults.
+                </p>
               </div>
-              <p className="mt-1 text-xs text-slate-400">
-                Leave operations on Standard unless this system needs a custom script override.
-              </p>
-            </div>
+              <svg
+                className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${scriptsOpen ? "rotate-180" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
 
-            <div className="rounded-lg border border-border p-3 space-y-3">
-              <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                System Operations
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {systemScriptOperations.map((operation) => {
-                  const key = buildOperationKey(operation, null);
-                  const options = compatibleScripts(operation, null);
-                  return (
-                    <div key={key}>
-                      <label className={labelClass}>{operationLabels[operation]}</label>
-                      <select
-                        value={scriptOverrides[key] ?? ""}
-                        onChange={(e) => setScriptOverride(operation, null, e.target.value)}
-                        className={inputClass}
-                      >
-                        <option value="">Standard</option>
-                        {options.map((script) => (
-                          <option key={script.id} value={script.id}>
-                            {script.name}{script.readonly ? " (built-in)" : ""}
-                          </option>
-                        ))}
-                      </select>
+            {scriptsOpen && (
+              <div id="system-script-overrides" className="space-y-4 border-t border-border px-4 pb-4 pt-3">
+                <div className="rounded-lg border border-border p-3 space-y-3">
+                  <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                    System Operations
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {systemScriptOperations.map((operation) => {
+                      const key = buildOperationKey(operation, null);
+                      const options = compatibleScripts(operation, null);
+                      return (
+                        <div key={key}>
+                          <label className={labelClass}>{operationLabels[operation]}</label>
+                          <select
+                            value={scriptOverrides[key] ?? ""}
+                            onChange={(e) => setScriptOverride(operation, null, e.target.value)}
+                            className={inputClass}
+                          >
+                            <option value="">Standard</option>
+                            {options.map((script) => (
+                              <option key={script.id} value={script.id}>
+                                {script.name}{script.readonly ? " (built-in)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {visibleScriptPackageManagers.map((manager) => (
+                  <div key={`scripts-${manager}`} className="rounded-lg border border-border p-3 space-y-3">
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      {PACKAGE_MANAGER_LABELS[manager] ?? packageManagerLabels.get(manager) ?? manager}
                     </div>
-                  );
-                })}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {packageScriptOperations.map((operation) => {
+                        const key = buildOperationKey(operation, manager);
+                        const options = compatibleScripts(operation, manager);
+                        if (options.length === 0 && !scriptOverrides[key]) return null;
+                        return (
+                          <div key={key}>
+                            <label className={labelClass}>{operationLabels[operation]}</label>
+                            <select
+                              value={scriptOverrides[key] ?? ""}
+                              onChange={(e) => setScriptOverride(operation, manager, e.target.value)}
+                              className={inputClass}
+                            >
+                              <option value="">Standard</option>
+                              {options.map((script) => (
+                                <option key={script.id} value={script.id}>
+                                  {script.name}{script.readonly ? " (built-in)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-
-            {visibleScriptPackageManagers.map((manager) => (
-              <div key={`scripts-${manager}`} className="rounded-lg border border-border p-3 space-y-3">
-                <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                  {PACKAGE_MANAGER_LABELS[manager] ?? packageManagerLabels.get(manager) ?? manager}
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {packageScriptOperations.map((operation) => {
-                    const key = buildOperationKey(operation, manager);
-                    const options = compatibleScripts(operation, manager);
-                    if (options.length === 0 && !scriptOverrides[key]) return null;
-                    return (
-                      <div key={key}>
-                        <label className={labelClass}>{operationLabels[operation]}</label>
-                        <select
-                          value={scriptOverrides[key] ?? ""}
-                          onChange={(e) => setScriptOverride(operation, manager, e.target.value)}
-                          className={inputClass}
-                        >
-                          <option value="">Standard</option>
-                          {options.map((script) => (
-                            <option key={script.id} value={script.id}>
-                              {script.name}{script.readonly ? " (built-in)" : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
+            )}
+          </section>
         )}
 
         {testResult && (
@@ -1233,19 +1251,24 @@ export function SystemForm({
         )}
 
         <div className="flex items-center justify-between gap-3 pt-2">
-          <button
-            type="button"
-            disabled={footerConnectionTestDisabled}
-            title={footerConnectionTestTitle}
-            onClick={() => runConnectionTest()}
-            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-          >
-            {testConnection.isPending ? (
-              <span className="spinner spinner-sm" />
-            ) : (
-              "Test Connection"
-            )}
-          </button>
+          <div className="min-w-0">
+            <button
+              type="button"
+              disabled={footerConnectionTestDisabled}
+              title={footerConnectionTestTitle}
+              onClick={() => runConnectionTest()}
+              className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+            >
+              {testConnection.isPending ? (
+                <span className="spinner spinner-sm" />
+              ) : (
+                "Test Connection"
+              )}
+            </button>
+            <p className="mt-1 text-xs text-slate-400">
+              Tests the connection and detects available package managers.
+            </p>
+          </div>
 
           <div className="flex gap-3">
             <button
