@@ -133,6 +133,7 @@ function emptyScript(): ScriptDefinition {
     type: "package_manager",
     operation: "detect",
     pkgManager: "apt",
+    isDefault: false,
     steps: [{ label: "Run command", command: "" }],
     parserConfig: null,
     systemInfoConfig: null,
@@ -205,6 +206,7 @@ function copyScriptDraft(script: ScriptDefinition): ScriptDefinition {
         }
       : null,
     sourceScriptId: script.id,
+    isDefault: false,
     createdAt: undefined,
     updatedAt: undefined,
   };
@@ -222,8 +224,9 @@ function scriptUsesSudo(script: ScriptDefinition): boolean {
 }
 
 function formatUsageOperation(usage: ScriptUsage): string {
-  const [, operation] = usage.operationKey.split("/");
-  return OPERATION_LABELS[(operation || usage.operationKey) as ScriptOperation] ?? usage.operationKey;
+  const [manager, operation] = usage.operationKey.split("/");
+  const operationLabel = OPERATION_LABELS[(operation || usage.operationKey) as ScriptOperation] ?? usage.operationKey;
+  return manager && manager !== "system" ? `${manager} · ${operationLabel}` : operationLabel;
 }
 
 function formatUsageSummary(usages: ScriptUsage[]): string {
@@ -747,6 +750,7 @@ function ScriptEditor({
       onSave({
         ...draft,
         pkgManager,
+        isDefault: draft.isDefault ?? false,
         steps: normalizedSteps,
         parserConfig: showParserConfig ? buildParserConfig(parserConfig) : null,
         systemInfoConfig: showSystemInfoConfig
@@ -1362,6 +1366,7 @@ export default function Scripts() {
   const [usageTarget, setUsageTarget] = useState<ScriptDefinition | null>(null);
   const [packageManagerDraft, setPackageManagerDraft] = useState(emptyPackageManager());
   const [copyingScriptId, setCopyingScriptId] = useState<string | null>(null);
+  const [defaultingScriptId, setDefaultingScriptId] = useState<string | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1465,6 +1470,20 @@ export default function Scripts() {
     } else {
       createScript.mutate({ ...script, id: undefined }, callbacks);
     }
+  };
+
+  const toggleScriptDefault = (script: ScriptDefinition) => {
+    setDefaultingScriptId(script.id);
+    updateScript.mutate(
+      { ...script, isDefault: !(script.isDefault ?? false) },
+      {
+        onSuccess: () => {
+          addToast(script.isDefault ? "Script default cleared" : "Script set as default", "success");
+        },
+        onError: (err: Error) => addToast(err.message, "danger"),
+        onSettled: () => setDefaultingScriptId(null),
+      },
+    );
   };
 
   const handleSavePackageManager = () => {
@@ -1626,6 +1645,7 @@ export default function Scripts() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-sm font-semibold truncate">{script.name}</h2>
                       <Badge variant={script.readonly ? "muted" : "info"} small>{script.readonly ? "built-in" : "custom"}</Badge>
+                      {script.isDefault ? <Badge variant="success" small>default</Badge> : null}
                       {script.pkgManager ? <Badge variant="muted" small>{script.pkgManager}</Badge> : null}
                       {scriptUsesSudo(script) ? <Badge variant="warning" small>sudo</Badge> : null}
                       <UsageBadge
@@ -1638,6 +1658,40 @@ export default function Scripts() {
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2">
+                    {!script.readonly && (
+                      <button
+                        type="button"
+                        onClick={() => toggleScriptDefault(script)}
+                        disabled={defaultingScriptId === script.id}
+                        className={`p-1.5 rounded transition-colors disabled:cursor-wait disabled:opacity-50 ${
+                          script.isDefault
+                            ? "text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                            : "text-slate-400 hover:bg-slate-100 hover:text-amber-500 dark:hover:bg-slate-700"
+                        }`}
+                        title={script.isDefault ? "Clear default script" : "Set as default script"}
+                        aria-label={script.isDefault ? `Clear ${script.name} as default` : `Set ${script.name} as default`}
+                        aria-pressed={script.isDefault ?? false}
+                      >
+                        {defaultingScriptId === script.id ? (
+                          <span className="spinner spinner-sm" />
+                        ) : (
+                          <svg
+                            className="w-4 h-4"
+                            fill={script.isDefault ? "currentColor" : "none"}
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M11.48 3.5a.6.6 0 011.04 0l2.28 4.62a.6.6 0 00.45.33l5.1.74a.6.6 0 01.33 1.02l-3.69 3.6a.6.6 0 00-.17.53l.87 5.08a.6.6 0 01-.87.63l-4.56-2.4a.6.6 0 00-.56 0l-4.56 2.4a.6.6 0 01-.87-.63l.87-5.08a.6.6 0 00-.17-.53l-3.69-3.6a.6.6 0 01.33-1.02l5.1-.74a.6.6 0 00.45-.33L11.48 3.5z"
+                            />
+                          </svg>
+                        )}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleCopy(script)}

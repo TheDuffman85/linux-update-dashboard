@@ -296,6 +296,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     type TEXT NOT NULL,
     operation TEXT NOT NULL,
     pkg_manager TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0,
     steps TEXT NOT NULL,
     parser_config TEXT,
     system_info_config TEXT,
@@ -319,6 +320,14 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(sql`ALTER TABLE custom_scripts ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`CREATE UNIQUE INDEX IF NOT EXISTS custom_scripts_default_scope_idx
+    ON custom_scripts (type, COALESCE(pkg_manager, 'system'), operation)
+    WHERE is_default = 1`);
 
   // Migration: add command column to existing databases
   try {

@@ -473,6 +473,76 @@ describe("script service", () => {
     })[0]?.command).toBe("echo custom");
   });
 
+  test("uses one explicit default script per package-manager operation", () => {
+    const first = createScript({
+      name: "Quiet APT check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      isDefault: true,
+      steps: [{ label: "Custom check", command: "echo first" }],
+    });
+    const second = createScript({
+      name: "Verbose APT check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      isDefault: true,
+      steps: [{ label: "Custom check", command: "echo second" }],
+    });
+    insertSystem(43);
+    insertSystem(45);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["apt"]) })
+      .where(eq(systems.id, 43))
+      .run();
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["dnf"]) })
+      .where(eq(systems.id, 45))
+      .run();
+
+    expect(resolveRuntimeSteps({
+      systemId: 43,
+      operation: "check_updates",
+      pkgManager: "apt",
+    })[0]?.command).toBe("echo second");
+    expect(listScripts().scripts.find((script) => script.id === first.id)?.isDefault).toBe(false);
+    expect(listScripts().scripts.find((script) => script.id === second.id)?.isDefault).toBe(true);
+    expect(listScriptUsages(second.id)).toEqual([
+      {
+        systemId: 43,
+        systemName: "system-43",
+        operationKey: "apt/check_updates",
+      },
+    ]);
+  });
+
+  test("uses explicit default scripts for system operations", () => {
+    const script = createScript({
+      name: "Custom reboot",
+      type: "system",
+      operation: "reboot",
+      isDefault: true,
+      steps: [{ label: "Reboot", command: "echo reboot" }],
+    });
+    insertSystem(44);
+
+    expect(resolveRuntimeSteps({
+      systemId: 44,
+      operation: "reboot",
+    })[0]?.command).toBe("echo reboot");
+    expect(listScriptUsages(script.id)).toEqual([
+      {
+        systemId: 44,
+        systemName: "system-44",
+        operationKey: "system/reboot",
+      },
+    ]);
+    expect(() => deleteScript(script.id)).toThrow(/assigned/);
+  });
+
   test("supports user-defined package managers with generic parser rules", () => {
     createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
     const parserConfig = {

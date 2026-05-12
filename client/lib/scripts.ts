@@ -40,6 +40,7 @@ export interface ScriptDefinition {
   type: ScriptType;
   operation: ScriptOperation;
   pkgManager: string | null;
+  isDefault?: boolean;
   steps: ScriptStep[];
   parserConfig: CustomParserConfig | null;
   systemInfoConfig: CustomSystemInfoConfig | null;

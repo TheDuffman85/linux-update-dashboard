@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import { getDb } from "../db";
 import { customPackageManagers, customScripts, systemScriptOverrides, systems } from "../db/schema";
 import {
@@ -64,6 +64,7 @@ export interface ScriptDefinition {
   type: ScriptType;
   operation: ScriptOperation;
   pkgManager: string | null;
+  isDefault: boolean;
   steps: ScriptStep[];
   parserConfig: CustomParserConfig | null;
   systemInfoConfig: CustomSystemInfoConfig | null;
@@ -514,6 +515,7 @@ function builtinScript(
     type: pkgManager ? "package_manager" : "system",
     operation,
     pkgManager,
+    isDefault: false,
     steps,
     parserConfig: null,
     systemInfoConfig: null,
@@ -845,6 +847,7 @@ function serializeCustomScript(row: typeof customScripts.$inferSelect): ScriptDe
     type: row.type as ScriptType,
     operation: row.operation as ScriptOperation,
     pkgManager: row.pkgManager,
+    isDefault: row.isDefault,
     steps: parseJson<ScriptStep[]>(row.steps, []),
     parserConfig: parseJson<CustomParserConfig | null>(row.parserConfig, null),
     systemInfoConfig: parseJson<CustomSystemInfoConfig | null>(row.systemInfoConfig, null),
@@ -980,6 +983,9 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type === "system" && input.operation !== "system_info" && input.operation !== "reboot") {
     return "system scripts must use system_info or reboot";
   }
+  if (input.isDefault !== undefined && typeof input.isDefault !== "boolean") {
+    return "isDefault must be a boolean";
+  }
   if (!Array.isArray(input.steps) || input.steps.length === 0) {
     return "steps must include at least one command";
   }
@@ -1009,10 +1015,32 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   return validateParserConfig(input.parserConfig) || validateSystemInfoConfig(input.systemInfoConfig);
 }
 
+function defaultScopeCondition(input: Pick<ScriptDefinition, "type" | "operation" | "pkgManager">) {
+  return and(
+    eq(customScripts.type, input.type),
+    eq(customScripts.operation, input.operation),
+    input.pkgManager ? eq(customScripts.pkgManager, input.pkgManager) : isNull(customScripts.pkgManager),
+  );
+}
+
+function clearOtherDefaults(input: Pick<ScriptDefinition, "type" | "operation" | "pkgManager">, exceptId?: number): void {
+  const conditions = [
+    defaultScopeCondition(input),
+    eq(customScripts.isDefault, true),
+  ];
+  if (exceptId !== undefined) conditions.push(ne(customScripts.id, exceptId));
+  getDb()
+    .update(customScripts)
+    .set({ isDefault: false })
+    .where(and(...conditions))
+    .run();
+}
+
 export function createScript(input: Partial<ScriptDefinition>): ScriptDefinition {
   const error = validateScriptInput(input);
   if (error) throw new Error(error);
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  if (input.isDefault) clearOtherDefaults(input as ScriptDefinition);
   const row = getDb()
     .insert(customScripts)
     .values({
@@ -1021,6 +1049,7 @@ export function createScript(input: Partial<ScriptDefinition>): ScriptDefinition
       type: input.type!,
       operation: input.operation!,
       pkgManager: input.pkgManager ?? null,
+      isDefault: input.isDefault ?? false,
       steps: JSON.stringify(input.steps),
       parserConfig: input.parserConfig ? JSON.stringify(input.parserConfig) : null,
       systemInfoConfig: input.systemInfoConfig ? JSON.stringify(input.systemInfoConfig) : null,
@@ -1042,6 +1071,7 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
   const error = validateScriptInput(next);
   if (error) throw new Error(error);
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  if (next.isDefault) clearOtherDefaults(next, parsed.id);
   const row = getDb()
     .update(customScripts)
     .set({
@@ -1050,6 +1080,7 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
       type: next.type,
       operation: next.operation,
       pkgManager: next.pkgManager ?? null,
+      isDefault: next.isDefault,
       steps: JSON.stringify(next.steps),
       parserConfig: next.parserConfig ? JSON.stringify(next.parserConfig) : null,
       systemInfoConfig: next.systemInfoConfig ? JSON.stringify(next.systemInfoConfig) : null,
@@ -1062,19 +1093,31 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
 }
 
 function isManagerActiveForSystem(system: {
+  pkgManager?: string | null;
   detectedPkgManagers: string | null;
   disabledPkgManagers: string | null;
 }, manager: string): boolean {
   const disabled = parseJson<string[]>(system.disabledPkgManagers, []);
   if (disabled.includes(manager)) return false;
-  if (!BUILTIN_MANAGER_ORDER.includes(manager)) {
-    return parseJson<string[]>(system.detectedPkgManagers, []).includes(manager);
-  }
-  return true;
+  const detected = parseJson<string[]>(system.detectedPkgManagers, []);
+  if (detected.length > 0) return detected.includes(manager);
+  if (system.pkgManager) return system.pkgManager === manager;
+  return BUILTIN_MANAGER_ORDER.includes(manager);
 }
 
-function getDefaultCustomManagerScriptId(script: ScriptDefinition): string | null {
+function getExplicitDefaultScriptId(script: Pick<ScriptDefinition, "type" | "operation" | "pkgManager">): string | null {
+  const row = getDb()
+    .select({ id: customScripts.id })
+    .from(customScripts)
+    .where(and(defaultScopeCondition(script), eq(customScripts.isDefault, true)))
+    .orderBy(asc(customScripts.id))
+    .get();
+  return row ? `custom:${row.id}` : null;
+}
+
+function getLegacyDefaultCustomManagerScriptId(script: ScriptDefinition): string | null {
   if (!script.pkgManager || BUILTIN_MANAGER_ORDER.includes(script.pkgManager)) return null;
+  if (getExplicitDefaultScriptId(script)) return null;
   const row = getDb()
     .select({ id: customScripts.id })
     .from(customScripts)
@@ -1085,6 +1128,44 @@ function getDefaultCustomManagerScriptId(script: ScriptDefinition): string | nul
     .orderBy(asc(customScripts.id))
     .get();
   return row ? `custom:${row.id}` : null;
+}
+
+function getEffectiveDefaultScriptId(script: ScriptDefinition): string | null {
+  if (script.isDefault) return script.id;
+  return getLegacyDefaultCustomManagerScriptId(script);
+}
+
+function listSystemsUsingDefault(script: ScriptDefinition, operationKey: string): ScriptUsage[] {
+  const rows = getDb()
+    .select({
+      systemId: systems.id,
+      systemName: systems.name,
+      pkgManager: systems.pkgManager,
+      detectedPkgManagers: systems.detectedPkgManagers,
+      disabledPkgManagers: systems.disabledPkgManagers,
+    })
+    .from(systems)
+    .orderBy(asc(systems.name), asc(systems.id))
+    .all();
+
+  return rows
+    .filter((system) => !script.pkgManager || isManagerActiveForSystem(system, script.pkgManager))
+    .filter((system) => {
+      const override = getDb()
+        .select({ id: systemScriptOverrides.id })
+        .from(systemScriptOverrides)
+        .where(and(
+          eq(systemScriptOverrides.systemId, system.systemId),
+          eq(systemScriptOverrides.operationKey, operationKey),
+        ))
+        .get();
+      return !override;
+    })
+    .map((system) => ({
+      systemId: system.systemId,
+      systemName: system.systemName,
+      operationKey,
+    }));
 }
 
 export function listScriptUsages(scriptId: string): ScriptUsage[] {
@@ -1101,6 +1182,7 @@ export function listScriptUsages(scriptId: string): ScriptUsage[] {
       systemId: systems.id,
       systemName: systems.name,
       operationKey: systemScriptOverrides.operationKey,
+      pkgManager: systems.pkgManager,
       detectedPkgManagers: systems.detectedPkgManagers,
       disabledPkgManagers: systems.disabledPkgManagers,
     })
@@ -1119,34 +1201,9 @@ export function listScriptUsages(scriptId: string): ScriptUsage[] {
       });
     });
 
-  if (getDefaultCustomManagerScriptId(script) === scriptId && script.pkgManager) {
-    const activeSystems = getDb()
-      .select({
-        systemId: systems.id,
-        systemName: systems.name,
-        detectedPkgManagers: systems.detectedPkgManagers,
-        disabledPkgManagers: systems.disabledPkgManagers,
-      })
-      .from(systems)
-      .orderBy(asc(systems.name), asc(systems.id))
-      .all()
-      .filter((system) => isManagerActiveForSystem(system, script.pkgManager!));
-
-    for (const system of activeSystems) {
-      const override = getDb()
-        .select({ id: systemScriptOverrides.id })
-        .from(systemScriptOverrides)
-        .where(and(
-          eq(systemScriptOverrides.systemId, system.systemId),
-          eq(systemScriptOverrides.operationKey, operationKey),
-        ))
-        .get();
-      if (override) continue;
-      addUsage({
-        systemId: system.systemId,
-        systemName: system.systemName,
-        operationKey,
-      });
+  if (getEffectiveDefaultScriptId(script) === scriptId) {
+    for (const usage of listSystemsUsingDefault(script, operationKey)) {
+      addUsage(usage);
     }
   }
 
@@ -1356,6 +1413,15 @@ export function resolveScript(
     .get();
   if (override) {
     const script = getScriptById(override.scriptId);
+    if (script) return script;
+  }
+  const explicitDefaultId = getExplicitDefaultScriptId({
+    type: pkgManager == null ? "system" : "package_manager",
+    operation,
+    pkgManager: pkgManager ?? null,
+  });
+  if (explicitDefaultId) {
+    const script = getScriptById(explicitDefaultId);
     if (script) return script;
   }
   const builtin = getBuiltinScripts().find((script) =>

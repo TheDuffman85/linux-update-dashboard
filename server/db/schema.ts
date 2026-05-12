@@ -247,6 +247,7 @@ export const customScripts = sqliteTable("custom_scripts", {
   type: text("type").notNull(),
   operation: text("operation").notNull(),
   pkgManager: text("pkg_manager"),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
   steps: text("steps").notNull(),
   parserConfig: text("parser_config"),
   systemInfoConfig: text("system_info_config"),
