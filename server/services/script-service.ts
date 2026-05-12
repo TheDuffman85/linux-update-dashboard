@@ -822,12 +822,47 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
   return serializeCustomScript(row);
 }
 
+function isManagerActiveForSystem(system: {
+  detectedPkgManagers: string | null;
+  disabledPkgManagers: string | null;
+}, manager: string): boolean {
+  const disabled = parseJson<string[]>(system.disabledPkgManagers, []);
+  if (disabled.includes(manager)) return false;
+  if (!BUILTIN_MANAGER_ORDER.includes(manager)) {
+    return parseJson<string[]>(system.detectedPkgManagers, []).includes(manager);
+  }
+  return true;
+}
+
+function getDefaultCustomManagerScriptId(script: ScriptDefinition): string | null {
+  if (!script.pkgManager || BUILTIN_MANAGER_ORDER.includes(script.pkgManager)) return null;
+  const row = getDb()
+    .select({ id: customScripts.id })
+    .from(customScripts)
+    .where(and(
+      eq(customScripts.operation, script.operation),
+      eq(customScripts.pkgManager, script.pkgManager),
+    ))
+    .orderBy(asc(customScripts.id))
+    .get();
+  return row ? `custom:${row.id}` : null;
+}
+
 export function listScriptUsages(scriptId: string): ScriptUsage[] {
-  return getDb()
+  const script = getScriptById(scriptId);
+  if (!script) return [];
+  const operationKey = buildOperationKey(script.operation, script.pkgManager);
+  const usageMap = new Map<string, ScriptUsage>();
+  const addUsage = (usage: ScriptUsage) => {
+    usageMap.set(`${usage.systemId}:${usage.operationKey}`, usage);
+  };
+
+  getDb()
     .select({
       systemId: systems.id,
       systemName: systems.name,
       operationKey: systemScriptOverrides.operationKey,
+      detectedPkgManagers: systems.detectedPkgManagers,
       disabledPkgManagers: systems.disabledPkgManagers,
     })
     .from(systemScriptOverrides)
@@ -835,12 +870,52 @@ export function listScriptUsages(scriptId: string): ScriptUsage[] {
     .where(eq(systemScriptOverrides.scriptId, scriptId))
     .orderBy(asc(systems.name), asc(systems.id), asc(systemScriptOverrides.operationKey))
     .all()
-    .filter((usage) => {
+    .forEach((usage) => {
       const [manager] = usage.operationKey.split("/");
-      if (!manager || manager === "system") return true;
-      return !parseJson<string[]>(usage.disabledPkgManagers, []).includes(manager);
-    })
-    .map(({ disabledPkgManagers, ...usage }) => usage);
+      if (manager && manager !== "system" && !isManagerActiveForSystem(usage, manager)) return;
+      addUsage({
+        systemId: usage.systemId,
+        systemName: usage.systemName,
+        operationKey: usage.operationKey,
+      });
+    });
+
+  if (getDefaultCustomManagerScriptId(script) === scriptId && script.pkgManager) {
+    const activeSystems = getDb()
+      .select({
+        systemId: systems.id,
+        systemName: systems.name,
+        detectedPkgManagers: systems.detectedPkgManagers,
+        disabledPkgManagers: systems.disabledPkgManagers,
+      })
+      .from(systems)
+      .orderBy(asc(systems.name), asc(systems.id))
+      .all()
+      .filter((system) => isManagerActiveForSystem(system, script.pkgManager!));
+
+    for (const system of activeSystems) {
+      const override = getDb()
+        .select({ id: systemScriptOverrides.id })
+        .from(systemScriptOverrides)
+        .where(and(
+          eq(systemScriptOverrides.systemId, system.systemId),
+          eq(systemScriptOverrides.operationKey, operationKey),
+        ))
+        .get();
+      if (override) continue;
+      addUsage({
+        systemId: system.systemId,
+        systemName: system.systemName,
+        operationKey,
+      });
+    }
+  }
+
+  return Array.from(usageMap.values()).sort((a, b) =>
+    a.systemName.localeCompare(b.systemName) ||
+    a.systemId - b.systemId ||
+    a.operationKey.localeCompare(b.operationKey)
+  );
 }
 
 export function deleteScript(scriptId: string): void {

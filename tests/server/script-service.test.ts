@@ -145,6 +145,76 @@ describe("script service", () => {
     expect(() => deleteScript(script.id)).not.toThrow();
   });
 
+  test("counts default scripts for enabled custom package managers as active usage", () => {
+    createCustomPackageManager({ name: "aaa", label: "AAA" });
+    const defaultScript = createScript({
+      name: "Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    const alternateScript = createScript({
+      name: "Alternate Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt-get" }],
+    });
+    insertSystem(5);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["aaa"]), disabledPkgManagers: JSON.stringify([]) })
+      .where(eq(systems.id, 5))
+      .run();
+
+    expect(listScriptUsages(defaultScript.id)).toEqual([
+      {
+        systemId: 5,
+        systemName: "system-5",
+        operationKey: "aaa/detect",
+      },
+    ]);
+    expect(listScriptUsages(alternateScript.id)).toEqual([]);
+    expect(() => deleteScript(defaultScript.id)).toThrow(/assigned/);
+  });
+
+  test("does not count default custom scripts when an operation override is set", () => {
+    createCustomPackageManager({ name: "aaa", label: "AAA" });
+    const defaultScript = createScript({
+      name: "Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    const overrideScript = createScript({
+      name: "Override Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt-get" }],
+    });
+    insertSystem(6);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["aaa"]), disabledPkgManagers: JSON.stringify([]) })
+      .where(eq(systems.id, 6))
+      .run();
+    setSystemOverrides(6, {
+      [buildOperationKey("detect", "aaa")]: overrideScript.id,
+    });
+
+    expect(listScriptUsages(defaultScript.id)).toEqual([]);
+    expect(listScriptUsages(overrideScript.id)).toEqual([
+      {
+        systemId: 6,
+        systemName: "system-6",
+        operationKey: "aaa/detect",
+      },
+    ]);
+  });
+
   test("replaces system overrides so omitted keys are unassigned", () => {
     const copy = createBuiltinCopy("builtin:apt:detect");
     insertSystem(4);
