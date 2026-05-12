@@ -429,6 +429,101 @@ function ShellCommandEditor({
   );
 }
 
+type ScriptReferenceEntry = {
+  id: string;
+  token: string;
+  description: string;
+};
+
+function isGeneratedConfigPlaceholder(placeholder: PlaceholderHelpEntry): boolean {
+  return /^\{\{config\.[^}]+\}\}$/.test(placeholder.name);
+}
+
+function ScriptReferenceSection({
+  title,
+  entries,
+  emptyMessage,
+  defaultOpen = false,
+  onCopy,
+}: {
+  title: string;
+  entries: ScriptReferenceEntry[];
+  emptyMessage: string;
+  defaultOpen?: boolean;
+  onCopy: (value: string) => void;
+}) {
+  const countLabel = entries.length === 1 ? "1 entry" : `${entries.length} entries`;
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <section className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 p-3 text-left"
+        aria-expanded={open}
+      >
+        <div className="min-w-0">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            {title}
+          </div>
+          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {countLabel}
+          </div>
+        </div>
+        <svg
+          className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="border-t border-border p-3">
+          {entries.length > 0 ? (
+            <div className="space-y-2">
+              {entries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-white p-2.5 dark:bg-slate-900 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                >
+                  <div className="min-w-0">
+                    <code className="inline-block max-w-full rounded bg-slate-200/70 px-1.5 py-0.5 text-xs dark:bg-slate-800">
+                      {entry.token}
+                    </code>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      {entry.description}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onCopy(entry.token)}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
+                    title={`Copy ${entry.token}`}
+                    aria-label={`Copy ${entry.token}`}
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              {emptyMessage}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function readPackageManagersPanelOpen(): boolean {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(PACKAGE_MANAGERS_PANEL_STORAGE_KEY) === "1";
@@ -480,16 +575,16 @@ function buildSystemInfoConfig(
 function ScriptEditor({
   script,
   packageManagers,
+  placeholders,
   onSave,
   onCancel,
-  onShowHelp,
   busy,
 }: {
   script: ScriptDefinition;
   packageManagers: Array<{ name: string; label: string; configEntries?: CustomPackageManagerConfigEntry[] }>;
+  placeholders: PlaceholderHelpEntry[];
   onSave: (script: ScriptDefinition) => void;
   onCancel: () => void;
-  onShowHelp: () => void;
   busy?: boolean;
 }) {
   const { addToast } = useToast();
@@ -526,7 +621,8 @@ function ScriptEditor({
     .find((manager) => manager.name === selectedPackageManager)
     ?.configEntries?.map((entry) => ({
       key: entry.key,
-      description: entry.description || `Default: ${entry.defaultValue}`,
+      description: entry.description?.trim()
+        || (entry.defaultValue ? `Default: ${entry.defaultValue}` : "Custom config value"),
     })) ?? [];
   const configKeys = selectedPackageManager
     ? [
@@ -534,6 +630,18 @@ function ScriptEditor({
         ...customConfigKeys,
       ]
     : [];
+  const configReferenceEntries = configKeys.map((entry) => ({
+    id: `config.${entry.key}`,
+    token: `{{config.${entry.key}}}`,
+    description: entry.description,
+  }));
+  const placeholderReferenceEntries = placeholders
+    .filter((placeholder) => !isGeneratedConfigPlaceholder(placeholder))
+    .map((placeholder) => ({
+      id: placeholder.name,
+      token: placeholder.name,
+      description: placeholder.description,
+    }));
   const showPackageManagerControls = draft.type === "package_manager";
   const showParserConfig =
     draft.type === "package_manager" &&
@@ -615,6 +723,15 @@ function ScriptEditor({
     }
   };
 
+  const copyReference = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      addToast(`Copied ${value}`, "success");
+    } catch {
+      addToast("Could not copy to clipboard", "danger");
+    }
+  };
+
   const save = () => {
     try {
       const normalizedSteps = steps.map((step) => ({
@@ -643,26 +760,13 @@ function ScriptEditor({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-2">
-        <div className="flex min-w-0 flex-1 gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-          <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-          </svg>
-          <p className="min-w-0 text-sm">
-            No support will be given for custom scripts.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onShowHelp}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
-          title="Show script placeholders"
-          aria-label="Show script placeholders"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.09 9a3 3 0 115.82 1c0 2-2.91 2-2.91 4m0 4h.01" />
-          </svg>
-        </button>
+      <div className="flex min-w-0 gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+        <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        </svg>
+        <p className="min-w-0 text-sm">
+          No support will be given for custom scripts.
+        </p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
@@ -730,28 +834,20 @@ function ScriptEditor({
       </div>
 
       {showPackageManagerControls && (
-        <div className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500 mb-2">
-            Config Keys
-          </div>
-          {configKeys.length > 0 ? (
-            <div className="space-y-2">
-              {configKeys.map((entry) => (
-                <div key={entry.key} className="flex flex-wrap items-center gap-2 text-sm">
-                  <code className="rounded bg-slate-200/70 dark:bg-slate-800 px-1.5 py-0.5 text-xs">
-                    {`{{config.${entry.key}}}`}
-                  </code>
-                  <span className="text-slate-500 dark:text-slate-400">{entry.description}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              No built-in config keys are defined for this package manager yet.
-            </p>
-          )}
-        </div>
+        <ScriptReferenceSection
+          title="Config Keys"
+          entries={configReferenceEntries}
+          emptyMessage="No config keys are defined for this package manager yet."
+          onCopy={copyReference}
+        />
       )}
+
+      <ScriptReferenceSection
+        title="Placeholders"
+        entries={placeholderReferenceEntries}
+        emptyMessage="No script placeholders are available."
+        onCopy={copyReference}
+      />
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
@@ -957,28 +1053,6 @@ function ScriptEditor({
         <button type="button" disabled={busy} onClick={save} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
           {busy ? <span className="spinner spinner-sm" /> : "Save"}
         </button>
-      </div>
-    </div>
-  );
-}
-
-function PlaceholderHelpContent({ placeholders }: { placeholders: PlaceholderHelpEntry[] }) {
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-slate-600 dark:text-slate-300">
-        Placeholders are resolved immediately before SSH execution. Package placeholders are validated with the same package-name rules used by selected upgrades.
-      </p>
-      <div className="space-y-3">
-        {placeholders.map((placeholder) => (
-          <div key={placeholder.name} className="rounded-lg border border-border p-3">
-            <div className="font-mono text-sm text-slate-900 dark:text-slate-100">{placeholder.name}</div>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{placeholder.description}</p>
-            <ShellCodeBlock code={placeholder.example} className="mt-2" />
-          </div>
-        ))}
-      </div>
-      <div className="rounded-lg border border-border p-3 text-sm text-slate-600 dark:text-slate-300">
-        Parser regexes for custom package managers should use named groups such as <span className="font-mono">packageName</span>, <span className="font-mono">currentVersion</span>, <span className="font-mono">newVersion</span>, <span className="font-mono">architecture</span>, and <span className="font-mono">repository</span>.
       </div>
     </div>
   );
@@ -1206,7 +1280,7 @@ function PackageManagersPanel({
                         {manager.name}
                       </code>
                       <span className="text-xs text-slate-500 dark:text-slate-400">
-                        {manager.scriptCount} scripts · {manager.operations.length} ops
+                        {manager.scriptCount} scripts · {manager.operations.length} ops · {manager.configEntries.length} configs
                       </span>
                     </div>
                   </div>
@@ -1281,7 +1355,6 @@ export default function Scripts() {
   const [managerFilter, setManagerFilter] = useState("all");
   const [packageManagersOpen, setPackageManagersOpen] = useState(readPackageManagersPanelOpen);
   const [editing, setEditing] = useState<ScriptDefinition | null>(null);
-  const [showHelp, setShowHelp] = useState(false);
   const [showPackageManager, setShowPackageManager] = useState(false);
   const [editingPackageManager, setEditingPackageManager] = useState<CustomPackageManagerDefinition | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScriptDefinition | null>(null);
@@ -1623,16 +1696,12 @@ export default function Scripts() {
           <ScriptEditor
             script={editing}
             packageManagers={packageManagerOptions}
+            placeholders={data?.placeholders ?? []}
             onSave={saveScript}
             onCancel={() => setEditing(null)}
-            onShowHelp={() => setShowHelp(true)}
             busy={createScript.isPending || updateScript.isPending}
           />
         )}
-      </Modal>
-
-      <Modal open={showHelp} onClose={() => setShowHelp(false)} title="Script Placeholders">
-        <PlaceholderHelpContent placeholders={data?.placeholders ?? []} />
       </Modal>
 
       <Modal

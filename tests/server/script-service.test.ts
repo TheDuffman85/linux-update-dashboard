@@ -514,7 +514,7 @@ describe("script service", () => {
     });
   });
 
-  test("exposes custom config placeholders and renders per-system values with defaults", () => {
+  test("renders custom config values with defaults without adding them to placeholder help", () => {
     createCustomPackageManager({
       name: "brewlinux",
       label: "Linuxbrew",
@@ -536,9 +536,11 @@ describe("script service", () => {
       .where(eq(systems.id, 10))
       .run();
 
-    expect(listScripts().placeholders).toContainEqual(expect.objectContaining({
+    expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
       name: "{{config.channel}}",
-      description: "Linuxbrew: Release channel",
+    }));
+    expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
+      name: "{{config.someKey}}",
     }));
     expect(resolveRuntimeSteps({
       systemId: 10,
@@ -584,9 +586,8 @@ describe("script service", () => {
       pkgManager: "apt",
       pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" },
     })[0]?.command).toBe("echo full-upgrade internal");
-    expect(listScripts().placeholders).toContainEqual(expect.objectContaining({
+    expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
       name: "{{config.mirror}}",
-      description: "APT: APT mirror",
     }));
   });
 

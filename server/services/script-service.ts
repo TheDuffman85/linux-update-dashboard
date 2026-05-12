@@ -148,24 +148,11 @@ export const PLACEHOLDER_HELP: PlaceholderHelpEntry[] = [
   { name: "{{quotedPackage}}", description: "The first selected package shell-quoted with single quotes.", example: "tool upgrade {{quotedPackage}}" },
   { name: "{{quotedPackages}}", description: "All selected packages shell-quoted and joined by spaces.", example: "tool upgrade {{quotedPackages}}" },
   { name: "{{manager}}", description: "The package manager key for the current operation.", example: "echo Checking {{manager}}" },
-  { name: "{{config.someKey}}", description: "A manager-specific config value from the system package-manager settings.", example: "echo {{config.defaultUpgradeMode}}" },
   { name: "{{sudo:COMMAND}}", description: "Wraps COMMAND with the dashboard sudo fallback helper.", example: "{{sudo:apk update}} 2>&1" },
 ];
 
-function buildPlaceholderHelp(customManagers: CustomPackageManagerDefinition[]): PlaceholderHelpEntry[] {
-  const entries = [...PLACEHOLDER_HELP];
-  for (const manager of customManagers) {
-    for (const entry of manager.configEntries) {
-      entries.push({
-        name: `{{config.${entry.key}}}`,
-        description: entry.description?.trim()
-          ? `${manager.label}: ${entry.description.trim()}`
-          : `${manager.label} custom config value.`,
-        example: `echo {{config.${entry.key}}}`,
-      });
-    }
-  }
-  return entries;
+function buildPlaceholderHelp(): PlaceholderHelpEntry[] {
+  return [...PLACEHOLDER_HELP];
 }
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
@@ -941,7 +928,7 @@ export function listScripts(): ScriptListResponse {
   return {
     scripts,
     packageManagers,
-    placeholders: buildPlaceholderHelp(packageManagers),
+    placeholders: buildPlaceholderHelp(),
   };
 }
 
