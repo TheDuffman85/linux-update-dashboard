@@ -285,6 +285,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     label TEXT NOT NULL,
     color TEXT,
     parser_config TEXT,
+    config_entries TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -313,6 +314,12 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(system_id, operation_key)
   )`);
+
+  try {
+    _db.run(sql`ALTER TABLE custom_package_managers ADD COLUMN config_entries TEXT`);
+  } catch {
+    // Column already exists
+  }
 
   // Migration: add command column to existing databases
   try {

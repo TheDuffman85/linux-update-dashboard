@@ -33,6 +33,7 @@ scripts.post("/package-managers", async (c) => {
       label: typeof body.label === "string" ? body.label : "",
       color: typeof body.color === "string" ? body.color : null,
       parserConfig: asObject(body.parserConfig) as scriptService.CustomParserConfig | null,
+      configEntries: Array.isArray(body.configEntries) ? body.configEntries : undefined,
     });
     return c.json({ manager }, 201);
   } catch (error) {
@@ -48,6 +49,7 @@ scripts.put("/package-managers/:name", async (c) => {
       label: typeof body.label === "string" ? body.label : "",
       color: typeof body.color === "string" ? body.color : null,
       parserConfig: asObject(body.parserConfig) as scriptService.CustomParserConfig | null,
+      configEntries: Array.isArray(body.configEntries) ? body.configEntries : undefined,
     });
     return c.json({ manager });
   } catch (error) {

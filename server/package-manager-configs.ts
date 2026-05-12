@@ -30,7 +30,7 @@ export interface FlatpakPackageManagerConfig {
   refreshAppstreamOnCheck?: boolean;
 }
 
-export interface PackageManagerConfigs {
+export interface BuiltinPackageManagerConfigs {
   apt?: AptPackageManagerConfig;
   dnf?: DnfPackageManagerConfig;
   yum?: YumPackageManagerConfig;
@@ -39,8 +39,23 @@ export interface PackageManagerConfigs {
   flatpak?: FlatpakPackageManagerConfig;
 }
 
-export type SupportedPackageManagerConfigName = keyof PackageManagerConfigs;
-export type PackageManagerConfigValue = PackageManagerConfigs[SupportedPackageManagerConfigName];
+export interface CustomPackageManagerConfigEntry {
+  key: string;
+  description?: string;
+  defaultValue: string;
+}
+
+export type CustomPackageManagerConfig = Record<string, string>;
+export type SupportedPackageManagerConfigName = keyof BuiltinPackageManagerConfigs;
+export type BuiltinPackageManagerConfigValue = NonNullable<BuiltinPackageManagerConfigs[SupportedPackageManagerConfigName]>;
+
+export type PackageManagerConfigs = BuiltinPackageManagerConfigs & {
+  [manager: string]: BuiltinPackageManagerConfigValue | CustomPackageManagerConfig | undefined;
+};
+
+export type PackageManagerConfigValue =
+  | BuiltinPackageManagerConfigValue
+  | CustomPackageManagerConfig;
 
 const SUPPORTED_CONFIG_MANAGERS = [
   "apt",
@@ -52,6 +67,12 @@ const SUPPORTED_CONFIG_MANAGERS = [
 ] as const satisfies SupportedPackageManagerConfigName[];
 
 const UNSUPPORTED_CONFIG_MANAGERS = new Set(["snap"]);
+const CUSTOM_CONFIG_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+
+export interface CustomPackageManagerConfigDefinition {
+  name: string;
+  configEntries?: CustomPackageManagerConfigEntry[] | null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -70,17 +91,20 @@ export function parsePackageManagerConfigs(
 
 export function serializePackageManagerConfigs(
   value: PackageManagerConfigs | null | undefined,
+  customManagers: CustomPackageManagerConfigDefinition[] = [],
 ): string | null {
-  const normalized = normalizePackageManagerConfigs(value);
+  const normalized = normalizePackageManagerConfigs(value, customManagers);
   return normalized ? JSON.stringify(normalized) : null;
 }
 
 export function normalizePackageManagerConfigs(
   value: unknown,
+  customManagers: CustomPackageManagerConfigDefinition[] = [],
 ): PackageManagerConfigs | null {
   if (!isRecord(value)) return null;
 
   const next: PackageManagerConfigs = {};
+  const customManagerMap = new Map(customManagers.map((manager) => [manager.name, manager]));
 
   if (isRecord(value.apt)) {
     const apt: AptPackageManagerConfig = {};
@@ -145,20 +169,100 @@ export function normalizePackageManagerConfigs(
     if (Object.keys(flatpak).length > 0) next.flatpak = flatpak;
   }
 
+  for (const [manager, rawConfig] of Object.entries(value)) {
+    if (SUPPORTED_CONFIG_MANAGERS.includes(manager as SupportedPackageManagerConfigName)) continue;
+    if (UNSUPPORTED_CONFIG_MANAGERS.has(manager) || !isRecord(rawConfig)) continue;
+
+    const definition = customManagerMap.get(manager);
+    const allowedKeys = definition
+      ? new Set((definition.configEntries ?? []).map((entry) => entry.key))
+      : null;
+    const customConfig: CustomPackageManagerConfig = {};
+    for (const [key, rawValue] of Object.entries(rawConfig)) {
+      if (allowedKeys && !allowedKeys.has(key)) continue;
+      if (typeof rawValue === "string") {
+        customConfig[key] = rawValue;
+      } else if (typeof rawValue === "number" || typeof rawValue === "boolean") {
+        customConfig[key] = String(rawValue);
+      }
+    }
+    if (Object.keys(customConfig).length > 0) next[manager] = customConfig;
+  }
+
   return Object.keys(next).length > 0 ? next : null;
 }
 
-export function validatePackageManagerConfigsInput(value: unknown): string | null {
+export function validateCustomPackageManagerConfigEntries(
+  entries: unknown,
+  existingManagers: CustomPackageManagerConfigDefinition[] = [],
+  currentManagerName?: string,
+): string | null {
+  if (entries === undefined || entries === null) return null;
+  if (!Array.isArray(entries)) {
+    return "configEntries must be an array";
+  }
+
+  const seen = new Set<string>();
+  const otherKeys = new Map<string, string>();
+  for (const manager of existingManagers) {
+    if (currentManagerName && manager.name === currentManagerName) continue;
+    for (const entry of manager.configEntries ?? []) {
+      otherKeys.set(entry.key, manager.name);
+    }
+  }
+
+  for (const [index, entry] of entries.entries()) {
+    if (!isRecord(entry)) return `configEntries.${index} must be an object`;
+    if (typeof entry.key !== "string" || !CUSTOM_CONFIG_KEY_PATTERN.test(entry.key.trim())) {
+      return `configEntries.${index}.key must start with a letter and contain only letters, numbers, underscores, or dashes`;
+    }
+    const key = entry.key.trim();
+    if (seen.has(key)) return `Duplicate custom config key: ${key}`;
+    seen.add(key);
+    const collidingManager = otherKeys.get(key);
+    if (collidingManager) {
+      return `Custom config key ${key} is already used by ${collidingManager}`;
+    }
+    if (entry.description !== undefined && typeof entry.description !== "string") {
+      return `configEntries.${index}.description must be a string`;
+    }
+    if (typeof entry.defaultValue !== "string") {
+      return `configEntries.${index}.defaultValue is required`;
+    }
+  }
+
+  return null;
+}
+
+export function normalizeCustomPackageManagerConfigEntries(entries: unknown): CustomPackageManagerConfigEntry[] {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter(isRecord)
+    .map((entry) => ({
+      key: typeof entry.key === "string" ? entry.key.trim() : "",
+      description: typeof entry.description === "string" ? entry.description.trim() || undefined : undefined,
+      defaultValue: typeof entry.defaultValue === "string" ? entry.defaultValue : "",
+    }))
+    .filter((entry) => CUSTOM_CONFIG_KEY_PATTERN.test(entry.key));
+}
+
+export function validatePackageManagerConfigsInput(
+  value: unknown,
+  customManagers: CustomPackageManagerConfigDefinition[] = [],
+): string | null {
   if (value === undefined) return null;
   if (!isRecord(value)) {
     return "pkgManagerConfigs must be an object";
   }
+  const customManagerMap = new Map(customManagers.map((manager) => [manager.name, manager]));
 
   for (const [manager, rawConfig] of Object.entries(value)) {
     if (UNSUPPORTED_CONFIG_MANAGERS.has(manager)) {
       return `pkgManagerConfigs.${manager} is not supported`;
     }
-    if (!SUPPORTED_CONFIG_MANAGERS.includes(manager as SupportedPackageManagerConfigName)) {
+    const isBuiltinManager = SUPPORTED_CONFIG_MANAGERS.includes(manager as SupportedPackageManagerConfigName);
+    const customManager = customManagerMap.get(manager);
+    if (!isBuiltinManager && !customManager) {
       return `pkgManagerConfigs.${manager} is not a supported package manager`;
     }
     if (!isRecord(rawConfig)) {
@@ -166,6 +270,19 @@ export function validatePackageManagerConfigsInput(value: unknown): string | nul
     }
 
     const keys = Object.keys(rawConfig);
+    if (!isBuiltinManager && customManager) {
+      const allowedKeys = new Set((customManager.configEntries ?? []).map((entry) => entry.key));
+      for (const key of keys) {
+        if (!allowedKeys.has(key)) {
+          return `pkgManagerConfigs.${manager}.${key} is not supported`;
+        }
+        if (typeof rawConfig[key] !== "string") {
+          return `pkgManagerConfigs.${manager}.${key} must be a string`;
+        }
+      }
+      continue;
+    }
+
     if (manager === "apt") {
       for (const key of keys) {
         if (key !== "defaultUpgradeMode" && key !== "autoHideKeptBackUpdates") {
@@ -301,10 +418,7 @@ export function getManagerConfig(
   manager: string,
 ): PackageManagerConfigValue | undefined {
   if (!configs) return undefined;
-  if (!SUPPORTED_CONFIG_MANAGERS.includes(manager as SupportedPackageManagerConfigName)) {
-    return undefined;
-  }
-  return configs[manager as SupportedPackageManagerConfigName];
+  return configs[manager];
 }
 
 export function getAptAutoHideKeptBackUpdates(

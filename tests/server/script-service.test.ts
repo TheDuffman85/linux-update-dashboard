@@ -388,13 +388,65 @@ describe("script service", () => {
     const updated = updateCustomPackageManager("brewlinux", {
       label: "Homebrew",
       color: "#0f766e",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
     });
 
     expect(updated).toMatchObject({
       name: "brewlinux",
       label: "Homebrew",
       color: "#0f766e",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
     });
+  });
+
+  test("exposes custom config placeholders and renders per-system values with defaults", () => {
+    createCustomPackageManager({
+      name: "brewlinux",
+      label: "Linuxbrew",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
+    });
+    const script = createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew update --{{config.channel}}" }],
+    });
+    insertSystem(10);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["brewlinux"]) })
+      .where(eq(systems.id, 10))
+      .run();
+
+    expect(listScripts().placeholders).toContainEqual(expect.objectContaining({
+      name: "{{config.channel}}",
+      description: "Linuxbrew: Release channel",
+    }));
+    expect(resolveRuntimeSteps({
+      systemId: 10,
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+    })[0]?.command).toBe("brew update --stable");
+
+    getDb()
+      .update(systems)
+      .set({ pkgManagerConfigs: JSON.stringify({ brewlinux: { channel: "edge" } }) })
+      .where(eq(systems.id, 10))
+      .run();
+    expect(resolveRuntimeSteps({
+      systemId: 10,
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      pkgManagerConfig: { channel: "edge" },
+    })[0]?.command).toBe("brew update --edge");
+    expect(script.pkgManager).toBe("brewlinux");
   });
 
   test("does not delete custom package managers that still have scripts", () => {

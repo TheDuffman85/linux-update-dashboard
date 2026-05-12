@@ -232,6 +232,7 @@ export const customPackageManagers = sqliteTable("custom_package_managers", {
   label: text("label").notNull(),
   color: text("color"),
   parserConfig: text("parser_config"),
+  configEntries: text("config_entries"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

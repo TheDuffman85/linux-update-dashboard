@@ -97,6 +97,7 @@ describe("SystemForm script operations", () => {
             label: "Custom APT",
             color: "#2563eb",
             parserConfig: null,
+            configEntries: [],
           },
         ],
         scripts: customAptOperations.map((operation) => ({
@@ -167,5 +168,48 @@ describe("SystemForm script operations", () => {
     for (const operation of customAptOperations) {
       expect(html).not.toContain(`Custom APT ${operation}`);
     }
+  });
+
+  test("shows custom package-manager config entries when the manager is available", () => {
+    mockUseScripts.mockReturnValue({
+      data: {
+        packageManagers: [
+          {
+            id: 1,
+            name: "custom-apt",
+            label: "Custom APT",
+            color: "#2563eb",
+            parserConfig: null,
+            configEntries: [
+              { key: "channel", description: "Release channel", defaultValue: "stable" },
+            ],
+          },
+        ],
+        scripts: [],
+        placeholders: [],
+      },
+    });
+
+    const html = renderToStaticMarkup(
+      <SystemForm
+        initial={{
+          name: "Debian",
+          hostname: "debian.local",
+          port: 22,
+          credentialId: 1,
+          detectedPkgManagers: ["custom-apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: { "custom-apt": { channel: "edge" } },
+          scriptOverrides: {},
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Custom APT");
+    expect(html).toContain("channel");
+    expect(html).toContain("Release channel");
+    expect(html).toContain("edge");
   });
 });

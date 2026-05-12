@@ -4,6 +4,7 @@ import {
   parsePackageManagerConfigs,
   serializePackageManagerConfigs,
   validatePackageManagerConfigsInput,
+  validateCustomPackageManagerConfigEntries,
 } from "../../server/package-manager-configs";
 
 describe("package-manager configs", () => {
@@ -60,5 +61,41 @@ describe("package-manager configs", () => {
         autoAcceptEulaOnUpgrade: "yes",
       },
     })).toBe("pkgManagerConfigs.yum.autoAcceptEulaOnUpgrade must be a boolean");
+  });
+
+  test("validates and normalizes custom manager config values", () => {
+    const customManagers = [
+      {
+        name: "brewlinux",
+        configEntries: [
+          { key: "channel", defaultValue: "stable", description: "Release channel" },
+        ],
+      },
+    ];
+
+    expect(validatePackageManagerConfigsInput({
+      brewlinux: { channel: "edge" },
+    }, customManagers)).toBeNull();
+    expect(normalizePackageManagerConfigs({
+      brewlinux: { channel: "edge", unknown: "ignored" },
+    }, customManagers)).toEqual({
+      brewlinux: { channel: "edge" },
+    });
+    expect(validatePackageManagerConfigsInput({
+      brewlinux: { unknown: "edge" },
+    }, customManagers)).toBe("pkgManagerConfigs.brewlinux.unknown is not supported");
+  });
+
+  test("rejects duplicate and colliding custom config entry keys", () => {
+    expect(validateCustomPackageManagerConfigEntries([
+      { key: "channel", defaultValue: "stable" },
+      { key: "channel", defaultValue: "edge" },
+    ])).toBe("Duplicate custom config key: channel");
+
+    expect(validateCustomPackageManagerConfigEntries([
+      { key: "channel", defaultValue: "stable" },
+    ], [
+      { name: "otherpm", configEntries: [{ key: "channel", defaultValue: "edge" }] },
+    ])).toBe("Custom config key channel is already used by otherpm");
   });
 });

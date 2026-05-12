@@ -105,7 +105,10 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
   ) {
     return "detectedPkgManagers must be an array of strings";
   }
-  const pkgManagerConfigError = validatePackageManagerConfigsInput(body.pkgManagerConfigs);
+  const pkgManagerConfigError = validatePackageManagerConfigsInput(
+    body.pkgManagerConfigs,
+    scriptService.listCustomPackageManagers(),
+  );
   if (pkgManagerConfigError) {
     return pkgManagerConfigError;
   }
@@ -564,7 +567,7 @@ systems.post("/", async (c) => {
       : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
-        ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listCustomPackageManagers())
         : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
@@ -680,7 +683,7 @@ systems.put("/:id", async (c) => {
       : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
-        ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listCustomPackageManagers())
         : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
@@ -726,7 +729,9 @@ systems.put("/:id", async (c) => {
 
   if (
     body.autoHideKeptBackUpdates === true ||
-    getAptAutoHideKeptBackUpdates(normalizePackageManagerConfigs(body.pkgManagerConfigs)) === true
+    getAptAutoHideKeptBackUpdates(
+      normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listCustomPackageManagers()),
+    ) === true
   ) {
     hiddenUpdateService.autoHideCachedKeptBackUpdates(id);
   }

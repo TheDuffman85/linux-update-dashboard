@@ -15,6 +15,7 @@ import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/syste
 import {
   normalizePackageManagerConfigs,
   SUPPORTED_PACKAGE_MANAGER_CONFIGS,
+  type CustomPackageManagerConfig,
   type PackageManagerConfigs,
 } from "../../lib/package-manager-configs";
 import {
@@ -272,6 +273,38 @@ export function SystemForm({
     });
   };
 
+  const setCustomManagerConfigValue = (manager: string, key: string, value: string) => {
+    setPkgManagerConfigs((prev) => {
+      const current = prev[manager] && typeof prev[manager] === "object" && !Array.isArray(prev[manager])
+        ? prev[manager] as CustomPackageManagerConfig
+        : {};
+      return {
+        ...prev,
+        [manager]: {
+          ...current,
+          [key]: value,
+        },
+      };
+    });
+  };
+
+  const packageManagerConfigsWithCustomDefaults = (): PackageManagerConfigs => {
+    const next: PackageManagerConfigs = { ...pkgManagerConfigs };
+    for (const manager of customPackageManagers) {
+      if (!isManagerEnabled(manager.name) || manager.configEntries.length === 0) continue;
+      const current = next[manager.name] && typeof next[manager.name] === "object" && !Array.isArray(next[manager.name])
+        ? next[manager.name] as CustomPackageManagerConfig
+        : {};
+      next[manager.name] = Object.fromEntries(
+        manager.configEntries.map((entry) => [
+          entry.key,
+          current[entry.key] ?? entry.defaultValue,
+        ]),
+      );
+    }
+    return next;
+  };
+
   const submitForm = () => {
     const validationError = validateSystemForm({
       name,
@@ -303,7 +336,10 @@ export function SystemForm({
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: [...disabledManagers],
       detectedPkgManagers: detectedManagers,
-      pkgManagerConfigs: normalizePackageManagerConfigs(pkgManagerConfigs) ?? {},
+      pkgManagerConfigs: normalizePackageManagerConfigs(
+        packageManagerConfigsWithCustomDefaults(),
+        customPackageManagers,
+      ) ?? {},
       excludeFromUpgradeAll,
       hidden,
       scriptOverrides: activeScriptOverrides,
@@ -878,7 +914,11 @@ export function SystemForm({
             {visiblePackageManagers.map((manager) => {
               const enabled = isManagerEnabled(manager);
               const title = PACKAGE_MANAGER_LABELS[manager] ?? packageManagerLabels.get(manager) ?? manager;
-              const hasExtraSettings = (SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager);
+              const customManager = customPackageManagers.find((entry) => entry.name === manager);
+              const customConfigEntries = customManager?.configEntries ?? [];
+              const hasExtraSettings =
+                (SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager) ||
+                customConfigEntries.length > 0;
 
               return (
                 <div key={manager} className="rounded-lg border border-border p-3 space-y-3">
@@ -1147,6 +1187,31 @@ export function SystemForm({
                         </span>
                       </span>
                     </label>
+                  )}
+
+                  {customConfigEntries.length > 0 && (
+                    <div className="space-y-3">
+                      {customConfigEntries.map((entry) => {
+                        const config = pkgManagerConfigs[manager] && typeof pkgManagerConfigs[manager] === "object" && !Array.isArray(pkgManagerConfigs[manager])
+                          ? pkgManagerConfigs[manager] as CustomPackageManagerConfig
+                          : {};
+                        return (
+                          <div key={entry.key}>
+                            <label className={labelClass}>{entry.key}</label>
+                            <input
+                              value={config[entry.key] ?? entry.defaultValue}
+                              onChange={(e) => setCustomManagerConfigValue(manager, entry.key, e.target.value)}
+                              className={inputClass}
+                            />
+                            {entry.description && (
+                              <p className="mt-1 text-xs text-slate-400">
+                                {entry.description}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
 
                   {!hasExtraSettings && (

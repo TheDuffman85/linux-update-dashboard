@@ -27,7 +27,7 @@ export interface FlatpakPackageManagerConfig {
   refreshAppstreamOnCheck?: boolean;
 }
 
-export interface PackageManagerConfigs {
+export interface BuiltinPackageManagerConfigs {
   apt?: AptPackageManagerConfig;
   dnf?: DnfPackageManagerConfig;
   yum?: YumPackageManagerConfig;
@@ -36,6 +36,19 @@ export interface PackageManagerConfigs {
   flatpak?: FlatpakPackageManagerConfig;
 }
 
+export interface CustomPackageManagerConfigEntry {
+  key: string;
+  description?: string;
+  defaultValue: string;
+}
+
+export type CustomPackageManagerConfig = Record<string, string>;
+export type BuiltinPackageManagerConfigValue = NonNullable<BuiltinPackageManagerConfigs[keyof BuiltinPackageManagerConfigs]>;
+
+export type PackageManagerConfigs = BuiltinPackageManagerConfigs & {
+  [manager: string]: BuiltinPackageManagerConfigValue | CustomPackageManagerConfig | undefined;
+};
+
 export const SUPPORTED_PACKAGE_MANAGER_CONFIGS = [
   "apt",
   "dnf",
@@ -43,14 +56,21 @@ export const SUPPORTED_PACKAGE_MANAGER_CONFIGS = [
   "pacman",
   "apk",
   "flatpak",
-] as const satisfies Array<keyof PackageManagerConfigs>;
+] as const satisfies Array<keyof BuiltinPackageManagerConfigs>;
+
+export interface CustomPackageManagerConfigDefinition {
+  name: string;
+  configEntries?: CustomPackageManagerConfigEntry[] | null;
+}
 
 export function normalizePackageManagerConfigs(
   value: PackageManagerConfigs | null | undefined,
+  customManagers: CustomPackageManagerConfigDefinition[] = [],
 ): PackageManagerConfigs | null {
   if (!value) return null;
 
   const next: PackageManagerConfigs = {};
+  const customManagerMap = new Map(customManagers.map((manager) => [manager.name, manager]));
 
   if (value.apt?.defaultUpgradeMode) {
     next.apt = { defaultUpgradeMode: value.apt.defaultUpgradeMode };
@@ -101,6 +121,25 @@ export function normalizePackageManagerConfigs(
   }
   if (value.flatpak?.refreshAppstreamOnCheck !== undefined) {
     next.flatpak = { refreshAppstreamOnCheck: value.flatpak.refreshAppstreamOnCheck };
+  }
+
+  for (const [manager, rawConfig] of Object.entries(value)) {
+    if ((SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager)) continue;
+    if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) continue;
+    const definition = customManagerMap.get(manager);
+    const allowedKeys = definition
+      ? new Set((definition.configEntries ?? []).map((entry) => entry.key))
+      : null;
+    const config: CustomPackageManagerConfig = {};
+    for (const [key, raw] of Object.entries(rawConfig)) {
+      if (allowedKeys && !allowedKeys.has(key)) continue;
+      if (typeof raw === "string") {
+        config[key] = raw;
+      } else if (typeof raw === "number" || typeof raw === "boolean") {
+        config[key] = String(raw);
+      }
+    }
+    if (Object.keys(config).length > 0) next[manager] = config;
   }
 
   return Object.keys(next).length > 0 ? next : null;

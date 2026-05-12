@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
+import type { CustomPackageManagerConfigEntry } from "./package-manager-configs";
 
 export type ScriptType = "package_manager" | "system";
 export type ScriptOperation =
@@ -61,6 +62,7 @@ export interface CustomPackageManagerDefinition {
   label: string;
   color: string | null;
   parserConfig: CustomParserConfig | null;
+  configEntries: CustomPackageManagerConfigEntry[];
   createdAt?: string;
   updatedAt?: string;
 }
@@ -129,6 +131,7 @@ export function useCreatePackageManager() {
       label: string;
       color?: string | null;
       parserConfig?: CustomParserConfig | null;
+      configEntries?: CustomPackageManagerConfigEntry[];
     }) =>
       apiFetch<{ manager: CustomPackageManagerDefinition }>("/scripts/package-managers", {
         method: "POST",
@@ -149,6 +152,7 @@ export function useUpdatePackageManager() {
       label: string;
       color?: string | null;
       parserConfig?: CustomParserConfig | null;
+      configEntries?: CustomPackageManagerConfigEntry[];
     }) =>
       apiFetch<{ manager: CustomPackageManagerDefinition }>(
         `/scripts/package-managers/${encodeURIComponent(name)}`,

@@ -26,6 +26,7 @@ import {
   type CustomSystemInfoConfig,
   type ScriptUsage,
 } from "../lib/scripts";
+import type { CustomPackageManagerConfigEntry } from "../lib/package-manager-configs";
 
 hljs.registerLanguage("bash", bashLanguage);
 hljs.configure({ ignoreUnescapedHTML: true });
@@ -106,6 +107,7 @@ type PackageManagerDraft = {
   name: string;
   label: string;
   color: string;
+  configEntries: CustomPackageManagerConfigEntry[];
 };
 
 type ManagedPackageManager = PackageManagerDraft & {
@@ -137,7 +139,44 @@ function emptyPackageManager(): PackageManagerDraft {
     name: "",
     label: "",
     color: "",
+    configEntries: [],
   };
+}
+
+function normalizeConfigEntries(entries: CustomPackageManagerConfigEntry[]): CustomPackageManagerConfigEntry[] {
+  return entries
+    .map((entry) => ({
+      key: entry.key.trim(),
+      description: entry.description?.trim() || undefined,
+      defaultValue: entry.defaultValue,
+    }))
+    .filter((entry) => entry.key || entry.description || entry.defaultValue);
+}
+
+function validateConfigEntries(
+  entries: CustomPackageManagerConfigEntry[],
+  managers: CustomPackageManagerDefinition[],
+  currentManagerName: string | null,
+): string | null {
+  const seen = new Set<string>();
+  const keyPattern = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+  const otherKeys = new Map<string, string>();
+  for (const manager of managers) {
+    if (currentManagerName && manager.name === currentManagerName) continue;
+    for (const entry of manager.configEntries ?? []) {
+      otherKeys.set(entry.key, manager.label);
+    }
+  }
+  for (const entry of entries) {
+    if (!keyPattern.test(entry.key)) {
+      return "Custom config keys must start with a letter and use only letters, numbers, underscores, or dashes.";
+    }
+    if (seen.has(entry.key)) return `Duplicate custom config key: ${entry.key}`;
+    seen.add(entry.key);
+    const collidingManager = otherKeys.get(entry.key);
+    if (collidingManager) return `${entry.key} is already used by ${collidingManager}.`;
+  }
+  return null;
 }
 
 function copyScriptDraft(script: ScriptDefinition): ScriptDefinition {
@@ -442,7 +481,7 @@ function ScriptEditor({
   busy,
 }: {
   script: ScriptDefinition;
-  packageManagers: Array<{ name: string; label: string }>;
+  packageManagers: Array<{ name: string; label: string; configEntries?: CustomPackageManagerConfigEntry[] }>;
   onSave: (script: ScriptDefinition) => void;
   onCancel: () => void;
   onShowHelp: () => void;
@@ -478,7 +517,18 @@ function ScriptEditor({
   const operationOptions = draft.type === "system" ? SYSTEM_OPERATIONS : PACKAGE_MANAGER_OPERATIONS;
   const selectedPackageManager = draft.pkgManager ?? "";
   const usesBuiltinParser = selectedPackageManager ? BUILTIN_PACKAGE_MANAGERS.includes(selectedPackageManager) : false;
-  const configKeys = selectedPackageManager ? PACKAGE_MANAGER_CONFIG_KEYS[selectedPackageManager] ?? [] : [];
+  const customConfigKeys = packageManagers
+    .find((manager) => manager.name === selectedPackageManager)
+    ?.configEntries?.map((entry) => ({
+      key: entry.key,
+      description: entry.description || `Default: ${entry.defaultValue}`,
+    })) ?? [];
+  const configKeys = selectedPackageManager
+    ? [
+        ...(PACKAGE_MANAGER_CONFIG_KEYS[selectedPackageManager] ?? []),
+        ...customConfigKeys,
+      ]
+    : [];
   const showPackageManagerControls = draft.type === "package_manager";
   const showParserConfig =
     draft.type === "package_manager" &&
@@ -944,6 +994,30 @@ function PackageManagerEditor({
   busy?: boolean;
   editing?: boolean;
 }) {
+  const updateConfigEntry = (index: number, patch: Partial<CustomPackageManagerConfigEntry>) => {
+    setDraft({
+      ...draft,
+      configEntries: draft.configEntries.map((entry, entryIndex) =>
+        entryIndex === index ? { ...entry, ...patch } : entry
+      ),
+    });
+  };
+  const addConfigEntry = () => {
+    setDraft({
+      ...draft,
+      configEntries: [
+        ...draft.configEntries,
+        { key: "", description: "", defaultValue: "" },
+      ],
+    });
+  };
+  const removeConfigEntry = (index: number) => {
+    setDraft({
+      ...draft,
+      configEntries: draft.configEntries.filter((_entry, entryIndex) => entryIndex !== index),
+    });
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -990,6 +1064,74 @@ function PackageManagerEditor({
             />
           </div>
         </div>
+      </div>
+      <div className="rounded-lg border border-border bg-slate-50/60 p-3 dark:bg-slate-900/30">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Custom Config
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={addConfigEntry}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-lg leading-none transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
+            title="Add config entry"
+            aria-label="Add config entry"
+          >
+            +
+          </button>
+        </div>
+        {draft.configEntries.length > 0 ? (
+          <div className="space-y-3">
+            {draft.configEntries.map((entry, index) => (
+              <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-border bg-white p-3 dark:bg-slate-900 md:grid-cols-[1fr_1fr_1fr_auto]">
+                <div>
+                  <label className={labelClass}>Key</label>
+                  <input
+                    value={entry.key}
+                    onChange={(e) => updateConfigEntry(index, { key: e.target.value })}
+                    className={inputClass}
+                    placeholder="channel"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Default Value</label>
+                  <input
+                    value={entry.defaultValue}
+                    onChange={(e) => updateConfigEntry(index, { defaultValue: e.target.value })}
+                    className={inputClass}
+                    placeholder="stable"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Description</label>
+                  <input
+                    value={entry.description ?? ""}
+                    onChange={(e) => updateConfigEntry(index, { description: e.target.value })}
+                    className={inputClass}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => removeConfigEntry(index)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-red-500 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
+                    title="Remove config entry"
+                    aria-label="Remove config entry"
+                  >
+                    -
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No custom config entries yet.
+          </p>
+        )}
       </div>
       <div className="flex justify-end gap-3">
         <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
@@ -1193,6 +1335,7 @@ export default function Scripts() {
         name: manager,
         label: BUILTIN_PACKAGE_MANAGER_LABELS[manager] ?? manager,
         color: "",
+        configEntries: [],
         builtin: BUILTIN_PACKAGE_MANAGERS.includes(manager),
         registered: BUILTIN_PACKAGE_MANAGERS.includes(manager),
         scriptCount: 0,
@@ -1216,6 +1359,7 @@ export default function Scripts() {
       ensureManager(manager.name, {
         label: manager.label,
         color: manager.color ?? "",
+        configEntries: manager.configEntries ?? [],
         builtin: false,
         registered: true,
       });
@@ -1243,12 +1387,12 @@ export default function Scripts() {
       });
   }, [data]);
   const packageManagerOptions = useMemo(() => {
-    const labels = new Map<string, string>();
+    const labels = new Map<string, { label: string; configEntries: CustomPackageManagerConfigEntry[] }>();
     for (const manager of managedPackageManagers) {
-      labels.set(manager.name, manager.label);
+      labels.set(manager.name, { label: manager.label, configEntries: manager.configEntries });
     }
     return Array.from(labels.entries())
-      .map(([name, label]) => ({ name, label }))
+      .map(([name, details]) => ({ name, label: details.label, configEntries: details.configEntries }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [managedPackageManagers]);
 
@@ -1268,9 +1412,20 @@ export default function Scripts() {
   };
 
   const handleSavePackageManager = () => {
+    const configEntries = normalizeConfigEntries(packageManagerDraft.configEntries);
+    const configEntryError = validateConfigEntries(
+      configEntries,
+      data?.packageManagers ?? [],
+      editingPackageManager?.name ?? null,
+    );
+    if (configEntryError) {
+      addToast(configEntryError, "danger");
+      return;
+    }
     const payload = {
       ...packageManagerDraft,
       color: packageManagerDraft.color.trim() || null,
+      configEntries,
     };
     const callbacks = {
       onSuccess: () => {
@@ -1302,6 +1457,7 @@ export default function Scripts() {
       name: existing.name,
       label: existing.label,
       color: existing.color ?? "",
+      configEntries: (existing.configEntries ?? []).map((entry) => ({ ...entry })),
     });
     setShowPackageManager(true);
   };

@@ -144,6 +144,7 @@ describe("Scripts page", () => {
             label: "Linuxbrew",
             color: "#2563eb",
             parserConfig: null,
+            configEntries: [],
           },
         ],
         placeholders: [],
