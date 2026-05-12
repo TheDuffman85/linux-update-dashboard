@@ -1062,10 +1062,6 @@ export function supportsFullUpgrade(systemId: number): boolean {
   const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
   const pkgManagers = systemService.getActivePkgManagers(system);
   return pkgManagers.some((pmName) => {
-    const parser = getParser(pmName);
-    if (parser?.getFullUpgradeAllCommand(getManagerConfig(pkgManagerConfigs, pmName)) != null) {
-      return true;
-    }
     return resolveRuntimeSteps({
       systemId,
       operation: "full_upgrade_all",

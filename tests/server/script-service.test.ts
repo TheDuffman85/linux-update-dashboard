@@ -73,6 +73,46 @@ describe("script service", () => {
     expect(scripts.some((script) => script.id === "builtin:system:reboot" && script.readonly)).toBe(true);
   });
 
+  test("resolves built-in runtime steps from the canonical script templates", () => {
+    insertSystem(12);
+    const cases: Array<{
+      operation: "detect" | "check_updates" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
+      pkgManager: string | null;
+      pkgManagerConfig?: Record<string, unknown>;
+      packages?: string[];
+    }> = [
+      { operation: "detect", pkgManager: "apt" },
+      { operation: "check_updates", pkgManager: "apt" },
+      { operation: "upgrade_all", pkgManager: "apt", pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" } },
+      { operation: "full_upgrade_all", pkgManager: "dnf", pkgManagerConfig: { autoAcceptEulaOnUpgrade: true } },
+      { operation: "upgrade_selected", pkgManager: "apt", packages: ["curl", "openssl"] },
+      { operation: "system_info", pkgManager: null },
+      { operation: "reboot", pkgManager: null },
+    ];
+
+    for (const entry of cases) {
+      const source = getBuiltinScripts().find((script) =>
+        script.operation === entry.operation && script.pkgManager === entry.pkgManager
+      );
+      expect(source, `${entry.pkgManager ?? "system"}/${entry.operation}`).toBeDefined();
+
+      expect(resolveRuntimeSteps({
+        systemId: 12,
+        operation: entry.operation,
+        pkgManager: entry.pkgManager,
+        pkgManagerConfig: entry.pkgManagerConfig,
+        packages: entry.packages,
+      })).toEqual(source!.steps.map((step) => ({
+        label: step.label,
+        command: renderCommandTemplate(step.command, {
+          pkgManager: entry.pkgManager,
+          config: entry.pkgManagerConfig,
+          packages: entry.packages,
+        }),
+      })));
+    }
+  });
+
   test("drafted built-in copies are editable custom scripts and assigned scripts cannot be deleted", () => {
     const copy = createBuiltinCopy("builtin:apt:check_updates");
     expect(copy.readonly).toBe(false);

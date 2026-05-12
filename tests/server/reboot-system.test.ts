@@ -8,6 +8,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateHistory } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
+import { buildOperationKey, createScript, setSystemOverrides } from "../../server/services/script-service";
 import { rebootSystem } from "../../server/services/update-service";
 
 describe("rebootSystem", () => {
@@ -108,5 +109,41 @@ describe("rebootSystem", () => {
         error: null,
       },
     ]);
+  });
+
+  test("runs the configured reboot script command", async () => {
+    const db = getDb();
+    const encryptor = getEncryptor();
+    const inserted = db.insert(systems).values({
+      name: "Debian",
+      hostname: "localhost",
+      port: 2005,
+      authType: "password",
+      username: "testuser",
+      encryptedPassword: encryptor.encrypt("testpass"),
+    }).returning({ id: systems.id }).get();
+    const script = createScript({
+      name: "Custom reboot",
+      type: "system",
+      operation: "reboot",
+      steps: [{ label: "Custom reboot", command: "echo custom-reboot" }],
+    });
+    setSystemOverrides(inserted.id, {
+      [buildOperationKey("reboot")]: script.id,
+    });
+
+    const sshManager = initSSHManager(1, 1, 1, encryptor);
+    const commands: string[] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      commands.push(command);
+      return { stdout: "ok", stderr: "", exitCode: 0 };
+    };
+
+    const result = await rebootSystem(inserted.id);
+
+    expect(result).toEqual({ success: true, message: "Reboot command sent" });
+    expect(commands).toEqual(["echo custom-reboot"]);
   });
 });

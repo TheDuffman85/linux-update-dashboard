@@ -6,9 +6,6 @@ import { resolveSystemCredential } from "./credential-service";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import type { ApprovedHostKeyInput } from "./system-connection-validation";
-import {
-  SYSTEM_INFO_CMD,
-} from "../ssh/system-info";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
 import type { PackageManagerConfigs } from "../package-manager-configs";
@@ -535,7 +532,7 @@ export async function updateSystemInfo(
   const steps = resolveRuntimeSteps({ systemId, operation: "system_info" });
   const sudoPassword = previous ? getSudoPassword(previous as Record<string, unknown>) : undefined;
   let stdout = "";
-  for (const step of steps.length ? steps : [{ label: "Collect system information", command: SYSTEM_INFO_CMD }]) {
+  for (const step of steps) {
     const result = await sshManager.runCommand(conn, step.command, undefined, sudoPassword);
     stdout += `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}\n`;
   }
