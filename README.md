@@ -14,7 +14,7 @@
 
 # Linux Update Dashboard
 
-A self-hosted web app for managing Linux package updates across multiple servers. Connect via SSH, check for updates, customize the package-management commands behind them, and apply updates from a single dashboard in your browser.
+A self-hosted web app for managing Linux package updates across multiple servers. Connect via SSH, check for updates, and apply them from a single dashboard in your browser.
 
 <div align="center">
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node.js-%235FA04E.svg?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js" /></a>
