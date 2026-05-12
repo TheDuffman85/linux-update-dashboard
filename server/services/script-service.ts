@@ -115,6 +115,34 @@ const MANAGER_LABELS: Record<string, string> = {
   snap: "Snap",
 };
 
+const MAX_SCRIPT_STEPS = 8;
+const MAX_SCRIPT_NAME_LENGTH = 120;
+const MAX_SCRIPT_DESCRIPTION_LENGTH = 2000;
+const MAX_STEP_LABEL_LENGTH = 120;
+const MAX_STEP_COMMAND_LENGTH = 8000;
+const MAX_SCRIPT_CONFIG_JSON_LENGTH = 5000;
+const MAX_REGEX_LENGTH = 500;
+const MAX_EXIT_CODE_COUNT = 16;
+const MAX_PARSE_STEP = 20;
+const PACKAGE_MANAGER_NAME_PATTERN = /^[a-z][a-z0-9_-]{1,31}$/;
+const SYSTEM_INFO_FIELDS = new Set<keyof SystemInfo>([
+  "osName",
+  "osVersion",
+  "kernel",
+  "hostname",
+  "uptime",
+  "uptimeSeconds",
+  "arch",
+  "cpuCores",
+  "memory",
+  "disk",
+  "bootId",
+  "installedKernels",
+  "rebootRequiredFilePresent",
+  "needsRestartingStatus",
+  "needsReboot",
+]);
+
 export const PLACEHOLDER_HELP: PlaceholderHelpEntry[] = [
   { name: "{{package}}", description: "The first selected package name, validated before execution.", example: "apt-get install --only-upgrade -y {{package}}" },
   { name: "{{packages}}", description: "All selected package names joined by spaces after validation.", example: "dnf upgrade -y {{packages}}" },
@@ -149,6 +177,139 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateJsonSize(value: unknown, field: string, maxLength = MAX_SCRIPT_CONFIG_JSON_LENGTH): string | null {
+  try {
+    const serialized = JSON.stringify(value);
+    if (!serialized || serialized.length > maxLength) {
+      return `${field} must serialize to at most ${maxLength} characters`;
+    }
+  } catch {
+    return `${field} must be JSON-serializable`;
+  }
+  return null;
+}
+
+function hasDangerousRegexConstruct(source: string): boolean {
+  const nestedQuantifier = /\((?:[^()\\]|\\.)*(?:[+*]|\{\d*,?\d*\})(?:[^()\\]|\\.)*\)(?:[+*]|\{\d*,?\d*\})/;
+  return nestedQuantifier.test(source) || /\\[1-9]/.test(source);
+}
+
+function validateRegexSource(
+  value: unknown,
+  field: string,
+  options: { required?: boolean; requireUpdateGroups?: boolean } = {},
+): string | null {
+  if (value === undefined || value === null || value === "") {
+    return options.required ? `${field} is required` : null;
+  }
+  if (typeof value !== "string") return `${field} must be a string`;
+  const source = value.trim();
+  if (!source) return options.required ? `${field} is required` : null;
+  if (source.length > MAX_REGEX_LENGTH) {
+    return `${field} must be ${MAX_REGEX_LENGTH} characters or less`;
+  }
+  if (hasDangerousRegexConstruct(source)) {
+    return `${field} contains an unsafe regular expression pattern`;
+  }
+  if (options.requireUpdateGroups) {
+    if (!source.includes("(?<packageName>") || !source.includes("(?<newVersion>")) {
+      return `${field} must include named capture groups packageName and newVersion`;
+    }
+  }
+  try {
+    new RegExp(source);
+  } catch (error) {
+    return `${field} is not a valid regular expression: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return null;
+}
+
+function compileValidatedRegex(
+  source: string,
+  field: string,
+  options: { requireUpdateGroups?: boolean } = {},
+): RegExp {
+  const error = validateRegexSource(source, field, {
+    required: true,
+    requireUpdateGroups: options.requireUpdateGroups,
+  });
+  if (error) throw new Error(error);
+  return new RegExp(source.trim());
+}
+
+function validateExitCodes(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) return `${field} must be an array`;
+  if (value.length > MAX_EXIT_CODE_COUNT) {
+    return `${field} must include at most ${MAX_EXIT_CODE_COUNT} values`;
+  }
+  if (!value.every((code) => Number.isInteger(code) && code >= 0 && code <= 255)) {
+    return `${field} must contain exit codes between 0 and 255`;
+  }
+  return null;
+}
+
+function validateParserConfig(config: unknown, field = "parserConfig"): string | null {
+  if (config === undefined || config === null) return null;
+  if (!isRecord(config)) return `${field} must be an object`;
+  const sizeError = validateJsonSize(config, field);
+  if (sizeError) return sizeError;
+  if (config.parseStep !== undefined) {
+    const parseStep = config.parseStep;
+    if (typeof parseStep !== "number" || !Number.isInteger(parseStep) || parseStep < 0 || parseStep > MAX_PARSE_STEP) {
+      return `${field}.parseStep must be an integer between 0 and ${MAX_PARSE_STEP}`;
+    }
+  }
+  return (
+    validateRegexSource(config.updateRegex, `${field}.updateRegex`, { requireUpdateGroups: config.updateRegex !== undefined }) ||
+    validateRegexSource(config.securityRegex, `${field}.securityRegex`) ||
+    validateRegexSource(config.keptBackRegex, `${field}.keptBackRegex`) ||
+    validateExitCodes(config.successExitCodes, `${field}.successExitCodes`) ||
+    validateExitCodes(config.updatesExitCodes, `${field}.updatesExitCodes`)
+  );
+}
+
+function validateSystemInfoConfig(config: unknown): string | null {
+  if (config === undefined || config === null) return null;
+  if (!isRecord(config)) return "systemInfoConfig must be an object";
+  const sizeError = validateJsonSize(config, "systemInfoConfig");
+  if (sizeError) return sizeError;
+  if (
+    config.mode !== undefined &&
+    config.mode !== "builtin" &&
+    config.mode !== "sectioned"
+  ) {
+    return "systemInfoConfig.mode must be builtin or sectioned";
+  }
+  if (config.fieldSections !== undefined && config.fieldSections !== null) {
+    if (!isRecord(config.fieldSections)) return "systemInfoConfig.fieldSections must be an object";
+    for (const [field, section] of Object.entries(config.fieldSections)) {
+      if (!SYSTEM_INFO_FIELDS.has(field as keyof SystemInfo)) {
+        return `systemInfoConfig.fieldSections.${field} is not supported`;
+      }
+      if (typeof section !== "string" || section.length > 120) {
+        return `systemInfoConfig.fieldSections.${field} must be a string up to 120 characters`;
+      }
+    }
+  }
+  return validateRegexSource(config.rebootRequiredRegex, "systemInfoConfig.rebootRequiredRegex");
+}
+
+function validatePackageManagerName(value: unknown): string | null {
+  if (typeof value !== "string" || !PACKAGE_MANAGER_NAME_PATTERN.test(value)) {
+    return "pkgManager must start with a letter and contain only lowercase letters, numbers, underscores, or dashes";
+  }
+  const knownManagers = new Set(listPackageManagerDefinitions().map((manager) => manager.name));
+  if (!knownManagers.has(value)) {
+    return `Unsupported package manager: ${value}`;
+  }
+  return null;
 }
 
 function managerLabel(manager: string): string {
@@ -802,8 +963,15 @@ export function getScriptById(scriptId: string): ScriptDefinition | null {
 }
 
 function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
-  if (!input.name || typeof input.name !== "string" || input.name.trim().length > 120) {
-    return "name is required (max 120 chars)";
+  if (!input.name || typeof input.name !== "string" || input.name.trim().length > MAX_SCRIPT_NAME_LENGTH) {
+    return `name is required (max ${MAX_SCRIPT_NAME_LENGTH} chars)`;
+  }
+  if (
+    input.description !== undefined &&
+    input.description !== null &&
+    (typeof input.description !== "string" || input.description.length > MAX_SCRIPT_DESCRIPTION_LENGTH)
+  ) {
+    return `description must be ${MAX_SCRIPT_DESCRIPTION_LENGTH} characters or less`;
   }
   if (input.type !== "package_manager" && input.type !== "system") {
     return "type must be package_manager or system";
@@ -815,18 +983,46 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type === "package_manager" && !input.pkgManager) {
     return "pkgManager is required for package manager scripts";
   }
+  if (input.type === "package_manager") {
+    const managerError = validatePackageManagerName(input.pkgManager);
+    if (managerError) return managerError;
+    if (input.operation === "system_info" || input.operation === "reboot") {
+      return "package manager scripts cannot use system operations";
+    }
+  }
   if (input.type === "system" && input.pkgManager) {
     return "system scripts cannot have pkgManager";
+  }
+  if (input.type === "system" && input.operation !== "system_info" && input.operation !== "reboot") {
+    return "system scripts must use system_info or reboot";
   }
   if (!Array.isArray(input.steps) || input.steps.length === 0) {
     return "steps must include at least one command";
   }
+  if (input.steps.length > MAX_SCRIPT_STEPS) {
+    return `steps must include at most ${MAX_SCRIPT_STEPS} commands`;
+  }
   for (const step of input.steps) {
-    if (!step.label || !step.command || step.command.length > 8000) {
-      return "each step needs a label and command";
+    if (!isRecord(step)) return "each step must be an object";
+    if (
+      typeof step.label !== "string" ||
+      !step.label.trim() ||
+      step.label.length > MAX_STEP_LABEL_LENGTH ||
+      typeof step.command !== "string" ||
+      !step.command.trim() ||
+      step.command.length > MAX_STEP_COMMAND_LENGTH
+    ) {
+      return `each step needs a label and command (command max ${MAX_STEP_COMMAND_LENGTH} chars)`;
     }
   }
-  return null;
+  if (
+    input.sourceScriptId !== undefined &&
+    input.sourceScriptId !== null &&
+    (typeof input.sourceScriptId !== "string" || input.sourceScriptId.length > 120 || !parseScriptId(input.sourceScriptId))
+  ) {
+    return "sourceScriptId must be a valid script ID";
+  }
+  return validateParserConfig(input.parserConfig) || validateSystemInfoConfig(input.systemInfoConfig);
 }
 
 export function createScript(input: Partial<ScriptDefinition>): ScriptDefinition {
@@ -997,13 +1193,15 @@ export function createCustomPackageManager(input: {
   configEntries?: CustomPackageManagerConfigEntry[] | null;
 }): CustomPackageManagerDefinition {
   const name = input.name.trim().toLowerCase();
-  if (!/^[a-z][a-z0-9_-]{1,31}$/.test(name)) {
+  if (!PACKAGE_MANAGER_NAME_PATTERN.test(name)) {
     throw new Error("Package manager name must start with a letter and contain only lowercase letters, numbers, underscores, or dashes");
   }
   if (BUILTIN_MANAGER_ORDER.includes(name)) {
     throw new Error("A built-in package manager already uses that name");
   }
-  if (!input.label.trim()) throw new Error("Package manager label is required");
+  if (!input.label.trim() || input.label.trim().length > 120) throw new Error("Package manager label is required (max 120 chars)");
+  const parserConfigError = validateParserConfig(input.parserConfig);
+  if (parserConfigError) throw new Error(parserConfigError);
   const configEntryError = validateCustomPackageManagerConfigEntries(
     input.configEntries,
     listPackageManagerDefinitions(),
@@ -1039,7 +1237,13 @@ export function updateCustomPackageManager(name: string, input: {
     .where(eq(customPackageManagers.name, normalizedName))
     .get();
   if (!existing && !isBuiltin) throw new Error("Package manager not found");
-  if (!isBuiltin && !input.label?.trim()) throw new Error("Package manager label is required");
+  if (!isBuiltin && (!input.label?.trim() || input.label.trim().length > 120)) {
+    throw new Error("Package manager label is required (max 120 chars)");
+  }
+  if (!isBuiltin) {
+    const parserConfigError = validateParserConfig(input.parserConfig);
+    if (parserConfigError) throw new Error(parserConfigError);
+  }
   const rawConfigEntries = input.configEntries === undefined
     ? parseJson<unknown>(existing?.configEntries, [])
     : input.configEntries;
@@ -1295,9 +1499,11 @@ export function parseCustomUpdates(
   if (!config?.updateRegex) return [];
   const parseStep = Number.isInteger(config.parseStep) ? Math.max(0, config.parseStep ?? 0) : commandResults.length - 1;
   const output = commandResults[parseStep]?.stdout ?? commandResults[commandResults.length - 1]?.stdout ?? "";
-  const updateRegex = new RegExp(config.updateRegex);
-  const securityRegex = config.securityRegex ? new RegExp(config.securityRegex) : null;
-  const keptBackRegex = config.keptBackRegex ? new RegExp(config.keptBackRegex) : null;
+  const configError = validateParserConfig(config);
+  if (configError) throw new Error(configError);
+  const updateRegex = compileValidatedRegex(config.updateRegex, "parserConfig.updateRegex", { requireUpdateGroups: true });
+  const securityRegex = config.securityRegex ? compileValidatedRegex(config.securityRegex, "parserConfig.securityRegex") : null;
+  const keptBackRegex = config.keptBackRegex ? compileValidatedRegex(config.keptBackRegex, "parserConfig.keptBackRegex") : null;
   const updates: ParsedUpdate[] = [];
   for (const raw of output.split("\n")) {
     const line = raw.trim();
@@ -1379,7 +1585,7 @@ function applySystemInfoConfig(stdout: string, config: CustomSystemInfoConfig | 
     }
   }
   if (config.rebootRequiredRegex) {
-    next.needsReboot = new RegExp(config.rebootRequiredRegex).test(stdout);
+    next.needsReboot = compileValidatedRegex(config.rebootRequiredRegex, "systemInfoConfig.rebootRequiredRegex").test(stdout);
   }
   return next;
 }
@@ -1413,7 +1619,7 @@ export function parseSystemInfoWithScript(
   const customInfo = usesBuiltinParser ? null : applySystemInfoConfig(stdout, script.systemInfoConfig);
   const info = customInfo ?? parseSystemInfo(stdout);
   const rawNeedsReboot = script?.systemInfoConfig?.rebootRequiredRegex
-    ? new RegExp(script.systemInfoConfig.rebootRequiredRegex).test(stdout)
+    ? compileValidatedRegex(script.systemInfoConfig.rebootRequiredRegex, "systemInfoConfig.rebootRequiredRegex").test(stdout)
     : resolveRebootRequired(previous, info);
   const rebootDismissal = resolveRebootDismissal(previous, info, rawNeedsReboot);
   return {

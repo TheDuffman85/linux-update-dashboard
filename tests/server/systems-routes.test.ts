@@ -6,8 +6,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, hiddenUpdates, settings, systems, updateCache, updateHistory } from "../../server/db/schema";
+import { apiTokens, credentials, hiddenUpdates, settings, systems, updateCache, updateHistory, users } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
+import { authMiddleware } from "../../server/middleware/auth";
+import { hashToken } from "../../server/auth/api-token";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
 import { buildOperationKey, createScript, getSystemOverrides, setSystemOverrides } from "../../server/services/script-service";
@@ -25,6 +27,22 @@ function createSystemCredential(username: string): number {
     }),
   }).returning({ id: credentials.id }).get();
   return inserted.id;
+}
+
+async function createBearerToken(): Promise<string> {
+  const token = `ludash_${randomBytes(32).toString("hex")}`;
+  const user = getDb().insert(users).values({
+    username: `api-user-${randomBytes(4).toString("hex")}`,
+    passwordHash: "unused",
+    isAdmin: 1,
+  }).returning({ id: users.id }).get();
+  getDb().insert(apiTokens).values({
+    userId: user.id,
+    name: "writer",
+    tokenHash: await hashToken(token),
+    readOnly: 0,
+  }).run();
+  return token;
 }
 
 function createValidatedConfigToken(data: {
@@ -809,6 +827,84 @@ describe("systems reorder route", () => {
 
     expect(res.status).toBe(200);
     expect(getSystemOverrides(systemId)).toEqual({});
+  });
+
+  test("persists script overrides on normal system create", async () => {
+    const credentialId = createSystemCredential("root");
+    const script = createScript({
+      name: "Detect APT custom",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Script Override Create",
+        hostname: "script-create.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        scriptOverrides: {
+          [buildOperationKey("detect", "apt")]: script.id,
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(getSystemOverrides(body.id)).toEqual({
+      [buildOperationKey("detect", "apt")]: script.id,
+    });
+  });
+
+  test("bearer tokens cannot mutate script overrides through systems routes", async () => {
+    const token = await createBearerToken();
+    const protectedApp = new Hono();
+    protectedApp.use("/api/*", authMiddleware);
+    protectedApp.route("/api/systems", systemsRoutes);
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    const incoming = {
+      socket: {
+        remoteAddress: "127.0.0.1",
+        remotePort: 12345,
+        remoteFamily: "IPv4",
+      },
+    };
+
+    const responses = await Promise.all([
+      protectedApp.request("/api/systems", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ scriptOverrides: {} }),
+      }, { incoming }),
+      protectedApp.request("/api/systems/1", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ scriptOverrides: {} }),
+      }, { incoming }),
+      protectedApp.request("/api/systems/1/script-overrides", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ scriptOverrides: {} }),
+      }, { incoming }),
+    ]);
+
+    for (const res of responses) {
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: "API tokens cannot modify script overrides",
+      });
+    }
   });
 
   test("filters hidden systems when requesting visible scope", async () => {

@@ -23,6 +23,7 @@ import {
   renderCommandTemplate,
   resolveRuntimeSteps,
   setSystemOverrides,
+  updateScript,
   updateCustomPackageManager,
 } from "../../server/services/script-service";
 
@@ -83,6 +84,90 @@ describe("script service", () => {
     });
 
     expect(() => deleteScript(copy.id)).toThrow(/assigned/);
+  });
+
+  test("rejects updates and deletes for built-in scripts", () => {
+    expect(() => updateScript("builtin:apt:detect", {
+      name: "Edited built-in",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    })).toThrow(/read-only/);
+    expect(() => deleteScript("builtin:apt:detect")).toThrow(/read-only/);
+  });
+
+  test("rejects invalid and oversized custom script payloads", () => {
+    expect(() => createScript({
+      name: "Bad manager",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "Apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    })).toThrow(/pkgManager/);
+
+    expect(() => createScript({
+      name: "Wrong operation",
+      type: "system",
+      operation: "detect",
+      steps: [{ label: "Detect", command: "true" }],
+    })).toThrow(/system_info or reboot/);
+
+    expect(() => createScript({
+      name: "Too many steps",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: Array.from({ length: 9 }, (_entry, index) => ({
+        label: `Step ${index}`,
+        command: "true",
+      })),
+    })).toThrow(/at most 8/);
+
+    expect(() => createScript({
+      name: "Bad step",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "x".repeat(8001) }],
+    })).toThrow(/command max 8000/);
+  });
+
+  test("rejects unsafe or incomplete parser regexes", () => {
+    expect(() => createScript({
+      name: "Missing parser groups",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "Check", command: "apt list --upgradable" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)$",
+      },
+    })).toThrow(/packageName and newVersion/);
+
+    expect(() => createScript({
+      name: "Unsafe parser",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "Check", command: "apt list --upgradable" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>(a+)+)\\s+(?<newVersion>\\S+)$",
+      },
+    })).toThrow(/unsafe regular expression/);
+
+    expect(() => createCustomPackageManager({
+      name: "brewlinux",
+      label: "Linuxbrew",
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)\\s+->\\s+(?<newVersion>\\S+)$",
+      },
+    })).not.toThrow();
+  });
+
+  test("rejects oversized and invalid formatter input", async () => {
+    await expect(formatShellCommand("")).rejects.toThrow(/Command is required/);
+    await expect(formatShellCommand("x".repeat(8001))).rejects.toThrow(/too long/);
   });
 
   test("lists system usage for assigned custom scripts", () => {

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import * as scriptService from "../services/script-service";
 
 const scripts = new Hono();
+const MAX_PARSER_SAMPLE_OUTPUT_LENGTH = 50_000;
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -70,6 +71,9 @@ scripts.post("/validate-parser", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) return c.json({ error: "Invalid request body" }, 400);
   const output = typeof body.output === "string" ? body.output : "";
+  if (output.length > MAX_PARSER_SAMPLE_OUTPUT_LENGTH) {
+    return c.json({ error: `output must be ${MAX_PARSER_SAMPLE_OUTPUT_LENGTH} characters or less` }, 400);
+  }
   const pkgManager = typeof body.pkgManager === "string" ? body.pkgManager : "custom";
   const parserConfig = asObject(body.parserConfig) as scriptService.CustomParserConfig | null;
   try {

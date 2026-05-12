@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import { buildCommandReference } from "../services/command-reference";
@@ -29,7 +29,13 @@ import {
   validatePackageManagerConfigsInput,
 } from "../package-manager-configs";
 
-const systems = new Hono();
+type SystemsEnv = {
+  Variables: {
+    apiToken?: boolean;
+  };
+};
+
+const systems = new Hono<SystemsEnv>();
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -41,6 +47,10 @@ function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id) || id <= 0) return null;
   return id;
+}
+
+function isApiTokenRequest(c: Context<SystemsEnv>): boolean {
+  return c.get("apiToken") === true;
 }
 
 const VALID_HOSTNAME = /^[a-zA-Z0-9]([a-zA-Z0-9._:-]*[a-zA-Z0-9])?$/;
@@ -532,6 +542,9 @@ systems.post("/", async (c) => {
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
+  if (isApiTokenRequest(c) && body.scriptOverrides !== undefined) {
+    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const sourceIdCandidate =
@@ -657,6 +670,9 @@ systems.put("/:id", async (c) => {
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
+  if (isApiTokenRequest(c) && body.scriptOverrides !== undefined) {
+    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const parsedConfig = parseConnectionConfig(body, id);
@@ -755,6 +771,9 @@ systems.post("/:id/reboot", async (c) => {
 systems.put("/:id/script-overrides", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (isApiTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  }
   if (!systemService.getSystem(id)) return c.json({ error: "System not found" }, 404);
   const body = asObject(await c.req.json().catch(() => null));
   if (!body || !asObject(body.scriptOverrides)) {
