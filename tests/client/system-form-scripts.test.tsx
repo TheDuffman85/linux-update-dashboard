@@ -95,7 +95,6 @@ describe("SystemForm script operations", () => {
             id: 1,
             name: "custom-apt",
             label: "Custom APT",
-            color: "#2563eb",
             parserConfig: null,
             configEntries: [],
             builtin: false,
@@ -179,7 +178,6 @@ describe("SystemForm script operations", () => {
             id: 1,
             name: "custom-apt",
             label: "Custom APT",
-            color: "#2563eb",
             parserConfig: null,
             builtin: false,
             configEntries: [

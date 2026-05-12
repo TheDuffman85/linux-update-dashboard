@@ -230,7 +230,6 @@ export const customPackageManagers = sqliteTable("custom_package_managers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull().unique(),
   label: text("label").notNull(),
-  color: text("color"),
   parserConfig: text("parser_config"),
   configEntries: text("config_entries"),
   createdAt: text("created_at")

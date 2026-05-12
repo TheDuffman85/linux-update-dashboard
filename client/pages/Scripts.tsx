@@ -112,7 +112,6 @@ const PACKAGE_MANAGERS_PANEL_STORAGE_KEY = "scripts.packageManagersPanelOpen";
 type PackageManagerDraft = {
   name: string;
   label: string;
-  color: string;
   configEntries: CustomPackageManagerConfigEntry[];
   builtin?: boolean;
 };
@@ -145,7 +144,6 @@ function emptyPackageManager(): PackageManagerDraft {
   return {
     name: "",
     label: "",
-    color: "",
     configEntries: [],
     builtin: false,
   };
@@ -429,10 +427,6 @@ function ShellCommandEditor({
       </div>
     </div>
   );
-}
-
-function colorInputValue(value: string): string {
-  return /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#2563eb";
 }
 
 function readPackageManagersPanelOpen(): boolean {
@@ -1057,25 +1051,6 @@ function PackageManagerEditor({
             disabled={draft.builtin}
           />
         </div>
-        <div>
-          <label className={labelClass}>Color</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              value={colorInputValue(draft.color)}
-              onChange={(e) => setDraft({ ...draft, color: e.target.value })}
-              className="h-10 w-12 rounded-lg border border-border bg-white dark:bg-slate-900 p-1"
-              title="Package manager color"
-              aria-label="Package manager color"
-            />
-            <input
-              value={draft.color}
-              onChange={(e) => setDraft({ ...draft, color: e.target.value })}
-              className={inputClass}
-              placeholder="#2563eb"
-            />
-          </div>
-        </div>
       </div>
       <div className="rounded-lg border border-border bg-slate-50/60 p-3 dark:bg-slate-900/30">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -1203,7 +1178,7 @@ function PackageManagersPanel({
       {open && (
         <div className="border-t border-border px-4 pb-4 pt-3">
           <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
-            Built-ins can be colored and extended with custom config entries; custom managers can also be labeled.
+            Built-ins can be extended with custom config entries; custom managers can also be labeled.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
             {managers.map((manager) => (
@@ -1213,11 +1188,7 @@ function PackageManagersPanel({
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="h-3 w-3 shrink-0 rounded-full border border-black/10 dark:border-white/20"
-                        style={{ backgroundColor: manager.color || "#94a3b8" }}
-                      />
+                    <div>
                       <h3 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
                         {manager.label}
                       </h3>
@@ -1348,7 +1319,6 @@ export default function Scripts() {
       const next: ManagedPackageManager = {
         name: manager,
         label: BUILTIN_PACKAGE_MANAGER_LABELS[manager] ?? manager,
-        color: "",
         configEntries: [],
         builtin: BUILTIN_PACKAGE_MANAGERS.includes(manager),
         registered: BUILTIN_PACKAGE_MANAGERS.includes(manager),
@@ -1372,7 +1342,6 @@ export default function Scripts() {
     for (const manager of data?.packageManagers ?? []) {
       ensureManager(manager.name, {
         label: manager.label,
-        color: manager.color ?? "",
         configEntries: manager.configEntries ?? [],
         builtin: manager.builtin,
         registered: true,
@@ -1438,7 +1407,6 @@ export default function Scripts() {
     }
     const payload = {
       ...packageManagerDraft,
-      color: packageManagerDraft.color.trim() || null,
       configEntries,
     };
     const callbacks = {
@@ -1470,7 +1438,6 @@ export default function Scripts() {
     setPackageManagerDraft({
       name: existing.name,
       label: existing.label,
-      color: existing.color ?? "",
       configEntries: (existing.configEntries ?? []).map((entry) => ({ ...entry })),
       builtin: existing.builtin,
     });

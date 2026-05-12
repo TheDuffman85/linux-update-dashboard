@@ -32,7 +32,6 @@ scripts.post("/package-managers", async (c) => {
     const manager = scriptService.createCustomPackageManager({
       name: typeof body.name === "string" ? body.name : "",
       label: typeof body.label === "string" ? body.label : "",
-      color: typeof body.color === "string" ? body.color : null,
       parserConfig: asObject(body.parserConfig) as scriptService.CustomParserConfig | null,
       configEntries: Array.isArray(body.configEntries) ? body.configEntries : undefined,
     });
@@ -48,7 +47,6 @@ scripts.put("/package-managers/:name", async (c) => {
   try {
     const manager = scriptService.updateCustomPackageManager(c.req.param("name"), {
       label: typeof body.label === "string" ? body.label : "",
-      color: typeof body.color === "string" ? body.color : null,
       parserConfig: asObject(body.parserConfig) as scriptService.CustomParserConfig | null,
       configEntries: Array.isArray(body.configEntries) ? body.configEntries : undefined,
     });

@@ -85,7 +85,6 @@ export interface CustomPackageManagerDefinition {
   builtin: boolean;
   name: string;
   label: string;
-  color: string | null;
   parserConfig: CustomParserConfig | null;
   configEntries: CustomPackageManagerConfigEntry[];
   createdAt: string;
@@ -875,7 +874,6 @@ function serializeCustomPackageManager(row: typeof customPackageManagers.$inferS
     builtin,
     name: row.name,
     label: builtin ? MANAGER_LABELS[row.name] ?? row.name : row.label,
-    color: row.color,
     parserConfig: builtin ? null : parseJson<CustomParserConfig | null>(row.parserConfig, null),
     configEntries: normalizeCustomPackageManagerConfigEntries(parseJson<unknown>(row.configEntries, [])),
     createdAt: row.createdAt,
@@ -913,7 +911,6 @@ export function listPackageManagerDefinitions(): CustomPackageManagerDefinition[
     builtin: true,
     name,
     label: MANAGER_LABELS[name] ?? name,
-    color: null,
     parserConfig: null,
     configEntries: [],
     createdAt: now,
@@ -1188,7 +1185,6 @@ export function deleteScript(scriptId: string): void {
 export function createCustomPackageManager(input: {
   name: string;
   label: string;
-  color?: string | null;
   parserConfig?: CustomParserConfig | null;
   configEntries?: CustomPackageManagerConfigEntry[] | null;
 }): CustomPackageManagerDefinition {
@@ -1214,7 +1210,6 @@ export function createCustomPackageManager(input: {
     .values({
       name,
       label: input.label.trim(),
-      color: input.color?.trim() || null,
       parserConfig: input.parserConfig ? JSON.stringify(input.parserConfig) : null,
       configEntries: configEntries.length ? JSON.stringify(configEntries) : null,
     })
@@ -1225,7 +1220,6 @@ export function createCustomPackageManager(input: {
 
 export function updateCustomPackageManager(name: string, input: {
   label?: string;
-  color?: string | null;
   parserConfig?: CustomParserConfig | null;
   configEntries?: CustomPackageManagerConfigEntry[] | null;
 }): CustomPackageManagerDefinition {
@@ -1258,7 +1252,6 @@ export function updateCustomPackageManager(name: string, input: {
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const values = {
     label: isBuiltin ? MANAGER_LABELS[normalizedName] ?? normalizedName : input.label!.trim(),
-    color: input.color?.trim() || null,
     parserConfig: isBuiltin || !input.parserConfig ? null : JSON.stringify(input.parserConfig),
     configEntries: configEntries.length ? JSON.stringify(configEntries) : null,
     updatedAt: now,

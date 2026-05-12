@@ -142,7 +142,6 @@ describe("Scripts page", () => {
             id: 1,
             name: "brewlinux",
             label: "Linuxbrew",
-            color: "#2563eb",
             parserConfig: null,
             configEntries: [],
             builtin: false,

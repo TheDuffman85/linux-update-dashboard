@@ -472,7 +472,6 @@ describe("script service", () => {
 
     const updated = updateCustomPackageManager("brewlinux", {
       label: "Homebrew",
-      color: "#0f766e",
       configEntries: [
         { key: "channel", description: "Release channel", defaultValue: "stable" },
       ],
@@ -481,17 +480,15 @@ describe("script service", () => {
     expect(updated).toMatchObject({
       name: "brewlinux",
       label: "Homebrew",
-      color: "#0f766e",
       configEntries: [
         { key: "channel", description: "Release channel", defaultValue: "stable" },
       ],
     });
   });
 
-  test("updates built-in package manager color and custom config metadata only", () => {
+  test("updates built-in package manager custom config metadata only", () => {
     const updated = updateCustomPackageManager("apt", {
       label: "Changed APT",
-      color: "#ef4444",
       parserConfig: {
         updateRegex: "ignored",
       },
@@ -504,7 +501,6 @@ describe("script service", () => {
       builtin: true,
       name: "apt",
       label: "APT",
-      color: "#ef4444",
       parserConfig: null,
       configEntries: [
         { key: "mirror", description: "APT mirror", defaultValue: "internal" },
@@ -512,7 +508,9 @@ describe("script service", () => {
     });
     expect(listScripts().packageManagers.find((manager) => manager.name === "apt")).toMatchObject({
       builtin: true,
-      color: "#ef4444",
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
     });
   });
 
@@ -564,7 +562,6 @@ describe("script service", () => {
 
   test("renders built-in package manager custom config values without dropping built-in config", () => {
     updateCustomPackageManager("apt", {
-      color: "#ef4444",
       configEntries: [
         { key: "mirror", description: "APT mirror", defaultValue: "internal" },
       ],

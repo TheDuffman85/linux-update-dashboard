@@ -680,7 +680,7 @@ The **Scripts** page exposes the SSH command templates that power package-manage
 - **Custom scripts are editable:** define one or more shell steps, choose the operation they implement, and optionally attach parser settings for update checks or section mapping for system-info output
 - **Per-system overrides:** each system can keep the standard detected defaults or override individual operations such as `apt/check_updates`, `apt/upgrade_all`, or `system/reboot`
 - **Usage tracking:** custom scripts show where they are assigned, and scripts still used by active systems cannot be deleted accidentally
-- **Custom package managers:** add package managers beyond the built-in list with a display label, color, parser regexes, and optional config entries that appear in each matching system's package-manager settings
+- **Custom package managers:** add package managers beyond the built-in list with a display label, parser regexes, and optional config entries that appear in each matching system's package-manager settings
 
 Script commands support placeholders that are resolved immediately before SSH execution:
 

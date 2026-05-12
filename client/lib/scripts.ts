@@ -61,7 +61,6 @@ export interface CustomPackageManagerDefinition {
   builtin: boolean;
   name: string;
   label: string;
-  color: string | null;
   parserConfig: CustomParserConfig | null;
   configEntries: CustomPackageManagerConfigEntry[];
   createdAt?: string;
@@ -130,7 +129,6 @@ export function useCreatePackageManager() {
     mutationFn: (manager: {
       name: string;
       label: string;
-      color?: string | null;
       parserConfig?: CustomParserConfig | null;
       configEntries?: CustomPackageManagerConfigEntry[];
     }) =>
@@ -151,7 +149,6 @@ export function useUpdatePackageManager() {
     }: {
       name: string;
       label: string;
-      color?: string | null;
       parserConfig?: CustomParserConfig | null;
       configEntries?: CustomPackageManagerConfigEntry[];
     }) =>

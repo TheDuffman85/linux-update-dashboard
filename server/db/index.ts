@@ -283,7 +283,6 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     label TEXT NOT NULL,
-    color TEXT,
     parser_config TEXT,
     config_entries TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
