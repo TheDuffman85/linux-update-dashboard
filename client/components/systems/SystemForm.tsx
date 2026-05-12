@@ -241,6 +241,15 @@ export function SystemForm({
       }
       return next;
     });
+    if (enabled) {
+      setScriptOverrides((prev) => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${manager}/`)) delete next[key];
+        }
+        return next;
+      });
+    }
     if (customPackageManagerNames.has(manager) && !enabled) {
       setDetectedManagers((prev) => (
         prev.includes(manager) ? prev : [...prev, manager]
@@ -276,6 +285,13 @@ export function SystemForm({
       return;
     }
 
+    const activeScriptOverrides = Object.fromEntries(
+      Object.entries(scriptOverrides).filter(([key]) => {
+        const [manager] = key.split("/");
+        return manager === "system" || !disabledManagers.has(manager);
+      }),
+    );
+
     onSubmit({
       name,
       hostname,
@@ -290,7 +306,7 @@ export function SystemForm({
       pkgManagerConfigs: normalizePackageManagerConfigs(pkgManagerConfigs) ?? {},
       excludeFromUpgradeAll,
       hidden,
-      scriptOverrides,
+      scriptOverrides: activeScriptOverrides,
       sourceSystemId,
     });
   };
@@ -322,7 +338,7 @@ export function SystemForm({
   const packageManagerLabels = new Map(
     customPackageManagers.map((manager) => [manager.name, manager.label]),
   );
-  const visibleScriptPackageManagers = visiblePackageManagers;
+  const visibleScriptPackageManagers = visiblePackageManagers.filter(isManagerEnabled);
   const packageScriptOperations: ScriptOperation[] = [
     "detect",
     "check_updates",

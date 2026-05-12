@@ -597,8 +597,8 @@ systems.post("/", async (c) => {
       sourceSystemId,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
-    if (body.scriptOverrides) {
-      scriptService.setSystemOverrides(
+    if (body.scriptOverrides !== undefined) {
+      scriptService.replaceSystemOverrides(
         systemId,
         body.scriptOverrides as Record<string, string | null | undefined>,
       );
@@ -712,8 +712,8 @@ systems.put("/:id", async (c) => {
       hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
-    if (body.scriptOverrides) {
-      scriptService.setSystemOverrides(
+    if (body.scriptOverrides !== undefined) {
+      scriptService.replaceSystemOverrides(
         id,
         body.scriptOverrides as Record<string, string | null | undefined>,
       );

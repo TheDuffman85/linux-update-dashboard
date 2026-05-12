@@ -10,6 +10,7 @@ import { credentials, hiddenUpdates, settings, systems, updateCache, updateHisto
 import systemsRoutes from "../../server/routes/systems";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
+import { buildOperationKey, createScript, getSystemOverrides, setSystemOverrides } from "../../server/services/script-service";
 import { issueValidatedConfigToken } from "../../server/services/system-connection-validation";
 import { initSSHManager } from "../../server/ssh/connection";
 
@@ -765,6 +766,49 @@ describe("systems reorder route", () => {
 
     expect(detailBody.system.updateCount).toBe(1);
     expect(detailBody.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["openssl"]);
+  });
+
+  test("replaces script overrides on full system update", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Script Override Clear",
+      hostname: "script-clear.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+    const script = createScript({
+      name: "Detect APT copy",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    setSystemOverrides(systemId, {
+      [buildOperationKey("detect", "apt")]: script.id,
+    });
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Script Override Clear",
+        hostname: "script-clear.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        disabledPkgManagers: [],
+        scriptOverrides: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(getSystemOverrides(systemId)).toEqual({});
   });
 
   test("filters hidden systems when requesting visible scope", async () => {

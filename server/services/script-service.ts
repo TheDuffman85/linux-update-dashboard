@@ -1,6 +1,6 @@
 import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "../db";
-import { customPackageManagers, customScripts, systemScriptOverrides } from "../db/schema";
+import { customPackageManagers, customScripts, systemScriptOverrides, systems } from "../db/schema";
 import {
   getManagerConfig,
   parsePackageManagerConfigs,
@@ -64,8 +64,16 @@ export interface ScriptDefinition {
   parserConfig: CustomParserConfig | null;
   systemInfoConfig: CustomSystemInfoConfig | null;
   sourceScriptId: string | null;
+  usageCount?: number;
+  usages?: ScriptUsage[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface ScriptUsage {
+  systemId: number;
+  systemName: string;
+  operationKey: string;
 }
 
 export interface CustomPackageManagerDefinition {
@@ -705,8 +713,16 @@ export function listScripts(): ScriptListResponse {
     .orderBy(asc(customScripts.type), asc(customScripts.pkgManager), asc(customScripts.operation), asc(customScripts.name))
     .all()
     .map(serializeCustomScript);
+  const scripts = [...getBuiltinScripts(), ...custom].map((script) => {
+    const usages = listScriptUsages(script.id);
+    return {
+      ...script,
+      usageCount: usages.length,
+      usages,
+    };
+  });
   return {
-    scripts: [...getBuiltinScripts(), ...custom],
+    scripts,
     packageManagers: listCustomPackageManagers(),
     placeholders: PLACEHOLDER_HELP,
   };
@@ -806,15 +822,36 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
   return serializeCustomScript(row);
 }
 
+export function listScriptUsages(scriptId: string): ScriptUsage[] {
+  return getDb()
+    .select({
+      systemId: systems.id,
+      systemName: systems.name,
+      operationKey: systemScriptOverrides.operationKey,
+      disabledPkgManagers: systems.disabledPkgManagers,
+    })
+    .from(systemScriptOverrides)
+    .innerJoin(systems, eq(systemScriptOverrides.systemId, systems.id))
+    .where(eq(systemScriptOverrides.scriptId, scriptId))
+    .orderBy(asc(systems.name), asc(systems.id), asc(systemScriptOverrides.operationKey))
+    .all()
+    .filter((usage) => {
+      const [manager] = usage.operationKey.split("/");
+      if (!manager || manager === "system") return true;
+      return !parseJson<string[]>(usage.disabledPkgManagers, []).includes(manager);
+    })
+    .map(({ disabledPkgManagers, ...usage }) => usage);
+}
+
 export function deleteScript(scriptId: string): void {
   const parsed = parseScriptId(scriptId);
   if (!parsed || parsed.kind !== "custom") throw new Error("Built-in scripts are read-only");
-  const referenced = getDb()
-    .select({ id: systemScriptOverrides.id })
-    .from(systemScriptOverrides)
+  const usages = listScriptUsages(scriptId);
+  if (usages.length > 0) throw new Error("Script is assigned to one or more systems");
+  getDb()
+    .delete(systemScriptOverrides)
     .where(eq(systemScriptOverrides.scriptId, scriptId))
-    .get();
-  if (referenced) throw new Error("Script is assigned to one or more systems");
+    .run();
   getDb().delete(customScripts).where(eq(customScripts.id, parsed.id)).run();
 }
 
@@ -910,23 +947,47 @@ export function getSystemOverrides(systemId: number): Record<string, string> {
   return Object.fromEntries(rows.map((row) => [row.operationKey, row.scriptId]));
 }
 
+function validateSystemOverride(operationKey: string, scriptId: string | null | undefined): void {
+  if (!/^[a-z0-9_-]+\/[a-z_]+$|^system\/[a-z_]+$/.test(operationKey)) {
+    throw new Error(`Invalid operation key: ${operationKey}`);
+  }
+  if (!scriptId) return;
+  const script = getScriptById(scriptId);
+  if (!script) throw new Error(`Script not found: ${scriptId}`);
+  const expectedKey = buildOperationKey(script.operation, script.pkgManager);
+  if (expectedKey !== operationKey) {
+    throw new Error(`Script ${scriptId} is not compatible with ${operationKey}`);
+  }
+}
+
 export function setSystemOverrides(systemId: number, overrides: Record<string, string | null | undefined>): Record<string, string> {
   const db = getDb();
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   for (const [operationKey, scriptId] of Object.entries(overrides)) {
-    if (!/^[a-z0-9_-]+\/[a-z_]+$|^system\/[a-z_]+$/.test(operationKey)) {
-      throw new Error(`Invalid operation key: ${operationKey}`);
-    }
+    validateSystemOverride(operationKey, scriptId);
     db.delete(systemScriptOverrides)
       .where(and(eq(systemScriptOverrides.systemId, systemId), eq(systemScriptOverrides.operationKey, operationKey)))
       .run();
     if (!scriptId) continue;
-    const script = getScriptById(scriptId);
-    if (!script) throw new Error(`Script not found: ${scriptId}`);
-    const expectedKey = buildOperationKey(script.operation, script.pkgManager);
-    if (expectedKey !== operationKey) {
-      throw new Error(`Script ${scriptId} is not compatible with ${operationKey}`);
-    }
+    db.insert(systemScriptOverrides)
+      .values({ systemId, operationKey, scriptId, createdAt: now, updatedAt: now })
+      .run();
+  }
+  return getSystemOverrides(systemId);
+}
+
+export function replaceSystemOverrides(systemId: number, overrides: Record<string, string | null | undefined>): Record<string, string> {
+  const db = getDb();
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const entries = Object.entries(overrides);
+  for (const [operationKey, scriptId] of entries) {
+    validateSystemOverride(operationKey, scriptId);
+  }
+  db.delete(systemScriptOverrides)
+    .where(eq(systemScriptOverrides.systemId, systemId))
+    .run();
+  for (const [operationKey, scriptId] of entries) {
+    if (!scriptId) continue;
     db.insert(systemScriptOverrides)
       .values({ systemId, operationKey, scriptId, createdAt: now, updatedAt: now })
       .run();

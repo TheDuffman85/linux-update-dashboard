@@ -43,8 +43,16 @@ export interface ScriptDefinition {
   parserConfig: CustomParserConfig | null;
   systemInfoConfig: CustomSystemInfoConfig | null;
   sourceScriptId: string | null;
+  usageCount?: number;
+  usages?: ScriptUsage[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface ScriptUsage {
+  systemId: number;
+  systemName: string;
+  operationKey: string;
 }
 
 export interface CustomPackageManagerDefinition {

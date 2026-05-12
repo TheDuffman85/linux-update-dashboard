@@ -3,8 +3,9 @@ import { randomBytes } from "crypto";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { eq, sql } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { systems } from "../../server/db/schema";
+import { systemScriptOverrides, systems } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
   buildOperationKey,
@@ -14,8 +15,11 @@ import {
   deleteScript,
   formatShellCommand,
   getBuiltinScripts,
+  getSystemOverrides,
+  listScriptUsages,
   listScripts,
   parseCustomUpdates,
+  replaceSystemOverrides,
   renderCommandTemplate,
   resolveRuntimeSteps,
   setSystemOverrides,
@@ -79,6 +83,79 @@ describe("script service", () => {
     });
 
     expect(() => deleteScript(copy.id)).toThrow(/assigned/);
+  });
+
+  test("lists system usage for assigned custom scripts", () => {
+    const copy = createBuiltinCopy("builtin:apt:detect");
+    insertSystem(2);
+    setSystemOverrides(2, {
+      [buildOperationKey("detect", "apt")]: copy.id,
+    });
+
+    expect(listScriptUsages(copy.id)).toEqual([
+      {
+        systemId: 2,
+        systemName: "system-2",
+        operationKey: "apt/detect",
+      },
+    ]);
+
+    const listed = listScripts().scripts.find((script) => script.id === copy.id);
+    expect(listed?.usageCount).toBe(1);
+    expect(listed?.usages?.[0]?.systemName).toBe("system-2");
+  });
+
+  test("deletes scripts with only stale override rows", () => {
+    const copy = createBuiltinCopy("builtin:apt:detect");
+
+    getDb().run(sql`PRAGMA foreign_keys=OFF`);
+    getDb().insert(systemScriptOverrides).values({
+      systemId: 999,
+      operationKey: buildOperationKey("detect", "apt"),
+      scriptId: copy.id,
+    }).run();
+    getDb().run(sql`PRAGMA foreign_keys=ON`);
+
+    expect(listScriptUsages(copy.id)).toEqual([]);
+    expect(() => deleteScript(copy.id)).not.toThrow();
+    expect(getDb().select().from(systemScriptOverrides).where(eq(systemScriptOverrides.scriptId, copy.id)).all()).toEqual([]);
+  });
+
+  test("does not count disabled package manager overrides as active usage", () => {
+    createCustomPackageManager({ name: "custom-apt", label: "Custom APT" });
+    const script = createScript({
+      name: "Detect Custom APT",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "custom-apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    insertSystem(3);
+    getDb()
+      .update(systems)
+      .set({ disabledPkgManagers: JSON.stringify(["custom-apt"]) })
+      .where(eq(systems.id, 3))
+      .run();
+    setSystemOverrides(3, {
+      [buildOperationKey("detect", "custom-apt")]: script.id,
+    });
+
+    expect(listScriptUsages(script.id)).toEqual([]);
+    expect(listScripts().scripts.find((entry) => entry.id === script.id)?.usageCount).toBe(0);
+    expect(() => deleteScript(script.id)).not.toThrow();
+  });
+
+  test("replaces system overrides so omitted keys are unassigned", () => {
+    const copy = createBuiltinCopy("builtin:apt:detect");
+    insertSystem(4);
+    setSystemOverrides(4, {
+      [buildOperationKey("detect", "apt")]: copy.id,
+    });
+
+    expect(getSystemOverrides(4)).toEqual({ "apt/detect": copy.id });
+    replaceSystemOverrides(4, {});
+
+    expect(getSystemOverrides(4)).toEqual({});
   });
 
   test("unmodified built-in copies keep built-in runtime behavior", () => {

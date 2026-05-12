@@ -24,6 +24,7 @@ import {
   type ScriptType,
   type CustomParserConfig,
   type CustomSystemInfoConfig,
+  type ScriptUsage,
 } from "../lib/scripts";
 
 hljs.registerLanguage("bash", bashLanguage);
@@ -170,6 +171,81 @@ function commandUsesSudo(command: string): boolean {
 
 function scriptUsesSudo(script: ScriptDefinition): boolean {
   return script.steps.some((step) => commandUsesSudo(step.command));
+}
+
+function formatUsageOperation(usage: ScriptUsage): string {
+  const [, operation] = usage.operationKey.split("/");
+  return OPERATION_LABELS[(operation || usage.operationKey) as ScriptOperation] ?? usage.operationKey;
+}
+
+function formatUsageSummary(usages: ScriptUsage[]): string {
+  if (usages.length === 0) return "Not assigned to any system";
+  const names = usages.map((usage) => usage.systemName);
+  const visible = names.slice(0, 3).join(", ");
+  const extra = names.length > 3 ? ` and ${names.length - 3} more` : "";
+  return `Assigned to ${visible}${extra}`;
+}
+
+function UsageDetails({ usages }: { usages: ScriptUsage[] }) {
+  return (
+    <div className="space-y-2">
+      {usages.map((usage) => (
+        <div
+          key={`${usage.systemId}-${usage.operationKey}`}
+          className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-sm"
+        >
+          <span className="min-w-0 truncate font-medium text-slate-800 dark:text-slate-100">
+            {usage.systemName}
+          </span>
+          <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">
+            {formatUsageOperation(usage)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UsageBadge({
+  usages,
+  onOpen,
+}: {
+  usages: ScriptUsage[];
+  onOpen: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (usages.length === 0) return null;
+
+  const label = usages.length === 1 ? "1 system" : `${usages.length} systems`;
+  const summary = formatUsageSummary(usages);
+
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        className="inline-flex items-center rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 transition-colors hover:bg-green-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
+        aria-label={`${summary}. Tap to view script assignments.`}
+        title={summary}
+      >
+        {label}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-2 w-max max-w-xs rounded-lg border border-border bg-white p-2 text-xs shadow-lg dark:bg-slate-900">
+          <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">
+            {summary}
+          </div>
+          <UsageDetails usages={usages} />
+        </div>
+      )}
+    </span>
+  );
 }
 
 function joinExitCodes(value: number[] | undefined): string {
@@ -1083,6 +1159,7 @@ export default function Scripts() {
   const [editingPackageManager, setEditingPackageManager] = useState<CustomPackageManagerDefinition | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScriptDefinition | null>(null);
   const [deleteManagerTarget, setDeleteManagerTarget] = useState<ManagedPackageManager | null>(null);
+  const [usageTarget, setUsageTarget] = useState<ScriptDefinition | null>(null);
   const [packageManagerDraft, setPackageManagerDraft] = useState(emptyPackageManager());
   const [copyingScriptId, setCopyingScriptId] = useState<string | null>(null);
 
@@ -1340,6 +1417,10 @@ export default function Scripts() {
                       <Badge variant={script.readonly ? "muted" : "info"} small>{script.readonly ? "built-in" : "custom"}</Badge>
                       {script.pkgManager ? <Badge variant="muted" small>{script.pkgManager}</Badge> : null}
                       {scriptUsesSudo(script) ? <Badge variant="warning" small>sudo</Badge> : null}
+                      <UsageBadge
+                        usages={script.usages ?? []}
+                        onOpen={() => setUsageTarget(script)}
+                      />
                     </div>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       {OPERATION_LABELS[script.operation]} · {script.description || "No description"}
@@ -1417,6 +1498,21 @@ export default function Scripts() {
       </Modal>
 
       <Modal
+        open={usageTarget !== null}
+        onClose={() => setUsageTarget(null)}
+        title={`${usageTarget?.name ?? "Script"} assignments`}
+      >
+        {usageTarget && (
+          <div>
+            <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">
+              {formatUsageSummary(usageTarget.usages ?? [])}
+            </p>
+            <UsageDetails usages={usageTarget.usages ?? []} />
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         open={showPackageManager}
         onClose={() => {
           setShowPackageManager(false);
@@ -1452,7 +1548,11 @@ export default function Scripts() {
           });
         }}
         title="Delete Script"
-        message={`Delete ${deleteTarget?.name ?? "this script"}? Assigned scripts cannot be deleted.`}
+        message={
+          deleteTarget && (deleteTarget.usages ?? []).length > 0
+            ? `Delete ${deleteTarget.name}? ${formatUsageSummary(deleteTarget.usages ?? [])}. It cannot be deleted until those systems use another script.`
+            : `Delete ${deleteTarget?.name ?? "this script"}? This action cannot be undone.`
+        }
         confirmLabel="Delete"
         danger
       />

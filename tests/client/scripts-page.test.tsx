@@ -160,4 +160,44 @@ describe("Scripts page", () => {
     expect(html).not.toContain("Edit package manager");
     expect(html).not.toContain("Focus");
   });
+
+  test("shows where custom scripts are assigned", () => {
+    mockUseScripts.mockReturnValue({
+      data: {
+        scripts: [
+          {
+            id: "custom:7",
+            readonly: false,
+            name: "Detect APT (Copy)",
+            description: null,
+            type: "package_manager",
+            operation: "detect",
+            pkgManager: "apt",
+            steps: [{ label: "Detect APT", command: "command -v apt" }],
+            parserConfig: null,
+            systemInfoConfig: null,
+            sourceScriptId: "builtin:apt:detect",
+            usageCount: 1,
+            usages: [
+              {
+                systemId: 42,
+                systemName: "web-42",
+                operationKey: "apt/detect",
+              },
+            ],
+          },
+        ],
+        packageManagers: [],
+        placeholders: [],
+      },
+      isLoading: false,
+    });
+
+    const html = renderToStaticMarkup(<Scripts />);
+
+    expect(html).toContain("1 system");
+    expect(html).toContain("Assigned to web-42");
+    expect(html).toContain("web-42");
+    expect(html).toContain("Detection");
+  });
 });
