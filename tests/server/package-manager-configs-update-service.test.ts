@@ -121,8 +121,8 @@ describe("update service package manager configs", () => {
     await applyUpgradeAll(aptSystemId);
     await applyUpgradeAll(dnfSystemId);
 
-    expect(commands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"))).toBe(true);
-    expect(commands.some((command) => command.includes("dnf distro-sync -y"))).toBe(true);
+    expect(commands.some((command) => command.includes('upgrade_mode="full-upgrade"'))).toBe(true);
+    expect(commands.some((command) => command.includes('upgrade_command="distro-sync"'))).toBe(true);
   });
 
   test("threads DNF and YUM EULA config into upgrade commands", async () => {
@@ -169,8 +169,8 @@ describe("update service package manager configs", () => {
     await applyUpgradeAll(dnfSystemId);
     await applyUpgradeAll(yumSystemId);
 
-    expect(commands.some((command) => command.includes("ACCEPT_EULA=Y dnf distro-sync -y"))).toBe(true);
-    expect(commands.some((command) => command.includes("ACCEPT_EULA=Y yum update -y"))).toBe(true);
+    expect(commands.some((command) => command.includes("env ACCEPT_EULA=Y dnf"))).toBe(true);
+    expect(commands.some((command) => command.includes("env ACCEPT_EULA=Y yum update -y"))).toBe(true);
   });
 
   test("applyFullUpgradeAll still forces full-upgrade semantics", async () => {
@@ -214,7 +214,8 @@ describe("update service package manager configs", () => {
 
     await applyFullUpgradeAll(systemId);
 
-    expect(commands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"))).toBe(true);
+    expect(commands.some((command) => command.includes('upgrade_mode="upgrade"'))).toBe(true);
+    expect(commands.some((command) => command.includes('then upgrade_mode="full-upgrade"; fi'))).toBe(true);
   });
 
   test("checkUpdates threads package-manager refresh config into commands", async () => {
@@ -270,53 +271,55 @@ describe("update service package manager configs", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
-      if (command.includes("dnf check-update --refresh --quiet")) {
+      if (command.includes("dnf") && command.includes("check-update")) {
         return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
       }
-      if (command.includes("dnf -y check-update --quiet")) {
-        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
-      }
-      if (command.includes("yum -y check-update --quiet")) {
-        return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
-      }
-      if (command.includes("dnf check-update --quiet")) {
+      if (command.includes("yum") && command.includes("check-update")) {
         return { stdout: "EXIT:0\n", stderr: "", exitCode: 0 };
       }
       if (command.includes("pacman -Qu")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
+      if (command.includes("pacman -Sy")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       if (command.includes("apk list -u")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apk update")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
       if (command.includes("flatpak remote-ls --updates")) {
         return { stdout: "===INSTALLED===\n===UPDATES===\n", stderr: "", exitCode: 0 };
       }
+      if (command.includes("flatpak update --appstream")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       throw new Error(`Unexpected command: ${command}`);
     };
 
     await checkUpdates(dnfSystemId);
-    expect(commands.some((command) => command.includes("dnf check-update --refresh --quiet"))).toBe(true);
-    expect(commands.some((command) => command.includes("dnf -y check-update --quiet"))).toBe(false);
+    expect(commands.some((command) => command.includes('if [ "true" = "true" ]; then check_args="$check_args --refresh"; fi'))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(dnfAutoAcceptSystemId);
-    expect(commands.some((command) => command.includes("dnf -y check-update --quiet"))).toBe(true);
+    expect(commands.some((command) => command.includes('if [ "true" = "true" ]; then check_args="$check_args -y"; fi'))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(yumSystemId);
-    expect(commands.some((command) => command.includes("yum -y check-update --quiet"))).toBe(true);
+    expect(commands.some((command) => command.includes('if [ "true" = "true" ]; then check_args="$check_args -y"; fi'))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(pacmanSystemId);
-    expect(commands.some((command) => command.includes("pacman -Sy"))).toBe(false);
+    expect(commands.some((command) => command.includes('if [ "false" != "false" ]; then') && command.includes("pacman -Sy"))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(apkSystemId);
-    expect(commands.some((command) => command.includes("apk update"))).toBe(false);
+    expect(commands.some((command) => command.includes('if [ "false" != "false" ]; then') && command.includes("apk update"))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(flatpakSystemId);
-    expect(commands.some((command) => command.includes("flatpak update --appstream"))).toBe(false);
+    expect(commands.some((command) => command.includes('if [ "false" != "false" ]; then') && command.includes("flatpak update --appstream"))).toBe(true);
   });
 
   test("threads DNF EULA config into full-upgrade and selected-package commands", async () => {

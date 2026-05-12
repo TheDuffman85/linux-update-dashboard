@@ -163,3 +163,11 @@ export function useDeletePackageManager() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
   });
 }
+
+export async function formatScriptCommand(command: string): Promise<string> {
+  const response = await apiFetch<{ command: string }>("/scripts/format", {
+    method: "POST",
+    body: JSON.stringify({ command }),
+  });
+  return response.command;
+}

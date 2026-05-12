@@ -83,6 +83,17 @@ scripts.post("/validate-parser", async (c) => {
   }
 });
 
+scripts.post("/format", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) return c.json({ error: "Invalid request body" }, 400);
+  const command = typeof body.command === "string" ? body.command : "";
+  try {
+    return c.json({ command: await scriptService.formatShellCommand(command) });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Failed to format command" }, 400);
+  }
+});
+
 scripts.put("/:id", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) return c.json({ error: "Invalid request body" }, 400);

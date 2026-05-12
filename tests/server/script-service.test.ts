@@ -12,6 +12,7 @@ import {
   createScript,
   deleteCustomPackageManager,
   deleteScript,
+  formatShellCommand,
   getBuiltinScripts,
   listScripts,
   parseCustomUpdates,
@@ -95,7 +96,8 @@ describe("script service", () => {
     });
 
     expect(copy.systemInfoConfig).toBeNull();
-    expect(steps[0]?.command).toContain("full-upgrade -y");
+    expect(steps[0]?.command).toContain('upgrade_mode="full-upgrade"');
+    expect(steps[0]?.command).toContain('${upgrade_mode} -y');
 
     const systemInfoCopy = createBuiltinCopy("builtin:system:system_info");
     expect(systemInfoCopy.systemInfoConfig).toEqual({ mode: "builtin" });
@@ -164,6 +166,18 @@ describe("script service", () => {
     expect(command).toContain("--manager apt");
     expect(command).toContain("--mode full-upgrade");
     expect(command).toContain("sudo -S -p ''");
+  });
+
+  test("formats compact built-in shell commands for display", async () => {
+    const aptUpgrade = getBuiltinScripts().find((script) => script.id === "builtin:apt:upgrade_all");
+    const reboot = getBuiltinScripts().find((script) => script.id === "builtin:system:reboot");
+
+    const formattedApt = await formatShellCommand(aptUpgrade?.steps[0]?.command ?? "");
+    const formattedReboot = await formatShellCommand(reboot?.steps[0]?.command ?? "");
+
+    expect(formattedApt).toContain('if [ "$upgrade_mode" != "full-upgrade" ]; then\n  upgrade_mode="upgrade"\nfi');
+    expect(formattedApt).toContain('elif command -v sudo > /dev/null 2>&1; then\n  sudo -S -p');
+    expect(formattedReboot).toContain('if [ "$(id -u)" = "0" ]; then\n  reboot\nelif command -v sudo > /dev/null 2>&1; then');
   });
 
   test("resolves per-system custom script overrides before built-ins", () => {

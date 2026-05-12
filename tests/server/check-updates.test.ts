@@ -268,7 +268,7 @@ describe("checkUpdates", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
-      if (command.includes("dnf check-update --quiet 2>&1")) {
+      if (command.includes("dnf") && command.includes("check-update")) {
         return {
           stdout: [
             "Importing GPG key 0x51312F3F:",
@@ -326,7 +326,7 @@ describe("checkUpdates", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
-      if (command.includes("dnf check-update --quiet 2>&1")) {
+      if (command.includes("dnf") && command.includes("check-update")) {
         return {
           stdout: [
             "Importing OpenPGP key 0x05A12548:",

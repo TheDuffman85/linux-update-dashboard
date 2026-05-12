@@ -5,12 +5,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { buildCommandReference, normalizeCommandForSudoers } from "../../server/services/command-reference";
 import { getPackageManagerDetectionCommands } from "../../server/ssh/detector";
-import { aptParser } from "../../server/ssh/parsers/apt";
-import { dnfParser } from "../../server/ssh/parsers/dnf";
-import { yumParser } from "../../server/ssh/parsers/yum";
-import { pacmanParser } from "../../server/ssh/parsers/pacman";
-import { apkParser } from "../../server/ssh/parsers/apk";
-import { flatpakParser } from "../../server/ssh/parsers/flatpak";
 import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
 import { getRebootCommand } from "../../server/ssh/reboot";
 import { closeDatabase, initDatabase } from "../../server/db";
@@ -40,15 +34,13 @@ describe("buildCommandReference", () => {
     expect(reference.exact.find((entry) => entry.id === "reboot")?.command).toBe(getRebootCommand());
 
     for (const detection of getPackageManagerDetectionCommands()) {
-      expect(reference.exact.some((entry) => entry.id === `detection:${detection.name}` && entry.command === detection.command)).toBe(true);
+      expect(reference.exact.some((entry) => entry.id === `detection:${detection.name}` && entry.command.includes(detection.command))).toBe(true);
     }
 
-    for (const command of aptParser.getCheckCommands()) {
-      expect(reference.exact.some((entry) => entry.command === command)).toBe(true);
-    }
-
-    expect(reference.exact.some((entry) => entry.command === aptParser.getUpgradeAllCommand())).toBe(true);
-    expect(reference.exact.some((entry) => entry.command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"))).toBe(true);
+    expect(reference.exact.some((entry) => entry.command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq"))).toBe(true);
+    expect(reference.exact.some((entry) => entry.command.includes("apt list --upgradable"))).toBe(true);
+    expect(reference.exact.some((entry) => entry.command.includes('upgrade_mode=""'))).toBe(true);
+    expect(reference.exact.some((entry) => entry.command.includes('upgrade_mode="full-upgrade"'))).toBe(true);
     expect(reference.exact.some((entry) => entry.command.includes("install --only-upgrade -y <package>"))).toBe(true);
     expect(reference.exact.some((entry) => entry.command.includes("install --only-upgrade -y <package1> <package2>"))).toBe(true);
   });
@@ -59,7 +51,7 @@ describe("buildCommandReference", () => {
         apt: { defaultUpgradeMode: "full-upgrade" },
       }),
     }));
-    expect(aptReference.exact.some((entry) => entry.category === "upgrade_all" && entry.command.includes("full-upgrade -y"))).toBe(true);
+    expect(aptReference.exact.some((entry) => entry.category === "upgrade_all" && entry.command.includes('upgrade_mode="full-upgrade"'))).toBe(true);
 
     const dnfReference = buildCommandReference(createSystem({
       pkgManager: "dnf",
@@ -73,17 +65,11 @@ describe("buildCommandReference", () => {
         },
       }),
     }));
-    expect(dnfReference.exact.some((entry) => entry.category === "check" && entry.command === dnfParser.getCheckCommands({
-      refreshMetadataOnCheck: true,
-      autoAcceptNewSigningKeysOnCheck: true,
-    })[0])).toBe(true);
-    expect(dnfReference.exact.some((entry) => entry.category === "upgrade_all" && entry.command === dnfParser.getUpgradeAllCommand({
-      defaultUpgradeMode: "distro-sync",
-      autoAcceptEulaOnUpgrade: true,
-    }))).toBe(true);
+    expect(dnfReference.exact.some((entry) => entry.category === "check" && entry.command.includes('if [ "true" = "true" ]; then check_args="$check_args --refresh"; fi'))).toBe(true);
+    expect(dnfReference.exact.some((entry) => entry.category === "upgrade_all" && entry.command.includes('upgrade_command="distro-sync"'))).toBe(true);
     expect(dnfReference.exact.some((entry) =>
       entry.category === "upgrade_selected" &&
-      entry.command.includes("ACCEPT_EULA=Y dnf upgrade -y <package>")
+      entry.command.includes("env ACCEPT_EULA=Y dnf upgrade -y <package>")
     )).toBe(true);
 
     const yumReference = buildCommandReference(createSystem({
@@ -96,16 +82,14 @@ describe("buildCommandReference", () => {
         },
       }),
     }));
-    expect(yumReference.exact.some((entry) => entry.category === "check" && entry.command === yumParser.getCheckCommands({
-      autoAcceptNewSigningKeysOnCheck: true,
-    })[0])).toBe(true);
+    expect(yumReference.exact.some((entry) => entry.category === "check" && entry.command.includes('if [ "true" = "true" ]; then check_args="$check_args -y"; fi'))).toBe(true);
     expect(yumReference.exact.some((entry) =>
       entry.category === "upgrade_all" &&
-      entry.command === yumParser.getUpgradeAllCommand({ autoAcceptEulaOnUpgrade: true })
+      entry.command.includes("env ACCEPT_EULA=Y yum update -y")
     )).toBe(true);
     expect(yumReference.exact.some((entry) =>
       entry.category === "upgrade_selected" &&
-      entry.command.includes("ACCEPT_EULA=Y yum update -y <package>")
+      entry.command.includes("env ACCEPT_EULA=Y yum update -y <package>")
     )).toBe(true);
 
     const pacmanReference = buildCommandReference(createSystem({
@@ -115,10 +99,8 @@ describe("buildCommandReference", () => {
         pacman: { refreshDatabasesOnCheck: false },
       }),
     }));
-    expect(pacmanReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "pacman")).toHaveLength(1);
-    expect(pacmanReference.exact.some((entry) => entry.command === pacmanParser.getCheckCommands({
-      refreshDatabasesOnCheck: false,
-    })[0])).toBe(true);
+    expect(pacmanReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "pacman")).toHaveLength(2);
+    expect(pacmanReference.exact.some((entry) => entry.command.includes('if [ "false" != "false" ]; then') && entry.command.includes("pacman -Sy"))).toBe(true);
 
     const apkReference = buildCommandReference(createSystem({
       pkgManager: "apk",
@@ -127,10 +109,8 @@ describe("buildCommandReference", () => {
         apk: { refreshIndexesOnCheck: false },
       }),
     }));
-    expect(apkReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "apk")).toHaveLength(1);
-    expect(apkReference.exact.some((entry) => entry.command === apkParser.getCheckCommands({
-      refreshIndexesOnCheck: false,
-    })[0])).toBe(true);
+    expect(apkReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "apk")).toHaveLength(2);
+    expect(apkReference.exact.some((entry) => entry.command.includes('if [ "false" != "false" ]; then') && entry.command.includes("apk update"))).toBe(true);
 
     const flatpakReference = buildCommandReference(createSystem({
       pkgManager: "flatpak",
@@ -139,10 +119,8 @@ describe("buildCommandReference", () => {
         flatpak: { refreshAppstreamOnCheck: false },
       }),
     }));
-    expect(flatpakReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "flatpak")).toHaveLength(1);
-    expect(flatpakReference.exact.some((entry) => entry.command === flatpakParser.getCheckCommands({
-      refreshAppstreamOnCheck: false,
-    })[0])).toBe(true);
+    expect(flatpakReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "flatpak")).toHaveLength(2);
+    expect(flatpakReference.exact.some((entry) => entry.command.includes('if [ "false" != "false" ]; then') && entry.command.includes("flatpak update --appstream"))).toBe(true);
   });
 
   test("excludes disabled managers and only includes full upgrades when supported", () => {
@@ -163,7 +141,7 @@ describe("buildCommandReference", () => {
     expect(aptUpgrade).toBeDefined();
 
     const normalized = normalizeCommandForSudoers(aptUpgrade!.command);
-    expect(normalized).toBe("apt-get -o DPkg::Lock::Timeout=60 upgrade -y");
+    expect(normalized).toBe("apt-get -o DPkg::Lock::Timeout=60 ${upgrade_mode} -y");
     expect(reference.sudoers.some((entry) => entry.command === normalized && entry.purpose === aptUpgrade!.purpose)).toBe(true);
 
     expect(reference.sudoers.some((entry) => entry.category === "check" && entry.command.includes("apt list --upgradable"))).toBe(false);

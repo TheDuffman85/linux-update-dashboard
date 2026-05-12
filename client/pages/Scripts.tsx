@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import hljs from "highlight.js/lib/core";
+import bashLanguage from "highlight.js/lib/languages/bash";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
@@ -10,6 +12,7 @@ import {
   useCreateScript,
   useDeletePackageManager,
   useDeleteScript,
+  formatScriptCommand,
   useScripts,
   useUpdatePackageManager,
   useUpdateScript,
@@ -22,6 +25,9 @@ import {
   type CustomParserConfig,
   type CustomSystemInfoConfig,
 } from "../lib/scripts";
+
+hljs.registerLanguage("bash", bashLanguage);
+hljs.configure({ ignoreUnescapedHTML: true });
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -180,6 +186,125 @@ function parseExitCodes(value: string): number[] | undefined {
   return codes;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function highlightShell(value: string): string {
+  try {
+    return hljs.highlight(value || "\n", {
+      language: "bash",
+      ignoreIllegals: true,
+    }).value;
+  } catch {
+    return escapeHtml(value);
+  }
+}
+
+async function formatShellScript(command: string): Promise<string> {
+  return formatScriptCommand(command);
+}
+
+function ShellCodeBlock({
+  code,
+  className = "",
+}: {
+  code: string;
+  className?: string;
+}) {
+  const [displayCode, setDisplayCode] = useState(code);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplayCode(code);
+    if (!code.trim()) return;
+
+    formatShellScript(code)
+      .then((formatted) => {
+        if (!cancelled) setDisplayCode(formatted);
+      })
+      .catch(() => {
+        if (!cancelled) setDisplayCode(code);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  const highlighted = useMemo(() => highlightShell(displayCode), [displayCode]);
+  return (
+    <pre className={`script-code overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 whitespace-pre-wrap break-words ${className}`}>
+      <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+    </pre>
+  );
+}
+
+function ShellCommandEditor({
+  id,
+  value,
+  onChange,
+  onBeautify,
+  beautifying,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  onBeautify: () => void;
+  beautifying?: boolean;
+}) {
+  const highlightRef = useRef<HTMLPreElement | null>(null);
+  const highlighted = useMemo(() => highlightShell(value), [value]);
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <label htmlFor={id} className={`${labelClass} mb-0`}>Command</label>
+        <button
+          type="button"
+          onClick={onBeautify}
+          disabled={beautifying || !value.trim()}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700"
+          title="Beautify command"
+        >
+          {beautifying ? <span className="spinner spinner-sm" /> : (
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 20l8.5-8.5m0 0L14 7l3 3-4.5 1.5zm3-14h.01M18 4h.01M20 10h.01M14 20h.01" />
+            </svg>
+          )}
+          Beautify
+        </button>
+      </div>
+      <div className="relative min-h-36 overflow-hidden rounded-lg border border-border bg-slate-950 focus-within:ring-2 focus-within:ring-blue-500">
+        <pre
+          ref={highlightRef}
+          aria-hidden="true"
+          className="script-editor-highlight pointer-events-none absolute inset-0 min-h-36 overflow-auto p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words"
+        >
+          <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+        </pre>
+        <textarea
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onScroll={(e) => {
+            if (!highlightRef.current) return;
+            highlightRef.current.scrollTop = e.currentTarget.scrollTop;
+            highlightRef.current.scrollLeft = e.currentTarget.scrollLeft;
+          }}
+          spellCheck={false}
+          className="relative block min-h-36 w-full resize-y bg-transparent p-3 font-mono text-xs leading-5 text-transparent caret-white selection:bg-blue-500/30 focus:outline-none"
+        />
+      </div>
+    </div>
+  );
+}
+
 function colorInputValue(value: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#2563eb";
 }
@@ -270,6 +395,7 @@ function ScriptEditor({
     script.systemInfoConfig?.mode ?? "sectioned"
   );
   const [rebootRequiredRegex, setRebootRequiredRegex] = useState(script.systemInfoConfig?.rebootRequiredRegex ?? "");
+  const [beautifyingStep, setBeautifyingStep] = useState<number | null>(null);
   const stepsRef = useRef<ScriptStep[]>(steps);
   const stepsListRef = useRef<HTMLDivElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
@@ -343,6 +469,21 @@ function ScriptEditor({
     setSteps((current) => current.filter((_step, stepIndex) => stepIndex !== index));
   };
 
+  const beautifyStep = async (index: number) => {
+    const command = steps[index]?.command ?? "";
+    if (!command.trim()) return;
+    setBeautifyingStep(index);
+    try {
+      updateStep(index, { command: await formatShellScript(command) });
+      addToast("Command beautified", "success");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Invalid shell syntax";
+      addToast(`Could not beautify command: ${detail}`, "danger");
+    } finally {
+      setBeautifyingStep(null);
+    }
+  };
+
   const save = () => {
     try {
       const normalizedSteps = steps.map((step) => ({
@@ -371,14 +512,19 @@ function ScriptEditor({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-sm text-amber-700 dark:text-amber-300">
-          No support is given for custom scripts whatsoever.
-        </p>
+      <div className="flex items-start gap-2">
+        <div className="flex min-w-0 flex-1 gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          </svg>
+          <p className="min-w-0 text-sm">
+            No support will be given for custom scripts.
+          </p>
+        </div>
         <button
           type="button"
           onClick={onShowHelp}
-          className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
           title="Show script placeholders"
           aria-label="Show script placeholders"
         >
@@ -515,14 +661,13 @@ function ScriptEditor({
                       className={inputClass}
                     />
                   </div>
-                  <div>
-                    <label className={labelClass}>Command</label>
-                    <textarea
-                      value={step.command}
-                      onChange={(e) => updateStep(index, { command: e.target.value })}
-                      className={`${inputClass} min-h-24 font-mono text-xs`}
-                    />
-                  </div>
+                  <ShellCommandEditor
+                    id={`script-step-${index}-command`}
+                    value={step.command}
+                    onChange={(command) => updateStep(index, { command })}
+                    onBeautify={() => beautifyStep(index)}
+                    beautifying={beautifyingStep === index}
+                  />
                 </div>
                 <button
                   type="button"
@@ -697,7 +842,7 @@ function PlaceholderHelpContent({ placeholders }: { placeholders: PlaceholderHel
           <div key={placeholder.name} className="rounded-lg border border-border p-3">
             <div className="font-mono text-sm text-slate-900 dark:text-slate-100">{placeholder.name}</div>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{placeholder.description}</p>
-            <pre className="mt-2 rounded bg-slate-900 px-3 py-2 text-xs text-slate-100 overflow-x-auto">{placeholder.example}</pre>
+            <ShellCodeBlock code={placeholder.example} className="mt-2" />
           </div>
         ))}
       </div>
@@ -939,6 +1084,7 @@ export default function Scripts() {
   const [deleteTarget, setDeleteTarget] = useState<ScriptDefinition | null>(null);
   const [deleteManagerTarget, setDeleteManagerTarget] = useState<ManagedPackageManager | null>(null);
   const [packageManagerDraft, setPackageManagerDraft] = useState(emptyPackageManager());
+  const [copyingScriptId, setCopyingScriptId] = useState<string | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1091,8 +1237,29 @@ export default function Scripts() {
     });
   };
 
-  const handleCopy = (script: ScriptDefinition) => {
-    setEditing(copyScriptDraft(script));
+  const handleCopy = async (script: ScriptDefinition) => {
+    const draft = copyScriptDraft(script);
+    setCopyingScriptId(script.id);
+    try {
+      draft.steps = await Promise.all(
+        draft.steps.map(async (step) => ({
+          ...step,
+          command: step.command.trim()
+            ? await formatShellScript(step.command)
+            : step.command,
+        })),
+      );
+    } catch (error) {
+      addToast(
+        error instanceof Error
+          ? `Copied script without beautifying: ${error.message}`
+          : "Copied script without beautifying",
+        "info",
+      );
+    } finally {
+      setCopyingScriptId(null);
+      setEditing(draft);
+    }
   };
 
   return (
@@ -1180,13 +1347,19 @@ export default function Scripts() {
                   </div>
                   <div className="flex shrink-0 gap-2">
                     <button
+                      type="button"
                       onClick={() => handleCopy(script)}
-                      className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                      disabled={copyingScriptId === script.id}
+                      className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-wait transition-colors"
                       title="Copy script"
                     >
+                      {copyingScriptId === script.id ? (
+                        <span className="spinner spinner-sm" />
+                      ) : (
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                       </svg>
+                      )}
                     </button>
                     {!script.readonly && (
                       <>
@@ -1216,7 +1389,7 @@ export default function Scripts() {
                   {script.steps.map((step, index) => (
                     <div key={`${script.id}-${index}`}>
                       <div className="mb-1 text-xs font-medium text-slate-500">{step.label}</div>
-                      <pre className="overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100 whitespace-pre-wrap break-all">{step.command}</pre>
+                      <ShellCodeBlock code={step.command} />
                     </div>
                   ))}
                 </div>

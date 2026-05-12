@@ -1612,11 +1612,11 @@ describe("systems reorder route", () => {
     expect(body.commandReference.exact.some((entry: { category: string; pkgManager: string | null; command: string }) =>
       entry.category === "upgrade_all" &&
       entry.pkgManager === "apt" &&
-      entry.command.includes("full-upgrade -y")
+      entry.command.includes('upgrade_mode="full-upgrade"')
     )).toBe(true);
     expect(body.commandReference.sudoers.some((entry: { category: string; command: string }) =>
       entry.category === "upgrade_all" &&
-      entry.command === "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"
+      entry.command === "apt-get -o DPkg::Lock::Timeout=60 ${upgrade_mode} -y"
     )).toBe(true);
   });
 });

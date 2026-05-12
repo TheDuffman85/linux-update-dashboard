@@ -182,6 +182,145 @@ export function renderCommandTemplate(
   return rendered;
 }
 
+export async function formatShellCommand(command: string): Promise<string> {
+  if (typeof command !== "string" || !command.trim()) {
+    throw new Error("Command is required");
+  }
+  if (command.length > 8000) {
+    throw new Error("Command is too long");
+  }
+  const [{ format }, shellPlugin] = await Promise.all([
+    import("prettier"),
+    import("prettier-plugin-sh"),
+  ]);
+  const formatted = await format(prettifyShellDisplay(command.trimEnd()) + "\n", {
+    parser: "sh",
+    plugins: [shellPlugin as never],
+    printWidth: 100,
+  });
+  return formatted.trimEnd();
+}
+
+function splitShellSemicolons(line: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+
+  for (const char of line) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if ((char === "'" || char === '"') && (!quote || quote === char)) {
+      quote = quote ? null : char;
+      current += char;
+      continue;
+    }
+    if (char === ";" && !quote) {
+      parts.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+function expandCompactSudoWrappers(value: string): string {
+  const sudoPattern =
+    /(^|\n)([ \t]*)if \[ "\$\(id -u\)" = "0" \]; then ([^;\n]+); elif command -v sudo >\/dev\/null 2>&1; then sudo -S -p '' ([^;\n]+); else ([^;\n]+); fi([^\n]*)/g;
+  let previous = "";
+  let next = value;
+  while (next !== previous) {
+    previous = next;
+    next = next.replace(
+      sudoPattern,
+      (_match, prefix: string, indent: string, rootCommand: string, sudoCommand: string, fallbackCommand: string, suffix: string) =>
+        [
+          `${prefix}${indent}if [ "$(id -u)" = "0" ]; then`,
+          `${indent}  ${rootCommand.trim()}`,
+          `${indent}elif command -v sudo >/dev/null 2>&1; then`,
+          `${indent}  sudo -S -p '' ${sudoCommand.trim()}`,
+          `${indent}else`,
+          `${indent}  ${fallbackCommand.trim()}`,
+          `${indent}fi${suffix}`,
+        ].join("\n"),
+    );
+  }
+  return next;
+}
+
+function expandCompactIfLine(line: string): string[] {
+  const parts = splitShellSemicolons(line);
+  if (parts.length <= 1) return [line];
+  if (!parts.some((part) => /^(if|elif|then|else|fi)\b/.test(part))) {
+    return parts;
+  }
+
+  const output: string[] = [];
+  let indent = 0;
+  const push = (text: string, offset = 0) => {
+    output.push(`${"  ".repeat(Math.max(0, indent + offset))}${text}`);
+  };
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    const next = parts[index + 1] ?? "";
+    if (/^if\b/.test(part) && next.startsWith("then ")) {
+      push(`${part}; then`);
+      indent += 1;
+      const remainder = next.slice("then ".length).trim();
+      if (remainder) push(remainder);
+      index += 1;
+      continue;
+    }
+    if (/^elif\b/.test(part) && next.startsWith("then ")) {
+      indent = Math.max(0, indent - 1);
+      push(`${part}; then`);
+      indent += 1;
+      const remainder = next.slice("then ".length).trim();
+      if (remainder) push(remainder);
+      index += 1;
+      continue;
+    }
+    if (part === "else" || part.startsWith("else ")) {
+      indent = Math.max(0, indent - 1);
+      push("else");
+      indent += 1;
+      const remainder = part.slice("else".length).trim();
+      if (remainder) push(remainder);
+      continue;
+    }
+    if (part === "fi" || part.startsWith("fi ")) {
+      indent = Math.max(0, indent - 1);
+      push(part);
+      continue;
+    }
+    push(part);
+  }
+
+  return output.length ? output : [line];
+}
+
+function prettifyShellDisplay(command: string): string {
+  const expandedSudo = expandCompactSudoWrappers(command);
+  const lines = expandedSudo.split("\n").flatMap((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return [line];
+    return expandCompactIfLine(line);
+  });
+  return lines.join("\n");
+}
+
 function builtinScript(
   operation: ScriptOperation,
   pkgManager: string | null,
@@ -206,6 +345,244 @@ function builtinScript(
   };
 }
 
+function commentedCommand(comment: string, command: string): string {
+  return [`# ${comment}`, command].join("\n");
+}
+
+function commandLines(...lines: string[]): string {
+  return lines.join("\n");
+}
+
+function aptUpgradeModeScript(defaultMode: "upgrade" | "full-upgrade"): string {
+  return commandLines(
+    "# Use the configured APT upgrade mode; fall back to the standard mode when unset.",
+    'upgrade_mode="{{config.defaultUpgradeMode}}"',
+    `if [ "$upgrade_mode" != "full-upgrade" ]; then upgrade_mode="${defaultMode}"; fi`,
+    "export DEBIAN_FRONTEND=noninteractive",
+    sudo(`apt-get -o DPkg::Lock::Timeout=60 \${upgrade_mode} -y`) + " 2>&1",
+  );
+}
+
+function dnfCheckScript(tool: "dnf" | "yum"): string {
+  const hasRefresh = tool === "dnf";
+  const checkLine = hasRefresh
+    ? 'if [ "{{config.refreshMetadataOnCheck}}" = "true" ]; then check_args="$check_args --refresh"; fi'
+    : "# Yum does not support the DNF metadata refresh flag here.";
+  return commandLines(
+    `# Check ${tool.toUpperCase()} updates and keep exit code 100 as updates-available, not a failure.`,
+    'check_args=""',
+    'if [ "{{config.autoAcceptNewSigningKeysOnCheck}}" = "true" ]; then check_args="$check_args -y"; fi',
+    checkLine,
+    `updates="$(${tool} $check_args check-update --quiet 2>&1)"; rc=$?`,
+    'echo "$updates"',
+    'echo "---INSTALLED---"',
+    'if [ "$rc" -eq 100 ] && command -v rpm >/dev/null 2>&1; then',
+    '  echo "$updates" | awk \'NF>=3 && $1 ~ /^[[:alnum:]_+.-]+\\.[[:alnum:]_+-]+$/ {print $1}\' | xargs -r rpm -q --qf \'%{NAME}.%{ARCH}\\t%{EPOCH}:%{VERSION}-%{RELEASE}\\n\' 2>/dev/null | sed \'s/\\t(none):/\\t/\'',
+    "fi",
+    'echo "EXIT:$rc"',
+    'if [ "$rc" -ne 0 ] && [ "$rc" -ne 100 ]; then exit "$rc"; fi',
+  );
+}
+
+function dnfLikeUpgradeScript(tool: "dnf" | "yum", command: string): string {
+  return commandLines(
+    `# Run ${tool.toUpperCase()} with automatic EULA acceptance only when that system setting is enabled.`,
+    'if [ "{{config.autoAcceptEulaOnUpgrade}}" = "true" ]; then',
+    `  ${sudo(`env ACCEPT_EULA=Y ${command}`)} 2>&1`,
+    "else",
+    `  ${sudo(command)} 2>&1`,
+    "fi",
+  );
+}
+
+function dnfUpgradeAllScript(full = false): string {
+  const command = full
+    ? "dnf distro-sync -y"
+    : 'dnf ${upgrade_command} -y';
+  return commandLines(
+    "# Use DNF distro-sync when configured; otherwise use the regular upgrade command.",
+    'upgrade_command="{{config.defaultUpgradeMode}}"',
+    'if [ "$upgrade_command" != "distro-sync" ]; then upgrade_command="upgrade"; fi',
+    dnfLikeUpgradeScript("dnf", command),
+  );
+}
+
+function maybeRefreshScript(
+  comment: string,
+  configKey: string,
+  command: string,
+): string {
+  return commandLines(
+    `# ${comment}`,
+    `if [ "{{config.${configKey}}}" != "false" ]; then`,
+    `  ${command}`,
+    "fi",
+  );
+}
+
+function builtinCheckSteps(manager: string): ScriptStep[] {
+  switch (manager) {
+    case "apt":
+      return [
+        {
+          label: "Fetching package lists",
+          command: commentedCommand(
+            "Refresh APT package metadata before listing available updates.",
+            sudo("apt-get -o DPkg::Lock::Timeout=60 update -qq") + " 2>&1",
+          ),
+        },
+        {
+          label: "Listing available updates",
+          command: commentedCommand(
+            "List APT packages with available updates; the first header line is ignored by the parser.",
+            "DEBIAN_FRONTEND=noninteractive apt list --upgradable 2>/dev/null | tail -n +2",
+          ),
+        },
+        {
+          label: "Detecting kept-back packages",
+          command: commentedCommand(
+            "Simulate a standard APT upgrade so the parser can mark packages that would be kept back.",
+            "DEBIAN_FRONTEND=noninteractive apt-get -s -o Debug::NoLocking=1 upgrade 2>&1",
+          ),
+        },
+      ];
+    case "dnf":
+      return [{ label: "Checking for updates", command: dnfCheckScript("dnf") }];
+    case "yum":
+      return [{ label: "Checking for updates", command: dnfCheckScript("yum") }];
+    case "pacman":
+      return [
+        {
+          label: "Refreshing package databases",
+          command: maybeRefreshScript(
+            "Refresh Pacman package databases unless this system has disabled that check step.",
+            "refreshDatabasesOnCheck",
+            sudo("pacman -Sy --noconfirm") + " 2>&1",
+          ),
+        },
+        {
+          label: "Listing available updates",
+          command: commandLines(
+            "# List Pacman updates while treating 'no updates' as a successful empty result.",
+            'errfile="$(mktemp)"',
+            'updates="$(pacman -Qu 2>"$errfile")"',
+            "rc=$?",
+            'printf "%s\\n" "$updates"',
+            'cat "$errfile" >&2',
+            'if [ "$rc" -eq 1 ] && [ -z "$updates" ] && [ ! -s "$errfile" ]; then rc=0; fi',
+            'rm -f "$errfile"',
+            'exit "$rc"',
+          ),
+        },
+      ];
+    case "apk":
+      return [
+        {
+          label: "Refreshing package indexes",
+          command: maybeRefreshScript(
+            "Refresh APK package indexes unless this system has disabled that check step.",
+            "refreshIndexesOnCheck",
+            sudo("apk update") + " 2>&1",
+          ),
+        },
+        {
+          label: "Listing available updates",
+          command: commentedCommand(
+            "List APK packages that are upgradable from the current repository indexes.",
+            "apk list -u 2>/dev/null",
+          ),
+        },
+      ];
+    case "flatpak":
+      return [
+        {
+          label: "Refreshing appstream data",
+          command: maybeRefreshScript(
+            "Refresh Flatpak appstream data unless this system has disabled that check step.",
+            "refreshAppstreamOnCheck",
+            sudo("flatpak update --appstream") + " 2>/dev/null; true",
+          ),
+        },
+        {
+          label: "Checking for updates",
+          command: commentedCommand(
+            "Print installed Flatpak versions, then print available remote updates for parser comparison.",
+            'echo "===INSTALLED==="; flatpak list --columns=application,version 2>/dev/null; echo "===UPDATES==="; flatpak remote-ls --updates --columns=name,application,version,branch,origin 2>/dev/null',
+          ),
+        },
+      ];
+    case "snap":
+      return [
+        {
+          label: "Checking for updates",
+          command: commentedCommand(
+            "Print installed Snap versions, then print refresh candidates for parser comparison.",
+            'echo "===INSTALLED==="; snap list --color=never 2>/dev/null; echo "===UPDATES==="; snap refresh --list 2>/dev/null',
+          ),
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+function builtinUpgradeAllCommand(manager: string): string {
+  switch (manager) {
+    case "apt":
+      return aptUpgradeModeScript("upgrade");
+    case "dnf":
+      return dnfUpgradeAllScript();
+    case "yum":
+      return dnfLikeUpgradeScript("yum", "yum update -y");
+    case "pacman":
+      return commentedCommand("Upgrade all Pacman packages and refresh package databases.", sudo("pacman -Syu --noconfirm") + " 2>&1");
+    case "apk":
+      return commentedCommand("Upgrade all APK packages from the configured repositories.", sudo("apk upgrade") + " 2>&1");
+    case "flatpak":
+      return commentedCommand("Upgrade all installed Flatpak applications and runtimes.", sudo("flatpak update -y") + " 2>&1");
+    case "snap":
+      return commentedCommand("Refresh all installed Snap packages.", sudo("snap refresh") + " 2>&1");
+    default:
+      return "";
+  }
+}
+
+function builtinFullUpgradeCommand(manager: string): string | null {
+  switch (manager) {
+    case "apt":
+      return aptUpgradeModeScript("full-upgrade");
+    case "dnf":
+      return dnfUpgradeAllScript(true);
+    default:
+      return null;
+  }
+}
+
+function builtinUpgradeSelectedCommand(manager: string): string {
+  switch (manager) {
+    case "apt":
+      return commandLines(
+        "# Upgrade only the selected APT packages.",
+        "export DEBIAN_FRONTEND=noninteractive",
+        sudo("apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y {{packages}}") + " 2>&1",
+      );
+    case "dnf":
+      return dnfLikeUpgradeScript("dnf", "dnf upgrade -y {{packages}}");
+    case "yum":
+      return dnfLikeUpgradeScript("yum", "yum update -y {{packages}}");
+    case "pacman":
+      return commentedCommand("Upgrade only the selected Pacman packages.", sudo("pacman -S --noconfirm {{packages}}") + " 2>&1");
+    case "apk":
+      return commentedCommand("Upgrade only the selected APK packages.", sudo("apk upgrade {{packages}}") + " 2>&1");
+    case "flatpak":
+      return commentedCommand("Upgrade only the selected Flatpak applications or runtimes.", sudo("flatpak update -y {{packages}}") + " 2>&1");
+    case "snap":
+      return commentedCommand("Refresh only the selected Snap packages.", sudo("snap refresh {{packages}}") + " 2>&1");
+    default:
+      return "";
+  }
+}
+
 function builtinScriptsForManager(manager: string): ScriptDefinition[] {
   const parser = getParser(manager);
   const scripts: ScriptDefinition[] = [];
@@ -216,31 +593,32 @@ function builtinScriptsForManager(manager: string): ScriptDefinition[] {
       manager,
       `Detect ${managerLabel(manager)}`,
       `Checks whether ${managerLabel(manager)} is available on the remote system.`,
-      [{ label: `Detect ${managerLabel(manager)}`, command: detection.command }],
+      [{
+        label: `Detect ${managerLabel(manager)}`,
+        command: commentedCommand(
+          `Check whether the ${managerLabel(manager)} command exists on the remote system.`,
+          detection.command,
+        ),
+      }],
     ));
   }
   if (!parser) return scripts;
 
-  const checkCommands = parser.getCheckCommands();
-  const labels = parser.getCheckCommandLabels?.() ?? [];
   scripts.push(builtinScript(
     "check_updates",
     manager,
     `Check ${managerLabel(manager)} updates`,
     `Refreshes and checks available ${managerLabel(manager)} updates.`,
-    checkCommands.map((command, index) => ({
-      label: labels[index] ?? `Step ${index + 1}`,
-      command,
-    })),
+    builtinCheckSteps(manager),
   ));
   scripts.push(builtinScript(
     "upgrade_all",
     manager,
     `Upgrade all ${managerLabel(manager)} packages`,
     `Installs all available ${managerLabel(manager)} updates.`,
-    [{ label: `Upgrade all ${managerLabel(manager)} packages`, command: parser.getUpgradeAllCommand() }],
+    [{ label: `Upgrade all ${managerLabel(manager)} packages`, command: builtinUpgradeAllCommand(manager) }],
   ));
-  const fullUpgrade = parser.getFullUpgradeAllCommand();
+  const fullUpgrade = builtinFullUpgradeCommand(manager);
   if (fullUpgrade) {
     scripts.push(builtinScript(
       "full_upgrade_all",
@@ -255,7 +633,7 @@ function builtinScriptsForManager(manager: string): ScriptDefinition[] {
     manager,
     `Upgrade selected ${managerLabel(manager)} packages`,
     `Upgrades selected packages through ${managerLabel(manager)}.`,
-    [{ label: `Upgrade selected ${managerLabel(manager)} packages`, command: parser.getUpgradePackageCommand("codex-package-placeholder").replaceAll("codex-package-placeholder", "{{packages}}") }],
+    [{ label: `Upgrade selected ${managerLabel(manager)} packages`, command: builtinUpgradeSelectedCommand(manager) }],
   ));
   return scripts;
 }
@@ -601,7 +979,11 @@ function isUnmodifiedBuiltinCopy(script: ScriptDefinition): boolean {
   ) {
     return false;
   }
-  return JSON.stringify(script.steps) === JSON.stringify(source.steps);
+  if (script.steps.length !== source.steps.length) return false;
+  return script.steps.every((step, index) => {
+    const sourceStep = source.steps[index];
+    return step.label === sourceStep.label && step.command === sourceStep.command;
+  });
 }
 
 function getRuntimeBuiltinScript(script: ScriptDefinition): ScriptDefinition | null {
@@ -619,46 +1001,6 @@ export function resolveRuntimeSteps(args: {
 }): ScriptStep[] {
   const script = resolveScript(args.systemId, args.operation, args.pkgManager);
   if (!script) return [];
-  const runtimeBuiltin = getRuntimeBuiltinScript(script);
-  if (runtimeBuiltin) {
-    const parser = args.pkgManager ? getParser(args.pkgManager) : null;
-    if (args.operation === "detect" && args.pkgManager) {
-      const command = getPackageManagerDetectionCommands().find((entry) => entry.name === args.pkgManager)?.command;
-      return command
-        ? [{ label: `Detect ${managerLabel(args.pkgManager)}`, command }]
-        : runtimeBuiltin.steps;
-    }
-    if (args.operation === "system_info") return [{ label: "Collect system information", command: SYSTEM_INFO_CMD }];
-    if (args.operation === "reboot") return [{ label: "Reboot system", command: getRebootCommand() }];
-    if (!parser) {
-      return runtimeBuiltin.steps.map((step) => ({
-        label: step.label,
-        command: renderCommandTemplate(step.command, {
-          pkgManager: args.pkgManager,
-          packages: args.packages,
-          config: args.pkgManagerConfig,
-        }),
-      }));
-    }
-    if (args.operation === "check_updates") {
-      const commands = parser.getCheckCommands(args.pkgManagerConfig);
-      const labels = parser.getCheckCommandLabels?.(args.pkgManagerConfig) ?? [];
-      return commands.map((command, index) => ({ label: labels[index] ?? `Step ${index + 1}`, command }));
-    }
-    if (args.operation === "upgrade_all") {
-      return [{ label: runtimeBuiltin.steps[0]?.label ?? "Upgrade all packages", command: parser.getUpgradeAllCommand(args.pkgManagerConfig) }];
-    }
-    if (args.operation === "full_upgrade_all") {
-      const command = parser.getFullUpgradeAllCommand(args.pkgManagerConfig);
-      return command ? [{ label: runtimeBuiltin.steps[0]?.label ?? "Full upgrade packages", command }] : [];
-    }
-    if (args.operation === "upgrade_selected") {
-      return [{
-        label: runtimeBuiltin.steps[0]?.label ?? "Upgrade selected packages",
-        command: parser.getUpgradePackagesCommand(args.packages ?? [], args.pkgManagerConfig),
-      }];
-    }
-  }
   return script.steps.map((step) => ({
     label: step.label,
     command: renderCommandTemplate(step.command, {
