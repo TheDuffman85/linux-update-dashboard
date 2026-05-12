@@ -403,6 +403,34 @@ describe("script service", () => {
     });
   });
 
+  test("updates built-in package manager color and custom config metadata only", () => {
+    const updated = updateCustomPackageManager("apt", {
+      label: "Changed APT",
+      color: "#ef4444",
+      parserConfig: {
+        updateRegex: "ignored",
+      },
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
+    });
+
+    expect(updated).toMatchObject({
+      builtin: true,
+      name: "apt",
+      label: "APT",
+      color: "#ef4444",
+      parserConfig: null,
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
+    });
+    expect(listScripts().packageManagers.find((manager) => manager.name === "apt")).toMatchObject({
+      builtin: true,
+      color: "#ef4444",
+    });
+  });
+
   test("exposes custom config placeholders and renders per-system values with defaults", () => {
     createCustomPackageManager({
       name: "brewlinux",
@@ -447,6 +475,37 @@ describe("script service", () => {
       pkgManagerConfig: { channel: "edge" },
     })[0]?.command).toBe("brew update --edge");
     expect(script.pkgManager).toBe("brewlinux");
+  });
+
+  test("renders built-in package manager custom config values without dropping built-in config", () => {
+    updateCustomPackageManager("apt", {
+      color: "#ef4444",
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
+    });
+    const script = createScript({
+      name: "Custom APT check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "Check", command: "echo {{config.defaultUpgradeMode}} {{config.mirror}}" }],
+    });
+    insertSystem(11);
+    setSystemOverrides(11, {
+      [buildOperationKey("check_updates", "apt")]: script.id,
+    });
+
+    expect(resolveRuntimeSteps({
+      systemId: 11,
+      operation: "check_updates",
+      pkgManager: "apt",
+      pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" },
+    })[0]?.command).toBe("echo full-upgrade internal");
+    expect(listScripts().placeholders).toContainEqual(expect.objectContaining({
+      name: "{{config.mirror}}",
+      description: "APT: APT mirror",
+    }));
   });
 
   test("does not delete custom package managers that still have scripts", () => {

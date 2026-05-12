@@ -86,6 +86,39 @@ describe("package-manager configs", () => {
     }, customManagers)).toBe("pkgManagerConfigs.brewlinux.unknown is not supported");
   });
 
+  test("validates and normalizes built-in manager custom config values", () => {
+    const managers = [
+      {
+        name: "apt",
+        configEntries: [
+          { key: "mirror", defaultValue: "main" },
+        ],
+      },
+    ];
+
+    expect(validatePackageManagerConfigsInput({
+      apt: {
+        defaultUpgradeMode: "full-upgrade",
+        mirror: "internal",
+      },
+    }, managers)).toBeNull();
+    expect(normalizePackageManagerConfigs({
+      apt: {
+        defaultUpgradeMode: "full-upgrade",
+        mirror: "internal",
+        unknown: "ignored",
+      },
+    }, managers)).toEqual({
+      apt: {
+        defaultUpgradeMode: "full-upgrade",
+        mirror: "internal",
+      },
+    });
+    expect(validateCustomPackageManagerConfigEntries([
+      { key: "defaultUpgradeMode", defaultValue: "fast" },
+    ], managers, "apt")).toBe("Custom config key defaultUpgradeMode collides with a built-in apt config key");
+  });
+
   test("rejects duplicate and colliding custom config entry keys", () => {
     expect(validateCustomPackageManagerConfigEntries([
       { key: "channel", defaultValue: "stable" },

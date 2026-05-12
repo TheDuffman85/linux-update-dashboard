@@ -63,6 +63,37 @@ export interface CustomPackageManagerConfigDefinition {
   configEntries?: CustomPackageManagerConfigEntry[] | null;
 }
 
+function mergeCustomConfig(
+  next: PackageManagerConfigs,
+  manager: string,
+  rawConfig: Record<string, unknown>,
+  customManagerMap: Map<string, CustomPackageManagerConfigDefinition>,
+  allowUnknownKeys = false,
+): void {
+  const definition = customManagerMap.get(manager);
+  if (!definition?.configEntries?.length && !allowUnknownKeys) return;
+  const allowedKeys = definition?.configEntries?.length
+    ? new Set(definition.configEntries.map((entry) => entry.key))
+    : null;
+  const config: CustomPackageManagerConfig = {};
+  for (const [key, raw] of Object.entries(rawConfig)) {
+    if (allowedKeys && !allowedKeys.has(key)) continue;
+    if (typeof raw === "string") {
+      config[key] = raw;
+    } else if (typeof raw === "number" || typeof raw === "boolean") {
+      config[key] = String(raw);
+    }
+  }
+  if (Object.keys(config).length === 0) return;
+  const current = next[manager] && typeof next[manager] === "object" && !Array.isArray(next[manager])
+    ? next[manager]
+    : {};
+  next[manager] = {
+    ...current,
+    ...config,
+  };
+}
+
 export function normalizePackageManagerConfigs(
   value: PackageManagerConfigs | null | undefined,
   customManagers: CustomPackageManagerConfigDefinition[] = [],
@@ -80,6 +111,9 @@ export function normalizePackageManagerConfigs(
       ...(next.apt ?? {}),
       autoHideKeptBackUpdates: value.apt.autoHideKeptBackUpdates,
     };
+  }
+  if (value.apt && typeof value.apt === "object" && !Array.isArray(value.apt)) {
+    mergeCustomConfig(next, "apt", value.apt as Record<string, unknown>, customManagerMap);
   }
   if (
     value.dnf?.defaultUpgradeMode !== undefined ||
@@ -101,6 +135,9 @@ export function normalizePackageManagerConfigs(
       next.dnf.autoAcceptEulaOnUpgrade = value.dnf.autoAcceptEulaOnUpgrade;
     }
   }
+  if (value.dnf && typeof value.dnf === "object" && !Array.isArray(value.dnf)) {
+    mergeCustomConfig(next, "dnf", value.dnf as Record<string, unknown>, customManagerMap);
+  }
   if (
     value.yum?.autoAcceptNewSigningKeysOnCheck !== undefined ||
     value.yum?.autoAcceptEulaOnUpgrade !== undefined
@@ -113,33 +150,32 @@ export function normalizePackageManagerConfigs(
       next.yum.autoAcceptEulaOnUpgrade = value.yum.autoAcceptEulaOnUpgrade;
     }
   }
+  if (value.yum && typeof value.yum === "object" && !Array.isArray(value.yum)) {
+    mergeCustomConfig(next, "yum", value.yum as Record<string, unknown>, customManagerMap);
+  }
   if (value.pacman?.refreshDatabasesOnCheck !== undefined) {
     next.pacman = { refreshDatabasesOnCheck: value.pacman.refreshDatabasesOnCheck };
+  }
+  if (value.pacman && typeof value.pacman === "object" && !Array.isArray(value.pacman)) {
+    mergeCustomConfig(next, "pacman", value.pacman as Record<string, unknown>, customManagerMap);
   }
   if (value.apk?.refreshIndexesOnCheck !== undefined) {
     next.apk = { refreshIndexesOnCheck: value.apk.refreshIndexesOnCheck };
   }
+  if (value.apk && typeof value.apk === "object" && !Array.isArray(value.apk)) {
+    mergeCustomConfig(next, "apk", value.apk as Record<string, unknown>, customManagerMap);
+  }
   if (value.flatpak?.refreshAppstreamOnCheck !== undefined) {
     next.flatpak = { refreshAppstreamOnCheck: value.flatpak.refreshAppstreamOnCheck };
+  }
+  if (value.flatpak && typeof value.flatpak === "object" && !Array.isArray(value.flatpak)) {
+    mergeCustomConfig(next, "flatpak", value.flatpak as Record<string, unknown>, customManagerMap);
   }
 
   for (const [manager, rawConfig] of Object.entries(value)) {
     if ((SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager)) continue;
     if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) continue;
-    const definition = customManagerMap.get(manager);
-    const allowedKeys = definition
-      ? new Set((definition.configEntries ?? []).map((entry) => entry.key))
-      : null;
-    const config: CustomPackageManagerConfig = {};
-    for (const [key, raw] of Object.entries(rawConfig)) {
-      if (allowedKeys && !allowedKeys.has(key)) continue;
-      if (typeof raw === "string") {
-        config[key] = raw;
-      } else if (typeof raw === "number" || typeof raw === "boolean") {
-        config[key] = String(raw);
-      }
-    }
-    if (Object.keys(config).length > 0) next[manager] = config;
+    mergeCustomConfig(next, manager, rawConfig as Record<string, unknown>, customManagerMap, true);
   }
 
   return Object.keys(next).length > 0 ? next : null;

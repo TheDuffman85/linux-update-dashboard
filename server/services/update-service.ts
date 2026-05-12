@@ -31,6 +31,7 @@ import { syncSystemNotificationHash } from "./notification-service";
 import {
   getCustomCheckErrorMessage,
   isCustomPackageManager,
+  listPackageManagerDefinitions,
   parseUpdatesWithScript,
   resolveRuntimeSteps,
   resolveScript,
@@ -267,7 +268,7 @@ function formatUpgradeFailureOutput(
 function getSystemPackageManagerConfigs(system: {
   pkgManagerConfigs?: string | null;
 }): PackageManagerConfigs | null {
-  return parsePackageManagerConfigs(system.pkgManagerConfigs ?? null);
+  return parsePackageManagerConfigs(system.pkgManagerConfigs ?? null, listPackageManagerDefinitions());
 }
 
 export function getConfiguredUpgradeBehaviorDescriptions(systemId: number): string[] {

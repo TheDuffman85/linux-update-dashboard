@@ -58,6 +58,7 @@ export interface ScriptUsage {
 
 export interface CustomPackageManagerDefinition {
   id: number;
+  builtin: boolean;
   name: string;
   label: string;
   color: string | null;

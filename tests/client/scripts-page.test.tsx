@@ -145,6 +145,7 @@ describe("Scripts page", () => {
             color: "#2563eb",
             parserConfig: null,
             configEntries: [],
+            builtin: false,
           },
         ],
         placeholders: [],

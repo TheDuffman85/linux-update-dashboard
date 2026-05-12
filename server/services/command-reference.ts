@@ -5,6 +5,7 @@ import {
 import type { PackageManagerConfigValue } from "../package-manager-configs";
 import {
   getBuiltinScripts,
+  listPackageManagerDefinitions,
   renderCommandTemplate,
   resolveRuntimeSteps,
   type ScriptOperation,
@@ -123,7 +124,7 @@ function dedupeCommands(entries: PotentialCommandEntry[]): PotentialCommandEntry
 }
 
 export function buildCommandReference(system: CommandReferenceSystem): CommandReference {
-  const configs = parsePackageManagerConfigs(system.pkgManagerConfigs ?? null);
+  const configs = parsePackageManagerConfigs(system.pkgManagerConfigs ?? null, listPackageManagerDefinitions());
   const exact: PotentialCommandEntry[] = [];
 
   for (const script of getBuiltinScripts().filter((entry) => entry.operation === "detect" && entry.pkgManager)) {

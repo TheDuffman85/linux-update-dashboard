@@ -82,6 +82,7 @@ export interface ScriptUsage {
 
 export interface CustomPackageManagerDefinition {
   id: number;
+  builtin: boolean;
   name: string;
   label: string;
   color: string | null;
@@ -707,12 +708,14 @@ function serializeCustomScript(row: typeof customScripts.$inferSelect): ScriptDe
 }
 
 function serializeCustomPackageManager(row: typeof customPackageManagers.$inferSelect): CustomPackageManagerDefinition {
+  const builtin = BUILTIN_MANAGER_ORDER.includes(row.name);
   return {
     id: row.id,
+    builtin,
     name: row.name,
-    label: row.label,
+    label: builtin ? MANAGER_LABELS[row.name] ?? row.name : row.label,
     color: row.color,
-    parserConfig: parseJson<CustomParserConfig | null>(row.parserConfig, null),
+    parserConfig: builtin ? null : parseJson<CustomParserConfig | null>(row.parserConfig, null),
     configEntries: normalizeCustomPackageManagerConfigEntries(parseJson<unknown>(row.configEntries, [])),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -725,11 +728,44 @@ export function listCustomPackageManagers(): CustomPackageManagerDefinition[] {
     .from(customPackageManagers)
     .orderBy(asc(customPackageManagers.label), asc(customPackageManagers.name))
     .all()
-    .map(serializeCustomPackageManager);
+    .map(serializeCustomPackageManager)
+    .filter((manager) => !manager.builtin);
+}
+
+export function listPackageManagerDefinitions(): CustomPackageManagerDefinition[] {
+  let rows: CustomPackageManagerDefinition[] = [];
+  try {
+    rows = getDb()
+      .select()
+      .from(customPackageManagers)
+      .all()
+      .map(serializeCustomPackageManager);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "Database not initialized") {
+      throw error;
+    }
+  }
+  const rowMap = new Map(rows.map((row) => [row.name, row]));
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const builtins = BUILTIN_MANAGER_ORDER.map((name, index) => rowMap.get(name) ?? {
+    id: -(index + 1),
+    builtin: true,
+    name,
+    label: MANAGER_LABELS[name] ?? name,
+    color: null,
+    parserConfig: null,
+    configEntries: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  const custom = rows
+    .filter((manager) => !manager.builtin)
+    .sort((a, b) => a.label.localeCompare(b.label) || a.name.localeCompare(b.name));
+  return [...builtins, ...custom];
 }
 
 export function listScripts(): ScriptListResponse {
-  const packageManagers = listCustomPackageManagers();
+  const packageManagers = listPackageManagerDefinitions();
   const custom = getDb()
     .select()
     .from(customScripts)
@@ -970,7 +1006,7 @@ export function createCustomPackageManager(input: {
   if (!input.label.trim()) throw new Error("Package manager label is required");
   const configEntryError = validateCustomPackageManagerConfigEntries(
     input.configEntries,
-    listCustomPackageManagers(),
+    listPackageManagerDefinitions(),
     name,
   );
   if (configEntryError) throw new Error(configEntryError);
@@ -996,40 +1032,49 @@ export function updateCustomPackageManager(name: string, input: {
   configEntries?: CustomPackageManagerConfigEntry[] | null;
 }): CustomPackageManagerDefinition {
   const normalizedName = name.trim().toLowerCase();
-  if (BUILTIN_MANAGER_ORDER.includes(normalizedName)) {
-    throw new Error("Built-in package managers are read-only");
-  }
+  const isBuiltin = BUILTIN_MANAGER_ORDER.includes(normalizedName);
   const existing = getDb()
     .select()
     .from(customPackageManagers)
     .where(eq(customPackageManagers.name, normalizedName))
     .get();
-  if (!existing) throw new Error("Package manager not found");
-  if (!input.label?.trim()) throw new Error("Package manager label is required");
+  if (!existing && !isBuiltin) throw new Error("Package manager not found");
+  if (!isBuiltin && !input.label?.trim()) throw new Error("Package manager label is required");
   const rawConfigEntries = input.configEntries === undefined
-    ? parseJson<unknown>(existing.configEntries, [])
+    ? parseJson<unknown>(existing?.configEntries, [])
     : input.configEntries;
   const configEntryError = validateCustomPackageManagerConfigEntries(
     rawConfigEntries,
-    listCustomPackageManagers(),
+    listPackageManagerDefinitions(),
     normalizedName,
   );
   if (configEntryError) throw new Error(configEntryError);
   const configEntries = normalizeCustomPackageManagerConfigEntries(rawConfigEntries);
 
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-  const row = getDb()
-    .update(customPackageManagers)
-    .set({
-      label: input.label.trim(),
-      color: input.color?.trim() || null,
-      parserConfig: input.parserConfig ? JSON.stringify(input.parserConfig) : null,
-      configEntries: configEntries.length ? JSON.stringify(configEntries) : null,
-      updatedAt: now,
-    })
-    .where(eq(customPackageManagers.name, normalizedName))
-    .returning()
-    .get();
+  const values = {
+    label: isBuiltin ? MANAGER_LABELS[normalizedName] ?? normalizedName : input.label!.trim(),
+    color: input.color?.trim() || null,
+    parserConfig: isBuiltin || !input.parserConfig ? null : JSON.stringify(input.parserConfig),
+    configEntries: configEntries.length ? JSON.stringify(configEntries) : null,
+    updatedAt: now,
+  };
+  const row = existing
+    ? getDb()
+        .update(customPackageManagers)
+        .set(values)
+        .where(eq(customPackageManagers.name, normalizedName))
+        .returning()
+        .get()
+    : getDb()
+        .insert(customPackageManagers)
+        .values({
+          name: normalizedName,
+          ...values,
+          createdAt: now,
+        })
+        .returning()
+        .get();
   return serializeCustomPackageManager(row);
 }
 
@@ -1176,18 +1221,22 @@ function withCustomConfigDefaults(
   manager: string | null | undefined,
   config: PackageManagerConfigValue | undefined,
 ): PackageManagerConfigValue | undefined {
-  if (!manager || BUILTIN_MANAGER_ORDER.includes(manager)) return config;
-  const definition = listCustomPackageManagers().find((entry) => entry.name === manager);
+  if (!manager) return config;
+  const definition = listPackageManagerDefinitions().find((entry) => entry.name === manager);
   if (!definition?.configEntries.length) return config;
   const configured = config && typeof config === "object" && !Array.isArray(config)
     ? config as CustomPackageManagerConfig
     : {};
-  return Object.fromEntries(
+  const defaults = Object.fromEntries(
     definition.configEntries.map((entry) => [
       entry.key,
       configured[entry.key] ?? entry.defaultValue,
     ]),
   );
+  return {
+    ...defaults,
+    ...configured,
+  };
 }
 
 export function resolveRuntimeSteps(args: {
@@ -1306,7 +1355,7 @@ export function getCustomCheckErrorMessage(
 export function getSystemPackageManagerConfig(system: { pkgManagerConfigs?: string | null }, manager: string): PackageManagerConfigValue | undefined {
   return withCustomConfigDefaults(
     manager,
-    getManagerConfig(parsePackageManagerConfigs(system.pkgManagerConfigs ?? null), manager),
+    getManagerConfig(parsePackageManagerConfigs(system.pkgManagerConfigs ?? null, listPackageManagerDefinitions()), manager),
   );
 }
 

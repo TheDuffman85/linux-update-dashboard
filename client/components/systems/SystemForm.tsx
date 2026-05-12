@@ -221,7 +221,11 @@ export function SystemForm({
   }, [hostKeyVerificationEnabled, approvedHostKey]);
 
   const customPackageManagers = scriptsData?.packageManagers ?? [];
-  const customPackageManagerNames = new Set(customPackageManagers.map((manager) => manager.name));
+  const customPackageManagerNames = new Set(
+    customPackageManagers
+      .filter((manager) => !manager.builtin)
+      .map((manager) => manager.name),
+  );
   const shouldShowManager = (manager: string) =>
     !customPackageManagerNames.has(manager) || detectedManagers.includes(manager);
   const isManagerEnabled = (manager: string) => {
@@ -291,6 +295,7 @@ export function SystemForm({
   const packageManagerConfigsWithCustomDefaults = (): PackageManagerConfigs => {
     const next: PackageManagerConfigs = { ...pkgManagerConfigs };
     for (const manager of customPackageManagers) {
+      if (!visiblePackageManagers.includes(manager.name)) continue;
       if (!isManagerEnabled(manager.name) || manager.configEntries.length === 0) continue;
       const current = next[manager.name] && typeof next[manager.name] === "object" && !Array.isArray(next[manager.name])
         ? next[manager.name] as CustomPackageManagerConfig

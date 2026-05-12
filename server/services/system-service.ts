@@ -15,7 +15,7 @@ import type { PackageManagerConfigs } from "../package-manager-configs";
 import { serializePackageManagerConfigs } from "../package-manager-configs";
 import {
   detectPackageManagersWithScripts,
-  listCustomPackageManagers,
+  listPackageManagerDefinitions,
   parseSystemInfoWithScript,
   resolveRuntimeSteps,
   resolveScript,
@@ -318,7 +318,7 @@ export function createSystem(data: {
     values.pkgManager = detectedPkgManagers[0] ?? null;
   }
   if (data.pkgManagerConfigs !== undefined) {
-    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listCustomPackageManagers());
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listPackageManagerDefinitions());
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
@@ -420,7 +420,7 @@ export function updateSystem(
     values.pkgManager = detectedPkgManagers[0] ?? null;
   }
   if (data.pkgManagerConfigs !== undefined) {
-    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listCustomPackageManagers());
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listPackageManagerDefinitions());
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;

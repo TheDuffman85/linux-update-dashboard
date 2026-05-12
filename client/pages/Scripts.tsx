@@ -83,6 +83,12 @@ const PACKAGE_MANAGER_CONFIG_KEYS: Record<string, Array<{ key: string; descripti
     { key: "refreshAppstreamOnCheck", description: "true unless appstream refresh is disabled" },
   ],
 };
+const BUILTIN_PACKAGE_MANAGER_CONFIG_KEY_NAMES = new Map(
+  Object.entries(PACKAGE_MANAGER_CONFIG_KEYS).map(([manager, entries]) => [
+    manager,
+    entries.map((entry) => entry.key),
+  ]),
+);
 const SYSTEM_INFO_FIELDS = [
   "osName",
   "osVersion",
@@ -108,6 +114,7 @@ type PackageManagerDraft = {
   label: string;
   color: string;
   configEntries: CustomPackageManagerConfigEntry[];
+  builtin?: boolean;
 };
 
 type ManagedPackageManager = PackageManagerDraft & {
@@ -140,6 +147,7 @@ function emptyPackageManager(): PackageManagerDraft {
     label: "",
     color: "",
     configEntries: [],
+    builtin: false,
   };
 }
 
@@ -170,6 +178,9 @@ function validateConfigEntries(
   for (const entry of entries) {
     if (!keyPattern.test(entry.key)) {
       return "Custom config keys must start with a letter and use only letters, numbers, underscores, or dashes.";
+    }
+    if (currentManagerName && BUILTIN_PACKAGE_MANAGER_CONFIG_KEY_NAMES.get(currentManagerName)?.includes(entry.key)) {
+      return `${entry.key} collides with a built-in ${currentManagerName} config key.`;
     }
     if (seen.has(entry.key)) return `Duplicate custom config key: ${entry.key}`;
     seen.add(entry.key);
@@ -1043,6 +1054,7 @@ function PackageManagerEditor({
             onChange={(e) => setDraft({ ...draft, label: e.target.value })}
             className={inputClass}
             placeholder="Custom PM"
+            disabled={draft.builtin}
           />
         </div>
         <div>
@@ -1191,7 +1203,7 @@ function PackageManagersPanel({
       {open && (
         <div className="border-t border-border px-4 pb-4 pt-3">
           <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
-            Built-ins are read-only; custom managers can be labeled and colored.
+            Built-ins can be colored and extended with custom config entries; custom managers can also be labeled.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
             {managers.map((manager) => (
@@ -1227,7 +1239,7 @@ function PackageManagersPanel({
                       </span>
                     </div>
                   </div>
-                  {!manager.builtin && manager.registered && (
+                  {manager.registered && (
                     <div className="flex shrink-0 gap-1">
                       <button
                         type="button"
@@ -1240,17 +1252,19 @@ function PackageManagersPanel({
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                         </svg>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteManager(manager)}
-                        className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                        title="Delete package manager"
-                        aria-label={`Delete ${manager.label}`}
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
+                      {!manager.builtin && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteManager(manager)}
+                          className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
+                          title="Delete package manager"
+                          aria-label={`Delete ${manager.label}`}
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1360,7 +1374,7 @@ export default function Scripts() {
         label: manager.label,
         color: manager.color ?? "",
         configEntries: manager.configEntries ?? [],
-        builtin: false,
+        builtin: manager.builtin,
         registered: true,
       });
     }
@@ -1458,6 +1472,7 @@ export default function Scripts() {
       label: existing.label,
       color: existing.color ?? "",
       configEntries: (existing.configEntries ?? []).map((entry) => ({ ...entry })),
+      builtin: existing.builtin,
     });
     setShowPackageManager(true);
   };

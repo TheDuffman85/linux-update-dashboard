@@ -107,7 +107,7 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
   }
   const pkgManagerConfigError = validatePackageManagerConfigsInput(
     body.pkgManagerConfigs,
-    scriptService.listCustomPackageManagers(),
+    scriptService.listPackageManagerDefinitions(),
   );
   if (pkgManagerConfigError) {
     return pkgManagerConfigError;
@@ -213,7 +213,10 @@ function getSystemWriteErrorResponse(error: unknown): Response | null {
 
 function serializeSystem(s: Record<string, unknown>) {
   const pkgManagerConfigs = mergeLegacyAutoHideKeptBackUpdates(
-    parsePackageManagerConfigs(s.pkgManagerConfigs as string | null),
+    parsePackageManagerConfigs(
+      s.pkgManagerConfigs as string | null,
+      scriptService.listPackageManagerDefinitions(),
+    ),
     s.autoHideKeptBackUpdates as number | null | undefined,
   );
   const {
@@ -567,7 +570,7 @@ systems.post("/", async (c) => {
       : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
-        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listCustomPackageManagers())
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
@@ -683,7 +686,7 @@ systems.put("/:id", async (c) => {
       : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
-        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listCustomPackageManagers())
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
@@ -730,7 +733,7 @@ systems.put("/:id", async (c) => {
   if (
     body.autoHideKeptBackUpdates === true ||
     getAptAutoHideKeptBackUpdates(
-      normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listCustomPackageManagers()),
+      normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions()),
     ) === true
   ) {
     hiddenUpdateService.autoHideCachedKeptBackUpdates(id);

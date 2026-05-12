@@ -98,6 +98,7 @@ describe("SystemForm script operations", () => {
             color: "#2563eb",
             parserConfig: null,
             configEntries: [],
+            builtin: false,
           },
         ],
         scripts: customAptOperations.map((operation) => ({
@@ -180,6 +181,7 @@ describe("SystemForm script operations", () => {
             label: "Custom APT",
             color: "#2563eb",
             parserConfig: null,
+            builtin: false,
             configEntries: [
               { key: "channel", description: "Release channel", defaultValue: "stable" },
             ],
