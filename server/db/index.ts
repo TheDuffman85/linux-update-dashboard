@@ -279,6 +279,56 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS custom_package_managers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    parser_config TEXT,
+    config_entries TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS custom_scripts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    type TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    pkg_manager TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    steps TEXT NOT NULL,
+    parser_config TEXT,
+    system_info_config TEXT,
+    source_script_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS system_script_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    operation_key TEXT NOT NULL,
+    script_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(system_id, operation_key)
+  )`);
+
+  try {
+    _db.run(sql`ALTER TABLE custom_package_managers ADD COLUMN config_entries TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE custom_scripts ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`CREATE UNIQUE INDEX IF NOT EXISTS custom_scripts_default_scope_idx
+    ON custom_scripts (type, COALESCE(pkg_manager, 'system'), operation)
+    WHERE is_default = 1`);
+
   // Migration: add command column to existing databases
   try {
     _db.run(sql`ALTER TABLE update_history ADD COLUMN command TEXT`);

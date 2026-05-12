@@ -1,0 +1,724 @@
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { randomBytes } from "crypto";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { eq, sql } from "drizzle-orm";
+import { closeDatabase, getDb, initDatabase } from "../../server/db";
+import { systemScriptOverrides, systems } from "../../server/db/schema";
+import { initEncryptor } from "../../server/security";
+import {
+  buildOperationKey,
+  createCustomPackageManager,
+  createScript,
+  deleteCustomPackageManager,
+  deleteScript,
+  formatShellCommand,
+  getBuiltinScripts,
+  getSystemOverrides,
+  listScriptUsages,
+  listScripts,
+  parseCustomUpdates,
+  replaceSystemOverrides,
+  renderCommandTemplate,
+  resolveRuntimeSteps,
+  setSystemOverrides,
+  updateScript,
+  updateCustomPackageManager,
+} from "../../server/services/script-service";
+
+describe("script service", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-scripts-"));
+    initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function insertSystem(id: number): void {
+    getDb().insert(systems).values({
+      id,
+      name: `system-${id}`,
+      hostname: `system-${id}.local`,
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).run();
+  }
+
+  function createBuiltinCopy(scriptId: string) {
+    const source = getBuiltinScripts().find((script) => script.id === scriptId);
+    if (!source) throw new Error(`Missing built-in script ${scriptId}`);
+    return createScript({
+      ...source,
+      id: undefined,
+      readonly: false,
+      name: `${source.name} (Copy)`,
+      sourceScriptId: source.id,
+    });
+  }
+
+  test("exposes built-in package manager and system scripts as read-only", () => {
+    const scripts = getBuiltinScripts();
+
+    expect(scripts.some((script) => script.id === "builtin:apt:check_updates" && script.readonly)).toBe(true);
+    expect(scripts.some((script) => script.id === "builtin:snap:detect" && script.readonly)).toBe(true);
+    expect(scripts.some((script) => script.id === "builtin:system:system_info" && script.readonly)).toBe(true);
+    expect(scripts.some((script) => script.id === "builtin:system:reboot" && script.readonly)).toBe(true);
+  });
+
+  test("resolves built-in runtime steps from the canonical script templates", () => {
+    insertSystem(12);
+    const cases: Array<{
+      operation: "detect" | "check_updates" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
+      pkgManager: string | null;
+      pkgManagerConfig?: Record<string, unknown>;
+      packages?: string[];
+    }> = [
+      { operation: "detect", pkgManager: "apt" },
+      { operation: "check_updates", pkgManager: "apt" },
+      { operation: "upgrade_all", pkgManager: "apt", pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" } },
+      { operation: "full_upgrade_all", pkgManager: "dnf", pkgManagerConfig: { autoAcceptEulaOnUpgrade: true } },
+      { operation: "upgrade_selected", pkgManager: "apt", packages: ["curl", "openssl"] },
+      { operation: "system_info", pkgManager: null },
+      { operation: "reboot", pkgManager: null },
+    ];
+
+    for (const entry of cases) {
+      const source = getBuiltinScripts().find((script) =>
+        script.operation === entry.operation && script.pkgManager === entry.pkgManager
+      );
+      expect(source, `${entry.pkgManager ?? "system"}/${entry.operation}`).toBeDefined();
+
+      expect(resolveRuntimeSteps({
+        systemId: 12,
+        operation: entry.operation,
+        pkgManager: entry.pkgManager,
+        pkgManagerConfig: entry.pkgManagerConfig,
+        packages: entry.packages,
+      })).toEqual(source!.steps.map((step) => ({
+        label: step.label,
+        command: renderCommandTemplate(step.command, {
+          pkgManager: entry.pkgManager,
+          config: entry.pkgManagerConfig,
+          packages: entry.packages,
+        }),
+      })));
+    }
+  });
+
+  test("drafted built-in copies are editable custom scripts and assigned scripts cannot be deleted", () => {
+    const copy = createBuiltinCopy("builtin:apt:check_updates");
+    expect(copy.readonly).toBe(false);
+    expect(copy.sourceScriptId).toBe("builtin:apt:check_updates");
+
+    insertSystem(1);
+    setSystemOverrides(1, {
+      [buildOperationKey("check_updates", "apt")]: copy.id,
+    });
+
+    expect(() => deleteScript(copy.id)).toThrow(/assigned/);
+  });
+
+  test("rejects updates and deletes for built-in scripts", () => {
+    expect(() => updateScript("builtin:apt:detect", {
+      name: "Edited built-in",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    })).toThrow(/read-only/);
+    expect(() => deleteScript("builtin:apt:detect")).toThrow(/read-only/);
+  });
+
+  test("rejects invalid and oversized custom script payloads", () => {
+    expect(() => createScript({
+      name: "Bad manager",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "Apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    })).toThrow(/pkgManager/);
+
+    expect(() => createScript({
+      name: "Wrong operation",
+      type: "system",
+      operation: "detect",
+      steps: [{ label: "Detect", command: "true" }],
+    })).toThrow(/system_info or reboot/);
+
+    expect(() => createScript({
+      name: "Too many steps",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: Array.from({ length: 9 }, (_entry, index) => ({
+        label: `Step ${index}`,
+        command: "true",
+      })),
+    })).toThrow(/at most 8/);
+
+    expect(() => createScript({
+      name: "Bad step",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "x".repeat(8001) }],
+    })).toThrow(/command max 8000/);
+  });
+
+  test("rejects unsafe or incomplete parser regexes", () => {
+    expect(() => createScript({
+      name: "Missing parser groups",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "Check", command: "apt list --upgradable" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)$",
+      },
+    })).toThrow(/packageName and newVersion/);
+
+    expect(() => createScript({
+      name: "Unsafe parser",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "Check", command: "apt list --upgradable" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>(a+)+)\\s+(?<newVersion>\\S+)$",
+      },
+    })).toThrow(/unsafe regular expression/);
+
+    expect(() => createCustomPackageManager({
+      name: "brewlinux",
+      label: "Linuxbrew",
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)\\s+->\\s+(?<newVersion>\\S+)$",
+      },
+    })).not.toThrow();
+  });
+
+  test("rejects oversized and invalid formatter input", async () => {
+    await expect(formatShellCommand("")).rejects.toThrow(/Command is required/);
+    await expect(formatShellCommand("x".repeat(8001))).rejects.toThrow(/too long/);
+  });
+
+  test("lists system usage for assigned custom scripts", () => {
+    const copy = createBuiltinCopy("builtin:apt:detect");
+    insertSystem(2);
+    setSystemOverrides(2, {
+      [buildOperationKey("detect", "apt")]: copy.id,
+    });
+
+    expect(listScriptUsages(copy.id)).toEqual([
+      {
+        systemId: 2,
+        systemName: "system-2",
+        operationKey: "apt/detect",
+      },
+    ]);
+
+    const listed = listScripts().scripts.find((script) => script.id === copy.id);
+    expect(listed?.usageCount).toBe(1);
+    expect(listed?.usages?.[0]?.systemName).toBe("system-2");
+  });
+
+  test("deletes scripts with only stale override rows", () => {
+    const copy = createBuiltinCopy("builtin:apt:detect");
+
+    getDb().run(sql`PRAGMA foreign_keys=OFF`);
+    getDb().insert(systemScriptOverrides).values({
+      systemId: 999,
+      operationKey: buildOperationKey("detect", "apt"),
+      scriptId: copy.id,
+    }).run();
+    getDb().run(sql`PRAGMA foreign_keys=ON`);
+
+    expect(listScriptUsages(copy.id)).toEqual([]);
+    expect(() => deleteScript(copy.id)).not.toThrow();
+    expect(getDb().select().from(systemScriptOverrides).where(eq(systemScriptOverrides.scriptId, copy.id)).all()).toEqual([]);
+  });
+
+  test("does not count disabled package manager overrides as active usage", () => {
+    createCustomPackageManager({ name: "custom-apt", label: "Custom APT" });
+    const script = createScript({
+      name: "Detect Custom APT",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "custom-apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    insertSystem(3);
+    getDb()
+      .update(systems)
+      .set({ disabledPkgManagers: JSON.stringify(["custom-apt"]) })
+      .where(eq(systems.id, 3))
+      .run();
+    setSystemOverrides(3, {
+      [buildOperationKey("detect", "custom-apt")]: script.id,
+    });
+
+    expect(listScriptUsages(script.id)).toEqual([]);
+    expect(listScripts().scripts.find((entry) => entry.id === script.id)?.usageCount).toBe(0);
+    expect(() => deleteScript(script.id)).not.toThrow();
+  });
+
+  test("counts default scripts for enabled custom package managers as active usage", () => {
+    createCustomPackageManager({ name: "aaa", label: "AAA" });
+    const defaultScript = createScript({
+      name: "Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    const alternateScript = createScript({
+      name: "Alternate Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt-get" }],
+    });
+    insertSystem(5);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["aaa"]), disabledPkgManagers: JSON.stringify([]) })
+      .where(eq(systems.id, 5))
+      .run();
+
+    expect(listScriptUsages(defaultScript.id)).toEqual([
+      {
+        systemId: 5,
+        systemName: "system-5",
+        operationKey: "aaa/detect",
+      },
+    ]);
+    expect(listScriptUsages(alternateScript.id)).toEqual([]);
+    expect(() => deleteScript(defaultScript.id)).toThrow(/assigned/);
+  });
+
+  test("does not count default custom scripts when an operation override is set", () => {
+    createCustomPackageManager({ name: "aaa", label: "AAA" });
+    const defaultScript = createScript({
+      name: "Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    const overrideScript = createScript({
+      name: "Override Detect APT (AAA)",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "aaa",
+      steps: [{ label: "Detect", command: "command -v apt-get" }],
+    });
+    insertSystem(6);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["aaa"]), disabledPkgManagers: JSON.stringify([]) })
+      .where(eq(systems.id, 6))
+      .run();
+    setSystemOverrides(6, {
+      [buildOperationKey("detect", "aaa")]: overrideScript.id,
+    });
+
+    expect(listScriptUsages(defaultScript.id)).toEqual([]);
+    expect(listScriptUsages(overrideScript.id)).toEqual([
+      {
+        systemId: 6,
+        systemName: "system-6",
+        operationKey: "aaa/detect",
+      },
+    ]);
+  });
+
+  test("replaces system overrides so omitted keys are unassigned", () => {
+    const copy = createBuiltinCopy("builtin:apt:detect");
+    insertSystem(4);
+    setSystemOverrides(4, {
+      [buildOperationKey("detect", "apt")]: copy.id,
+    });
+
+    expect(getSystemOverrides(4)).toEqual({ "apt/detect": copy.id });
+    replaceSystemOverrides(4, {});
+
+    expect(getSystemOverrides(4)).toEqual({});
+  });
+
+  test("unmodified built-in copies keep built-in runtime behavior", () => {
+    const copy = createBuiltinCopy("builtin:apt:upgrade_all");
+    insertSystem(7);
+    setSystemOverrides(7, {
+      [buildOperationKey("upgrade_all", "apt")]: copy.id,
+    });
+
+    const steps = resolveRuntimeSteps({
+      systemId: 7,
+      operation: "upgrade_all",
+      pkgManager: "apt",
+      pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" },
+    });
+
+    expect(copy.systemInfoConfig).toBeNull();
+    expect(steps[0]?.command).toContain('upgrade_mode="full-upgrade"');
+    expect(steps[0]?.command).toContain('${upgrade_mode} -y');
+
+    const systemInfoCopy = createBuiltinCopy("builtin:system:system_info");
+    expect(systemInfoCopy.systemInfoConfig).toEqual({ mode: "builtin" });
+  });
+
+  test("built-in copies moved to custom managers use their saved detection script", () => {
+    createCustomPackageManager({ name: "custom-apt", label: "Custom APT" });
+    createScript({
+      name: "Detect Custom APT",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "custom-apt",
+      steps: [{ label: "Detect Custom APT", command: "command -v apt >/dev/null 2>&1 && echo 'found'" }],
+      sourceScriptId: "builtin:apt:detect",
+    });
+    insertSystem(9);
+
+    const steps = resolveRuntimeSteps({
+      systemId: 9,
+      operation: "detect",
+      pkgManager: "custom-apt",
+    });
+
+    expect(steps).toEqual([
+      { label: "Detect Custom APT", command: "command -v apt >/dev/null 2>&1 && echo 'found'" },
+    ]);
+  });
+
+  test("edited built-in copies use their custom step commands", () => {
+    const copy = createBuiltinCopy("builtin:apt:upgrade_all");
+    const edited = createScript({
+      name: "Custom upgrade",
+      type: copy.type,
+      operation: copy.operation,
+      pkgManager: copy.pkgManager,
+      steps: [{ label: "Custom", command: "echo custom" }],
+      sourceScriptId: copy.sourceScriptId,
+    });
+    insertSystem(8);
+    setSystemOverrides(8, {
+      [buildOperationKey("upgrade_all", "apt")]: edited.id,
+    });
+
+    const steps = resolveRuntimeSteps({
+      systemId: 8,
+      operation: "upgrade_all",
+      pkgManager: "apt",
+      pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" },
+    });
+
+    expect(steps[0]?.command).toBe("echo custom");
+  });
+
+
+  test("renders package and sudo placeholders", () => {
+    const command = renderCommandTemplate(
+      "{{sudo:custom upgrade {{packages}}}} --manager {{manager}} --mode {{config.defaultUpgradeMode}}",
+      {
+        pkgManager: "apt",
+        packages: ["curl", "openssl"],
+        config: { defaultUpgradeMode: "full-upgrade" },
+      },
+    );
+
+    expect(command).toContain("custom upgrade curl openssl");
+    expect(command).toContain("--manager apt");
+    expect(command).toContain("--mode full-upgrade");
+    expect(command).toContain("sudo -S -p ''");
+  });
+
+  test("formats compact built-in shell commands for display", async () => {
+    const aptUpgrade = getBuiltinScripts().find((script) => script.id === "builtin:apt:upgrade_all");
+    const reboot = getBuiltinScripts().find((script) => script.id === "builtin:system:reboot");
+
+    const formattedApt = await formatShellCommand(aptUpgrade?.steps[0]?.command ?? "");
+    const formattedReboot = await formatShellCommand(reboot?.steps[0]?.command ?? "");
+
+    expect(formattedApt).toContain('if [ "$upgrade_mode" != "full-upgrade" ]; then\n  upgrade_mode="upgrade"\nfi');
+    expect(formattedApt).toContain('elif command -v sudo > /dev/null 2>&1; then\n  sudo -S -p');
+    expect(formattedReboot).toContain('if [ "$(id -u)" = "0" ]; then\n  reboot\nelif command -v sudo > /dev/null 2>&1; then');
+  });
+
+  test("resolves per-system custom script overrides before built-ins", () => {
+    const script = createScript({
+      name: "Quiet APT check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "Custom check", command: "echo custom" }],
+    });
+
+    insertSystem(42);
+    setSystemOverrides(42, {
+      [buildOperationKey("check_updates", "apt")]: script.id,
+    });
+
+    expect(resolveRuntimeSteps({
+      systemId: 42,
+      operation: "check_updates",
+      pkgManager: "apt",
+    })[0]?.command).toBe("echo custom");
+  });
+
+  test("uses one explicit default script per package-manager operation", () => {
+    const first = createScript({
+      name: "Quiet APT check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      isDefault: true,
+      steps: [{ label: "Custom check", command: "echo first" }],
+    });
+    const second = createScript({
+      name: "Verbose APT check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      isDefault: true,
+      steps: [{ label: "Custom check", command: "echo second" }],
+    });
+    insertSystem(43);
+    insertSystem(45);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["apt"]) })
+      .where(eq(systems.id, 43))
+      .run();
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["dnf"]) })
+      .where(eq(systems.id, 45))
+      .run();
+
+    expect(resolveRuntimeSteps({
+      systemId: 43,
+      operation: "check_updates",
+      pkgManager: "apt",
+    })[0]?.command).toBe("echo second");
+    expect(listScripts().scripts.find((script) => script.id === first.id)?.isDefault).toBe(false);
+    expect(listScripts().scripts.find((script) => script.id === second.id)?.isDefault).toBe(true);
+    expect(listScriptUsages(second.id)).toEqual([
+      {
+        systemId: 43,
+        systemName: "system-43",
+        operationKey: "apt/check_updates",
+      },
+    ]);
+  });
+
+  test("uses explicit default scripts for system operations", () => {
+    const script = createScript({
+      name: "Custom reboot",
+      type: "system",
+      operation: "reboot",
+      isDefault: true,
+      steps: [{ label: "Reboot", command: "echo reboot" }],
+    });
+    insertSystem(44);
+
+    expect(resolveRuntimeSteps({
+      systemId: 44,
+      operation: "reboot",
+    })[0]?.command).toBe("echo reboot");
+    expect(listScriptUsages(script.id)).toEqual([
+      {
+        systemId: 44,
+        systemName: "system-44",
+        operationKey: "system/reboot",
+      },
+    ]);
+    expect(() => deleteScript(script.id)).toThrow(/assigned/);
+  });
+
+  test("supports user-defined package managers with generic parser rules", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    const parserConfig = {
+      updateRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+->\\s+(?<newVersion>\\S+)$",
+    };
+    createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+      parserConfig,
+    });
+
+    const scripts = listScripts();
+    expect(scripts.packageManagers.some((manager) => manager.name === "brewlinux")).toBe(true);
+
+    const updates = parseCustomUpdates("brewlinux", parserConfig, [{
+      command: "brew outdated",
+      stdout: "openssl 3.2 -> 3.3\n",
+      stderr: "",
+      exitCode: 0,
+    }]);
+
+    expect(updates).toEqual([
+      expect.objectContaining({
+        packageName: "openssl",
+        currentVersion: "3.2",
+        newVersion: "3.3",
+        pkgManager: "brewlinux",
+      }),
+    ]);
+  });
+
+  test("updates custom package manager display metadata", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+
+    const updated = updateCustomPackageManager("brewlinux", {
+      label: "Homebrew",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
+    });
+
+    expect(updated).toMatchObject({
+      name: "brewlinux",
+      label: "Homebrew",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
+    });
+  });
+
+  test("updates built-in package manager custom config metadata only", () => {
+    const updated = updateCustomPackageManager("apt", {
+      label: "Changed APT",
+      parserConfig: {
+        updateRegex: "ignored",
+      },
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
+    });
+
+    expect(updated).toMatchObject({
+      builtin: true,
+      name: "apt",
+      label: "APT",
+      parserConfig: null,
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
+    });
+    expect(listScripts().packageManagers.find((manager) => manager.name === "apt")).toMatchObject({
+      builtin: true,
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
+    });
+  });
+
+  test("renders custom config values with defaults without adding them to placeholder help", () => {
+    createCustomPackageManager({
+      name: "brewlinux",
+      label: "Linuxbrew",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
+    });
+    const script = createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew update --{{config.channel}}" }],
+    });
+    insertSystem(10);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["brewlinux"]) })
+      .where(eq(systems.id, 10))
+      .run();
+
+    expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
+      name: "{{config.channel}}",
+    }));
+    expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
+      name: "{{config.someKey}}",
+    }));
+    expect(resolveRuntimeSteps({
+      systemId: 10,
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+    })[0]?.command).toBe("brew update --stable");
+
+    getDb()
+      .update(systems)
+      .set({ pkgManagerConfigs: JSON.stringify({ brewlinux: { channel: "edge" } }) })
+      .where(eq(systems.id, 10))
+      .run();
+    expect(resolveRuntimeSteps({
+      systemId: 10,
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      pkgManagerConfig: { channel: "edge" },
+    })[0]?.command).toBe("brew update --edge");
+    expect(script.pkgManager).toBe("brewlinux");
+  });
+
+  test("renders built-in package manager custom config values without dropping built-in config", () => {
+    updateCustomPackageManager("apt", {
+      configEntries: [
+        { key: "mirror", description: "APT mirror", defaultValue: "internal" },
+      ],
+    });
+    const script = createScript({
+      name: "Custom APT check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "Check", command: "echo {{config.defaultUpgradeMode}} {{config.mirror}}" }],
+    });
+    insertSystem(11);
+    setSystemOverrides(11, {
+      [buildOperationKey("check_updates", "apt")]: script.id,
+    });
+
+    expect(resolveRuntimeSteps({
+      systemId: 11,
+      operation: "check_updates",
+      pkgManager: "apt",
+      pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" },
+    })[0]?.command).toBe("echo full-upgrade internal");
+    expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
+      name: "{{config.mirror}}",
+    }));
+  });
+
+  test("does not delete custom package managers that still have scripts", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+    });
+
+    expect(() => deleteCustomPackageManager("brewlinux")).toThrow(/used by one or more scripts/);
+  });
+
+  test("deletes unused custom package managers", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+
+    deleteCustomPackageManager("brewlinux");
+
+    expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(false);
+  });
+});

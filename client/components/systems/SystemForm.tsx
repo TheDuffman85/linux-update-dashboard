@@ -15,12 +15,18 @@ import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/syste
 import {
   normalizePackageManagerConfigs,
   SUPPORTED_PACKAGE_MANAGER_CONFIGS,
+  type CustomPackageManagerConfig,
   type PackageManagerConfigs,
 } from "../../lib/package-manager-configs";
 import {
   getHostKeyStatusBadgeLabel,
   type HostKeyStatus,
 } from "../../lib/host-key-status";
+import {
+  buildOperationKey,
+  useScripts,
+  type ScriptOperation,
+} from "../../lib/scripts";
 
 interface SystemFormData {
   name: string;
@@ -32,10 +38,12 @@ interface SystemFormData {
   validatedConfigToken?: string;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  detectedPkgManagers?: string[];
   pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
+  scriptOverrides?: Record<string, string | null | undefined>;
   sourceSystemId?: number;
 }
 
@@ -49,6 +57,7 @@ const PACKAGE_MANAGER_LABELS: Record<string, string> = {
   flatpak: "Flatpak",
   snap: "Snap",
 };
+const PACKAGE_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
 
 function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
@@ -58,6 +67,15 @@ function isHostKeyErrorMessage(message: string | null | undefined): boolean {
   return /HostKeyVerificationError|SSH host key approval required|SSH host key verification failed/i.test(
     message ?? ""
   );
+}
+
+function sortPackageManagers(a: string, b: string): number {
+  const leftIndex = PACKAGE_MANAGER_ORDER.indexOf(a);
+  const rightIndex = PACKAGE_MANAGER_ORDER.indexOf(b);
+  if (leftIndex === -1 && rightIndex === -1) return a.localeCompare(b);
+  if (leftIndex === -1) return 1;
+  if (rightIndex === -1) return -1;
+  return leftIndex - rightIndex;
 }
 
 export function SystemForm({
@@ -77,6 +95,7 @@ export function SystemForm({
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
     hostKeyStatus?: HostKeyStatus;
+    scriptOverrides?: Record<string, string>;
   };
   systemId?: number;
   sourceSystemId?: number;
@@ -89,6 +108,7 @@ export function SystemForm({
   const createCredential = useCreateCredential();
   const { data: allCredentials } = useCredentials();
   const { data: allSystems } = useSystems();
+  const { data: scriptsData } = useScripts();
   const { addToast } = useToast();
   const credentials =
     allCredentials?.filter((credential) =>
@@ -131,6 +151,9 @@ export function SystemForm({
     initial?.excludeFromUpgradeAll === 1
   );
   const [hidden, setHidden] = useState(initial?.hidden === true);
+  const [scriptOverrides, setScriptOverrides] = useState<Record<string, string>>(
+    initial?.scriptOverrides ?? {}
+  );
   const selectedProxyJumpSystem =
     availableSystems.find((system) => system.id === proxyJumpSystemId) ?? null;
   const getChallengeSystemName = (challengeSystemId?: number) => {
@@ -160,6 +183,7 @@ export function SystemForm({
   );
   const [showUnapprovedSaveWarning, setShowUnapprovedSaveWarning] = useState(false);
   const [showCreateCredential, setShowCreateCredential] = useState(false);
+  const [scriptsOpen, setScriptsOpen] = useState(false);
 
   const resetValidatedState = () => {
     setValidatedConfigToken(null);
@@ -196,16 +220,46 @@ export function SystemForm({
     });
   }, [hostKeyVerificationEnabled, approvedHostKey]);
 
+  const customPackageManagers = scriptsData?.packageManagers ?? [];
+  const customPackageManagerNames = new Set(
+    customPackageManagers
+      .filter((manager) => !manager.builtin)
+      .map((manager) => manager.name),
+  );
+  const shouldShowManager = (manager: string) =>
+    !customPackageManagerNames.has(manager) || detectedManagers.includes(manager);
+  const isManagerEnabled = (manager: string) => {
+    if (customPackageManagerNames.has(manager) && !detectedManagers.includes(manager)) {
+      return false;
+    }
+    return !disabledManagers.has(manager);
+  };
+
   const toggleManager = (manager: string) => {
+    const enabled = isManagerEnabled(manager);
     setDisabledManagers((prev) => {
       const next = new Set(prev);
-      if (next.has(manager)) {
-        next.delete(manager);
-      } else {
+      if (enabled) {
         next.add(manager);
+      } else {
+        next.delete(manager);
       }
       return next;
     });
+    if (enabled) {
+      setScriptOverrides((prev) => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${manager}/`)) delete next[key];
+        }
+        return next;
+      });
+    }
+    if (customPackageManagerNames.has(manager) && !enabled) {
+      setDetectedManagers((prev) => (
+        prev.includes(manager) ? prev : [...prev, manager]
+      ));
+    }
   };
 
   const setManagerConfig = <T extends keyof PackageManagerConfigs>(
@@ -223,6 +277,39 @@ export function SystemForm({
     });
   };
 
+  const setCustomManagerConfigValue = (manager: string, key: string, value: string) => {
+    setPkgManagerConfigs((prev) => {
+      const current = prev[manager] && typeof prev[manager] === "object" && !Array.isArray(prev[manager])
+        ? prev[manager] as CustomPackageManagerConfig
+        : {};
+      return {
+        ...prev,
+        [manager]: {
+          ...current,
+          [key]: value,
+        },
+      };
+    });
+  };
+
+  const packageManagerConfigsWithCustomDefaults = (): PackageManagerConfigs => {
+    const next: PackageManagerConfigs = { ...pkgManagerConfigs };
+    for (const manager of customPackageManagers) {
+      if (!visiblePackageManagers.includes(manager.name)) continue;
+      if (!isManagerEnabled(manager.name) || manager.configEntries.length === 0) continue;
+      const current = next[manager.name] && typeof next[manager.name] === "object" && !Array.isArray(next[manager.name])
+        ? next[manager.name] as CustomPackageManagerConfig
+        : {};
+      next[manager.name] = Object.fromEntries(
+        manager.configEntries.map((entry) => [
+          entry.key,
+          current[entry.key] ?? entry.defaultValue,
+        ]),
+      );
+    }
+    return next;
+  };
+
   const submitForm = () => {
     const validationError = validateSystemForm({
       name,
@@ -236,6 +323,13 @@ export function SystemForm({
       return;
     }
 
+    const activeScriptOverrides = Object.fromEntries(
+      Object.entries(scriptOverrides).filter(([key]) => {
+        const [manager] = key.split("/");
+        return manager === "system" || !disabledManagers.has(manager);
+      }),
+    );
+
     onSubmit({
       name,
       hostname,
@@ -246,9 +340,14 @@ export function SystemForm({
       validatedConfigToken: validatedConfigToken || undefined,
       sudoPassword: sudoPassword || undefined,
       disabledPkgManagers: [...disabledManagers],
-      pkgManagerConfigs: normalizePackageManagerConfigs(pkgManagerConfigs) ?? {},
+      detectedPkgManagers: detectedManagers,
+      pkgManagerConfigs: normalizePackageManagerConfigs(
+        packageManagerConfigsWithCustomDefaults(),
+        customPackageManagers,
+      ) ?? {},
       excludeFromUpgradeAll,
       hidden,
+      scriptOverrides: activeScriptOverrides,
       sourceSystemId,
     });
   };
@@ -272,16 +371,45 @@ export function SystemForm({
     new Set([
       ...detectedManagers,
       ...Object.keys(pkgManagerConfigs),
+      ...Object.keys(scriptOverrides)
+        .map((key) => key.split("/")[0])
+        .filter((manager) => manager && manager !== "system"),
     ]),
-  ).sort((a, b) => {
-    const order = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
-    const leftIndex = order.indexOf(a);
-    const rightIndex = order.indexOf(b);
-    if (leftIndex === -1 && rightIndex === -1) return a.localeCompare(b);
-    if (leftIndex === -1) return 1;
-    if (rightIndex === -1) return -1;
-    return leftIndex - rightIndex;
-  });
+  ).filter(shouldShowManager).sort(sortPackageManagers);
+  const packageManagerLabels = new Map(
+    customPackageManagers.map((manager) => [manager.name, manager.label]),
+  );
+  const visibleScriptPackageManagers = visiblePackageManagers.filter(isManagerEnabled);
+  const packageScriptOperations: ScriptOperation[] = [
+    "detect",
+    "check_updates",
+    "upgrade_all",
+    "full_upgrade_all",
+    "upgrade_selected",
+  ];
+  const systemScriptOperations: ScriptOperation[] = ["system_info", "reboot"];
+  const operationLabels: Record<ScriptOperation, string> = {
+    detect: "Detection",
+    check_updates: "Check updates",
+    upgrade_all: "Upgrade all",
+    full_upgrade_all: "Full upgrade",
+    upgrade_selected: "Upgrade selected",
+    system_info: "System info",
+    reboot: "Reboot",
+  };
+  const compatibleScripts = (operation: ScriptOperation, pkgManager: string | null) =>
+    (scriptsData?.scripts ?? []).filter(
+      (script) => script.operation === operation && script.pkgManager === pkgManager,
+    );
+  const setScriptOverride = (operation: ScriptOperation, pkgManager: string | null, scriptId: string) => {
+    const key = buildOperationKey(operation, pkgManager);
+    setScriptOverrides((prev) => {
+      const next = { ...prev };
+      if (scriptId) next[key] = scriptId;
+      else delete next[key];
+      return next;
+    });
+  };
 
   const runConnectionTest = (extra?: {
     trustChallengeToken?: string;
@@ -789,9 +917,13 @@ export function SystemForm({
             </div>
 
             {visiblePackageManagers.map((manager) => {
-              const enabled = !disabledManagers.has(manager);
-              const title = PACKAGE_MANAGER_LABELS[manager] ?? manager;
-              const hasExtraSettings = (SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager);
+              const enabled = isManagerEnabled(manager);
+              const title = PACKAGE_MANAGER_LABELS[manager] ?? packageManagerLabels.get(manager) ?? manager;
+              const customManager = customPackageManagers.find((entry) => entry.name === manager);
+              const customConfigEntries = customManager?.configEntries ?? [];
+              const hasExtraSettings =
+                (SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager) ||
+                customConfigEntries.length > 0;
 
               return (
                 <div key={manager} className="rounded-lg border border-border p-3 space-y-3">
@@ -1062,6 +1194,31 @@ export function SystemForm({
                     </label>
                   )}
 
+                  {customConfigEntries.length > 0 && (
+                    <div className="space-y-3">
+                      {customConfigEntries.map((entry) => {
+                        const config = pkgManagerConfigs[manager] && typeof pkgManagerConfigs[manager] === "object" && !Array.isArray(pkgManagerConfigs[manager])
+                          ? pkgManagerConfigs[manager] as CustomPackageManagerConfig
+                          : {};
+                        return (
+                          <div key={entry.key}>
+                            <label className={labelClass}>{entry.key}</label>
+                            <input
+                              value={config[entry.key] ?? entry.defaultValue}
+                              onChange={(e) => setCustomManagerConfigValue(manager, entry.key, e.target.value)}
+                              className={inputClass}
+                            />
+                            {entry.description && (
+                              <p className="mt-1 text-xs text-slate-400">
+                                {entry.description}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {!hasExtraSettings && (
                     <p className="text-xs text-slate-400">
                       No additional settings for this package manager yet.
@@ -1071,6 +1228,101 @@ export function SystemForm({
               );
             })}
           </div>
+        )}
+
+        {(scriptsData?.scripts.length ?? 0) > 0 && (
+          <section className="rounded-xl border border-border bg-white dark:bg-slate-900">
+            <button
+              type="button"
+              aria-expanded={scriptsOpen}
+              aria-controls="system-script-overrides"
+              onClick={() => setScriptsOpen((open) => !open)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            >
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Scripts
+                </h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Optional overrides; Standard uses the detected package manager defaults.
+                </p>
+              </div>
+              <svg
+                className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${scriptsOpen ? "rotate-180" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {scriptsOpen && (
+              <div id="system-script-overrides" className="space-y-4 border-t border-border px-4 pb-4 pt-3">
+                <div className="rounded-lg border border-border p-3 space-y-3">
+                  <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                    System Operations
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {systemScriptOperations.map((operation) => {
+                      const key = buildOperationKey(operation, null);
+                      const options = compatibleScripts(operation, null);
+                      return (
+                        <div key={key}>
+                          <label className={labelClass}>{operationLabels[operation]}</label>
+                          <select
+                            value={scriptOverrides[key] ?? ""}
+                            onChange={(e) => setScriptOverride(operation, null, e.target.value)}
+                            className={inputClass}
+                          >
+                            <option value="">Standard</option>
+                            {options.map((script) => (
+                              <option key={script.id} value={script.id}>
+                                {script.name}{script.readonly ? " (built-in)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {visibleScriptPackageManagers.map((manager) => (
+                  <div key={`scripts-${manager}`} className="rounded-lg border border-border p-3 space-y-3">
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      {PACKAGE_MANAGER_LABELS[manager] ?? packageManagerLabels.get(manager) ?? manager}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {packageScriptOperations.map((operation) => {
+                        const key = buildOperationKey(operation, manager);
+                        const options = compatibleScripts(operation, manager);
+                        if (options.length === 0 && !scriptOverrides[key]) return null;
+                        return (
+                          <div key={key}>
+                            <label className={labelClass}>{operationLabels[operation]}</label>
+                            <select
+                              value={scriptOverrides[key] ?? ""}
+                              onChange={(e) => setScriptOverride(operation, manager, e.target.value)}
+                              className={inputClass}
+                            >
+                              <option value="">Standard</option>
+                              {options.map((script) => (
+                                <option key={script.id} value={script.id}>
+                                  {script.name}{script.readonly ? " (built-in)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         {testResult && (
@@ -1085,19 +1337,24 @@ export function SystemForm({
         )}
 
         <div className="flex items-center justify-between gap-3 pt-2">
-          <button
-            type="button"
-            disabled={footerConnectionTestDisabled}
-            title={footerConnectionTestTitle}
-            onClick={() => runConnectionTest()}
-            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-          >
-            {testConnection.isPending ? (
-              <span className="spinner spinner-sm" />
-            ) : (
-              "Test Connection"
-            )}
-          </button>
+          <div className="min-w-0">
+            <button
+              type="button"
+              disabled={footerConnectionTestDisabled}
+              title={footerConnectionTestTitle}
+              onClick={() => runConnectionTest()}
+              className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+            >
+              {testConnection.isPending ? (
+                <span className="spinner spinner-sm" />
+              ) : (
+                "Test Connection"
+              )}
+            </button>
+            <p className="mt-1 text-xs text-slate-400">
+              Tests the connection and detects available package managers.
+            </p>
+          </div>
 
           <div className="flex gap-3">
             <button

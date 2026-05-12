@@ -1,21 +1,62 @@
-// Each section is separated by ; so a missing tool (e.g. hostname on minimal
-// containers) does not break the entire chain via &&.
-export const SYSTEM_INFO_CMD =
-  'echo "===OS==="; cat /etc/os-release 2>/dev/null; ' +
-  'echo "===RPI_ISSUE==="; cat /etc/rpi-issue 2>/dev/null; ' +
-  'echo "===PVE_VERSION==="; if command -v pveversion >/dev/null 2>&1; then pveversion 2>/dev/null | head -1; fi; ' +
-  'echo "===KERNEL==="; uname -r 2>/dev/null; ' +
-  'echo "===HOSTNAME==="; (hostname 2>/dev/null || cat /etc/hostname 2>/dev/null); ' +
-  'echo "===UPTIME==="; (uptime -p 2>/dev/null || uptime 2>/dev/null); ' +
-  'echo "===UPTIME_SECONDS==="; cut -d " " -f1 /proc/uptime 2>/dev/null; ' +
-  'echo "===ARCH==="; uname -m 2>/dev/null; ' +
-  'echo "===CPU==="; nproc 2>/dev/null; ' +
-  'echo "===MEM==="; free -h 2>/dev/null | grep Mem; ' +
-  'echo "===DISK==="; df -h / 2>/dev/null | tail -1; ' +
-  'echo "===BOOT_ID==="; cat /proc/sys/kernel/random/boot_id 2>/dev/null; ' +
-  'echo "===REBOOT_FILE==="; if [ -f /run/reboot-required ] || [ -f /var/run/reboot-required ]; then echo "PRESENT"; else echo "ABSENT"; fi; ' +
-  'echo "===NEEDS_RESTARTING==="; if command -v needs-restarting >/dev/null 2>&1; then needs-restarting -r >/dev/null 2>&1; echo $?; else echo "UNAVAILABLE"; fi; ' +
-  'echo "===INSTALLED_KERNELS==="; ls -1 /lib/modules 2>/dev/null';
+// Each section is intentionally independent so a missing tool (e.g. hostname
+// on minimal containers) does not break the rest of the collection script.
+export const SYSTEM_INFO_CMD = `# Collect OS, hardware, uptime, boot, and reboot-required details for the dashboard.
+# Section markers are parsed by the built-in system-info parser.
+echo "===OS==="
+cat /etc/os-release 2>/dev/null
+
+echo "===RPI_ISSUE==="
+cat /etc/rpi-issue 2>/dev/null
+
+echo "===PVE_VERSION==="
+if command -v pveversion >/dev/null 2>&1; then
+  pveversion 2>/dev/null | head -1
+fi
+
+echo "===KERNEL==="
+uname -r 2>/dev/null
+
+echo "===HOSTNAME==="
+hostname 2>/dev/null || cat /etc/hostname 2>/dev/null
+
+echo "===UPTIME==="
+uptime -p 2>/dev/null || uptime 2>/dev/null
+
+echo "===UPTIME_SECONDS==="
+cut -d " " -f1 /proc/uptime 2>/dev/null
+
+echo "===ARCH==="
+uname -m 2>/dev/null
+
+echo "===CPU==="
+nproc 2>/dev/null
+
+echo "===MEM==="
+free -h 2>/dev/null | grep Mem
+
+echo "===DISK==="
+df -h / 2>/dev/null | tail -1
+
+echo "===BOOT_ID==="
+cat /proc/sys/kernel/random/boot_id 2>/dev/null
+
+echo "===REBOOT_FILE==="
+if [ -f /run/reboot-required ] || [ -f /var/run/reboot-required ]; then
+  echo "PRESENT"
+else
+  echo "ABSENT"
+fi
+
+echo "===NEEDS_RESTARTING==="
+if command -v needs-restarting >/dev/null 2>&1; then
+  needs-restarting -r >/dev/null 2>&1
+  echo $?
+else
+  echo "UNAVAILABLE"
+fi
+
+echo "===INSTALLED_KERNELS==="
+ls -1 /lib/modules 2>/dev/null`;
 
 export type NeedsRestartingStatus =
   | "required"

@@ -87,6 +87,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       const managementPrefixes = [
         "/api/auth", "/api/settings", "/api/tokens",
         "/api/passkeys", "/api/notifications", "/api/schedules",
+        "/api/scripts",
       ];
       if (managementPrefixes.some((p) => path.startsWith(p))) {
         return c.json({ error: "API tokens cannot access management endpoints" }, 403);

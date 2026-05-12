@@ -6,17 +6,17 @@ import { resolveSystemCredential } from "./credential-service";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import type { ApprovedHostKeyInput } from "./system-connection-validation";
-import {
-  SYSTEM_INFO_CMD,
-  parseSystemInfo,
-  resolveRebootDismissal,
-  resolveRebootRequired,
-} from "../ssh/system-info";
-import { detectPackageManagers } from "../ssh/detector";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
 import type { PackageManagerConfigs } from "../package-manager-configs";
 import { serializePackageManagerConfigs } from "../package-manager-configs";
+import {
+  detectPackageManagersWithScripts,
+  listPackageManagerDefinitions,
+  parseSystemInfoWithScript,
+  resolveRuntimeSteps,
+  resolveScript,
+} from "./script-service";
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
@@ -74,6 +74,23 @@ function normalizeStringList(value: string[] | string | null | undefined): strin
       : [];
 
   return Array.from(new Set(raw.filter((entry): entry is string => typeof entry === "string"))).sort();
+}
+
+function normalizeStringListPreservingOrder(value: string[] | string | null | undefined): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.length > 0
+      ? (() => {
+          try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+
+  return Array.from(new Set(raw.filter((entry): entry is string => typeof entry === "string")));
 }
 
 export function deriveHostKeyStatus(system: {
@@ -243,6 +260,7 @@ export function createSystem(data: {
   hostKeyVerificationEnabled?: boolean;
   sudoPassword?: string;
   disabledPkgManagers?: string[];
+  detectedPkgManagers?: string[];
   pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
@@ -291,8 +309,13 @@ export function createSystem(data: {
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
+  if (data.detectedPkgManagers !== undefined) {
+    const detectedPkgManagers = normalizeStringListPreservingOrder(data.detectedPkgManagers);
+    values.detectedPkgManagers = JSON.stringify(detectedPkgManagers);
+    values.pkgManager = detectedPkgManagers[0] ?? null;
+  }
   if (data.pkgManagerConfigs !== undefined) {
-    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listPackageManagerDefinitions());
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
@@ -336,6 +359,7 @@ export function updateSystem(
     hostKeyVerificationEnabled?: boolean;
     sudoPassword?: string;
     disabledPkgManagers?: string[];
+    detectedPkgManagers?: string[];
     pkgManagerConfigs?: PackageManagerConfigs | null;
     autoHideKeptBackUpdates?: boolean;
     excludeFromUpgradeAll?: boolean;
@@ -365,6 +389,10 @@ export function updateSystem(
     data.disabledPkgManagers !== undefined &&
     JSON.stringify(normalizeStringList(data.disabledPkgManagers)) !==
       JSON.stringify(normalizeStringList(existing.disabledPkgManagers));
+  const detectedPkgManagersChanged =
+    data.detectedPkgManagers !== undefined &&
+    JSON.stringify(normalizeStringList(data.detectedPkgManagers)) !==
+      JSON.stringify(normalizeStringList(existing.detectedPkgManagers));
 
   const values: Record<string, unknown> = {
     name: data.name,
@@ -383,8 +411,13 @@ export function updateSystem(
   if (data.disabledPkgManagers !== undefined) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
+  if (data.detectedPkgManagers !== undefined) {
+    const detectedPkgManagers = normalizeStringListPreservingOrder(data.detectedPkgManagers);
+    values.detectedPkgManagers = JSON.stringify(detectedPkgManagers);
+    values.pkgManager = detectedPkgManagers[0] ?? null;
+  }
   if (data.pkgManagerConfigs !== undefined) {
-    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs);
+    values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listPackageManagerDefinitions());
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
@@ -418,7 +451,7 @@ export function updateSystem(
       .set(values as Partial<typeof systems.$inferInsert>)
       .where(eq(systems.id, systemId))
       .run();
-    if (disabledPkgManagersChanged) {
+    if (disabledPkgManagersChanged || detectedPkgManagersChanged) {
       cacheService.invalidateCache(systemId);
     }
   } catch (error) {
@@ -495,17 +528,20 @@ export async function updateSystemInfo(
   conn: Client
 ): Promise<void> {
   const previous = getSystem(systemId);
-  const { stdout } = await sshManager.runCommand(
-    conn,
-    SYSTEM_INFO_CMD
-  );
+  const script = resolveScript(systemId, "system_info", null);
+  const steps = resolveRuntimeSteps({ systemId, operation: "system_info" });
+  const sudoPassword = previous ? getSudoPassword(previous as Record<string, unknown>) : undefined;
+  let stdout = "";
+  for (const step of steps) {
+    const result = await sshManager.runCommand(conn, step.command, undefined, sudoPassword);
+    stdout += `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}\n`;
+  }
   // Don't bail on non-zero exit: individual sections may fail on minimal
   // containers (e.g. missing hostname) while the rest still provides data.
-  if (!stdout.includes("===OS===")) return;
+  const parsed = parseSystemInfoWithScript(stdout, script, previous);
+  if (!parsed) return;
 
-  const info = parseSystemInfo(stdout);
-  const rawNeedsReboot = resolveRebootRequired(previous, info);
-  const rebootDismissal = resolveRebootDismissal(previous, info, rawNeedsReboot);
+  const { info } = parsed;
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const db = getDb();
 
@@ -522,14 +558,14 @@ export async function updateSystemInfo(
       memory: info.memory,
       disk: info.disk,
       bootId: info.bootId || previous?.bootId || null,
-      needsReboot: rebootDismissal.needsReboot ? 1 : 0,
-      rebootDismissedBootId: rebootDismissal.dismissalExpired
+      needsReboot: parsed.needsReboot ? 1 : 0,
+      rebootDismissedBootId: parsed.dismissalExpired
         ? null
         : previous?.rebootDismissedBootId ?? null,
-      rebootDismissedUptimeSeconds: rebootDismissal.dismissalExpired
+      rebootDismissedUptimeSeconds: parsed.dismissalExpired
         ? null
         : previous?.rebootDismissedUptimeSeconds ?? null,
-      rebootDismissedAt: rebootDismissal.dismissalExpired
+      rebootDismissedAt: parsed.dismissalExpired
         ? null
         : previous?.rebootDismissedAt ?? null,
       systemInfoUpdatedAt: now,
@@ -545,7 +581,7 @@ export async function detectAndStorePkgManager(
   sshManager: SSHConnectionManager,
   conn: Client
 ): Promise<string[]> {
-  const detected = await detectPackageManagers(sshManager, conn);
+  const detected = await detectPackageManagersWithScripts(systemId, sshManager, conn);
   const db = getDb();
 
   if (detected.length > 0) {

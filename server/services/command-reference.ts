@@ -2,10 +2,15 @@ import {
   getManagerConfig,
   parsePackageManagerConfigs,
 } from "../package-manager-configs";
-import { getPackageManagerDetectionCommands } from "../ssh/detector";
-import { getParser } from "../ssh/parsers";
-import { getRebootCommand } from "../ssh/reboot";
-import { SYSTEM_INFO_CMD } from "../ssh/system-info";
+import type { PackageManagerConfigValue } from "../package-manager-configs";
+import {
+  getBuiltinScripts,
+  listPackageManagerDefinitions,
+  renderCommandTemplate,
+  resolveRuntimeSteps,
+  type ScriptOperation,
+  type ScriptStep,
+} from "./script-service";
 import * as systemService from "./system-service";
 
 export type PotentialCommandCategory =
@@ -32,6 +37,7 @@ export interface CommandReference {
 }
 
 interface CommandReferenceSystem {
+  id?: number | null;
   pkgManager: string | null;
   detectedPkgManagers: string | null;
   disabledPkgManagers: string | null;
@@ -67,6 +73,27 @@ function getCheckPurpose(label: string, manager: string): string {
   return CHECK_LABEL_PURPOSES[label] || `Runs a ${managerLabel(manager)} update check step`;
 }
 
+function getBuiltinSteps(
+  operation: ScriptOperation,
+  pkgManager: string | null,
+  options: {
+    config?: PackageManagerConfigValue;
+    packages?: string[];
+  } = {},
+): ScriptStep[] {
+  const script = getBuiltinScripts().find((candidate) =>
+    candidate.operation === operation && candidate.pkgManager === pkgManager
+  );
+  return script?.steps.map((step) => ({
+    label: step.label,
+    command: renderCommandTemplate(step.command, {
+      pkgManager,
+      config: options.config,
+      packages: options.packages,
+    }),
+  })) ?? [];
+}
+
 function extractSudoCommand(command: string): string | null {
   const match = /then sudo -S -p '' (.+?); else /.exec(command);
   return match?.[1]?.trim() || null;
@@ -97,60 +124,174 @@ function dedupeCommands(entries: PotentialCommandEntry[]): PotentialCommandEntry
 }
 
 export function buildCommandReference(system: CommandReferenceSystem): CommandReference {
-  const configs = parsePackageManagerConfigs(system.pkgManagerConfigs ?? null);
+  const configs = parsePackageManagerConfigs(system.pkgManagerConfigs ?? null, listPackageManagerDefinitions());
   const exact: PotentialCommandEntry[] = [];
 
-  for (const { name, command } of getPackageManagerDetectionCommands()) {
+  for (const script of getBuiltinScripts().filter((entry) => entry.operation === "detect" && entry.pkgManager)) {
+    const step = getBuiltinSteps("detect", script.pkgManager)[0];
+    if (!step || !script.pkgManager) continue;
     exact.push({
-      id: `detection:${name}`,
+      id: `detection:${script.pkgManager}`,
       category: "detection",
-      label: `Detect ${managerLabel(name)}`,
-      purpose: `Checks whether ${managerLabel(name)} is available on the remote system`,
-      pkgManager: name,
-      command,
+      label: step.label || `Detect ${managerLabel(script.pkgManager)}`,
+      purpose: `Checks whether ${managerLabel(script.pkgManager)} is available on the remote system`,
+      pkgManager: script.pkgManager,
+      command: step.command,
     });
   }
 
+  const systemInfo = getBuiltinSteps("system_info", null)[0];
+  if (systemInfo) {
   exact.push({
     id: "system-info",
     category: "system_info",
-    label: "Collect system information",
+    label: systemInfo.label,
     purpose: "Collects OS, kernel, uptime, resources, and reboot-related system details",
     pkgManager: null,
-    command: SYSTEM_INFO_CMD,
+    command: systemInfo.command,
   });
+  }
 
   const activeManagers = systemService.getActivePkgManagers(system);
+  if (system.id && system.id > 0) {
+    for (const manager of activeManagers) {
+      if (exact.some((entry) => entry.id === `detection:${manager}`)) continue;
+      const detectionStep = resolveRuntimeSteps({
+        systemId: system.id,
+        operation: "detect",
+        pkgManager: manager,
+      })[0];
+      if (!detectionStep) continue;
+      exact.push({
+        id: `detection:${manager}`,
+        category: "detection",
+        label: detectionStep.label || `Detect ${managerLabel(manager)}`,
+        purpose: `Checks whether ${managerLabel(manager)} is available on the remote system`,
+        pkgManager: manager,
+        command: detectionStep.command,
+      });
+    }
+  }
+
   for (const manager of activeManagers) {
-    const parser = getParser(manager);
-    if (!parser) continue;
-
+    const systemId = system.id ?? 0;
     const config = getManagerConfig(configs, manager);
-    const checkCommands = parser.getCheckCommands(config).map(normalizeCommandTemplate);
-    const checkLabels = parser.getCheckCommandLabels?.(config) ?? [];
+    if (systemId > 0) {
+      const checkSteps = resolveRuntimeSteps({
+        systemId,
+        operation: "check_updates",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      });
+      for (const [index, step] of checkSteps.entries()) {
+        exact.push({
+          id: `check:${manager}:${index}`,
+          category: "check",
+          label: step.label || `Check ${managerLabel(manager)} updates`,
+          purpose: getCheckPurpose(step.label || "", manager),
+          pkgManager: manager,
+          command: normalizeCommandTemplate(step.command),
+        });
+      }
 
-    for (const [index, command] of checkCommands.entries()) {
-      const label = checkLabels[index] || `Check ${managerLabel(manager)} updates`;
+      const upgradeAll = resolveRuntimeSteps({
+        systemId,
+        operation: "upgrade_all",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      })[0];
+      if (upgradeAll) {
+        exact.push({
+          id: `upgrade-all:${manager}`,
+          category: "upgrade_all",
+          label: `Upgrade all ${managerLabel(manager)} packages`,
+          purpose: `Installs all available ${managerLabel(manager)} updates for this system`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(upgradeAll.command),
+        });
+      }
+
+      const fullUpgrade = resolveRuntimeSteps({
+        systemId,
+        operation: "full_upgrade_all",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      })[0];
+      if (fullUpgrade) {
+        exact.push({
+          id: `full-upgrade:${manager}`,
+          category: "full_upgrade_all",
+          label: `Run ${managerLabel(manager)} full upgrade`,
+          purpose: `Runs the fuller ${managerLabel(manager)} upgrade mode for this system`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(fullUpgrade.command),
+        });
+      }
+
+      const upgradeOne = resolveRuntimeSteps({
+        systemId,
+        operation: "upgrade_selected",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+        packages: [SINGLE_PACKAGE_PLACEHOLDER],
+      })[0];
+      if (upgradeOne) {
+        exact.push({
+          id: `upgrade-selected-single:${manager}`,
+          category: "upgrade_selected",
+          label: `Upgrade one selected ${managerLabel(manager)} package`,
+          purpose: `Upgrades a single selected package via ${managerLabel(manager)}`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(upgradeOne.command),
+        });
+      }
+
+      const upgradeMultiple = resolveRuntimeSteps({
+        systemId,
+        operation: "upgrade_selected",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+        packages: [MULTI_PACKAGE_PLACEHOLDER_ONE, MULTI_PACKAGE_PLACEHOLDER_TWO],
+      })[0];
+      if (upgradeMultiple) {
+        exact.push({
+          id: `upgrade-selected-multiple:${manager}`,
+          category: "upgrade_selected",
+          label: `Upgrade multiple selected ${managerLabel(manager)} packages`,
+          purpose: `Upgrades multiple selected packages via ${managerLabel(manager)}`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(upgradeMultiple.command),
+        });
+      }
+      continue;
+    }
+
+    const checkSteps = getBuiltinSteps("check_updates", manager, { config });
+    for (const [index, step] of checkSteps.entries()) {
+      const label = step.label || `Check ${managerLabel(manager)} updates`;
       exact.push({
         id: `check:${manager}:${index}`,
         category: "check",
         label,
         purpose: getCheckPurpose(label, manager),
         pkgManager: manager,
-        command,
+        command: normalizeCommandTemplate(step.command),
       });
     }
 
+    const upgradeAll = getBuiltinSteps("upgrade_all", manager, { config })[0];
+    if (upgradeAll) {
     exact.push({
       id: `upgrade-all:${manager}`,
       category: "upgrade_all",
       label: `Upgrade all ${managerLabel(manager)} packages`,
       purpose: `Installs all available ${managerLabel(manager)} updates for this system`,
       pkgManager: manager,
-      command: normalizeCommandTemplate(parser.getUpgradeAllCommand(config)),
+      command: normalizeCommandTemplate(upgradeAll.command),
     });
+    }
 
-    const fullUpgrade = parser.getFullUpgradeAllCommand(config);
+    const fullUpgrade = getBuiltinSteps("full_upgrade_all", manager, { config })[0];
     if (fullUpgrade) {
       exact.push({
         id: `full-upgrade:${manager}`,
@@ -158,43 +299,49 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         label: `Run ${managerLabel(manager)} full upgrade`,
         purpose: `Runs the fuller ${managerLabel(manager)} upgrade mode for this system`,
         pkgManager: manager,
-        command: normalizeCommandTemplate(fullUpgrade),
+        command: normalizeCommandTemplate(fullUpgrade.command),
       });
     }
 
+    const upgradeOne = getBuiltinSteps("upgrade_selected", manager, {
+      config,
+      packages: [SINGLE_PACKAGE_PLACEHOLDER],
+    })[0];
+    if (upgradeOne) {
     exact.push({
       id: `upgrade-selected-single:${manager}`,
       category: "upgrade_selected",
       label: `Upgrade one selected ${managerLabel(manager)} package`,
       purpose: `Upgrades a single selected package via ${managerLabel(manager)}`,
       pkgManager: manager,
-      command: normalizeCommandTemplate(
-        parser.getUpgradePackageCommand(SINGLE_PACKAGE_PLACEHOLDER, config),
-      ),
+      command: normalizeCommandTemplate(upgradeOne.command),
     });
+    }
 
+    const upgradeMultiple = getBuiltinSteps("upgrade_selected", manager, {
+      config,
+      packages: [MULTI_PACKAGE_PLACEHOLDER_ONE, MULTI_PACKAGE_PLACEHOLDER_TWO],
+    })[0];
+    if (upgradeMultiple) {
     exact.push({
       id: `upgrade-selected-multiple:${manager}`,
       category: "upgrade_selected",
       label: `Upgrade multiple selected ${managerLabel(manager)} packages`,
       purpose: `Upgrades multiple selected packages via ${managerLabel(manager)}`,
       pkgManager: manager,
-      command: normalizeCommandTemplate(
-        parser.getUpgradePackagesCommand([
-          MULTI_PACKAGE_PLACEHOLDER_ONE,
-          MULTI_PACKAGE_PLACEHOLDER_TWO,
-        ], config),
-      ),
+      command: normalizeCommandTemplate(upgradeMultiple.command),
     });
+    }
   }
 
-  exact.push({
+  const reboot = getBuiltinSteps("reboot", null)[0];
+  if (reboot) exact.push({
     id: "reboot",
     category: "reboot",
-    label: "Reboot system",
+    label: reboot.label,
     purpose: "Reboots the remote system",
     pkgManager: null,
-    command: getRebootCommand(),
+    command: reboot.command,
   });
 
   return {

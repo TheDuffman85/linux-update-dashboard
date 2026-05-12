@@ -8,6 +8,11 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
+  buildOperationKey,
+  createScript,
+  setSystemOverrides,
+} from "../../server/services/script-service";
+import {
   dismissNeedsReboot,
   filterVisibleSystemIds,
   filterVisibleSystemItems,
@@ -209,6 +214,50 @@ UNAVAILABLE
 
     const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
     expect(system?.uptimeSeconds).toBe(123.45);
+  });
+
+  test("executes the configured system-info script instead of a hard-coded fallback", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Pi",
+      hostname: "pi.local",
+      port: 22,
+      authType: "password",
+      username: "pi",
+    }).returning({ id: systems.id }).get();
+    const script = createScript({
+      name: "Custom system info",
+      type: "system",
+      operation: "system_info",
+      steps: [{ label: "Custom system info", command: "echo custom-system-info" }],
+    });
+    setSystemOverrides(inserted.id, {
+      [buildOperationKey("system_info")]: script.id,
+    });
+
+    const commands: string[] = [];
+    const sshManager = {
+      runCommand: async (_conn: unknown, command: string) => {
+        commands.push(command);
+        return {
+          stdout: buildSystemInfoOutput({
+            bootId: "boot-custom",
+            uptimeSeconds: 456,
+            rebootFile: "ABSENT",
+            needsRestarting: "unsupported",
+          }),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    } as unknown as SSHConnectionManager;
+
+    await updateSystemInfo(inserted.id, sshManager, {} as never);
+
+    expect(commands).toEqual(["echo custom-system-info"]);
+    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
+    expect(system?.bootId).toBe("boot-custom");
+    expect(system?.uptimeSeconds).toBe(456);
   });
 
   test("clears dismissal metadata after reboot and shows a new raw reboot requirement", async () => {

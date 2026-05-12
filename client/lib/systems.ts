@@ -70,6 +70,7 @@ export interface System {
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
   supportsFullUpgrade?: boolean;
+  scriptOverrides: Record<string, string>;
 }
 
 export interface CachedUpdate {
@@ -209,10 +210,12 @@ export function useCreateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
+      scriptOverrides?: Record<string, string | null | undefined>;
       sourceSystemId?: number;
     }) => apiFetch<{ id: number }>("/systems", { method: "POST", body: JSON.stringify(data) }),
     onSuccess: async () => {
@@ -236,10 +239,12 @@ export function useUpdateSystem() {
       validatedConfigToken?: string;
       sudoPassword?: string;
       disabledPkgManagers?: string[];
+      detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
+      scriptOverrides?: Record<string, string | null | undefined>;
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["systems"] });

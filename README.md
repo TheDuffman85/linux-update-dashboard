@@ -34,6 +34,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Reusable credential vault:** store username/password, SSH key, or OpenSSH certificate credentials once and reuse them across systems
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Per-system package-manager behavior:** configure manager-specific upgrade/check behavior such as APT full-upgrade defaults, DNF distro-sync defaults, and refresh toggles for DNF, Pacman, APK, and Flatpak
+- **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, add custom package managers, and assign per-system script overrides
 - **Granular updates:** upgrade everything at once or pick individual packages per system
 - **Background scheduling:** periodic checks keep your dashboard up to date with a configurable scheduler interval and cache duration
 - **APT kept-back auto-hide:** optionally move kept-back APT packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
@@ -671,6 +672,32 @@ Per-system package-manager config is available in the system edit dialog for sup
 
 `snap` does not currently expose manager-specific config.
 
+## Script Customization
+
+The **Scripts** page exposes the SSH command templates that power package-manager detection, update checks, upgrades, selected-package upgrades, system information collection, and reboots.
+
+- **Built-in scripts are read-only:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot scripts are shipped as defaults and can be copied when you need a custom variant
+- **Custom scripts are editable:** define one or more shell steps, choose the operation they implement, and optionally attach parser settings for update checks or section mapping for system-info output
+- **Per-system overrides:** each system can keep the standard detected defaults or override individual operations such as `apt/check_updates`, `apt/upgrade_all`, or `system/reboot`
+- **Usage tracking:** custom scripts show where they are assigned, and scripts still used by active systems cannot be deleted accidentally
+- **Custom package managers:** add package managers beyond the built-in list with a display label, parser regexes, and optional config entries that appear in each matching system's package-manager settings
+
+Script commands support placeholders that are resolved immediately before SSH execution:
+
+| Placeholder | Meaning |
+|-------------|---------|
+| `{{package}}` | First selected package name after package-name validation |
+| `{{packages}}` | All selected package names joined with spaces after validation |
+| `{{quotedPackage}}` | First selected package shell-quoted with single quotes |
+| `{{quotedPackages}}` | All selected packages shell-quoted and joined with spaces |
+| `{{manager}}` | Current package-manager key, such as `apt` or a custom manager name |
+| `{{config.someKey}}` | Per-system package-manager config value, including custom config entries and defaults |
+| `{{sudo:COMMAND}}` | Wraps `COMMAND` with the dashboard sudo fallback helper |
+
+For custom update parsers, the update regex should use named capture groups. `packageName` and `newVersion` are required for an update to be recorded; optional groups include `currentVersion`, `architecture`, and `repository`. Separate security and kept-back regexes can mark matching lines. Custom success and update exit-code lists are available for package managers whose check command uses non-zero exit codes to mean "updates available".
+
+Custom system-info scripts can either keep the built-in sectioned parser or map named output sections to fields such as OS name, kernel, uptime, architecture, CPU, memory, disk, boot ID, and installed kernels. A reboot-required regex can also be configured when your target distribution reports reboot state differently.
+
 ## Project Structure
 
 ```
@@ -689,7 +716,7 @@ Per-system package-manager config is available in the system edit dialog for sup
 │   └── styles/               # Tailwind CSS
 ├── server/                   # Hono backend
 │   ├── auth/                 # Password, WebAuthn, OIDC, session handling
-│   ├── db/                   # SQLite + Drizzle schema (9 tables)
+│   ├── db/                   # SQLite + Drizzle schema
 │   ├── middleware/           # Auth and rate-limit middleware
 │   ├── routes/               # API route handlers
 │   ├── services/             # Business logic, caching, scheduling
@@ -894,6 +921,20 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST | `/api/schedules` | Create a schedule |
 | PUT | `/api/schedules/:id` | Update a schedule |
 | DELETE | `/api/schedules/:id` | Delete a schedule |
+
+### Scripts (`/api/scripts/*`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/scripts` | List built-in and custom scripts, package-manager definitions, and placeholder help |
+| POST | `/api/scripts` | Create a custom script |
+| PUT | `/api/scripts/:id` | Update a custom script |
+| DELETE | `/api/scripts/:id` | Delete an unused custom script |
+| POST | `/api/scripts/package-managers` | Create a custom package-manager definition |
+| PUT | `/api/scripts/package-managers/:name` | Update package-manager metadata, parser settings, and custom config entries |
+| DELETE | `/api/scripts/package-managers/:name` | Delete an unused custom package-manager definition |
+| POST | `/api/scripts/validate-parser` | Test custom parser settings against sample command output |
+| POST | `/api/scripts/format` | Format a shell command for display/editing |
 
 ### Credentials (`/api/credentials/*`)
 

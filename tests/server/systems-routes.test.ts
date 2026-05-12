@@ -6,10 +6,13 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, hiddenUpdates, settings, systems, updateCache, updateHistory } from "../../server/db/schema";
+import { apiTokens, credentials, hiddenUpdates, settings, systems, updateCache, updateHistory, users } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
+import { authMiddleware } from "../../server/middleware/auth";
+import { hashToken } from "../../server/auth/api-token";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
+import { buildOperationKey, createScript, getSystemOverrides, setSystemOverrides } from "../../server/services/script-service";
 import { issueValidatedConfigToken } from "../../server/services/system-connection-validation";
 import { initSSHManager } from "../../server/ssh/connection";
 
@@ -24,6 +27,22 @@ function createSystemCredential(username: string): number {
     }),
   }).returning({ id: credentials.id }).get();
   return inserted.id;
+}
+
+async function createBearerToken(): Promise<string> {
+  const token = `ludash_${randomBytes(32).toString("hex")}`;
+  const user = getDb().insert(users).values({
+    username: `api-user-${randomBytes(4).toString("hex")}`,
+    passwordHash: "unused",
+    isAdmin: 1,
+  }).returning({ id: users.id }).get();
+  getDb().insert(apiTokens).values({
+    userId: user.id,
+    name: "writer",
+    tokenHash: await hashToken(token),
+    readOnly: 0,
+  }).run();
+  return token;
 }
 
 function createValidatedConfigToken(data: {
@@ -767,6 +786,127 @@ describe("systems reorder route", () => {
     expect(detailBody.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["openssl"]);
   });
 
+  test("replaces script overrides on full system update", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Script Override Clear",
+      hostname: "script-clear.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+    const script = createScript({
+      name: "Detect APT copy",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+    setSystemOverrides(systemId, {
+      [buildOperationKey("detect", "apt")]: script.id,
+    });
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Script Override Clear",
+        hostname: "script-clear.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        disabledPkgManagers: [],
+        scriptOverrides: {},
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(getSystemOverrides(systemId)).toEqual({});
+  });
+
+  test("persists script overrides on normal system create", async () => {
+    const credentialId = createSystemCredential("root");
+    const script = createScript({
+      name: "Detect APT custom",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "command -v apt" }],
+    });
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Script Override Create",
+        hostname: "script-create.local",
+        port: 22,
+        credentialId,
+        hostKeyVerificationEnabled: false,
+        scriptOverrides: {
+          [buildOperationKey("detect", "apt")]: script.id,
+        },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(getSystemOverrides(body.id)).toEqual({
+      [buildOperationKey("detect", "apt")]: script.id,
+    });
+  });
+
+  test("bearer tokens cannot mutate script overrides through systems routes", async () => {
+    const token = await createBearerToken();
+    const protectedApp = new Hono();
+    protectedApp.use("/api/*", authMiddleware);
+    protectedApp.route("/api/systems", systemsRoutes);
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    const incoming = {
+      socket: {
+        remoteAddress: "127.0.0.1",
+        remotePort: 12345,
+        remoteFamily: "IPv4",
+      },
+    };
+
+    const responses = await Promise.all([
+      protectedApp.request("/api/systems", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ scriptOverrides: {} }),
+      }, { incoming }),
+      protectedApp.request("/api/systems/1", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ scriptOverrides: {} }),
+      }, { incoming }),
+      protectedApp.request("/api/systems/1/script-overrides", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ scriptOverrides: {} }),
+      }, { incoming }),
+    ]);
+
+    for (const res of responses) {
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: "API tokens cannot modify script overrides",
+      });
+    }
+  });
+
   test("filters hidden systems when requesting visible scope", async () => {
     const db = getDb();
     db.insert(systems).values([
@@ -1322,6 +1462,42 @@ describe("systems reorder route", () => {
     expect(updated?.disabledPkgManagers).toBe("[]");
   });
 
+  test("allows enabling custom package managers on update", async () => {
+    const db = getDb();
+    const credentialId = createSystemCredential("root");
+    const systemId = db.insert(systems).values({
+      name: "Custom PM",
+      hostname: "custom-pm.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+      detectedPkgManagers: JSON.stringify(["apt"]),
+      disabledPkgManagers: JSON.stringify([]),
+    }).returning({ id: systems.id }).get().id;
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Custom PM",
+        hostname: "custom-pm.local",
+        port: 22,
+        credentialId,
+        detectedPkgManagers: ["apt", "custom-apt"],
+        disabledPkgManagers: [],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const updated = db.select().from(systems).where(eq(systems.id, systemId)).get();
+    expect(updated?.detectedPkgManagers).toBe(JSON.stringify(["apt", "custom-apt"]));
+    expect(updated?.disabledPkgManagers).toBe("[]");
+  });
+
   test("clears cached updates when disabled package managers change", async () => {
     const db = getDb();
     const credentialId = createSystemCredential("root");
@@ -1576,11 +1752,11 @@ describe("systems reorder route", () => {
     expect(body.commandReference.exact.some((entry: { category: string; pkgManager: string | null; command: string }) =>
       entry.category === "upgrade_all" &&
       entry.pkgManager === "apt" &&
-      entry.command.includes("full-upgrade -y")
+      entry.command.includes('upgrade_mode="full-upgrade"')
     )).toBe(true);
     expect(body.commandReference.sudoers.some((entry: { category: string; command: string }) =>
       entry.category === "upgrade_all" &&
-      entry.command === "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"
+      entry.command === "apt-get -o DPkg::Lock::Timeout=60 ${upgrade_mode} -y"
     )).toBe(true);
   });
 });

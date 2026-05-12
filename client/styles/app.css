@@ -94,3 +94,47 @@ body {
 [data-theme="dark"] .sortable-chosen {
   @apply bg-blue-900/20;
 }
+
+.script-code,
+.script-editor-highlight {
+  color: #d6deeb;
+  tab-size: 2;
+}
+
+.script-code .hljs-comment,
+.script-editor-highlight .hljs-comment {
+  color: #7dd3fc;
+  font-style: italic;
+}
+
+.script-code .hljs-keyword,
+.script-code .hljs-built_in,
+.script-code .hljs-name,
+.script-editor-highlight .hljs-keyword,
+.script-editor-highlight .hljs-built_in,
+.script-editor-highlight .hljs-name {
+  color: #f9a8d4;
+}
+
+.script-code .hljs-string,
+.script-code .hljs-variable,
+.script-code .hljs-template-variable,
+.script-editor-highlight .hljs-string,
+.script-editor-highlight .hljs-variable,
+.script-editor-highlight .hljs-template-variable {
+  color: #86efac;
+}
+
+.script-code .hljs-number,
+.script-code .hljs-literal,
+.script-editor-highlight .hljs-number,
+.script-editor-highlight .hljs-literal {
+  color: #fbbf24;
+}
+
+.script-code .hljs-title,
+.script-code .hljs-attr,
+.script-editor-highlight .hljs-title,
+.script-editor-highlight .hljs-attr {
+  color: #93c5fd;
+}

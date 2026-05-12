@@ -1,12 +1,12 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import { buildCommandReference } from "../services/command-reference";
 import * as hiddenUpdateService from "../services/hidden-update-service";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
+import * as scriptService from "../services/script-service";
 import { getSSHManager } from "../ssh/connection";
-import { detectPackageManagers } from "../ssh/detector";
 import { validatePackageName } from "../ssh/parsers/types";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
@@ -29,7 +29,13 @@ import {
   validatePackageManagerConfigsInput,
 } from "../package-manager-configs";
 
-const systems = new Hono();
+type SystemsEnv = {
+  Variables: {
+    apiToken?: boolean;
+  };
+};
+
+const systems = new Hono<SystemsEnv>();
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -41,6 +47,10 @@ function parseId(raw: string): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id) || id <= 0) return null;
   return id;
+}
+
+function isApiTokenRequest(c: Context<SystemsEnv>): boolean {
+  return c.get("apiToken") === true;
 }
 
 const VALID_HOSTNAME = /^[a-zA-Z0-9]([a-zA-Z0-9._:-]*[a-zA-Z0-9])?$/;
@@ -96,7 +106,19 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
   ) {
     return "disabledPkgManagers must be an array of strings";
   }
-  const pkgManagerConfigError = validatePackageManagerConfigsInput(body.pkgManagerConfigs);
+  if (
+    body.detectedPkgManagers !== undefined &&
+    (
+      !Array.isArray(body.detectedPkgManagers) ||
+      !body.detectedPkgManagers.every((value) => typeof value === "string")
+    )
+  ) {
+    return "detectedPkgManagers must be an array of strings";
+  }
+  const pkgManagerConfigError = validatePackageManagerConfigsInput(
+    body.pkgManagerConfigs,
+    scriptService.listPackageManagerDefinitions(),
+  );
   if (pkgManagerConfigError) {
     return pkgManagerConfigError;
   }
@@ -105,6 +127,16 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     typeof body.validatedConfigToken !== "string"
   ) {
     return "validatedConfigToken must be a string";
+  }
+  if (
+    body.scriptOverrides !== undefined &&
+    (
+      !body.scriptOverrides ||
+      typeof body.scriptOverrides !== "object" ||
+      Array.isArray(body.scriptOverrides)
+    )
+  ) {
+    return "scriptOverrides must be an object";
   }
   return null;
 }
@@ -191,7 +223,10 @@ function getSystemWriteErrorResponse(error: unknown): Response | null {
 
 function serializeSystem(s: Record<string, unknown>) {
   const pkgManagerConfigs = mergeLegacyAutoHideKeptBackUpdates(
-    parsePackageManagerConfigs(s.pkgManagerConfigs as string | null),
+    parsePackageManagerConfigs(
+      s.pkgManagerConfigs as string | null,
+      scriptService.listPackageManagerDefinitions(),
+    ),
     s.autoHideKeptBackUpdates as number | null | undefined,
   );
   const {
@@ -225,6 +260,8 @@ function serializeSystem(s: Record<string, unknown>) {
             proxyJumpSystemId: s.proxyJumpSystemId as number | null,
           })
         : [],
+    scriptOverrides:
+      typeof s.id === "number" ? scriptService.getSystemOverrides(s.id) : {},
   };
 }
 
@@ -433,6 +470,7 @@ systems.get("/:id", (c) => {
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
     },
     commandReference: buildCommandReference({
+      id,
       pkgManager: (system.pkgManager as string | null) ?? null,
       detectedPkgManagers: (system.detectedPkgManagers as string | null) ?? null,
       disabledPkgManagers: (system.disabledPkgManagers as string | null) ?? null,
@@ -504,6 +542,9 @@ systems.post("/", async (c) => {
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
+  if (isApiTokenRequest(c) && body.scriptOverrides !== undefined) {
+    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const sourceIdCandidate =
@@ -537,9 +578,12 @@ systems.post("/", async (c) => {
     const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
       ? body.disabledPkgManagers as string[]
       : undefined;
+    const detectedPkgManagers = Array.isArray(body.detectedPkgManagers)
+      ? body.detectedPkgManagers as string[]
+      : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
-        ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
@@ -564,6 +608,7 @@ systems.post("/", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword,
       disabledPkgManagers,
+      detectedPkgManagers,
       pkgManagerConfigs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
@@ -571,6 +616,12 @@ systems.post("/", async (c) => {
       sourceSystemId,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
+    if (body.scriptOverrides !== undefined) {
+      scriptService.replaceSystemOverrides(
+        systemId,
+        body.scriptOverrides as Record<string, string | null | undefined>,
+      );
+    }
   } catch (error) {
     const response = getSystemWriteErrorResponse(error);
     if (response) return response;
@@ -619,6 +670,9 @@ systems.put("/:id", async (c) => {
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
+  if (isApiTokenRequest(c) && body.scriptOverrides !== undefined) {
+    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const parsedConfig = parseConnectionConfig(body, id);
@@ -643,9 +697,12 @@ systems.put("/:id", async (c) => {
     const disabledPkgManagers = Array.isArray(body.disabledPkgManagers)
       ? body.disabledPkgManagers as string[]
       : undefined;
+    const detectedPkgManagers = Array.isArray(body.detectedPkgManagers)
+      ? body.detectedPkgManagers as string[]
+      : undefined;
     let pkgManagerConfigs =
       body.pkgManagerConfigs !== undefined
-        ? normalizePackageManagerConfigs(body.pkgManagerConfigs)
+        ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
@@ -670,12 +727,19 @@ systems.put("/:id", async (c) => {
       hostKeyVerificationEnabled: parsedConfig.config.hostKeyVerificationEnabled,
       sudoPassword,
       disabledPkgManagers,
+      detectedPkgManagers,
       pkgManagerConfigs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
+    if (body.scriptOverrides !== undefined) {
+      scriptService.replaceSystemOverrides(
+        id,
+        body.scriptOverrides as Record<string, string | null | undefined>,
+      );
+    }
   } catch (error) {
     const response = getSystemWriteErrorResponse(error);
     if (response) return response;
@@ -684,7 +748,9 @@ systems.put("/:id", async (c) => {
 
   if (
     body.autoHideKeptBackUpdates === true ||
-    getAptAutoHideKeptBackUpdates(normalizePackageManagerConfigs(body.pkgManagerConfigs)) === true
+    getAptAutoHideKeptBackUpdates(
+      normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions()),
+    ) === true
   ) {
     hiddenUpdateService.autoHideCachedKeptBackUpdates(id);
   }
@@ -700,6 +766,28 @@ systems.post("/:id/reboot", async (c) => {
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const result = await updateService.rebootSystem(id);
   return c.json(result, result.success ? 200 : 500);
+});
+
+systems.put("/:id/script-overrides", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (isApiTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  }
+  if (!systemService.getSystem(id)) return c.json({ error: "System not found" }, 404);
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body || !asObject(body.scriptOverrides)) {
+    return c.json({ error: "scriptOverrides must be an object" }, 400);
+  }
+  try {
+    const scriptOverrides = scriptService.setSystemOverrides(
+      id,
+      body.scriptOverrides as Record<string, string | null | undefined>,
+    );
+    return c.json({ scriptOverrides });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Failed to update script overrides" }, 400);
+  }
 });
 
 systems.post("/:id/dismiss-needs-reboot", async (c) => {
@@ -863,7 +951,11 @@ systems.post("/test-connection", async (c) => {
         approvedHostKeys,
       });
       try {
-        const detectedManagers = await detectPackageManagers(sshManager, conn);
+        const detectedManagers = await scriptService.detectPackageManagersWithScripts(
+          systemId ?? 0,
+          sshManager,
+          conn,
+        );
         return c.json({ ...result, detectedManagers, validatedConfigToken });
       } finally {
         sshManager.disconnect(conn);
