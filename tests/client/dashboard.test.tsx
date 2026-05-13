@@ -1,0 +1,126 @@
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
+import type { ReactNode } from "react";
+
+const {
+  mockUseDashboardStats,
+  mockUseDashboardSystems,
+  mockUseRefreshCache,
+  mockUseReorderSystemUpgradeOrder,
+  mockUseUpdateSystemUpgradeAllExclusion,
+  mockUseUpdateSystemUpgradeMode,
+  mockUseToast,
+  mockUseUpgrade,
+} = vi.hoisted(() => ({
+  mockUseDashboardStats: vi.fn(),
+  mockUseDashboardSystems: vi.fn(),
+  mockUseRefreshCache: vi.fn(),
+  mockUseReorderSystemUpgradeOrder: vi.fn(),
+  mockUseUpdateSystemUpgradeAllExclusion: vi.fn(),
+  mockUseUpdateSystemUpgradeMode: vi.fn(),
+  mockUseToast: vi.fn(),
+  mockUseUpgrade: vi.fn(),
+}));
+
+vi.mock("../../client/lib/dashboard", () => ({
+  useDashboardStats: mockUseDashboardStats,
+  useDashboardSystems: mockUseDashboardSystems,
+}));
+
+vi.mock("../../client/lib/updates", () => ({
+  useRefreshCache: mockUseRefreshCache,
+}));
+
+vi.mock("../../client/lib/systems", () => ({
+  useReorderSystemUpgradeOrder: mockUseReorderSystemUpgradeOrder,
+  useUpdateSystemUpgradeAllExclusion: mockUseUpdateSystemUpgradeAllExclusion,
+  useUpdateSystemUpgradeMode: mockUseUpdateSystemUpgradeMode,
+}));
+
+vi.mock("../../client/context/ToastContext", () => ({
+  useToast: mockUseToast,
+}));
+
+vi.mock("../../client/context/UpgradeContext", () => ({
+  useUpgrade: mockUseUpgrade,
+}));
+
+vi.mock("../../client/components/Layout", () => ({
+  Layout: ({ title, actions, children }: { title: ReactNode; actions?: ReactNode; children: ReactNode }) => (
+    <div>
+      <div>{title}</div>
+      <div>{actions}</div>
+      <main>{children}</main>
+    </div>
+  ),
+}));
+
+import Dashboard from "../../client/pages/Dashboard";
+
+describe("Dashboard", () => {
+  beforeEach(() => {
+    mockUseDashboardStats.mockReturnValue({
+      data: {
+        total: 1,
+        upToDate: 0,
+        needsUpdates: 1,
+        unreachable: 0,
+        checkIssues: 0,
+        totalUpdates: 7,
+        needsReboot: 0,
+      },
+    });
+    mockUseDashboardSystems.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          name: "Alpha",
+          hostname: "alpha.local",
+          port: 22,
+          osName: "Debian",
+          isReachable: 1,
+          updateCount: 7,
+          securityCount: 2,
+          keptBackCount: 0,
+          cacheAge: null,
+          cacheTimestamp: null,
+          isStale: false,
+          lastCheck: null,
+          activeOperation: null,
+          excludeFromUpgradeAll: 0,
+          upgradeOrder: 1,
+          pkgManager: "apt",
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: null,
+          supportsFullUpgrade: true,
+        },
+      ],
+      dataUpdatedAt: Date.now(),
+    });
+    mockUseRefreshCache.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseReorderSystemUpgradeOrder.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpdateSystemUpgradeAllExclusion.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpdateSystemUpgradeMode.mockReturnValue({ mutate: vi.fn(), isPending: false, variables: undefined });
+    mockUseToast.mockReturnValue({ addToast: vi.fn() });
+    mockUseUpgrade.mockReturnValue({
+      upgradeAll: vi.fn(),
+      isUpgrading: () => false,
+      removeUpgrading: vi.fn(),
+      upgradingSystems: new Map(),
+      upgradingCount: 0,
+    });
+  });
+
+  test("does not show the total update count on the Upgrade All dashboard button", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Upgrade All");
+    expect(html).not.toContain("Upgrade All (7)");
+  });
+});
