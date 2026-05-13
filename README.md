@@ -887,6 +887,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/systems/:id/check` | Check one system for updates |
+| POST | `/api/systems/:id/cancel` | Request cancellation of the running operation on a system |
 | POST | `/api/systems/check-all` | Check all systems (background) |
 | POST | `/api/systems/:id/upgrade` | Upgrade all packages on a system |
 | POST | `/api/systems/:id/full-upgrade` | Full/dist upgrade on a system |

@@ -9,6 +9,7 @@ export interface ActiveOperation {
   phase?: "reconnecting" | "rechecking";
   packageName?: string;
   packageNames?: string[];
+  cancelRequested?: boolean;
 }
 
 export interface LastCheckSummary {
@@ -106,7 +107,7 @@ export interface HiddenUpdate {
   updatedAt: string;
 }
 
-export type ActivityStepStatus = "success" | "warning" | "failed" | "started";
+export type ActivityStepStatus = "success" | "warning" | "failed" | "started" | "cancelled";
 
 export interface ActivityStep {
   label: string | null;

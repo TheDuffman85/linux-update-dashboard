@@ -17,7 +17,7 @@ export function useCheckUpdates() {
         `/systems/${systemId}/check`,
         { method: "POST" }
       );
-      return pollJob<{ updateCount: number }>(jobId);
+      return pollJob<{ updateCount: number; status?: string }>(jobId);
     },
     onSettled: async (_data, _error, systemId) => {
       if (systemId !== undefined) {
@@ -38,6 +38,21 @@ export function useCheckAll() {
         qc.invalidateQueries({ queryKey: ["systems"] });
         qc.invalidateQueries({ queryKey: ["dashboard"] });
       }, 5000);
+    },
+  });
+}
+
+export function useCancelOperation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (systemId: number) =>
+      apiFetch<{ status: string }>(`/systems/${systemId}/cancel`, {
+        method: "POST",
+      }),
+    onSettled: async (_data, _error, systemId) => {
+      if (systemId !== undefined) {
+        await invalidateSystemOperationQueries(qc, systemId);
+      }
     },
   });
 }

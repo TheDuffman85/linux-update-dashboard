@@ -80,8 +80,12 @@ export function buildPersistentSetupCommand(
     'chmod 700 "$SCRIPT"',
   ];
   const launchInnerCmd = [
-    'nohup sh "$1" "$2" > "$3" 2>&1 < /dev/null &',
-    'echo "LUDASH_BG PID=$! LOG=$3 EXIT=$2"',
+    'if command -v setsid >/dev/null 2>&1; then',
+    '  nohup setsid sh "$1" "$2" > "$3" 2>&1 < /dev/null &',
+    'else',
+    '  nohup sh "$1" "$2" > "$3" 2>&1 < /dev/null &',
+    'fi',
+    'echo "LUDASH_BG PID=$! LOG=$3 EXIT=$2 SCRIPT=$1"',
   ].join("\n");
   const launchCmd =
     `sh -c ${shellSingleQuote(launchInnerCmd)} _ "$SCRIPT" "$EXITFILE" "$LOGFILE"`;
@@ -115,6 +119,9 @@ export const EXIT_MONITORING_LOST = -2;
 /** Sentinel exit code: remote temp files are gone (e.g. server rebooted and /tmp was cleared). */
 export const EXIT_FILES_GONE = -3;
 
+/** Sentinel exit code: the dashboard requested cancellation of the command. */
+export const EXIT_CANCELLED = -4;
+
 export interface CommandResult {
   stdout: string;
   stderr: string;
@@ -130,6 +137,7 @@ export interface PersistentCommandInfo {
   pid: number;
   logFile: string;
   exitFile: string;
+  scriptFile?: string;
 }
 
 interface SSHConnectionError extends Error {
@@ -658,7 +666,8 @@ export class SSHConnectionManager {
     command: string,
     timeout?: number,
     sudoPassword?: string,
-    onData?: (chunk: string, stream: "stdout" | "stderr") => void
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void,
+    signal?: AbortSignal | null
   ): Promise<CommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const wrappedCommand = wrapRemoteCommand(command);
@@ -667,9 +676,12 @@ export class SSHConnectionManager {
       let settled = false;
       let stdout = "";
       let stderr = "";
+      let stream: ClientChannel | null = null;
+      let timer: ReturnType<typeof setTimeout>;
 
       const cleanup = () => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         conn.removeListener("error", onConnectionError);
         conn.removeListener("close", onConnectionClose);
         conn.removeListener("end", onConnectionEnd);
@@ -706,7 +718,25 @@ export class SSHConnectionManager {
         });
       };
 
-      const timer = setTimeout(() => {
+      const onAbort = () => {
+        try {
+          stream?.close();
+        } catch {
+          try {
+            stream?.end();
+          } catch {}
+        }
+        settle({
+          stdout,
+          stderr: appendConnectionError(stderr, "Operation cancelled"),
+          exitCode: EXIT_CANCELLED,
+        });
+      };
+
+      timer = setTimeout(() => {
+        try {
+          stream?.close();
+        } catch {}
         settle({
           stdout: "",
           stderr: `Command timed out after ${cmdTimeout}s`,
@@ -714,16 +744,28 @@ export class SSHConnectionManager {
         });
       }, cmdTimeout * 1000);
 
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
       conn.on("error", onConnectionError);
       conn.once("close", onConnectionClose);
       conn.once("end", onConnectionEnd);
 
-      conn.exec(wrappedCommand, (err, stream) => {
+      conn.exec(wrappedCommand, (err, execStream) => {
         if (err) {
           settle({ stdout: "", stderr: String(err), exitCode: -1 });
           return;
         }
 
+        stream = execStream;
+        if (settled) {
+          try {
+            stream.close();
+          } catch {}
+          return;
+        }
         stream.on("data", (data: Buffer) => {
           const text = data.toString();
           stdout += text;
@@ -759,9 +801,14 @@ export class SSHConnectionManager {
     command: string,
     timeout?: number,
     sudoPassword?: string,
-    onData?: (chunk: string, stream: "stdout" | "stderr") => void
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void,
+    options?: {
+      signal?: AbortSignal | null;
+      onPersistentInfo?: (info: PersistentCommandInfo) => void;
+    }
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
+    const signal = options?.signal ?? null;
     const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
       command,
       !!sudoPassword
@@ -771,9 +818,15 @@ export class SSHConnectionManager {
       conn,
       setupCmd,
       30,
-      useSudoLaunch ? sudoPassword : undefined
+      useSudoLaunch ? sudoPassword : undefined,
+      undefined,
+      signal
     );
     const info = this.parseNohupOutput(setupResult.stdout);
+
+    if (setupResult.exitCode === EXIT_CANCELLED) {
+      return setupResult;
+    }
 
     if (!info || setupResult.exitCode !== 0) {
       logger.warn("SSH nohup setup failed", {
@@ -788,13 +841,34 @@ export class SSHConnectionManager {
       };
     }
 
+    options?.onPersistentInfo?.(info);
+
+    if (signal?.aborted) {
+      await this.cancelPersistentCommand(conn, info);
+      return {
+        stdout: "",
+        stderr: "Operation cancelled",
+        exitCode: EXIT_CANCELLED,
+      };
+    }
+
     const tailResult = await this.runTailMonitor(
       conn,
       info.logFile,
       info.pid,
       cmdTimeout,
-      onData
+      onData,
+      signal
     );
+
+    if (tailResult.cancelled) {
+      await this.cancelPersistentCommand(conn, info);
+      return {
+        stdout: tailResult.stdout,
+        stderr: "Operation cancelled",
+        exitCode: EXIT_CANCELLED,
+      };
+    }
 
     if (tailResult.monitoringLost) {
       return {
@@ -830,14 +904,36 @@ export class SSHConnectionManager {
 
   private parseNohupOutput(stdout: string): PersistentCommandInfo | null {
     const match = stdout.match(
-      /LUDASH_BG PID=(\d+) LOG=(\S+) EXIT=(\S+)/
+      /LUDASH_BG PID=(\d+) LOG=(\S+) EXIT=(\S+)(?: SCRIPT=(\S+))?/
     );
     if (!match) return null;
     return {
       pid: parseInt(match[1], 10),
       logFile: match[2],
       exitFile: match[3],
+      scriptFile: match[4],
     };
+  }
+
+  private async cancelPersistentCommand(
+    conn: Client,
+    info: PersistentCommandInfo
+  ): Promise<void> {
+    const scriptCleanup = info.scriptFile
+      ? ` ${shellSingleQuote(info.scriptFile)}`
+      : "";
+    const cancelCommand = [
+      `PID=${shellSingleQuote(String(info.pid))}`,
+      `EXITFILE=${shellSingleQuote(info.exitFile)}`,
+      `LOGFILE=${shellSingleQuote(info.logFile)}`,
+      'kill -TERM "-$PID" 2>/dev/null || kill -TERM "$PID" 2>/dev/null || true',
+      'i=0',
+      'while [ "$i" -lt 5 ] && [ -d "/proc/$PID" ]; do i=$((i + 1)); sleep 1; done',
+      '[ -d "/proc/$PID" ] && (kill -KILL "-$PID" 2>/dev/null || kill -KILL "$PID" 2>/dev/null || true)',
+      'printf "%s" "130" > "$EXITFILE" 2>/dev/null || true',
+      `rm -f "$LOGFILE" "$EXITFILE"${scriptCleanup}`,
+    ].join("; ");
+    await this.runCommand(conn, cancelCommand, 10).catch(() => {});
   }
 
   private runTailMonitor(
@@ -845,15 +941,19 @@ export class SSHConnectionManager {
     logFile: string,
     pid: number,
     timeout: number,
-    onData?: (chunk: string, stream: "stdout" | "stderr") => void
-  ): Promise<{ stdout: string; monitoringLost: boolean }> {
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void,
+    signal?: AbortSignal | null
+  ): Promise<{ stdout: string; monitoringLost: boolean; cancelled: boolean }> {
     return new Promise((resolve) => {
       let resolved = false;
-      const finish = (stdout: string, lost: boolean) => {
+      let stream: ClientChannel | null = null;
+      let stdout = "";
+      const finish = (stdout: string, lost: boolean, cancelled = false) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(timer);
-        resolve({ stdout, monitoringLost: lost });
+        signal?.removeEventListener("abort", onAbort);
+        resolve({ stdout, monitoringLost: lost, cancelled });
       };
 
       const timer = setTimeout(() => {
@@ -863,13 +963,26 @@ export class SSHConnectionManager {
       // If the connection itself drops, the process still runs under nohup
       const onConnError = () => finish(stdout, true);
       const onConnClose = () => finish(stdout, true);
+      const onAbort = () => {
+        try {
+          stream?.close();
+        } catch {
+          try {
+            stream?.end();
+          } catch {}
+        }
+        finish(stdout, false, true);
+      };
       conn.once("error", onConnError);
       conn.once("close", onConnClose);
-
-      let stdout = "";
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
 
       const tailCommand = buildTailMonitorCommand(logFile, pid);
-      conn.exec(wrapRemoteCommand(tailCommand), (err, stream) => {
+      conn.exec(wrapRemoteCommand(tailCommand), (err, tailStream) => {
         if (err) {
           conn.removeListener("error", onConnError);
           conn.removeListener("close", onConnClose);
@@ -877,6 +990,7 @@ export class SSHConnectionManager {
           return;
         }
 
+        stream = tailStream;
         stream.on("data", (data: Buffer) => {
           const text = data.toString();
           stdout += text;
