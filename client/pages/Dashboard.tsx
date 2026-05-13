@@ -234,9 +234,6 @@ export default function Dashboard() {
   const defaultSelectedSystemIds = orderedSystemsWithUpdates
     .filter((s) => s.excludeFromUpgradeAll !== 1)
     .map((s) => s.id);
-  const defaultSelectedUpdateCount = orderedSystemsWithUpdates
-    .filter((s) => s.excludeFromUpgradeAll !== 1)
-    .reduce((sum, s) => sum + s.updateCount, 0);
   const selectedSystems = modalSystems.filter((s) => selectedSystemIds.includes(s.id));
   const selectedUpdateCount = selectedSystems.reduce((sum, s) => sum + s.updateCount, 0);
 
@@ -412,7 +409,7 @@ export default function Dashboard() {
                   Upgrading...
                 </span>
               ) : (
-                `Upgrade All (${defaultSelectedUpdateCount})`
+                "Upgrade All"
               )}
             </button>
           )}
@@ -476,7 +473,7 @@ export default function Dashboard() {
                 return (
                   <li
                     key={s.id}
-                    className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${
+                    className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${
                       isSelected
                         ? "bg-white dark:bg-slate-800/60"
                         : "bg-slate-50 dark:bg-slate-700/50"
@@ -495,16 +492,16 @@ export default function Dashboard() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
                       </svg>
                     </span>
-                    <div className="flex min-w-48 flex-1 items-center gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center gap-3">
                       <input
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => toggleSystemSelection(s.id)}
                         disabled={updateSystemUpgradeAllExclusion.isPending}
-                        className="rounded"
+                        className="shrink-0 rounded"
                         aria-label={`${isSelected ? "Exclude" : "Include"} ${s.name} in Upgrade All`}
                       />
-                      <span className="block text-sm text-slate-700 dark:text-slate-200 truncate">
+                      <span className="block min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200">
                         {s.name}
                       </span>
                       {canOverrideMode && (
@@ -513,7 +510,7 @@ export default function Dashboard() {
                           onClick={() => toggleFullUpgradeSelection(s.id)}
                           disabled={!isSelected || fullUpgradeSaving}
                           aria-pressed={fullUpgradeEnabled}
-                          className={`rounded-md border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          className={`shrink-0 rounded-md border px-2.5 py-1 text-xs whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                             fullUpgradeEnabled
                               ? "border-blue-600 bg-blue-600 text-white"
                               : "border-border bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -524,7 +521,7 @@ export default function Dashboard() {
                         </button>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                    <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-start-auto sm:justify-end">
                       <Badge variant="warning" small>{s.updateCount} updates</Badge>
                       {s.securityCount > 0 && (
                         <Badge variant="danger" small>{s.securityCount} security</Badge>
@@ -549,17 +546,17 @@ export default function Dashboard() {
             )}
           </div>
         )}
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <button
             onClick={closeUpgradeConfirm}
-            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+            className="w-full px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors sm:w-auto"
           >
             Cancel
           </button>
           <button
             onClick={handleUpgradeAll}
             disabled={selectedSystemIds.length === 0}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+            className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 sm:w-auto"
           >
             Upgrade All
           </button>
