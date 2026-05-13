@@ -10,7 +10,7 @@ function appendText(existing: string | null, next: string): string {
 
 function finalizePendingStep(
   step: ActivityStep | undefined,
-  status: "success" | "failed",
+  status: "success" | "failed" | "cancelled",
   completedAt?: string
 ): void {
   if (!step) return;
@@ -55,8 +55,19 @@ export function deriveLiveActivitySteps(messages: WsMessage[]): ActivityStep[] {
           current.status = "failed";
         }
         break;
+      case "warning":
+        if (!current) break;
+        current.error = appendText(current.error, message.message);
+        if (current.status === "started" && /cancelled/i.test(message.message)) {
+          current.status = "cancelled";
+        }
+        break;
       case "done":
-        finalizePendingStep(current, message.success ? "success" : "failed", message.completedAt);
+        finalizePendingStep(
+          current,
+          current?.status === "cancelled" ? "cancelled" : message.success ? "success" : "failed",
+          message.completedAt,
+        );
         break;
       default:
         break;

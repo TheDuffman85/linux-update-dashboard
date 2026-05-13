@@ -9,6 +9,7 @@ export interface ActiveOperation {
   phase?: "reconnecting" | "rechecking";
   packageName?: string;
   packageNames?: string[];
+  cancelRequested?: boolean;
 }
 
 export interface LastCheckSummary {
@@ -55,6 +56,7 @@ export interface System {
   rebootDismissedUptimeSeconds: number | null;
   rebootDismissedAt: string | null;
   excludeFromUpgradeAll: number;
+  upgradeOrder: number;
   hidden: number;
   needsReboot: number;
   isReachable: number;
@@ -105,7 +107,7 @@ export interface HiddenUpdate {
   updatedAt: string;
 }
 
-export type ActivityStepStatus = "success" | "warning" | "failed" | "started";
+export type ActivityStepStatus = "success" | "warning" | "failed" | "started" | "cancelled";
 
 export interface ActivityStep {
   label: string | null;
@@ -265,6 +267,65 @@ export function useReorderSystems() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["systems"] });
       await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useReorderSystemUpgradeOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (systemIds: number[]) =>
+      apiFetch("/systems/upgrade-order", {
+        method: "PUT",
+        body: JSON.stringify({ systemIds }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useUpdateSystemUpgradeMode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      systemId,
+      fullUpgrade,
+    }: {
+      systemId: number;
+      fullUpgrade: boolean;
+    }) =>
+      apiFetch(`/systems/${systemId}/upgrade-mode`, {
+        method: "PUT",
+        body: JSON.stringify({ fullUpgrade }),
+      }),
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
+    },
+  });
+}
+
+export function useUpdateSystemUpgradeAllExclusion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      systemId,
+      excluded,
+    }: {
+      systemId: number;
+      excluded: boolean;
+    }) =>
+      apiFetch(`/systems/${systemId}/upgrade-all-exclusion`, {
+        method: "PUT",
+        body: JSON.stringify({ excluded }),
+      }),
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
     },
   });
 }

@@ -57,10 +57,27 @@ updates.post("/systems/:id/check", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const jobId = startJob(async () => {
-    await updateService.checkUpdates(id);
-    return hiddenUpdateService.getVisibleUpdateSummary(id);
+    try {
+      await updateService.checkUpdates(id);
+      return hiddenUpdateService.getVisibleUpdateSummary(id);
+    } catch (error) {
+      if (updateService.isOperationCancelledError(error)) {
+        return { status: "cancelled", updateCount: 0 };
+      }
+      throw error;
+    }
   });
   return c.json({ status: "started", jobId });
+});
+
+updates.post("/systems/:id/cancel", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const cancelled = updateService.cancelActiveOperation(id);
+  if (!cancelled) {
+    return c.json({ error: "No running operation for this system" }, 409);
+  }
+  return c.json({ status: "cancelling" });
 });
 
 // Check all systems
@@ -76,10 +93,21 @@ updates.post("/systems/check-all", async (c) => {
 updates.post("/systems/:id/upgrade", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const body = await c.req.json().catch(() => null) as { defaultUpgradeModeOverride?: unknown } | null;
+  const defaultUpgradeModeOverride = body?.defaultUpgradeModeOverride;
+  if (
+    defaultUpgradeModeOverride !== undefined &&
+    defaultUpgradeModeOverride !== "standard" &&
+    defaultUpgradeModeOverride !== "aggressive"
+  ) {
+    return c.json({ error: "defaultUpgradeModeOverride must be 'standard' or 'aggressive'" }, 400);
+  }
   const jobId = startJob(async () => {
-    const result = await updateService.applyUpgradeAll(id);
+    const result = await updateService.applyUpgradeAll(id, {
+      defaultUpgradeModeOverride,
+    });
     return {
-      status: result.warning ? "warning" : result.success ? "success" : "failed",
+      status: result.cancelled ? "cancelled" : result.warning ? "warning" : result.success ? "success" : "failed",
       output: result.output,
     };
   });
@@ -96,7 +124,7 @@ updates.post("/systems/:id/full-upgrade", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.applyFullUpgradeAll(id);
     return {
-      status: result.warning ? "warning" : result.success ? "success" : "failed",
+      status: result.cancelled ? "cancelled" : result.warning ? "warning" : result.success ? "success" : "failed",
       output: result.output,
     };
   });
@@ -121,7 +149,7 @@ updates.post("/systems/:id/upgrade/:packageName", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.applyUpgradePackage(id, packageName);
     return {
-      status: result.warning ? "warning" : result.success ? "success" : "failed",
+      status: result.cancelled ? "cancelled" : result.warning ? "warning" : result.success ? "success" : "failed",
       package: packageName,
       output: result.output,
     };
@@ -156,7 +184,7 @@ updates.post("/systems/:id/upgrade-packages", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.applyUpgradePackages(id, normalizedPackageNames);
     return {
-      status: result.warning ? "warning" : result.success ? "success" : "failed",
+      status: result.cancelled ? "cancelled" : result.warning ? "warning" : result.success ? "success" : "failed",
       packageCount: normalizedPackageNames.length,
       packages: normalizedPackageNames,
       output: result.output,

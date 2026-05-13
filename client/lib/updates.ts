@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch, pollJob } from "./client";
 
+export type DefaultUpgradeModeOverride = "standard" | "aggressive";
+
 async function invalidateSystemOperationQueries(qc: QueryClient, systemId: number): Promise<void> {
   await qc.invalidateQueries({ queryKey: ["system", systemId] });
   await qc.invalidateQueries({ queryKey: ["systems"] });
@@ -15,7 +17,7 @@ export function useCheckUpdates() {
         `/systems/${systemId}/check`,
         { method: "POST" }
       );
-      return pollJob<{ updateCount: number }>(jobId);
+      return pollJob<{ updateCount: number; status?: string }>(jobId);
     },
     onSettled: async (_data, _error, systemId) => {
       if (systemId !== undefined) {
@@ -40,17 +42,44 @@ export function useCheckAll() {
   });
 }
 
+export function useCancelOperation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (systemId: number) =>
+      apiFetch<{ status: string }>(`/systems/${systemId}/cancel`, {
+        method: "POST",
+      }),
+    onSettled: async (_data, _error, systemId) => {
+      if (systemId !== undefined) {
+        await invalidateSystemOperationQueries(qc, systemId);
+      }
+    },
+  });
+}
+
 export function useUpgradeAll() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (systemId: number) => {
+    mutationFn: async (vars: number | {
+      systemId: number;
+      defaultUpgradeModeOverride?: DefaultUpgradeModeOverride;
+    }) => {
+      const systemId = typeof vars === "number" ? vars : vars.systemId;
+      const defaultUpgradeModeOverride =
+        typeof vars === "number" ? undefined : vars.defaultUpgradeModeOverride;
       const { jobId } = await apiFetch<{ status: string; jobId: string }>(
         `/systems/${systemId}/upgrade`,
-        { method: "POST" }
+        {
+          method: "POST",
+          body: defaultUpgradeModeOverride
+            ? JSON.stringify({ defaultUpgradeModeOverride })
+            : undefined,
+        }
       );
       return pollJob<{ status: string; output: string }>(jobId, 3000);
     },
-    onSettled: async (_data, _error, systemId) => {
+    onSettled: async (_data, _error, vars) => {
+      const systemId = typeof vars === "number" ? vars : vars?.systemId;
       if (systemId !== undefined) {
         await invalidateSystemOperationQueries(qc, systemId);
       }

@@ -6,7 +6,7 @@ import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSystem, useRebootSystem, useDismissNeedsReboot } from "../lib/systems";
-import { useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
+import { useCancelOperation, useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
@@ -250,6 +250,7 @@ function UpdateCheckNotice({
 function getStatusVariant(status: string): "success" | "warning" | "danger" | "muted" {
   if (status === "success") return "success";
   if (status === "warning") return "warning";
+  if (status === "cancelled") return "warning";
   if (status === "failed") return "danger";
   return "muted";
 }
@@ -1034,6 +1035,8 @@ function HistoryList({
                     ? "success"
                     : row.status === "warning"
                       ? "warning"
+                      : row.status === "cancelled"
+                        ? "warning"
                       : row.status === "failed"
                         ? "danger"
                         : "muted"
@@ -1122,12 +1125,14 @@ export default function SystemDetail() {
   const unhideUpdate = useUnhideUpdate();
   const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading, removeUpgrading } = useUpgrade();
   const { addToast } = useToast();
+  const cancelOperation = useCancelOperation();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showUpgradeSelectedConfirm, setShowUpgradeSelectedConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDismissNeedsRebootConfirm, setShowDismissNeedsRebootConfirm] = useState(false);
   const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
   const [selectedPackageNames, setSelectedPackageNames] = useState<string[]>([]);
@@ -1180,6 +1185,7 @@ export default function SystemDetail() {
   );
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
+  const operationCancellable = !!activeOp && !activeOp.cancelRequested && !cancelOperation.isPending;
   const updatesSignature = data?.updates
     .map((update) => `${update.pkgManager}:${update.packageName}:${update.newVersion || ""}`)
     .join("|") ?? "";
@@ -1237,8 +1243,10 @@ export default function SystemDetail() {
     checkUpdates.mutate(systemId, {
       onSuccess: (d) =>
         addToast(
-          `Check complete: ${d.updateCount} update${d.updateCount !== 1 ? "s" : ""} found`,
-          d.updateCount === 0 ? "success" : "info"
+          d.status === "cancelled"
+            ? "Check cancelled"
+            : `Check complete: ${d.updateCount} update${d.updateCount !== 1 ? "s" : ""} found`,
+          d.status === "cancelled" ? "info" : d.updateCount === 0 ? "success" : "info"
         ),
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -1251,8 +1259,9 @@ export default function SystemDetail() {
         addToast(
           d.status === "success" ? "Upgrade complete"
             : d.status === "warning" ? "Upgrade likely complete (inferred after reboot)"
-              : "Upgrade failed",
-          d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
+              : d.status === "cancelled" ? "Upgrade cancelled"
+                : "Upgrade failed",
+          d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
     });
@@ -1265,8 +1274,9 @@ export default function SystemDetail() {
         addToast(
           d.status === "success" ? "Full upgrade complete"
             : d.status === "warning" ? "Full upgrade likely complete (inferred after reboot)"
-              : "Full upgrade failed",
-          d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
+              : d.status === "cancelled" ? "Full upgrade cancelled"
+                : "Full upgrade failed",
+          d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
     });
@@ -1285,8 +1295,10 @@ export default function SystemDetail() {
             ? `Selected update${selectedNames.length !== 1 ? "s" : ""} complete`
             : d.status === "warning"
               ? `Selected update${selectedNames.length !== 1 ? "s" : ""} likely complete (inferred after reboot)`
-              : `Selected update${selectedNames.length !== 1 ? "s" : ""} failed`,
-          d.status === "failed" ? "danger" : d.status === "warning" ? "info" : "success"
+              : d.status === "cancelled"
+                ? `Selected update${selectedNames.length !== 1 ? "s" : ""} cancelled`
+                : `Selected update${selectedNames.length !== 1 ? "s" : ""} failed`,
+          d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
         ),
       onError: (err: Error) => {
         setSelectedPackageNames(selectedNames);
@@ -1308,6 +1320,14 @@ export default function SystemDetail() {
     setShowDismissNeedsRebootConfirm(false);
     dismissNeedsReboot.mutate(systemId, {
       onSuccess: () => addToast("Reboot warning dismissed", "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleCancelOperation = () => {
+    setShowCancelConfirm(false);
+    cancelOperation.mutate(systemId, {
+      onSuccess: () => addToast("Cancellation requested", "info"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -1355,6 +1375,29 @@ export default function SystemDetail() {
     setSelectedPackageNames((current) => toggleSelectedPackageName(current, packageName));
   };
 
+  const renderRunningCancelAction = (label: string, className: string) => (
+    <button
+      type="button"
+      onClick={() => setShowCancelConfirm(true)}
+      disabled={!operationCancellable}
+      className={className}
+      aria-label={`Cancel ${label.toLowerCase().replace("...", "")}`}
+    >
+      <span className="flex items-center justify-center gap-1.5">
+        <span className="spinner spinner-sm" />
+        <span>{activeOp?.cancelRequested || cancelOperation.isPending ? "Cancelling..." : label}</span>
+        <span className="mx-0.5 h-4 w-px bg-current opacity-25" aria-hidden="true" />
+        <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </span>
+    </button>
+  );
+  const checkingCancelClass =
+    "px-3 py-1.5 text-sm rounded-lg border border-border hover:border-red-300 dark:hover:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-colors disabled:opacity-50 min-w-32";
+  const upgradeCancelClass =
+    "px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-red-600 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-40";
+
   return (
     <Layout
       title={
@@ -1378,24 +1421,30 @@ export default function SystemDetail() {
             </svg>
             Back
           </button>
-          <button
-            onClick={handleCheck}
-            disabled={checking || upgrading}
-            className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-          >
-            {checking ? (
+          {checking && activeOp ? (
+            renderRunningCancelAction("Checking...", checkingCancelClass)
+          ) : (
+            <button
+              onClick={handleCheck}
+              disabled={checking || upgrading}
+              className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 min-w-24"
+            >
+              {checking ? (
               <span className="flex items-center gap-1.5">
                 <span className="spinner spinner-sm" />
                 Checking...
               </span>
-            ) : "Refresh"}
-          </button>
+              ) : "Refresh"}
+            </button>
+          )}
           {showUpgradeActions && (
-            hasSelectedPackages ? (
+            activeOp && upgrading ? (
+              renderRunningCancelAction("Upgrading...", upgradeCancelClass)
+            ) : hasSelectedPackages ? (
               <button
                 onClick={() => setShowUpgradeSelectedConfirm(true)}
                 disabled={upgrading || checking}
-                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
               >
                 {upgrading ? (
                   <span className="flex items-center gap-1.5">
@@ -1413,7 +1462,7 @@ export default function SystemDetail() {
                     <button
                       onClick={() => setShowUpgradeConfirm(true)}
                       disabled={upgrading || checking}
-                      className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                      className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-32"
                     >
                       {upgrading ? (
                         <span className="flex items-center gap-1.5">
@@ -1452,7 +1501,7 @@ export default function SystemDetail() {
                 <button
                   onClick={() => setShowFullUpgradeConfirm(true)}
                   disabled={upgrading || checking}
-                  className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                  className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
                 >
                   {upgrading ? (
                     <span className="flex items-center gap-1.5">
@@ -1468,7 +1517,7 @@ export default function SystemDetail() {
               <button
                 onClick={() => setShowUpgradeConfirm(true)}
                 disabled={upgrading || checking}
-                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
               >
                 {upgrading ? (
                   <span className="flex items-center gap-1.5">
@@ -1669,6 +1718,16 @@ export default function SystemDetail() {
         confirmLabel="Reboot"
         danger
         loading={rebooting}
+      />
+      <ConfirmDialog
+        open={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        onConfirm={handleCancelOperation}
+        title="Cancel Running Operation"
+        message={`Cancel the running command on ${system.name}?`}
+        confirmLabel="Cancel Operation"
+        danger
+        loading={cancelOperation.isPending}
       />
       <ConfirmDialog
         open={showDismissNeedsRebootConfirm}

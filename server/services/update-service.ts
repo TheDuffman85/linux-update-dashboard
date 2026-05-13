@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
-import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, type PersistentCommandInfo } from "../ssh/connection";
+import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, EXIT_CANCELLED, type PersistentCommandInfo } from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName } from "../ssh/parsers/types";
@@ -21,9 +21,14 @@ import {
 import { getActivityHistoryLimit } from "./settings-service";
 import {
   clearActiveOperation,
+  cancelActiveOperation as requestActiveOperationCancellation,
   getActiveOperation as getStoredActiveOperation,
   getAllActiveOperations as getStoredActiveOperations,
+  getActiveOperationSignal,
+  isOperationCancelledError,
   setActiveOperation,
+  throwIfActiveOperationCancelled,
+  OperationCancelledError,
   type ActiveOperation,
 } from "./active-operation-store";
 import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
@@ -38,6 +43,26 @@ import {
 } from "./script-service";
 
 type VisibleCachedUpdate = ReturnType<typeof hiddenUpdateService.getVisibleCachedUpdates>[number];
+export type DefaultUpgradeModeOverride = "standard" | "aggressive";
+type OperationResult = { success: boolean; output: string; warning?: boolean; cancelled?: boolean };
+
+function withDefaultUpgradeModeOverride(
+  configs: PackageManagerConfigs | null,
+  override?: DefaultUpgradeModeOverride,
+): PackageManagerConfigs | null {
+  if (!override) return configs;
+  return {
+    ...(configs ?? {}),
+    apt: {
+      ...((configs?.apt ?? {}) as object),
+      defaultUpgradeMode: override === "aggressive" ? "full-upgrade" : "upgrade",
+    },
+    dnf: {
+      ...((configs?.dnf ?? {}) as object),
+      defaultUpgradeMode: override === "aggressive" ? "distro-sync" : "upgrade",
+    },
+  };
+}
 
 export function getActiveOperation(systemId: number): ActiveOperation | null {
   return getStoredActiveOperation(systemId);
@@ -46,6 +71,12 @@ export function getActiveOperation(systemId: number): ActiveOperation | null {
 export function getAllActiveOperations(): ReadonlyMap<number, ActiveOperation> {
   return getStoredActiveOperations();
 }
+
+export function cancelActiveOperation(systemId: number): boolean {
+  return requestActiveOperationCancellation(systemId);
+}
+
+export { isOperationCancelledError };
 
 export interface LastCheckSummary {
   status: "success" | "warning" | "failed";
@@ -187,7 +218,7 @@ interface ReconnectionResult {
   serverRebooted: boolean;
 }
 
-export type ActivityStepStatus = "success" | "warning" | "failed" | "started";
+export type ActivityStepStatus = "success" | "warning" | "failed" | "started" | "cancelled";
 
 export interface ActivityStep {
   label: string | null;
@@ -207,10 +238,36 @@ function getCurrentTimestamp(): string {
   return new Date().toISOString().replace("T", " ").replace("Z", "");
 }
 
+function getCancellationSignal(systemId: number): AbortSignal | null {
+  return getActiveOperationSignal(systemId);
+}
+
+function isCancelledResult(exitCode: number): boolean {
+  return exitCode === EXIT_CANCELLED;
+}
+
+function createCancelledError(): OperationCancelledError {
+  return new OperationCancelledError("Operation cancelled");
+}
+
 function setActiveOperationPhase(systemId: number, phase: ActiveOperation["phase"]): void {
   const current = getStoredActiveOperation(systemId);
   if (!current || !phase) return;
   setActiveOperation(systemId, { ...current, phase });
+}
+
+function setActiveOperationPersistentInfo(
+  systemId: number,
+  info: PersistentCommandInfo,
+): void {
+  const current = getStoredActiveOperation(systemId);
+  if (!current) return;
+  setActiveOperation(systemId, {
+    ...current,
+    remotePid: info.pid,
+    remoteLogFile: info.logFile,
+    remoteExitFile: info.exitFile,
+  });
 }
 
 function trimSanitizedOutput(value: string | null | undefined, limit: number): string | null {
@@ -556,7 +613,7 @@ function logHistory(
     now;
   const completedAt =
     opts?.completedAt ??
-    (status === "success" || status === "failed" || status === "warning" ? now : null);
+    (status === "success" || status === "failed" || status === "warning" || status === "cancelled" ? now : null);
 
   db.insert(updateHistory)
     .values({
@@ -607,7 +664,7 @@ function insertStartedEntry(
 /** Update an existing history row to its final status. */
 function finishEntry(
   id: number,
-  status: "success" | "failed" | "warning",
+  status: "success" | "failed" | "warning" | "cancelled",
   opts?: {
     packageCount?: number;
     packages?: string;
@@ -645,6 +702,7 @@ async function checkUpdatesUnlocked(
   const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
 
   const sshManager = getSSHManager();
+  const signal = getCancellationSignal(systemId);
   const allUpdates: ParsedUpdate[] = [];
   const allCommands: string[] = [];
   const allSteps: ActivityStep[] = [];
@@ -656,9 +714,11 @@ async function checkUpdatesUnlocked(
   let conn;
   let pkgManagers: string[] = [];
   try {
+    throwIfActiveOperationCancelled(systemId);
     conn = await sshManager.connect(system as Record<string, unknown>, {
       systemId,
     });
+    throwIfActiveOperationCancelled(systemId);
 
     // Update system info
     await systemService.updateSystemInfo(
@@ -666,10 +726,12 @@ async function checkUpdatesUnlocked(
       sshManager,
       conn
     );
+    throwIfActiveOperationCancelled(systemId);
 
     // Detect package managers if not yet detected
     if (!system.detectedPkgManagers) {
       await systemService.detectAndStorePkgManager(systemId, sshManager, conn);
+      throwIfActiveOperationCancelled(systemId);
       // Re-read system to get updated detected list
       const updated = systemService.getSystem(systemId);
       if (updated) {
@@ -686,6 +748,7 @@ async function checkUpdatesUnlocked(
     // Run check for each package manager
 
     for (const pmName of pkgManagers) {
+      throwIfActiveOperationCancelled(systemId);
       try {
         const parser = getParser(pmName);
         const managerConfig = getManagerConfig(pkgManagerConfigs, pmName);
@@ -717,10 +780,27 @@ async function checkUpdatesUnlocked(
             (chunk, stream) => {
               streamedOutput += chunk;
               pub({ type: "output", data: chunk, stream });
-            }
+            },
+            signal
           );
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
+          checkOutput += combinedOutput;
+          if (isCancelledResult(result.exitCode)) {
+            allSteps.push(
+              createActivityStep({
+                label,
+                pkgManager: pmName,
+                command: commands[i],
+                output: combinedOutput,
+                error: "Operation cancelled",
+                status: "cancelled",
+                startedAt: stepStartedAt,
+                completedAt: stepCompletedAt,
+              })
+            );
+            throw createCancelledError();
+          }
           const customScript = parser ? null : resolveScript(systemId, "check_updates", pmName);
           const parserReportedError =
             parser?.getCheckErrorMessage?.(result.stdout, result.stderr, result.exitCode)
@@ -734,7 +814,6 @@ async function checkUpdatesUnlocked(
                 || `Command exited with code ${result.exitCode}`
               : null);
           const commandFailed = result.exitCode !== 0 || checkErrorMessage !== null;
-          checkOutput += combinedOutput;
           lastStdout = result.stdout;
           lastStderr = result.stderr;
           lastExitCode = result.exitCode;
@@ -775,6 +854,9 @@ async function checkUpdatesUnlocked(
         successfulChecks++;
         successfulPkgManagers.push(pmName);
       } catch (e) {
+        if (isOperationCancelledError(e)) {
+          throw e;
+        }
         const errorText = e instanceof Error ? e.message : String(e);
         checkErrors.push(`[${pmName}] ${errorText}`);
         logger.warn("System update check failed", {
@@ -786,6 +868,20 @@ async function checkUpdatesUnlocked(
       }
     }
   } catch (e) {
+    if (isOperationCancelledError(e)) {
+      const message = e.message || "Operation cancelled";
+      pub({ type: "warning", message });
+      pub({ type: "done", success: false, completedAt: getCurrentTimestamp() });
+      if (!silent) {
+        logHistory(systemId, "check", pkgManagers.join(",") || system.pkgManager || "unknown", "cancelled", {
+          command: allCommands.join(" && "),
+          steps: allSteps,
+          output: checkOutput.slice(0, 5000) || undefined,
+          error: message,
+        });
+      }
+      throw e;
+    }
     logger.warn("System SSH connection failed during update check", {
       systemId,
       error: sanitizeOutput(String(e)),
@@ -875,8 +971,9 @@ export async function checkUpdates(
 }
 
 export async function applyUpgradeAll(
-  systemId: number
-): Promise<{ success: boolean; output: string; warning?: boolean }> {
+  systemId: number,
+  options?: { defaultUpgradeModeOverride?: DefaultUpgradeModeOverride },
+): Promise<OperationResult> {
   return withLock(systemId, async () => {
     const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "upgrade_all", startedAt: now });
@@ -887,7 +984,10 @@ export async function applyUpgradeAll(
     if (!system) {
       return { success: false, output: "System not found" };
     }
-    const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
+    const pkgManagerConfigs = withDefaultUpgradeModeOverride(
+      getSystemPackageManagerConfigs(system),
+      options?.defaultUpgradeModeOverride,
+    );
 
     // Collect all distinct package managers from the cached updates
     const db = getDb();
@@ -916,14 +1016,18 @@ export async function applyUpgradeAll(
     let reconnectionUsed = false;
 
     const sshManager = getSSHManager();
+    const signal = getCancellationSignal(systemId);
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
     try {
+      throwIfActiveOperationCancelled(systemId);
       conn = await sshManager.connect(system as Record<string, unknown>, {
         systemId,
       });
+      throwIfActiveOperationCancelled(systemId);
 
       for (const pmName of pkgManagers) {
+        throwIfActiveOperationCancelled(systemId);
         const steps = resolveRuntimeSteps({
           systemId,
           operation: "upgrade_all",
@@ -949,9 +1053,35 @@ export async function applyUpgradeAll(
           3600,
           sudoPassword,
           onDataCb,
+          {
+            signal,
+            onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
+          },
         );
 
         let { stdout, stderr, exitCode } = result;
+
+        if (isCancelledResult(exitCode)) {
+          const stepCompletedAt = getCurrentTimestamp();
+          const combinedOutput = streamedOutput || stdout || stderr;
+          finishEntry(histId, "cancelled", {
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: pmName,
+              command: cmd,
+              output: combinedOutput,
+              error: "Operation cancelled",
+              status: "cancelled",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }),
+            output: stdout.slice(0, STEP_OUTPUT_LIMIT),
+            error: "Operation cancelled",
+          });
+          outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, output: "Operation cancelled", cancelled: true };
+        }
 
         if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
           // Connection lost — attempt reconnection
@@ -1023,6 +1153,11 @@ export async function applyUpgradeAll(
       outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
       return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
     } catch (e) {
+      if (isOperationCancelledError(e)) {
+        outputStream.publish(systemId, { type: "warning", message: e.message });
+        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+        return { success: false, output: e.message, cancelled: true };
+      }
       logHistory(
         systemId,
         "upgrade_all",
@@ -1073,7 +1208,7 @@ export function supportsFullUpgrade(systemId: number): boolean {
 
 export async function applyFullUpgradeAll(
   systemId: number
-): Promise<{ success: boolean; output: string; warning?: boolean }> {
+): Promise<OperationResult> {
   return withLock(systemId, async () => {
     const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "full_upgrade_all", startedAt: now });
@@ -1111,14 +1246,18 @@ export async function applyFullUpgradeAll(
     let reconnectionUsed = false;
 
     const sshManager = getSSHManager();
+    const signal = getCancellationSignal(systemId);
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
     try {
+      throwIfActiveOperationCancelled(systemId);
       conn = await sshManager.connect(system as Record<string, unknown>, {
         systemId,
       });
+      throwIfActiveOperationCancelled(systemId);
 
       for (const pmName of pkgManagers) {
+        throwIfActiveOperationCancelled(systemId);
         const managerConfig = getManagerConfig(pkgManagerConfigs, pmName);
         let steps = resolveRuntimeSteps({
           systemId,
@@ -1153,9 +1292,35 @@ export async function applyFullUpgradeAll(
           3600,
           sudoPassword,
           onDataCb,
+          {
+            signal,
+            onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
+          },
         );
 
         let { stdout, stderr, exitCode } = result;
+
+        if (isCancelledResult(exitCode)) {
+          const stepCompletedAt = getCurrentTimestamp();
+          const combinedOutput = streamedOutput || stdout || stderr;
+          finishEntry(histId, "cancelled", {
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: pmName,
+              command: cmd,
+              output: combinedOutput,
+              error: "Operation cancelled",
+              status: "cancelled",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }),
+            output: stdout.slice(0, STEP_OUTPUT_LIMIT),
+            error: "Operation cancelled",
+          });
+          outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, output: "Operation cancelled", cancelled: true };
+        }
 
         if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
           try { sshManager.disconnect(conn!); } catch {}
@@ -1225,6 +1390,11 @@ export async function applyFullUpgradeAll(
       outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
       return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
     } catch (e) {
+      if (isOperationCancelledError(e)) {
+        outputStream.publish(systemId, { type: "warning", message: e.message });
+        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+        return { success: false, output: e.message, cancelled: true };
+      }
       logHistory(
         systemId,
         "full_upgrade_all",
@@ -1261,14 +1431,14 @@ export async function applyFullUpgradeAll(
 export async function applyUpgradePackage(
   systemId: number,
   packageName: string
-): Promise<{ success: boolean; output: string; warning?: boolean }> {
+): Promise<OperationResult> {
   return applyUpgradePackages(systemId, [packageName]);
 }
 
 export async function applyUpgradePackages(
   systemId: number,
   packageNames: string[],
-): Promise<{ success: boolean; output: string; warning?: boolean }> {
+): Promise<OperationResult> {
   return withLock(systemId, async () => {
     const system = systemService.getSystem(systemId);
     if (!system) {
@@ -1302,6 +1472,7 @@ export async function applyUpgradePackages(
       }
 
       const sshManager = getSSHManager();
+      const signal = getCancellationSignal(systemId);
       const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
       const selectedPackagesJson = JSON.stringify(selected.packageNames);
       const allCommands: string[] = [];
@@ -1311,11 +1482,14 @@ export async function applyUpgradePackages(
       let conn;
 
       try {
+        throwIfActiveOperationCancelled(systemId);
         conn = await sshManager.connect(system as Record<string, unknown>, {
           systemId,
         });
+        throwIfActiveOperationCancelled(systemId);
 
         for (const [pmName, packagesForManager] of groupedUpdates) {
+          throwIfActiveOperationCancelled(systemId);
           const steps = resolveRuntimeSteps({
             systemId,
             operation: "upgrade_selected",
@@ -1352,9 +1526,41 @@ export async function applyUpgradePackages(
             3600,
             sudoPassword,
             onDataCb,
+            {
+              signal,
+              onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
+            },
           );
 
           let { stdout, stderr, exitCode } = result;
+
+          if (isCancelledResult(exitCode)) {
+            const stepCompletedAt = getCurrentTimestamp();
+            const combinedOutput = streamedOutput || stdout || stderr;
+            finishEntry(histId, "cancelled", {
+              packageCount: selected.packageNames.length,
+              packages: selectedPackagesJson,
+              steps: createSingleStepHistory({
+                label: null,
+                pkgManager: pmName,
+                command: cmd,
+                output: combinedOutput,
+                error: "Operation cancelled",
+                status: "cancelled",
+                startedAt: stepStartedAt,
+                completedAt: stepCompletedAt,
+              }),
+              output: stdout.slice(0, STEP_OUTPUT_LIMIT),
+              error: "Operation cancelled",
+            });
+            outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
+            outputStream.publish(systemId, {
+              type: "done",
+              success: false,
+              completedAt: getCurrentTimestamp(),
+            });
+            return { success: false, output: "Operation cancelled", cancelled: true };
+          }
 
           if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
             try { sshManager.disconnect(conn!); } catch {}
@@ -1428,6 +1634,11 @@ export async function applyUpgradePackages(
           warning: reconnectionUsed && overallSuccess,
         };
       } catch (e) {
+        if (isOperationCancelledError(e)) {
+          outputStream.publish(systemId, { type: "warning", message: e.message });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, output: e.message, cancelled: true };
+        }
         logHistory(systemId, "upgrade_package", Array.from(groupedUpdates.keys()).join(","), "failed", {
           packageCount: selected.packageNames.length,
           packages: selectedPackagesJson,
@@ -1470,6 +1681,7 @@ export async function rebootSystem(
       if (!system) return { success: false, message: "System not found" };
 
       const sshManager = getSSHManager();
+      const signal = getCancellationSignal(systemId);
       const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
       const cmd = resolveRuntimeSteps({ systemId, operation: "reboot" })[0]?.command;
       if (!cmd) return { success: false, message: "No reboot script configured" };
@@ -1479,15 +1691,36 @@ export async function rebootSystem(
 
       let conn;
       try {
+        throwIfActiveOperationCancelled(systemId);
         conn = await sshManager.connect(system as Record<string, unknown>, {
           systemId,
         });
+        throwIfActiveOperationCancelled(systemId);
         let streamedOutput = "";
         const result = await sshManager.runCommand(conn, cmd, 30, sudoPassword, (chunk, stream) => {
           streamedOutput += chunk;
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
-        });
+        }, signal);
         const stepCompletedAt = getCurrentTimestamp();
+
+        if (isCancelledResult(result.exitCode)) {
+          finishEntry(histId, "cancelled", {
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: "system",
+              command: cmd,
+              output: streamedOutput || result.stdout || result.stderr,
+              error: "Operation cancelled",
+              status: "cancelled",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }),
+            error: "Operation cancelled",
+          });
+          outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, message: "Operation cancelled" };
+        }
 
         if (result.exitCode !== 0) {
           const errorText = result.stderr || result.stdout || `reboot exited with code ${result.exitCode}`;
@@ -1547,6 +1780,25 @@ export async function rebootSystem(
         outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
         return { success: true, message: "Reboot command sent" };
       } catch (e) {
+        if (isOperationCancelledError(e)) {
+          const stepCompletedAt = getCurrentTimestamp();
+          finishEntry(histId, "cancelled", {
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: "system",
+              command: cmd,
+              output: null,
+              error: e.message,
+              status: "cancelled",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }),
+            error: e.message,
+          });
+          outputStream.publish(systemId, { type: "warning", message: e.message });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, message: e.message };
+        }
         const errMsg = String(e);
         const stepCompletedAt = getCurrentTimestamp();
         // A closed connection after reboot is expected

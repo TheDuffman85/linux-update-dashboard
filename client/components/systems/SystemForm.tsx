@@ -41,7 +41,6 @@ interface SystemFormData {
   detectedPkgManagers?: string[];
   pkgManagerConfigs?: PackageManagerConfigs | null;
   autoHideKeptBackUpdates?: boolean;
-  excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
   scriptOverrides?: Record<string, string | null | undefined>;
   sourceSystemId?: number;
@@ -86,12 +85,11 @@ export function SystemForm({
   onCancel,
   loading = false,
 }: {
-  initial?: Omit<Partial<SystemFormData>, "autoHideKeptBackUpdates" | "excludeFromUpgradeAll"> & {
+  initial?: Omit<Partial<SystemFormData>, "autoHideKeptBackUpdates"> & {
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
     pkgManagerConfigs?: PackageManagerConfigs | null;
     autoHideKeptBackUpdates?: number;
-    excludeFromUpgradeAll?: number;
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
     hostKeyStatus?: HostKeyStatus;
@@ -146,9 +144,6 @@ export function SystemForm({
       ?? (initial?.autoHideKeptBackUpdates === 1
         ? { apt: { autoHideKeptBackUpdates: true } }
         : {})
-  );
-  const [excludeFromUpgradeAll, setExcludeFromUpgradeAll] = useState(
-    initial?.excludeFromUpgradeAll === 1
   );
   const [hidden, setHidden] = useState(initial?.hidden === true);
   const [scriptOverrides, setScriptOverrides] = useState<Record<string, string>>(
@@ -345,7 +340,6 @@ export function SystemForm({
         packageManagerConfigsWithCustomDefaults(),
         customPackageManagers,
       ) ?? {},
-      excludeFromUpgradeAll,
       hidden,
       scriptOverrides: activeScriptOverrides,
       sourceSystemId,
@@ -874,23 +868,6 @@ export function SystemForm({
         <label className="flex items-start gap-3 text-sm cursor-pointer">
           <input
             type="checkbox"
-            checked={excludeFromUpgradeAll}
-            onChange={(e) => setExcludeFromUpgradeAll(e.target.checked)}
-            className="rounded mt-0.5"
-          />
-          <span className="min-w-0">
-            <span className="block text-slate-700 dark:text-slate-200">
-              Exclude from Upgrade All
-            </span>
-            <span className="block text-xs text-slate-400 mt-0.5">
-              Start unchecked in the Upgrade All Systems dialog
-            </span>
-          </span>
-        </label>
-
-        <label className="flex items-start gap-3 text-sm cursor-pointer">
-          <input
-            type="checkbox"
             checked={hidden}
             onChange={(e) => setHidden(e.target.checked)}
             className="rounded mt-0.5"
@@ -951,25 +928,6 @@ export function SystemForm({
 
                   {manager === "apt" && (
                     <>
-                      <div>
-                        <label className={labelClass}>Default Upgrade Mode</label>
-                        <select
-                          value={pkgManagerConfigs.apt?.defaultUpgradeMode ?? "upgrade"}
-                          onChange={(e) =>
-                            setManagerConfig("apt", {
-                              ...pkgManagerConfigs.apt,
-                              defaultUpgradeMode: e.target.value as "upgrade" | "full-upgrade",
-                            })
-                          }
-                          className={inputClass}
-                        >
-                          <option value="upgrade">Standard upgrade</option>
-                          <option value="full-upgrade">Full upgrade</option>
-                        </select>
-                      </div>
-                      <p className="text-xs text-slate-400">
-                        When set to full upgrade, the normal Upgrade action may install new dependencies or remove obsolete packages.
-                      </p>
                       <label className="flex items-start gap-3 text-sm cursor-pointer">
                         <input
                           type="checkbox"
@@ -996,22 +954,6 @@ export function SystemForm({
 
                   {manager === "dnf" && (
                     <>
-                      <div>
-                        <label className={labelClass}>Default Upgrade Mode</label>
-                        <select
-                          value={pkgManagerConfigs.dnf?.defaultUpgradeMode ?? "upgrade"}
-                          onChange={(e) =>
-                            setManagerConfig("dnf", {
-                              ...pkgManagerConfigs.dnf,
-                              defaultUpgradeMode: e.target.value as "upgrade" | "distro-sync",
-                            })
-                          }
-                          className={inputClass}
-                        >
-                          <option value="upgrade">Standard upgrade</option>
-                          <option value="distro-sync">Distro sync</option>
-                        </select>
-                      </div>
                       <label className="flex items-start gap-3 text-sm cursor-pointer">
                         <input
                           type="checkbox"

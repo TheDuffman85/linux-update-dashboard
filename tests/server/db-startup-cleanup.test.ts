@@ -276,6 +276,7 @@ describe("database startup cleanup", () => {
     restartedSqlite.close();
     expect(columns.some((column) => column.name === "ignore_kept_back_packages")).toBe(false);
     expect(columns.some((column) => column.name === "auto_hide_kept_back_updates")).toBe(true);
+    expect(columns.some((column) => column.name === "upgrade_order")).toBe(true);
     expect(columns.some((column) => column.name === "uptime_seconds")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_boot_id")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_uptime_seconds")).toBe(true);
@@ -286,6 +287,7 @@ describe("database startup cleanup", () => {
     expect(restarted[0].name).toBe("Legacy Debian");
     expect(restarted[0].pkgManager).toBe("apt");
     expect(restarted[0].autoHideKeptBackUpdates).toBe(1);
+    expect(restarted[0].upgradeOrder).toBe(1);
     expect(restarted[0].pkgManagerConfigs).toBe(JSON.stringify({
       apt: {
         autoHideKeptBackUpdates: true,
@@ -333,5 +335,15 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "reboot_dismissed_boot_id")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_uptime_seconds")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
+  });
+
+  test("adds the upgrade order column for systems", () => {
+    const sqlite = new Database(dbPath, { readonly: true });
+    const columns = sqlite
+      .prepare("PRAGMA table_info(systems)")
+      .all() as Array<{ name?: string }>;
+    sqlite.close();
+
+    expect(columns.some((column) => column.name === "upgrade_order")).toBe(true);
   });
 });

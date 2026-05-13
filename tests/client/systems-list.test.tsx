@@ -100,6 +100,7 @@ describe("SystemsList", () => {
           memory: null,
           disk: null,
           excludeFromUpgradeAll: 0,
+          upgradeOrder: 1,
           hidden: 0,
           needsReboot: 0,
           isReachable: 1,
