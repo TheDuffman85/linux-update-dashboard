@@ -125,6 +125,145 @@ describe("systems reorder route", () => {
     ]);
   });
 
+  test("persists upgrade order for a modal ordered system list", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      {
+        name: "Alpha",
+        hostname: "alpha.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        name: "Bravo",
+        hostname: "bravo.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        name: "Charlie",
+        hostname: "charlie.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request("/api/systems/upgrade-order", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemIds: [inserted[2].id, inserted[0].id, inserted[1].id],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const rows = db
+      .select({
+        name: systems.name,
+        upgradeOrder: systems.upgradeOrder,
+      })
+      .from(systems)
+      .all();
+    expect(Object.fromEntries(rows.map((row) => [row.name, row.upgradeOrder]))).toEqual({
+      Charlie: 1,
+      Alpha: 2,
+      Bravo: 3,
+    });
+  });
+
+  test("persists upgrade mode for APT and DNF systems", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      {
+        name: "Apt System",
+        hostname: "apt.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+        pkgManager: "apt",
+        detectedPkgManagers: JSON.stringify(["apt"]),
+      },
+      {
+        name: "Dnf System",
+        hostname: "dnf.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+        pkgManager: "dnf",
+        detectedPkgManagers: JSON.stringify(["dnf"]),
+      },
+    ]).returning({ id: systems.id }).all();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const aptRes = await app.request(`/api/systems/${inserted[0].id}/upgrade-mode`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullUpgrade: true }),
+    });
+    const dnfRes = await app.request(`/api/systems/${inserted[1].id}/upgrade-mode`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullUpgrade: true }),
+    });
+
+    expect(aptRes.status).toBe(200);
+    expect(dnfRes.status).toBe(200);
+
+    const updated = db
+      .select({ id: systems.id, pkgManagerConfigs: systems.pkgManagerConfigs })
+      .from(systems)
+      .all();
+    const configsById = new Map(updated.map((system) => [
+      system.id,
+      JSON.parse(system.pkgManagerConfigs ?? "{}"),
+    ]));
+
+    expect(configsById.get(inserted[0].id)).toEqual({
+      apt: { defaultUpgradeMode: "full-upgrade" },
+    });
+    expect(configsById.get(inserted[1].id)).toEqual({
+      dnf: { defaultUpgradeMode: "distro-sync" },
+    });
+  });
+
+  test("persists upgrade-all exclusion from the modal", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Excluded System",
+      hostname: "excluded.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const excludeRes = await app.request(`/api/systems/${inserted.id}/upgrade-all-exclusion`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ excluded: true }),
+    });
+    expect(excludeRes.status).toBe(200);
+    expect(listSystems().find((system) => system.id === inserted.id)?.excludeFromUpgradeAll).toBe(1);
+
+    const includeRes = await app.request(`/api/systems/${inserted.id}/upgrade-all-exclusion`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ excluded: false }),
+    });
+    expect(includeRes.status).toBe(200);
+    expect(listSystems().find((system) => system.id === inserted.id)?.excludeFromUpgradeAll).toBe(0);
+  });
+
   test("rejects reorder payloads that omit systems", async () => {
     const db = getDb();
     const inserted = db.insert(systems).values([

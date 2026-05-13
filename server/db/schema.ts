@@ -101,6 +101,7 @@ export const systems = sqliteTable(
     excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
       .notNull()
       .default(0),
+    upgradeOrder: integer("upgrade_order").notNull().default(1),
     hidden: integer("hidden").notNull().default(0),
     needsReboot: integer("needs_reboot").notNull().default(0),
     systemInfoUpdatedAt: text("system_info_updated_at"),

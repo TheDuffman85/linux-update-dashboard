@@ -149,6 +149,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     memory TEXT,
     disk TEXT,
     exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
+    upgrade_order INTEGER NOT NULL DEFAULT 1,
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
     boot_id TEXT,
@@ -609,6 +610,11 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN upgrade_order INTEGER NOT NULL DEFAULT 1`);
+  } catch {
+    // Column already exists
+  }
+  try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`);
   } catch {
     // Column already exists
@@ -1059,6 +1065,7 @@ function rebuildSystemsTable(
       memory TEXT,
       disk TEXT,
       exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
+      upgrade_order INTEGER NOT NULL DEFAULT 1,
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
       boot_id TEXT,
@@ -1108,6 +1115,7 @@ function rebuildSystemsTable(
     "memory",
     "disk",
     "exclude_from_upgrade_all",
+    "upgrade_order",
     "hidden",
     "needs_reboot",
     "boot_id",
@@ -1160,6 +1168,7 @@ function rebuildSystemsTable(
     "memory",
     "disk",
     "exclude_from_upgrade_all",
+    "upgrade_order",
     "hidden",
     "needs_reboot",
     "boot_id",

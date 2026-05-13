@@ -5,7 +5,13 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { useUpgradeAll, useFullUpgradeAll, useUpgradePackage, useUpgradePackages } from "../lib/updates";
+import {
+  useUpgradeAll,
+  useFullUpgradeAll,
+  useUpgradePackage,
+  useUpgradePackages,
+  type DefaultUpgradeModeOverride,
+} from "../lib/updates";
 
 interface UpgradeEntry {
   type: "all" | "full_all" | "package";
@@ -19,9 +25,17 @@ interface UpgradeCallbacks {
   onError?: (err: Error) => void;
 }
 
+interface UpgradeAllOptions {
+  defaultUpgradeModeOverride?: DefaultUpgradeModeOverride;
+}
+
 interface UpgradeContextType {
   upgradingSystems: Map<number, UpgradeEntry>;
-  upgradeAll: (systemId: number, callbacks?: UpgradeCallbacks) => void;
+  upgradeAll: (
+    systemId: number,
+    optionsOrCallbacks?: UpgradeAllOptions | UpgradeCallbacks,
+    callbacks?: UpgradeCallbacks
+  ) => Promise<void>;
   fullUpgradeAll: (systemId: number, callbacks?: UpgradeCallbacks) => void;
   upgradePackage: (
     systemId: number,
@@ -66,18 +80,33 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const upgradeAll = useCallback(
-    (systemId: number, callbacks?: UpgradeCallbacks) => {
+    async (
+      systemId: number,
+      optionsOrCallbacks?: UpgradeAllOptions | UpgradeCallbacks,
+      callbacks?: UpgradeCallbacks
+    ) => {
+      const options =
+        optionsOrCallbacks &&
+        ("onSuccess" in optionsOrCallbacks || "onError" in optionsOrCallbacks)
+          ? undefined
+          : optionsOrCallbacks as UpgradeAllOptions | undefined;
+      const resolvedCallbacks =
+        optionsOrCallbacks &&
+        ("onSuccess" in optionsOrCallbacks || "onError" in optionsOrCallbacks)
+          ? optionsOrCallbacks as UpgradeCallbacks
+          : callbacks;
       addUpgrading(systemId, { type: "all", addedAt: Date.now() });
-      upgradeAllMutation.mutate(systemId, {
-        onSuccess: (data) => {
-          removeUpgrading(systemId);
-          callbacks?.onSuccess?.(data);
-        },
-        onError: (err) => {
-          removeUpgrading(systemId);
-          callbacks?.onError?.(err);
-        },
-      });
+      try {
+        const data = await upgradeAllMutation.mutateAsync({
+          systemId,
+          defaultUpgradeModeOverride: options?.defaultUpgradeModeOverride,
+        });
+        removeUpgrading(systemId);
+        resolvedCallbacks?.onSuccess?.(data);
+      } catch (err) {
+        removeUpgrading(systemId);
+        resolvedCallbacks?.onError?.(err as Error);
+      }
     },
     [upgradeAllMutation, addUpgrading, removeUpgrading]
   );

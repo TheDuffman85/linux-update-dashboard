@@ -1,14 +1,102 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router";
+import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { useDashboardStats, useDashboardSystems } from "../lib/dashboard";
 import { useRefreshCache } from "../lib/updates";
+import {
+  useReorderSystemUpgradeOrder,
+  useUpdateSystemUpgradeAllExclusion,
+  useUpdateSystemUpgradeMode,
+} from "../lib/systems";
+import type { System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { deriveSystemUpdateState, isPostUpgradeRecheck } from "../lib/system-status";
+
+function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return items;
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
+function compareUpgradeOrder(a: System, b: System): number {
+  const orderDiff = (a.upgradeOrder ?? 1) - (b.upgradeOrder ?? 1);
+  if (orderDiff !== 0) return orderDiff;
+  return a.name.localeCompare(b.name) || a.id - b.id;
+}
+
+function parseManagerList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is string => typeof entry === "string");
+  }
+  if (typeof value !== "string" || !value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseConfigObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || !value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function getConfigEntry(configs: Record<string, unknown>, manager: string): Record<string, unknown> {
+  const entry = configs[manager];
+  return entry && typeof entry === "object" && !Array.isArray(entry)
+    ? entry as Record<string, unknown>
+    : {};
+}
+
+function getActiveManagers(system: System): string[] {
+  const detectedManagers = parseManagerList(system.detectedPkgManagers);
+  const disabledManagers = parseManagerList(system.disabledPkgManagers);
+  const detected = detectedManagers.length
+    ? detectedManagers
+    : system.pkgManager
+      ? [system.pkgManager]
+      : [];
+  const disabled = new Set(disabledManagers);
+  return detected.filter((manager) => !disabled.has(manager));
+}
+
+function supportsDefaultUpgradeModeOverride(system: System): boolean {
+  const managers = getActiveManagers(system);
+  return managers.includes("apt") || managers.includes("dnf");
+}
+
+function isDefaultFullUpgradeEnabled(system: System): boolean {
+  const managers = getActiveManagers(system);
+  const configs = parseConfigObject(system.pkgManagerConfigs);
+  return (
+    managers.includes("apt") &&
+    getConfigEntry(configs, "apt").defaultUpgradeMode === "full-upgrade"
+  ) || (
+    managers.includes("dnf") &&
+    getConfigEntry(configs, "dnf").defaultUpgradeMode === "distro-sync"
+  );
+}
 
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
@@ -103,9 +191,17 @@ export default function Dashboard() {
   const hasActiveOps = systems?.some((s) => s.activeOperation) ?? false;
   const { data: stats } = useDashboardStats(hasActiveOps);
   const refreshCache = useRefreshCache();
+  const reorderSystemUpgradeOrder = useReorderSystemUpgradeOrder();
+  const updateSystemUpgradeAllExclusion = useUpdateSystemUpgradeAllExclusion();
+  const updateSystemUpgradeMode = useUpdateSystemUpgradeMode();
   const { addToast } = useToast();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
+  const [fullUpgradeSelections, setFullUpgradeSelections] = useState<Record<number, boolean>>({});
+  const [upgradeModalSystems, setUpgradeModalSystems] = useState<System[]>([]);
+  const upgradeModalSystemsRef = useRef<System[]>([]);
+  const upgradeListRef = useRef<HTMLUListElement | null>(null);
+  const upgradeSortableRef = useRef<Sortable | null>(null);
 
   // Sync client-side upgrading state with server's activeOperation.
   // React Query only fires inline mutation callbacks for the last .mutate() call,
@@ -132,38 +228,153 @@ export default function Dashboard() {
   };
 
   const systemsWithUpdates = systems?.filter((s) => s.updateCount > 0 && !isUpgrading(s.id)) ?? [];
-  const excludedSystems = systemsWithUpdates.filter((s) => s.excludeFromUpgradeAll === 1);
-  const defaultSelectedSystemIds = systemsWithUpdates
+  const orderedSystemsWithUpdates = [...systemsWithUpdates].sort(compareUpgradeOrder);
+  const modalSystems = showUpgradeConfirm ? upgradeModalSystems : orderedSystemsWithUpdates;
+  const excludedSystems = orderedSystemsWithUpdates.filter((s) => s.excludeFromUpgradeAll === 1);
+  const defaultSelectedSystemIds = orderedSystemsWithUpdates
     .filter((s) => s.excludeFromUpgradeAll !== 1)
     .map((s) => s.id);
-  const defaultSelectedUpdateCount = systemsWithUpdates
+  const defaultSelectedUpdateCount = orderedSystemsWithUpdates
     .filter((s) => s.excludeFromUpgradeAll !== 1)
     .reduce((sum, s) => sum + s.updateCount, 0);
-  const selectedSystems = systemsWithUpdates.filter((s) => selectedSystemIds.includes(s.id));
+  const selectedSystems = modalSystems.filter((s) => selectedSystemIds.includes(s.id));
   const selectedUpdateCount = selectedSystems.reduce((sum, s) => sum + s.updateCount, 0);
+
+  useEffect(() => {
+    upgradeModalSystemsRef.current = upgradeModalSystems;
+  }, [upgradeModalSystems]);
+
+  useEffect(() => {
+    const list = upgradeListRef.current;
+    if (!showUpgradeConfirm || !list || upgradeModalSystems.length <= 1) {
+      upgradeSortableRef.current?.destroy();
+      upgradeSortableRef.current = null;
+      return;
+    }
+
+    upgradeSortableRef.current?.destroy();
+    upgradeSortableRef.current = new Sortable(list, {
+      animation: 150,
+      handle: ".upgrade-drag-handle",
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      onEnd: (evt) => {
+        if (
+          evt.oldIndex === undefined ||
+          evt.newIndex === undefined ||
+          evt.oldIndex === evt.newIndex
+        ) {
+          return;
+        }
+
+        const previousSystems = upgradeModalSystemsRef.current;
+        const nextSystems = moveSystem(previousSystems, evt.oldIndex, evt.newIndex);
+
+        setUpgradeModalSystems(nextSystems);
+        reorderSystemUpgradeOrder.mutate(nextSystems.map((system) => system.id), {
+          onError: (err) => {
+            setUpgradeModalSystems(previousSystems);
+            addToast(err.message, "danger");
+          },
+        });
+      },
+    });
+
+    return () => {
+      upgradeSortableRef.current?.destroy();
+      upgradeSortableRef.current = null;
+    };
+  }, [showUpgradeConfirm, upgradeModalSystems.length, reorderSystemUpgradeOrder, addToast]);
+
+  useEffect(() => {
+    upgradeSortableRef.current?.option("disabled", reorderSystemUpgradeOrder.isPending);
+  }, [reorderSystemUpgradeOrder.isPending]);
 
   const openUpgradeConfirm = () => {
     setSelectedSystemIds(defaultSelectedSystemIds);
+    setUpgradeModalSystems(orderedSystemsWithUpdates);
+    setFullUpgradeSelections(Object.fromEntries(
+      orderedSystemsWithUpdates.map((s) => [s.id, isDefaultFullUpgradeEnabled(s)])
+    ));
     setShowUpgradeConfirm(true);
   };
 
   const closeUpgradeConfirm = () => {
     setShowUpgradeConfirm(false);
     setSelectedSystemIds([]);
+    setUpgradeModalSystems([]);
+    setFullUpgradeSelections({});
+  };
+
+  const setModalSystemExclusion = (systemId: number, excluded: boolean) => {
+    setUpgradeModalSystems((current) =>
+      current.map((system) =>
+        system.id === systemId
+          ? { ...system, excludeFromUpgradeAll: excluded ? 1 : 0 }
+          : system
+      )
+    );
   };
 
   const toggleSystemSelection = (systemId: number) => {
+    const wasSelected = selectedSystemIds.includes(systemId);
+    const excluded = wasSelected;
+
     setSelectedSystemIds((current) =>
-      current.includes(systemId)
+      wasSelected
         ? current.filter((id) => id !== systemId)
         : [...current, systemId]
+    );
+    setModalSystemExclusion(systemId, excluded);
+    updateSystemUpgradeAllExclusion.mutate(
+      { systemId, excluded },
+      {
+        onError: (err) => {
+          setSelectedSystemIds((current) =>
+            wasSelected
+              ? [...current, systemId]
+              : current.filter((id) => id !== systemId)
+          );
+          setModalSystemExclusion(systemId, !excluded);
+          addToast(err.message, "danger");
+        },
+      }
+    );
+  };
+
+  const toggleFullUpgradeSelection = (systemId: number) => {
+    const previous = fullUpgradeSelections[systemId] ?? false;
+    const next = !previous;
+    setFullUpgradeSelections((current) => ({ ...current, [systemId]: next }));
+    updateSystemUpgradeMode.mutate(
+      { systemId, fullUpgrade: next },
+      {
+        onError: (err) => {
+          setFullUpgradeSelections((current) => ({
+            ...current,
+            [systemId]: previous,
+          }));
+          addToast(err.message, "danger");
+        },
+      }
     );
   };
 
   const handleUpgradeAll = () => {
+    const systemsToUpgrade = selectedSystems;
+    const fullUpgradeBySystemId = fullUpgradeSelections;
     closeUpgradeConfirm();
-    for (const s of selectedSystems) {
-      upgradeAll(s.id, {
+    for (const s of systemsToUpgrade) {
+      const canOverrideMode = supportsDefaultUpgradeModeOverride(s);
+      const override =
+        !canOverrideMode
+          ? undefined
+          : {
+              defaultUpgradeModeOverride: fullUpgradeBySystemId[s.id]
+                ? "aggressive" as const
+                : "standard" as const,
+            };
+      void upgradeAll(s.id, override, {
         onSuccess: (d: any) =>
           addToast(
             d.status === "success"
@@ -201,7 +412,7 @@ export default function Dashboard() {
                   Upgrading...
                 </span>
               ) : (
-                `Upgrade All (${excludedSystems.length > 0 ? `${defaultSelectedUpdateCount} selected` : defaultSelectedUpdateCount})`
+                `Upgrade All (${defaultSelectedUpdateCount})`
               )}
             </button>
           )}
@@ -253,35 +464,67 @@ export default function Dashboard() {
         </p>
         {systemsWithUpdates.length > 0 && (
           <div className="mb-4">
-            <ul className="space-y-2">
-              {systemsWithUpdates.map((s) => {
-                const isExcludedByDefault = s.excludeFromUpgradeAll === 1;
+            <ul ref={upgradeListRef} className="space-y-2">
+              {modalSystems.map((s) => {
                 const isSelected = selectedSystemIds.includes(s.id);
+                const canOverrideMode = supportsDefaultUpgradeModeOverride(s);
+                const fullUpgradeEnabled = fullUpgradeSelections[s.id] ?? false;
+                const fullUpgradeSaving =
+                  updateSystemUpgradeMode.isPending &&
+                  updateSystemUpgradeMode.variables?.systemId === s.id;
 
                 return (
                   <li
                     key={s.id}
                     className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${
-                      isExcludedByDefault
-                        ? "bg-slate-50 dark:bg-slate-700/50"
-                        : "bg-white dark:bg-slate-800/60"
+                      isSelected
+                        ? "bg-white dark:bg-slate-800/60"
+                        : "bg-slate-50 dark:bg-slate-700/50"
                     } border-border`}
                   >
-                    <label className="flex items-center gap-3 cursor-pointer min-w-0">
+                    <span
+                      className={`upgrade-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
+                        reorderSystemUpgradeOrder.isPending || modalSystems.length < 2
+                          ? "cursor-not-allowed opacity-40"
+                          : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                      }`}
+                      title="Drag to set upgrade order"
+                      aria-label={`Drag to set upgrade order for ${s.name}`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+                      </svg>
+                    </span>
+                    <div className="flex min-w-48 flex-1 items-center gap-3">
                       <input
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => toggleSystemSelection(s.id)}
+                        disabled={updateSystemUpgradeAllExclusion.isPending}
                         className="rounded"
+                        aria-label={`${isSelected ? "Exclude" : "Include"} ${s.name} in Upgrade All`}
                       />
                       <span className="block text-sm text-slate-700 dark:text-slate-200 truncate">
                         {s.name}
                       </span>
-                    </label>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isExcludedByDefault && (
-                        <Badge variant="muted" small>Excluded by default</Badge>
+                      {canOverrideMode && (
+                        <button
+                          type="button"
+                          onClick={() => toggleFullUpgradeSelection(s.id)}
+                          disabled={!isSelected || fullUpgradeSaving}
+                          aria-pressed={fullUpgradeEnabled}
+                          className={`rounded-md border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                            fullUpgradeEnabled
+                              ? "border-blue-600 bg-blue-600 text-white"
+                              : "border-border bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                          }`}
+                          title="Toggle and save full upgrade for this system"
+                        >
+                          Full upgrade
+                        </button>
                       )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                       <Badge variant="warning" small>{s.updateCount} updates</Badge>
                       {s.securityCount > 0 && (
                         <Badge variant="danger" small>{s.securityCount} security</Badge>
@@ -294,9 +537,14 @@ export default function Dashboard() {
                 );
               })}
             </ul>
-            {excludedSystems.length > 0 && (
+            {systemsWithUpdates.length > 1 && (
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
-                Checking an excluded system includes it only for this run and does not change its saved setting.
+                Drag systems to set the saved upgrade order. Upgrade jobs are started from top to bottom without waiting for earlier systems to finish.
+              </p>
+            )}
+            {systemsWithUpdates.length > 0 && (
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
+                Check a system to include it in future Upgrade All runs; uncheck it to exclude it.
               </p>
             )}
           </div>

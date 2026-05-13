@@ -123,6 +123,13 @@ describe("update service package manager configs", () => {
 
     expect(commands.some((command) => command.includes('upgrade_mode="full-upgrade"'))).toBe(true);
     expect(commands.some((command) => command.includes('upgrade_command="distro-sync"'))).toBe(true);
+
+    commands.length = 0;
+    await applyUpgradeAll(aptSystemId, { defaultUpgradeModeOverride: "standard" });
+    await applyUpgradeAll(dnfSystemId, { defaultUpgradeModeOverride: "standard" });
+
+    expect(commands.some((command) => command.includes('upgrade_mode="upgrade"'))).toBe(true);
+    expect(commands.some((command) => command.includes('upgrade_command="upgrade"'))).toBe(true);
   });
 
   test("threads DNF and YUM EULA config into upgrade commands", async () => {

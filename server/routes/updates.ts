@@ -76,8 +76,19 @@ updates.post("/systems/check-all", async (c) => {
 updates.post("/systems/:id/upgrade", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const body = await c.req.json().catch(() => null) as { defaultUpgradeModeOverride?: unknown } | null;
+  const defaultUpgradeModeOverride = body?.defaultUpgradeModeOverride;
+  if (
+    defaultUpgradeModeOverride !== undefined &&
+    defaultUpgradeModeOverride !== "standard" &&
+    defaultUpgradeModeOverride !== "aggressive"
+  ) {
+    return c.json({ error: "defaultUpgradeModeOverride must be 'standard' or 'aggressive'" }, 400);
+  }
   const jobId = startJob(async () => {
-    const result = await updateService.applyUpgradeAll(id);
+    const result = await updateService.applyUpgradeAll(id, {
+      defaultUpgradeModeOverride,
+    });
     return {
       status: result.warning ? "warning" : result.success ? "success" : "failed",
       output: result.output,

@@ -38,6 +38,25 @@ import {
 } from "./script-service";
 
 type VisibleCachedUpdate = ReturnType<typeof hiddenUpdateService.getVisibleCachedUpdates>[number];
+export type DefaultUpgradeModeOverride = "standard" | "aggressive";
+
+function withDefaultUpgradeModeOverride(
+  configs: PackageManagerConfigs | null,
+  override?: DefaultUpgradeModeOverride,
+): PackageManagerConfigs | null {
+  if (!override) return configs;
+  return {
+    ...(configs ?? {}),
+    apt: {
+      ...((configs?.apt ?? {}) as object),
+      defaultUpgradeMode: override === "aggressive" ? "full-upgrade" : "upgrade",
+    },
+    dnf: {
+      ...((configs?.dnf ?? {}) as object),
+      defaultUpgradeMode: override === "aggressive" ? "distro-sync" : "upgrade",
+    },
+  };
+}
 
 export function getActiveOperation(systemId: number): ActiveOperation | null {
   return getStoredActiveOperation(systemId);
@@ -875,7 +894,8 @@ export async function checkUpdates(
 }
 
 export async function applyUpgradeAll(
-  systemId: number
+  systemId: number,
+  options?: { defaultUpgradeModeOverride?: DefaultUpgradeModeOverride },
 ): Promise<{ success: boolean; output: string; warning?: boolean }> {
   return withLock(systemId, async () => {
     const now = getCurrentTimestamp();
@@ -887,7 +907,10 @@ export async function applyUpgradeAll(
     if (!system) {
       return { success: false, output: "System not found" };
     }
-    const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
+    const pkgManagerConfigs = withDefaultUpgradeModeOverride(
+      getSystemPackageManagerConfigs(system),
+      options?.defaultUpgradeModeOverride,
+    );
 
     // Collect all distinct package managers from the cached updates
     const db = getDb();

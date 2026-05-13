@@ -9,7 +9,10 @@ import type { ApprovedHostKeyInput } from "./system-connection-validation";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
 import type { PackageManagerConfigs } from "../package-manager-configs";
-import { serializePackageManagerConfigs } from "../package-manager-configs";
+import {
+  parsePackageManagerConfigs,
+  serializePackageManagerConfigs,
+} from "../package-manager-configs";
 import {
   detectPackageManagersWithScripts,
   listPackageManagerDefinitions,
@@ -520,6 +523,92 @@ export function reorderSystems(systemIds: number[]): void {
       .where(eq(systems.id, id))
       .run();
   }
+}
+
+export function reorderSystemUpgradeOrder(systemIds: number[]): void {
+  const db = getDb();
+  const uniqueIds = Array.from(new Set(systemIds));
+
+  if (uniqueIds.length !== systemIds.length) {
+    throw new Error("Upgrade order contains duplicate IDs");
+  }
+  if (systemIds.length === 0) {
+    throw new Error("Upgrade order must include at least one system");
+  }
+
+  const existingIds = new Set(
+    db
+      .select({ id: systems.id })
+      .from(systems)
+      .where(inArray(systems.id, systemIds))
+      .all()
+      .map((system) => system.id)
+  );
+  if (!systemIds.every((id) => existingIds.has(id))) {
+    throw new Error("Upgrade order contains unknown IDs");
+  }
+
+  for (const [index, id] of systemIds.entries()) {
+    db.update(systems)
+      .set({ upgradeOrder: index + 1 })
+      .where(eq(systems.id, id))
+      .run();
+  }
+}
+
+export function updateSystemUpgradeMode(systemId: number, fullUpgrade: boolean): void {
+  const db = getDb();
+  const system = getSystem(systemId);
+  if (!system) throw new Error("System not found");
+
+  const activeManagers = getActivePkgManagers(system);
+  const supportsUpgradeMode =
+    activeManagers.includes("apt") || activeManagers.includes("dnf");
+  if (!supportsUpgradeMode) {
+    throw new Error("Upgrade mode is only supported for APT and DNF systems");
+  }
+
+  const configs = parsePackageManagerConfigs(
+    system.pkgManagerConfigs,
+    listPackageManagerDefinitions(),
+  ) ?? {};
+
+  if (activeManagers.includes("apt")) {
+    configs.apt = {
+      ...(configs.apt ?? {}),
+      defaultUpgradeMode: fullUpgrade ? "full-upgrade" : "upgrade",
+    };
+  }
+  if (activeManagers.includes("dnf")) {
+    configs.dnf = {
+      ...(configs.dnf ?? {}),
+      defaultUpgradeMode: fullUpgrade ? "distro-sync" : "upgrade",
+    };
+  }
+
+  db.update(systems)
+    .set({
+      pkgManagerConfigs: serializePackageManagerConfigs(
+        configs,
+        listPackageManagerDefinitions(),
+      ),
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
+export function updateSystemUpgradeAllExclusion(systemId: number, excluded: boolean): void {
+  const system = getSystem(systemId);
+  if (!system) throw new Error("System not found");
+
+  getDb().update(systems)
+    .set({
+      excludeFromUpgradeAll: excluded ? 1 : 0,
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(systems.id, systemId))
+    .run();
 }
 
 export async function updateSystemInfo(

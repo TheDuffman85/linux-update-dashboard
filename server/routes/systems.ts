@@ -662,6 +662,69 @@ systems.put("/reorder", async (c) => {
   return c.json({ status: "ok" });
 });
 
+systems.put("/upgrade-order", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+  const systemIds = parseSystemIdList(body.systemIds);
+
+  if (!systemIds) {
+    return c.json({ error: "systemIds must be an array of positive integers" }, 400);
+  }
+
+  try {
+    systemService.reorderSystemUpgradeOrder(systemIds);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reorder system upgrade order";
+    return c.json({ error: message }, 400);
+  }
+
+  return c.json({ status: "ok" });
+});
+
+systems.put("/:id/upgrade-mode", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+  if (typeof body.fullUpgrade !== "boolean") {
+    return c.json({ error: "fullUpgrade must be a boolean" }, 400);
+  }
+
+  try {
+    systemService.updateSystemUpgradeMode(id, body.fullUpgrade);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update system upgrade mode";
+    return c.json({ error: message }, 400);
+  }
+
+  return c.json({ status: "ok" });
+});
+
+systems.put("/:id/upgrade-all-exclusion", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+  if (typeof body.excluded !== "boolean") {
+    return c.json({ error: "excluded must be a boolean" }, 400);
+  }
+
+  try {
+    systemService.updateSystemUpgradeAllExclusion(id, body.excluded);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update system upgrade exclusion";
+    return c.json({ error: message }, 400);
+  }
+
+  return c.json({ status: "ok" });
+});
+
 // Update system
 systems.put("/:id", async (c) => {
   const id = parseId(c.req.param("id"));
