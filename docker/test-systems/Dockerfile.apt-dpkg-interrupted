@@ -1,0 +1,62 @@
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      openssh-server sudo dpkg-dev ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd /tmp/pkgbuild
+
+# Configure SSH before intentionally leaving one package half-configured.
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser
+
+RUN ssh-keygen -A
+
+# Build a package whose postinst fails until a marker file is created. The
+# postinst creates that marker during the first failed configure attempt, so the
+# dashboard's `dpkg --configure -a` repair can complete it on the next attempt.
+RUN set -eux; \
+    workdir="/tmp/pkgbuild/dpkg-interrupted-app_1.0"; \
+    mkdir -p "${workdir}/DEBIAN" "${workdir}/usr/share/doc/dpkg-interrupted-app"; \
+    printf '%s\n' \
+      'Package: dpkg-interrupted-app' \
+      'Version: 1.0' \
+      'Section: misc' \
+      'Priority: optional' \
+      'Architecture: amd64' \
+      'Maintainer: Linux Update Dashboard <devnull@example.invalid>' \
+      'Description: Test package for interrupted dpkg repair behavior' \
+      > "${workdir}/DEBIAN/control"; \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      'marker=/var/lib/dpkg-interrupted-app/allow-configure' \
+      'if [ "$1" = "configure" ] && [ ! -f "$marker" ]; then' \
+      '  mkdir -p "$(dirname "$marker")"' \
+      '  touch "$marker"' \
+      '  echo "Simulating an interrupted dpkg configure step; rerun dpkg --configure -a to finish." >&2' \
+      '  exit 1' \
+      'fi' \
+      'echo configured > /usr/share/doc/dpkg-interrupted-app/status.txt' \
+      'exit 0' \
+      > "${workdir}/DEBIAN/postinst"; \
+    chmod 755 "${workdir}/DEBIAN/postinst"; \
+    printf 'pending configure fixture\n' > "${workdir}/usr/share/doc/dpkg-interrupted-app/status.txt"; \
+    dpkg-deb --build "${workdir}" /tmp/dpkg-interrupted-app_1.0_amd64.deb >/dev/null; \
+    dpkg -i /tmp/dpkg-interrupted-app_1.0_amd64.deb || true; \
+    dpkg --audit | grep -q 'dpkg-interrupted-app'; \
+    rm -rf /tmp/pkgbuild /tmp/dpkg-interrupted-app_1.0_amd64.deb
+
+RUN su - testuser -c "sudo -n true"
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

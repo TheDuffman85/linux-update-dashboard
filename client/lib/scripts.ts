@@ -6,6 +6,7 @@ export type ScriptType = "package_manager" | "system";
 export type ScriptOperation =
   | "detect"
   | "check_updates"
+  | "repair_issue"
   | "upgrade_all"
   | "full_upgrade_all"
   | "upgrade_selected"

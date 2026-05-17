@@ -17,6 +17,7 @@ export type PotentialCommandCategory =
   | "detection"
   | "system_info"
   | "check"
+  | "repair_issue"
   | "upgrade_all"
   | "full_upgrade_all"
   | "upgrade_selected"
@@ -49,7 +50,7 @@ const MULTI_PACKAGE_PLACEHOLDER_ONE = "codex-package-placeholder-one";
 const MULTI_PACKAGE_PLACEHOLDER_TWO = "codex-package-placeholder-two";
 
 const CHECK_LABEL_PURPOSES: Record<string, string> = {
-  "Fetching package lists": "Refreshes APT package list metadata before checking updates",
+  "Fetching package lists": "Audits dpkg state, then refreshes APT package list metadata before checking updates",
   "Listing available updates": "Lists packages that have updates available",
   "Detecting kept-back packages": "Checks which APT updates are being kept back",
   "Checking for updates": "Checks for available updates on the remote system",
@@ -194,6 +195,23 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         });
       }
 
+      const repairIssue = resolveRuntimeSteps({
+        systemId,
+        operation: "repair_issue",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      })[0];
+      if (repairIssue) {
+        exact.push({
+          id: `repair-issue:${manager}`,
+          category: "repair_issue",
+          label: `Repair ${managerLabel(manager)} issue`,
+          purpose: `Runs the package manager issue repair action for ${managerLabel(manager)}`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(repairIssue.command),
+        });
+      }
+
       const upgradeAll = resolveRuntimeSteps({
         systemId,
         operation: "upgrade_all",
@@ -276,6 +294,18 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         purpose: getCheckPurpose(label, manager),
         pkgManager: manager,
         command: normalizeCommandTemplate(step.command),
+      });
+    }
+
+    const repairIssue = getBuiltinSteps("repair_issue", manager, { config })[0];
+    if (repairIssue) {
+      exact.push({
+        id: `repair-issue:${manager}`,
+        category: "repair_issue",
+        label: `Repair ${managerLabel(manager)} issue`,
+        purpose: `Runs the package manager issue repair action for ${managerLabel(manager)}`,
+        pkgManager: manager,
+        command: normalizeCommandTemplate(repairIssue.command),
       });
     }
 

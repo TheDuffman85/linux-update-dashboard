@@ -178,6 +178,41 @@ export const hiddenUpdates = sqliteTable(
   ]
 );
 
+export const packageManagerIssues = sqliteTable(
+  "package_manager_issues",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    pkgManager: text("pkg_manager").notNull(),
+    issueKey: text("issue_key").notNull(),
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    repairCommand: text("repair_command"),
+    active: integer("active").notNull().default(1),
+    dismissedBootId: text("dismissed_boot_id"),
+    dismissedUptimeSeconds: real("dismissed_uptime_seconds"),
+    dismissedAt: text("dismissed_at"),
+    detectedAt: text("detected_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    lastSeenAt: text("last_seen_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    resolvedAt: text("resolved_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    unique().on(table.systemId, table.pkgManager, table.issueKey),
+  ]
+);
+
 export const updateHistory = sqliteTable("update_history", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   systemId: integer("system_id")

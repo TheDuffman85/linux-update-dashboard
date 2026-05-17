@@ -8,6 +8,7 @@ import { sudo, validatePackageName } from "../ssh/parsers/types";
 import { getDnfLikeEulaPromptMessage, hasDnfLikeEulaPrompt } from "../ssh/parsers/dnf";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
+import * as packageIssueService from "./package-manager-issue-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
 import { logger } from "../logger";
@@ -320,6 +321,16 @@ function formatUpgradeFailureOutput(
     return `${rawError}\n\n${getDnfLikeEulaPromptMessage(pkgManager)}`;
   }
   return rawError;
+}
+
+function recordPackageManagerIssueFromFailure(
+  systemId: number,
+  pkgManager: string,
+  output: string,
+): void {
+  const detectedIssue = packageIssueService.detectPackageManagerIssue(pkgManager, output);
+  if (!detectedIssue) return;
+  packageIssueService.upsertPackageManagerIssue(systemId, detectedIssue);
 }
 
 function getSystemPackageManagerConfigs(system: {
@@ -765,6 +776,7 @@ async function checkUpdatesUnlocked(
         let lastStderr = "";
         let lastExitCode = 0;
         const commandResults: CheckCommandResult[] = [];
+        const detectedIssues = new Map<string, packageIssueService.PackageManagerIssueInput>();
 
         for (let i = 0; i < commands.length; i++) {
           const label = steps[i]?.label ?? `Step ${i + 1}`;
@@ -814,6 +826,14 @@ async function checkUpdatesUnlocked(
                 || `Command exited with code ${result.exitCode}`
               : null);
           const commandFailed = result.exitCode !== 0 || checkErrorMessage !== null;
+          const detectedIssue = packageIssueService.detectPackageManagerIssue(
+            pmName,
+            `${result.stdout}\n${result.stderr}\n${combinedOutput}\n${checkErrorMessage ?? ""}`,
+          );
+          if (detectedIssue) {
+            detectedIssues.set(detectedIssue.issueKey, detectedIssue);
+            packageIssueService.upsertPackageManagerIssue(systemId, detectedIssue);
+          }
           lastStdout = result.stdout;
           lastStderr = result.stderr;
           lastExitCode = result.exitCode;
@@ -853,6 +873,13 @@ async function checkUpdatesUnlocked(
         allUpdates.push(...updates);
         successfulChecks++;
         successfulPkgManagers.push(pmName);
+        if (detectedIssues.size === 0) {
+          packageIssueService.resolvePackageManagerIssuesForManager(systemId, pmName);
+        } else {
+          for (const issue of detectedIssues.values()) {
+            checkErrors.push(`[${pmName}] ${issue.message}`);
+          }
+        }
       } catch (e) {
         if (isOperationCancelledError(e)) {
           throw e;
@@ -963,6 +990,168 @@ export async function checkUpdates(
     outputStream.resetStream(systemId);
     try {
       return await checkUpdatesUnlocked(systemId);
+    } finally {
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
+    }
+  });
+}
+
+export async function solvePackageManagerIssue(
+  systemId: number,
+  issueId: number,
+): Promise<OperationResult> {
+  return withLock(systemId, async () => {
+    const now = getCurrentTimestamp();
+    setActiveOperation(systemId, { type: "package_manager_repair", startedAt: now });
+    outputStream.resetStream(systemId);
+    await requestNotificationRuntimeSystemSync(systemId);
+    try {
+      const system = systemService.getSystem(systemId);
+      if (!system) return { success: false, output: "System not found" };
+      const issue = packageIssueService.getPackageManagerIssue(systemId, issueId);
+      if (!issue || issue.active !== 1) {
+        return { success: false, output: "Package manager issue not found" };
+      }
+      const steps = resolveRuntimeSteps({
+        systemId,
+        operation: "repair_issue",
+        pkgManager: issue.pkgManager,
+        pkgManagerConfig: getManagerConfig(getSystemPackageManagerConfigs(system), issue.pkgManager),
+      });
+      if (!steps.length) {
+        return { success: false, output: "No repair command is available for this package manager issue" };
+      }
+
+      const sshManager = getSSHManager();
+      const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
+      const signal = getCancellationSignal(systemId);
+      const activitySteps: ActivityStep[] = [];
+      const allCommands: string[] = [];
+      let repairOutput = "";
+      let conn;
+      try {
+        throwIfActiveOperationCancelled(systemId);
+        conn = await sshManager.connect(system as Record<string, unknown>, { systemId });
+        throwIfActiveOperationCancelled(systemId);
+
+        for (const step of steps) {
+          const cmd = step.command;
+          allCommands.push(cmd);
+          const label = step.label || "Repairing package manager";
+          const stepStartedAt = getCurrentTimestamp();
+          outputStream.publish(systemId, {
+            type: "started",
+            command: cmd,
+            pkgManager: issue.pkgManager,
+            startedAt: stepStartedAt,
+          });
+          outputStream.publish(systemId, { type: "phase", phase: label });
+          let streamedOutput = "";
+          const result = await sshManager.runCommand(
+            conn,
+            cmd,
+            undefined,
+            sudoPassword,
+            (chunk, stream) => {
+              streamedOutput += chunk;
+              outputStream.publish(systemId, { type: "output", data: chunk, stream });
+            },
+            signal,
+          );
+          const stepCompletedAt = getCurrentTimestamp();
+          const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
+          repairOutput += combinedOutput;
+
+          if (isCancelledResult(result.exitCode)) {
+            const message = "Operation cancelled";
+            activitySteps.push(createActivityStep({
+              label,
+              pkgManager: issue.pkgManager,
+              command: cmd,
+              output: combinedOutput,
+              error: message,
+              status: "cancelled",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }));
+            logHistory(systemId, "package_manager_repair", issue.pkgManager, "cancelled", {
+              command: allCommands.join(" && "),
+              steps: activitySteps,
+              output: repairOutput.slice(0, STEP_OUTPUT_LIMIT),
+              error: message,
+            });
+            outputStream.publish(systemId, { type: "warning", message });
+            outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+            return { success: false, output: message, cancelled: true };
+          }
+
+          if (result.exitCode !== 0) {
+            const errorText =
+              result.stderr || result.stdout || combinedOutput || `Repair command exited with code ${result.exitCode}`;
+            recordPackageManagerIssueFromFailure(systemId, issue.pkgManager, `${combinedOutput}\n${errorText}`);
+            activitySteps.push(createActivityStep({
+              label,
+              pkgManager: issue.pkgManager,
+              command: cmd,
+              output: combinedOutput,
+              error: errorText,
+              status: "failed",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }));
+            logHistory(systemId, "package_manager_repair", issue.pkgManager, "failed", {
+              command: allCommands.join(" && "),
+              steps: activitySteps,
+              output: repairOutput.slice(0, STEP_OUTPUT_LIMIT),
+              error: errorText,
+            });
+            outputStream.publish(systemId, { type: "error", message: errorText });
+            outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+            return { success: false, output: errorText };
+          }
+
+          activitySteps.push(createActivityStep({
+            label,
+            pkgManager: issue.pkgManager,
+            command: cmd,
+            output: combinedOutput,
+            error: null,
+            status: "success",
+            startedAt: stepStartedAt,
+            completedAt: stepCompletedAt,
+          }));
+        }
+
+        logHistory(systemId, "package_manager_repair", issue.pkgManager, "success", {
+          command: allCommands.join(" && "),
+          steps: activitySteps,
+          output: repairOutput.slice(0, STEP_OUTPUT_LIMIT),
+        });
+      } finally {
+        if (conn) sshManager.disconnect(conn);
+      }
+
+      setActiveOperationPhase(systemId, "rechecking");
+      outputStream.publish(systemId, { type: "phase", phase: "Refreshing updates" });
+      await checkUpdatesUnlocked(systemId, true);
+      const refreshedIssue = packageIssueService.getPackageManagerIssue(systemId, issueId);
+      const repaired = !refreshedIssue || refreshedIssue.active !== 1;
+      outputStream.publish(systemId, { type: "done", success: repaired, completedAt: getCurrentTimestamp() });
+      return {
+        success: repaired,
+        output: repaired
+          ? "Package manager issue repaired"
+          : "Repair command ran, but the package manager issue is still detected.",
+      };
+    } catch (error) {
+      if (isOperationCancelledError(error)) {
+        return { success: false, output: error.message, cancelled: true };
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      outputStream.publish(systemId, { type: "error", message });
+      outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+      return { success: false, output: message };
     } finally {
       clearActiveOperation(systemId);
       await requestNotificationRuntimeSystemSync(systemId);
@@ -1114,6 +1303,13 @@ export async function applyUpgradeAll(
         const formattedError = success
           ? null
           : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
+        if (!success) {
+          recordPackageManagerIssueFromFailure(
+            systemId,
+            pmName,
+            `${stdout}\n${stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
+          );
+        }
         allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
 
         const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
@@ -1352,6 +1548,13 @@ export async function applyFullUpgradeAll(
         const formattedError = success
           ? null
           : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
+        if (!success) {
+          recordPackageManagerIssueFromFailure(
+            systemId,
+            pmName,
+            `${stdout}\n${stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
+          );
+        }
         allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
 
         const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
@@ -1587,6 +1790,13 @@ export async function applyUpgradePackages(
           const formattedError = success
             ? null
             : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
+          if (!success) {
+            recordPackageManagerIssueFromFailure(
+              systemId,
+              pmName,
+              `${stdout}\n${stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
+            );
+          }
           finishEntry(histId, histStatus, {
             packageCount: selected.packageNames.length,
             packages: selectedPackagesJson,

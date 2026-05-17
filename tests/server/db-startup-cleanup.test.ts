@@ -337,6 +337,18 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
   });
 
+  test("creates package manager issue tracking table", () => {
+    const sqlite = new Database(dbPath, { readonly: true });
+    const columns = sqlite
+      .prepare("PRAGMA table_info(package_manager_issues)")
+      .all() as Array<{ name?: string }>;
+    sqlite.close();
+
+    expect(columns.some((column) => column.name === "issue_key")).toBe(true);
+    expect(columns.some((column) => column.name === "dismissed_boot_id")).toBe(true);
+    expect(columns.some((column) => column.name === "resolved_at")).toBe(true);
+  });
+
   test("adds the upgrade order column for systems", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const columns = sqlite

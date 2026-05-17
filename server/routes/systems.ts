@@ -3,6 +3,7 @@ import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import { buildCommandReference } from "../services/command-reference";
 import * as hiddenUpdateService from "../services/hidden-update-service";
+import * as packageIssueService from "../services/package-manager-issue-service";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
 import * as scriptService from "../services/script-service";
@@ -176,6 +177,16 @@ function getSystemWriteErrorResponse(error: unknown): Response | null {
   }
 
   if (error instanceof systemService.RebootDismissalSnapshotRequiredError) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  if (error instanceof packageIssueService.PackageIssueDismissalSnapshotRequiredError) {
     return new Response(
       JSON.stringify({ error: error.message }),
       {
@@ -425,6 +436,9 @@ systems.get("/", (c) => {
     ? systemService.listVisibleSystemsWithUpdateCounts()
     : systemService.listSystemsWithUpdateCounts();
   const lastChecks = getLastCheckMap(allSystems.map((system) => system.id));
+  const issueCounts = packageIssueService.getVisiblePackageManagerIssueCounts(
+    allSystems.map((system) => system.id),
+  );
   const systemsWithMeta = allSystems.map((s) => ({
     ...serializeSystem(s as Record<string, unknown>),
     hostKeyStatus: deriveDisplayedHostKeyStatus(
@@ -436,6 +450,7 @@ systems.get("/", (c) => {
     cacheTimestamp: cacheService.getCacheTimestamp(s.id),
     activeOperation: updateService.getActiveOperation(s.id),
     supportsFullUpgrade: updateService.supportsFullUpgrade(s.id),
+    packageIssueCount: issueCounts.get(s.id) ?? 0,
   }));
   return c.json({ systems: systemsWithMeta });
 });
@@ -449,6 +464,7 @@ systems.get("/:id", (c) => {
 
   const updates = hiddenUpdateService.getVisibleCachedUpdates(id);
   const hiddenUpdates = hiddenUpdateService.listActiveHiddenUpdates(id);
+  const packageIssues = packageIssueService.listVisiblePackageManagerIssues(id);
   const history = updateService.getHistory(id, getActivityHistoryLimit()).map((h) => ({
     ...h,
     packagesList: h.packages ? JSON.parse(h.packages) : [],
@@ -478,6 +494,7 @@ systems.get("/:id", (c) => {
     }),
     updates,
     hiddenUpdates,
+    packageIssues,
     history,
   });
 });
@@ -519,6 +536,30 @@ systems.post("/:id/hidden-updates", async (c) => {
   }
 
   return c.json({ hiddenUpdate }, 201);
+});
+
+systems.post("/:id/package-issues/:issueId/dismiss", async (c) => {
+  const systemId = parseId(c.req.param("id"));
+  const issueId = parseId(c.req.param("issueId"));
+  if (!systemId || !issueId) {
+    return c.json({ error: "Invalid package manager issue ID" }, 400);
+  }
+  const system = systemService.getSystem(systemId);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  try {
+    packageIssueService.dismissPackageManagerIssue(systemId, issueId);
+  } catch (error) {
+    const response = getSystemWriteErrorResponse(error);
+    if (response) return response;
+    if (error instanceof Error && error.message.includes("not found")) {
+      return c.json({ error: error.message }, 404);
+    }
+    throw error;
+  }
+
+  await notificationRuntime.syncSystemState(systemId);
+  return c.json({ status: "ok" });
 });
 
 systems.delete("/:id/hidden-updates/:hiddenUpdateId", (c) => {

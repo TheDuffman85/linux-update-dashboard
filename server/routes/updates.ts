@@ -80,6 +80,22 @@ updates.post("/systems/:id/cancel", async (c) => {
   return c.json({ status: "cancelling" });
 });
 
+updates.post("/systems/:id/package-issues/:issueId/solve", async (c) => {
+  const id = parseId(c.req.param("id"));
+  const issueId = parseId(c.req.param("issueId"));
+  if (!id || !issueId) {
+    return c.json({ error: "Invalid package manager issue ID" }, 400);
+  }
+  const jobId = startJob(async () => {
+    const result = await updateService.solvePackageManagerIssue(id, issueId);
+    return {
+      status: result.cancelled ? "cancelled" : result.success ? "success" : "failed",
+      output: result.output,
+    };
+  });
+  return c.json({ status: "started", jobId });
+});
+
 // Check all systems
 updates.post("/systems/check-all", async (c) => {
   // Run in background

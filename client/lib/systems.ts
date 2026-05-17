@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiFetch } from "./client";
+import { apiFetch, pollJob } from "./client";
 import type { PackageManagerConfigs } from "./package-manager-configs";
 import type { HostKeyStatus } from "./host-key-status";
 
 export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot";
+  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair";
   startedAt: string;
   phase?: "reconnecting" | "rechecking";
   packageName?: string;
@@ -72,6 +72,7 @@ export interface System {
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
   supportsFullUpgrade?: boolean;
+  packageIssueCount?: number;
   scriptOverrides: Record<string, string>;
 }
 
@@ -103,6 +104,25 @@ export interface HiddenUpdate {
   active: number;
   lastMatchedAt: string;
   inactiveSince: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PackageManagerIssue {
+  id: number;
+  systemId: number;
+  pkgManager: string;
+  issueKey: string;
+  title: string;
+  message: string;
+  repairCommand: string | null;
+  active: number;
+  dismissedBootId: string | null;
+  dismissedUptimeSeconds: number | null;
+  dismissedAt: string | null;
+  detectedAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,7 +159,7 @@ export interface HistoryEntry {
 
 export interface PotentialCommandEntry {
   id: string;
-  category: "detection" | "system_info" | "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
+  category: "detection" | "system_info" | "check" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
   label: string;
   purpose: string;
   pkgManager: string | null;
@@ -155,6 +175,7 @@ export interface SystemDetailResponse {
   system: System;
   updates: CachedUpdate[];
   hiddenUpdates: HiddenUpdate[];
+  packageIssues: PackageManagerIssue[];
   history: HistoryEntry[];
   commandReference: CommandReference;
 }
@@ -361,6 +382,41 @@ export function useDismissNeedsReboot() {
       apiFetch<{ status: string }>(`/systems/${id}/dismiss-needs-reboot`, { method: "POST" }),
     onSuccess: async (_data, id) => {
       await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useSolvePackageIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ systemId, issueId }: { systemId: number; issueId: number }) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
+        `/systems/${systemId}/package-issues/${issueId}/solve`,
+        { method: "POST" },
+      );
+      return pollJob<{ status: string; output: string }>(jobId, 3000);
+    },
+    onSettled: async (_data, _error, vars) => {
+      if (!vars) return;
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useDismissPackageIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ systemId, issueId }: { systemId: number; issueId: number }) =>
+      apiFetch<{ status: string }>(
+        `/systems/${systemId}/package-issues/${issueId}/dismiss`,
+        { method: "POST" },
+      ),
+    onSuccess: async (_data, vars) => {
+      await qc.invalidateQueries({ queryKey: ["system", vars.systemId] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
       await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },

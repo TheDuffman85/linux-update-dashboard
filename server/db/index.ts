@@ -198,6 +198,26 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     UNIQUE(system_id, pkg_manager, package_name, new_version)
   )`);
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS package_manager_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    pkg_manager TEXT NOT NULL,
+    issue_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    repair_command TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    dismissed_boot_id TEXT,
+    dismissed_uptime_seconds REAL,
+    dismissed_at TEXT,
+    detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(system_id, pkg_manager, issue_key)
+  )`);
+
   _db.run(sql`CREATE TABLE IF NOT EXISTS update_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
