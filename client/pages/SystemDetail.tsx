@@ -5,7 +5,13 @@ import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSystem, useRebootSystem, useDismissNeedsReboot } from "../lib/systems";
+import {
+  useSystem,
+  useRebootSystem,
+  useDismissNeedsReboot,
+  useSolvePackageIssue,
+  useDismissPackageIssue,
+} from "../lib/systems";
 import { useCancelOperation, useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
@@ -18,6 +24,7 @@ import type {
   HistoryEntry,
   ActiveOperation,
   ActivityStep,
+  PackageManagerIssue,
 } from "../lib/systems";
 import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
@@ -247,6 +254,74 @@ function UpdateCheckNotice({
   );
 }
 
+export function PackageManagerIssueBanner({
+  issues,
+  busy,
+  solvingIssueId,
+  dismissingIssueId,
+  onSolve,
+  onDismiss,
+}: {
+  issues: PackageManagerIssue[];
+  busy?: boolean;
+  solvingIssueId?: number | null;
+  dismissingIssueId?: number | null;
+  onSolve: (issue: PackageManagerIssue) => void;
+  onDismiss: (issue: PackageManagerIssue) => void;
+}) {
+  if (issues.length === 0) return null;
+
+  return (
+    <div className="space-y-3 mb-6">
+      {issues.map((issue) => {
+        const solving = solvingIssueId === issue.id;
+        const dismissing = dismissingIssueId === issue.id;
+        return (
+          <div
+            key={issue.id}
+            className="flex items-center gap-2 px-4 py-3 rounded-xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-sm"
+          >
+            <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+            </svg>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium">{issue.title}</span>
+                <Badge variant="danger" small>{issue.pkgManager}</Badge>
+              </div>
+              <p className="text-red-600 dark:text-red-400">{issue.message}</p>
+            </div>
+            <button
+              onClick={() => onSolve(issue)}
+              disabled={busy || solving || dismissing}
+              className="px-3 py-1 text-xs font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+            >
+              {solving ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="spinner spinner-sm" />
+                  Solving...
+                </span>
+              ) : "Solve"}
+            </button>
+            <button
+              onClick={() => onDismiss(issue)}
+              disabled={busy || solving || dismissing}
+              className="px-3 py-1 text-xs font-medium rounded-lg border border-red-300 dark:border-red-800 bg-white/70 dark:bg-slate-900/30 text-red-700 dark:text-red-300 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+            >
+              {dismissing ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="spinner spinner-sm" />
+                  Dismissing...
+                </span>
+              ) : "Dismiss"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function getStatusVariant(status: string): "success" | "warning" | "danger" | "muted" {
   if (status === "success") return "success";
   if (status === "warning") return "warning";
@@ -314,6 +389,7 @@ export function getActivityTitle(
   if (action === "upgrade_all") return "Upgraded all packages";
   if (action === "full_upgrade_all") return "Full upgraded all packages";
   if (action === "reboot") return "Rebooted system";
+  if (action === "package_manager_repair") return "Repaired package manager";
   return `Upgraded ${packagesList.join(", ") || packageName || "package"}`;
 }
 
@@ -1128,12 +1204,16 @@ export default function SystemDetail() {
   const cancelOperation = useCancelOperation();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
+  const solvePackageIssue = useSolvePackageIssue();
+  const dismissPackageIssue = useDismissPackageIssue();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showUpgradeSelectedConfirm, setShowUpgradeSelectedConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDismissNeedsRebootConfirm, setShowDismissNeedsRebootConfirm] = useState(false);
+  const [pendingSolveIssue, setPendingSolveIssue] = useState<PackageManagerIssue | null>(null);
+  const [pendingDismissIssue, setPendingDismissIssue] = useState<PackageManagerIssue | null>(null);
   const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
   const [selectedPackageNames, setSelectedPackageNames] = useState<string[]>([]);
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
@@ -1184,7 +1264,9 @@ export default function SystemDetail() {
     activeOp?.type === "upgrade_package"
   );
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
+  const repairingPackageIssue = solvePackageIssue.isPending || activeOp?.type === "package_manager_repair";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
+  const dismissingPackageIssue = dismissPackageIssue.isPending;
   const operationCancellable = !!activeOp && !activeOp.cancelRequested && !cancelOperation.isPending;
   const updatesSignature = data?.updates
     .map((update) => `${update.pkgManager}:${update.packageName}:${update.newVersion || ""}`)
@@ -1214,12 +1296,12 @@ export default function SystemDetail() {
     );
   }
 
-  const { system, updates, hiddenUpdates, history } = data;
-  const selectionBusy = upgrading || checking || rebooting || hideUpdate.isPending || unhideUpdate.isPending;
+  const { system, updates, hiddenUpdates, packageIssues, history } = data;
+  const selectionBusy = upgrading || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
-  const updateState = deriveSystemUpdateState(system, { upgrading, checking });
+  const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
     : updateState === "check_warning" || updateState === "updates_available"
@@ -1324,6 +1406,38 @@ export default function SystemDetail() {
     });
   };
 
+  const handleSolvePackageIssue = () => {
+    if (!pendingSolveIssue) return;
+    const issue = pendingSolveIssue;
+    setPendingSolveIssue(null);
+    solvePackageIssue.mutate(
+      { systemId, issueId: issue.id },
+      {
+        onSuccess: (d) =>
+          addToast(
+            d.status === "success" ? "Package manager issue solved"
+              : d.status === "cancelled" ? "Package manager repair cancelled"
+                : d.output || "Package manager repair failed",
+            d.status === "success" ? "success" : d.status === "cancelled" ? "info" : "danger",
+          ),
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
+
+  const handleDismissPackageIssue = () => {
+    if (!pendingDismissIssue) return;
+    const issue = pendingDismissIssue;
+    setPendingDismissIssue(null);
+    dismissPackageIssue.mutate(
+      { systemId, issueId: issue.id },
+      {
+        onSuccess: () => addToast("Package manager warning dismissed", "success"),
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
+
   const handleCancelOperation = () => {
     setShowCancelConfirm(false);
     cancelOperation.mutate(systemId, {
@@ -1402,8 +1516,8 @@ export default function SystemDetail() {
     <Layout
       title={
         <span className="flex items-center gap-2 min-w-0">
-          {upgrading || checking ? (
-            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+          {upgrading || checking || repairingPackageIssue ? (
+            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || repairingPackageIssue ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
           ) : (
             <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
           )}
@@ -1421,12 +1535,12 @@ export default function SystemDetail() {
             </svg>
             Back
           </button>
-          {checking && activeOp ? (
-            renderRunningCancelAction("Checking...", checkingCancelClass)
+          {(checking || repairingPackageIssue) && activeOp ? (
+            renderRunningCancelAction(repairingPackageIssue ? "Repairing..." : "Checking...", checkingCancelClass)
           ) : (
             <button
               onClick={handleCheck}
-              disabled={checking || upgrading}
+              disabled={checking || upgrading || repairingPackageIssue}
               className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 min-w-24"
             >
               {checking ? (
@@ -1443,7 +1557,7 @@ export default function SystemDetail() {
             ) : hasSelectedPackages ? (
               <button
                 onClick={() => setShowUpgradeSelectedConfirm(true)}
-                disabled={upgrading || checking}
+                disabled={upgrading || checking || repairingPackageIssue}
                 className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
               >
                 {upgrading ? (
@@ -1461,7 +1575,7 @@ export default function SystemDetail() {
                   <div className="flex">
                     <button
                       onClick={() => setShowUpgradeConfirm(true)}
-                      disabled={upgrading || checking}
+                      disabled={upgrading || checking || repairingPackageIssue}
                       className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-32"
                     >
                       {upgrading ? (
@@ -1475,7 +1589,7 @@ export default function SystemDetail() {
                     </button>
                     <button
                       onClick={() => setShowUpgradeDropdown((v) => !v)}
-                      disabled={upgrading || checking}
+                      disabled={upgrading || checking || repairingPackageIssue}
                       className="px-1.5 py-1.5 text-sm rounded-r-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 border-l border-blue-500"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1500,7 +1614,7 @@ export default function SystemDetail() {
               ) : (
                 <button
                   onClick={() => setShowFullUpgradeConfirm(true)}
-                  disabled={upgrading || checking}
+                  disabled={upgrading || checking || repairingPackageIssue}
                   className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
                 >
                   {upgrading ? (
@@ -1516,7 +1630,7 @@ export default function SystemDetail() {
             ) : (
               <button
                 onClick={() => setShowUpgradeConfirm(true)}
-                disabled={upgrading || checking}
+                disabled={upgrading || checking || repairingPackageIssue}
                 className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
               >
                 {upgrading ? (
@@ -1584,6 +1698,15 @@ export default function SystemDetail() {
         />
       </div>
 
+      <PackageManagerIssueBanner
+        issues={packageIssues}
+        busy={upgrading || checking || rebooting || repairingPackageIssue}
+        solvingIssueId={solvePackageIssue.isPending ? solvePackageIssue.variables?.issueId ?? null : null}
+        dismissingIssueId={dismissPackageIssue.isPending ? dismissPackageIssue.variables?.issueId ?? null : null}
+        onSolve={setPendingSolveIssue}
+        onDismiss={setPendingDismissIssue}
+      />
+
       {/* Reboot required warning */}
       {system.needsReboot === 1 && (
         <div className="flex items-center gap-2 px-4 py-3 mb-6 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm">
@@ -1594,7 +1717,7 @@ export default function SystemDetail() {
           <span className="text-amber-600 dark:text-amber-500 flex-1">A kernel update has been installed. Reboot this system to apply it.</span>
           <button
             onClick={() => setShowRebootConfirm(true)}
-            disabled={rebooting || upgrading || checking || dismissingNeedsReboot}
+            disabled={rebooting || upgrading || checking || repairingPackageIssue || dismissingNeedsReboot}
             className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {rebooting ? (
@@ -1606,7 +1729,7 @@ export default function SystemDetail() {
           </button>
           <button
             onClick={() => setShowDismissNeedsRebootConfirm(true)}
-            disabled={dismissingNeedsReboot || rebooting || upgrading || checking}
+            disabled={dismissingNeedsReboot || rebooting || upgrading || checking || repairingPackageIssue}
             className="px-3 py-1 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-900/30 text-amber-700 dark:text-amber-400 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {dismissingNeedsReboot ? (
@@ -1657,7 +1780,7 @@ export default function SystemDetail() {
 
       <HiddenUpdatesSection
         hiddenUpdates={hiddenUpdates}
-        busy={unhideUpdate.isPending || hideUpdate.isPending || upgrading || checking}
+        busy={unhideUpdate.isPending || hideUpdate.isPending || upgrading || checking || repairingPackageIssue}
         onUnhide={handleUnhideUpdate}
       />
 
@@ -1737,6 +1860,32 @@ export default function SystemDetail() {
         message={`Dismiss the reboot warning for ${system.name}? It will stay hidden until a later system scan detects that the host has rebooted.`}
         confirmLabel="Dismiss Warning"
         loading={dismissingNeedsReboot}
+      />
+      <ConfirmDialog
+        open={pendingSolveIssue !== null}
+        onClose={() => setPendingSolveIssue(null)}
+        onConfirm={handleSolvePackageIssue}
+        title="Solve Package Manager Issue"
+        message={
+          pendingSolveIssue
+            ? `Run the repair action for ${pendingSolveIssue.title} on ${system.name}? The dashboard will refresh updates afterwards.`
+            : ""
+        }
+        confirmLabel="Solve"
+        loading={repairingPackageIssue}
+      />
+      <ConfirmDialog
+        open={pendingDismissIssue !== null}
+        onClose={() => setPendingDismissIssue(null)}
+        onConfirm={handleDismissPackageIssue}
+        title="Dismiss Package Manager Warning"
+        message={
+          pendingDismissIssue
+            ? `Dismiss ${pendingDismissIssue.title} for ${system.name}? It will stay hidden for this boot, or until a later check no longer detects it.`
+            : ""
+        }
+        confirmLabel="Dismiss Warning"
+        loading={dismissingPackageIssue}
       />
       <ConfirmDialog
         open={pendingHideUpdate !== null}

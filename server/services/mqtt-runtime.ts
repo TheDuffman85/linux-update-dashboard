@@ -132,7 +132,12 @@ function formatHomeAssistantAppVersion(version: string | null, branch: string): 
 }
 
 function isMutatingOperation(type: string | undefined): boolean {
-  return type === "upgrade_all" || type === "full_upgrade_all" || type === "upgrade_package";
+  return (
+    type === "upgrade_all" ||
+    type === "full_upgrade_all" ||
+    type === "upgrade_package" ||
+    type === "package_manager_repair"
+  );
 }
 
 function buildSystemReleaseSummary(

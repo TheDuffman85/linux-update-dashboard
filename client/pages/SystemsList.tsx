@@ -195,7 +195,7 @@ export default function SystemsList() {
               {orderedSystems.map((s) => {
                 const postUpgradeRechecking = isPostUpgradeRecheck(s.activeOperation);
                 const upgrading = !postUpgradeRechecking && (isUpgrading(s.id) || !!s.activeOperation?.type?.startsWith("upgrade"));
-                const checking = postUpgradeRechecking || s.activeOperation?.type === "check";
+                const checking = postUpgradeRechecking || s.activeOperation?.type === "check" || s.activeOperation?.type === "package_manager_repair";
                 const updateState = deriveSystemUpdateState(s, { upgrading, checking });
 
                 return (
@@ -259,6 +259,9 @@ export default function SystemsList() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                           </svg>
                         </span>
+                      )}
+                      {(s.packageIssueCount ?? 0) > 0 && (
+                        <Badge variant="danger" small>pkg issue</Badge>
                       )}
                     </div>
                   </td>

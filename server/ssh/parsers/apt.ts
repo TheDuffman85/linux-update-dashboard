@@ -49,13 +49,15 @@ function findCommandResult(
 }
 
 export const APT_LOCK_WAIT = "-o DPkg::Lock::Timeout=60";
+export const APT_DPKG_AUDIT_PREFIX =
+  'audit="$(dpkg --audit 2>&1 || true)"; if [ -n "$audit" ]; then printf "%s\\n" "dpkg was interrupted, you must manually run \'sudo dpkg --configure -a\' to correct the problem."; printf "%s\\n" "$audit"; fi';
 
 export const aptParser: PackageParser = {
   name: "apt",
 
   getCheckCommands() {
     return [
-      sudo(`apt-get ${APT_LOCK_WAIT} update -qq`) + " 2>&1",
+      `${APT_DPKG_AUDIT_PREFIX}; ${sudo(`apt-get ${APT_LOCK_WAIT} update -qq`)} 2>&1`,
       "DEBIAN_FRONTEND=noninteractive apt list --upgradable 2>/dev/null | tail -n +2",
       "DEBIAN_FRONTEND=noninteractive apt-get -s -o Debug::NoLocking=1 upgrade 2>&1",
     ];

@@ -12,6 +12,7 @@ import {
 } from "../package-manager-configs";
 import { getPackageManagerDetectionCommands } from "../ssh/detector";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
+import { APT_DPKG_AUDIT_PREFIX } from "../ssh/parsers/apt";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
 import { getRebootCommand } from "../ssh/reboot";
@@ -30,6 +31,7 @@ export type ScriptType = "package_manager" | "system";
 export type ScriptOperation =
   | "detect"
   | "check_updates"
+  | "repair_issue"
   | "upgrade_all"
   | "full_upgrade_all"
   | "upgrade_selected"
@@ -606,8 +608,8 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
         {
           label: "Fetching package lists",
           command: commentedCommand(
-            "Refresh APT package metadata before listing available updates.",
-            sudo("apt-get -o DPkg::Lock::Timeout=60 update -qq") + " 2>&1",
+            "Audit dpkg state, then refresh APT package metadata before listing available updates.",
+            `${APT_DPKG_AUDIT_PREFIX}; ${sudo("apt-get -o DPkg::Lock::Timeout=60 update -qq")} 2>&1`,
           ),
         },
         {
@@ -705,6 +707,32 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
   }
 }
 
+function dnfLikeRepairIssueScript(tool: "dnf" | "yum"): string {
+  return commandLines(
+    `# Accept a newly presented ${tool.toUpperCase()} repository signing key for this one repair attempt.`,
+    `updates="$(${tool} -y check-update --quiet 2>&1)"; rc=$?`,
+    'echo "$updates"',
+    'if [ "$rc" -ne 0 ] && [ "$rc" -ne 100 ]; then exit "$rc"; fi',
+  );
+}
+
+function builtinRepairIssueCommand(manager: string): string | null {
+  switch (manager) {
+    case "apt":
+      return commandLines(
+        "# Finish any interrupted dpkg package configuration.",
+        "export DEBIAN_FRONTEND=noninteractive",
+        sudo("dpkg --configure -a") + " 2>&1",
+      );
+    case "dnf":
+      return dnfLikeRepairIssueScript("dnf");
+    case "yum":
+      return dnfLikeRepairIssueScript("yum");
+    default:
+      return null;
+  }
+}
+
 function builtinUpgradeAllCommand(manager: string): string {
   switch (manager) {
     case "apt":
@@ -790,6 +818,16 @@ function builtinScriptsForManager(manager: string): ScriptDefinition[] {
     `Refreshes and checks available ${managerLabel(manager)} updates.`,
     builtinCheckSteps(manager),
   ));
+  const repairIssue = builtinRepairIssueCommand(manager);
+  if (repairIssue) {
+    scripts.push(builtinScript(
+      "repair_issue",
+      manager,
+      `Repair ${managerLabel(manager)} issue`,
+      `Runs the built-in ${managerLabel(manager)} repair action used by package manager issue banners.`,
+      [{ label: `Repair ${managerLabel(manager)} issue`, command: repairIssue }],
+    ));
+  }
   scripts.push(builtinScript(
     "upgrade_all",
     manager,
@@ -963,7 +1001,7 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type !== "package_manager" && input.type !== "system") {
     return "type must be package_manager or system";
   }
-  const operations: ScriptOperation[] = ["detect", "check_updates", "upgrade_all", "full_upgrade_all", "upgrade_selected", "system_info", "reboot"];
+  const operations: ScriptOperation[] = ["detect", "check_updates", "repair_issue", "upgrade_all", "full_upgrade_all", "upgrade_selected", "system_info", "reboot"];
   if (!input.operation || !operations.includes(input.operation)) {
     return "operation is not supported";
   }

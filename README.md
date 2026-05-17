@@ -674,11 +674,11 @@ Per-system package-manager config is available in the system edit dialog for sup
 
 ## Script Customization
 
-The **Scripts** page exposes the SSH command templates that power package-manager detection, update checks, upgrades, selected-package upgrades, system information collection, and reboots.
+The **Scripts** page exposes the SSH command templates that power package-manager detection, update checks, issue repair actions, upgrades, selected-package upgrades, system information collection, and reboots.
 
 - **Built-in scripts are read-only:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot scripts are shipped as defaults and can be copied when you need a custom variant
 - **Custom scripts are editable:** define one or more shell steps, choose the operation they implement, and optionally attach parser settings for update checks or section mapping for system-info output
-- **Per-system overrides:** each system can keep the standard detected defaults or override individual operations such as `apt/check_updates`, `apt/upgrade_all`, or `system/reboot`
+- **Per-system overrides:** each system can keep the standard detected defaults or override individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/upgrade_all`, or `system/reboot`
 - **Usage tracking:** custom scripts show where they are assigned, and scripts still used by active systems cannot be deleted accidentally
 - **Custom package managers:** add package managers beyond the built-in list with a display label, parser regexes, and optional config entries that appear in each matching system's package-manager settings
 
@@ -801,6 +801,7 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-apt-snap-partial` | 2012 | APT + Snap (Snap check fails) | `bash` | Ubuntu 24.04 |
 | `ludash-test-dnf-gpg-prompt` | 2013 | DNF (GPG key prompt fixture) | `bash` | Fedora 41 |
 | `ludash-test-dnf-eula-prompt` | 2014 | DNF (EULA prompt fixture) | `bash` | Fedora 41 |
+| `ludash-test-apt-dpkg-interrupted` | 2015 | APT (interrupted dpkg fixture) | `bash` | Debian 12 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -829,6 +830,11 @@ That makes it useful for verifying the dashboard’s fail-closed handling of `dn
 - an upgrade `%pre` scriptlet that reads from `/dev/tty` unless `ACCEPT_EULA=Y` is set
 
 That makes it useful for verifying the dashboard’s opt-in DNF/YUM EULA automation for non-interactive upgrades without depending on third-party repositories.
+
+`ludash-test-apt-dpkg-interrupted` is a special APT fixture. It intentionally leaves a local package in a failed configure state so APT commands report:
+- `dpkg was interrupted, you must manually run 'sudo dpkg --configure -a'`
+
+That makes it useful for verifying the package manager issue banner, including the **Solve** action that runs `dpkg --configure -a` and then rechecks updates.
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 

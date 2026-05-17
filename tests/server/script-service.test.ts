@@ -68,6 +68,8 @@ describe("script service", () => {
     const scripts = getBuiltinScripts();
 
     expect(scripts.some((script) => script.id === "builtin:apt:check_updates" && script.readonly)).toBe(true);
+    expect(scripts.some((script) => script.id === "builtin:apt:repair_issue" && script.readonly)).toBe(true);
+    expect(scripts.some((script) => script.id === "builtin:dnf:repair_issue" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:snap:detect" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:system:system_info" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:system:reboot" && script.readonly)).toBe(true);
@@ -76,13 +78,14 @@ describe("script service", () => {
   test("resolves built-in runtime steps from the canonical script templates", () => {
     insertSystem(12);
     const cases: Array<{
-      operation: "detect" | "check_updates" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
+      operation: "detect" | "check_updates" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
       pkgManager: string | null;
       pkgManagerConfig?: Record<string, unknown>;
       packages?: string[];
     }> = [
       { operation: "detect", pkgManager: "apt" },
       { operation: "check_updates", pkgManager: "apt" },
+      { operation: "repair_issue", pkgManager: "apt" },
       { operation: "upgrade_all", pkgManager: "apt", pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" } },
       { operation: "full_upgrade_all", pkgManager: "dnf", pkgManagerConfig: { autoAcceptEulaOnUpgrade: true } },
       { operation: "upgrade_selected", pkgManager: "apt", packages: ["curl", "openssl"] },

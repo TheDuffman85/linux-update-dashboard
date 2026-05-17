@@ -34,6 +34,7 @@ hljs.configure({ ignoreUnescapedHTML: true });
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
   check_updates: "Check updates",
+  repair_issue: "Repair issue",
   upgrade_all: "Upgrade all",
   full_upgrade_all: "Full upgrade",
   upgrade_selected: "Upgrade selected",
@@ -43,6 +44,7 @@ const OPERATION_LABELS: Record<ScriptOperation, string> = {
 const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
   "detect",
   "check_updates",
+  "repair_issue",
   "upgrade_all",
   "full_upgrade_all",
   "upgrade_selected",

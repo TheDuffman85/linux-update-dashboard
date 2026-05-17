@@ -1,14 +1,16 @@
 import { describe, expect, test } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   buildActivityDisplayRows,
   getActivityTitle,
   getPackageSelectionState,
   isScrollNearBottom,
   matchesHistoryEntryToSession,
+  PackageManagerIssueBanner,
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
 } from "../../client/pages/SystemDetail";
-import type { ActiveOperation, HistoryEntry } from "../../client/lib/systems";
+import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
 import type { WsMessage } from "../../client/hooks/useCommandOutput";
 
 function createHistoryEntry(overrides: Partial<HistoryEntry> & Pick<HistoryEntry, "id" | "action" | "pkgManager" | "status" | "startedAt">): HistoryEntry {
@@ -449,6 +451,40 @@ describe("buildActivityDisplayRows", () => {
     expect(rows[0]?.isRunning).toBe(false);
     expect(rows[0]?.useLiveDetails).toBe(true);
     expect(rows[0]?.completedAt).toBe("2026-03-25 20:00:03");
+  });
+});
+
+describe("PackageManagerIssueBanner", () => {
+  test("renders solve and dismiss actions for visible package manager issues", () => {
+    const issue: PackageManagerIssue = {
+      id: 7,
+      systemId: 1,
+      pkgManager: "apt",
+      issueKey: "apt_dpkg_interrupted",
+      title: "APT needs repair",
+      message: "dpkg was interrupted",
+      repairCommand: "dpkg --configure -a",
+      active: 1,
+      dismissedBootId: null,
+      dismissedUptimeSeconds: null,
+      dismissedAt: null,
+      detectedAt: "2026-05-17 10:00:00",
+      lastSeenAt: "2026-05-17 10:00:00",
+      resolvedAt: null,
+      createdAt: "2026-05-17 10:00:00",
+      updatedAt: "2026-05-17 10:00:00",
+    };
+
+    const html = renderToStaticMarkup(PackageManagerIssueBanner({
+      issues: [issue],
+      onSolve: () => {},
+      onDismiss: () => {},
+    }));
+
+    expect(html).toContain("APT needs repair");
+    expect(html).toContain("dpkg was interrupted");
+    expect(html).toContain("Solve");
+    expect(html).toContain("Dismiss");
   });
 });
 
