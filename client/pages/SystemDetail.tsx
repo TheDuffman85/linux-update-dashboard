@@ -26,7 +26,7 @@ import type {
   ActivityStep,
   PackageManagerIssue,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
@@ -1195,11 +1195,11 @@ export default function SystemDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const systemId = parseInt(id!, 10);
-  const { data, isLoading } = useSystem(systemId);
+  const { data, isLoading, dataUpdatedAt } = useSystem(systemId);
   const checkUpdates = useCheckUpdates();
   const hideUpdate = useHideUpdate();
   const unhideUpdate = useUnhideUpdate();
-  const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading, removeUpgrading } = useUpgrade();
+  const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading, removeUpgrading, upgradingSystems } = useUpgrade();
   const { addToast } = useToast();
   const cancelOperation = useCancelOperation();
   const rebootSystem = useRebootSystem();
@@ -1240,6 +1240,16 @@ export default function SystemDetail() {
       removeUpgrading(systemId);
     }
   }, [commandOutput.phase, isUpgrading, removeUpgrading, systemId]);
+
+  // Keep the local header/status pill in sync if the mutation callback is
+  // delayed or missed but the server has already finalized the operation.
+  useEffect(() => {
+    const localUpgrade = upgradingSystems.get(systemId);
+    if (!data || !localUpgrade || dataUpdatedAt < localUpgrade.addedAt) return;
+    if (shouldClearLocalUpgrade(data.system.activeOperation)) {
+      removeUpgrading(systemId);
+    }
+  }, [data, dataUpdatedAt, removeUpgrading, systemId, upgradingSystems]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
