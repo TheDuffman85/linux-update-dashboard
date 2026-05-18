@@ -56,7 +56,7 @@ vi.mock("../../client/components/Layout", () => ({
   ),
 }));
 
-import Dashboard from "../../client/pages/Dashboard";
+import Dashboard, { getDashboardUpgradeToast } from "../../client/pages/Dashboard";
 
 describe("Dashboard", () => {
   beforeEach(() => {
@@ -122,5 +122,56 @@ describe("Dashboard", () => {
 
     expect(html).toContain("Upgrade All");
     expect(html).not.toContain("Upgrade All (7)");
+  });
+
+  test("disables dashboard refresh and upgrade actions while the server reports an active upgrade", () => {
+    mockUseDashboardSystems.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          name: "Alpha",
+          hostname: "alpha.local",
+          port: 22,
+          osName: "Debian",
+          isReachable: 1,
+          updateCount: 7,
+          securityCount: 2,
+          keptBackCount: 0,
+          cacheAge: null,
+          cacheTimestamp: null,
+          isStale: false,
+          lastCheck: null,
+          activeOperation: {
+            type: "upgrade_all",
+            startedAt: "2026-05-18 10:00:00",
+          },
+          excludeFromUpgradeAll: 0,
+          upgradeOrder: 1,
+          pkgManager: "apt",
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: null,
+          supportsFullUpgrade: true,
+        },
+      ],
+      dataUpdatedAt: Date.now(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Refresh All<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Upgrading\.\.\..*<\/button>/s);
+    expect(html).not.toContain(">Upgrade All</button>");
+  });
+
+  test("treats recovered upgrade warnings as informational dashboard toasts", () => {
+    expect(getDashboardUpgradeToast("Alpha", "warning")).toEqual({
+      message: "Alpha: Upgrade state resynced after backend restart",
+      type: "info",
+    });
   });
 });

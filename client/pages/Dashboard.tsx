@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Link } from "react-router";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
@@ -30,6 +30,14 @@ function compareUpgradeOrder(a: System, b: System): number {
   const orderDiff = (a.upgradeOrder ?? 1) - (b.upgradeOrder ?? 1);
   if (orderDiff !== 0) return orderDiff;
   return a.name.localeCompare(b.name) || a.id - b.id;
+}
+
+function hasActiveUpgradeOperation(system: System): boolean {
+  return system.activeOperation?.type.includes("upgrade") ?? false;
+}
+
+function isUpgradeAllEligible(system: System, locallyUpgrading: boolean): boolean {
+  return system.updateCount > 0 && !locallyUpgrading && !hasActiveUpgradeOperation(system);
 }
 
 function parseManagerList(value: unknown): string[] {
@@ -96,6 +104,22 @@ function isDefaultFullUpgradeEnabled(system: System): boolean {
     managers.includes("dnf") &&
     getConfigEntry(configs, "dnf").defaultUpgradeMode === "distro-sync"
   );
+}
+
+export function getDashboardUpgradeToast(
+  systemName: string,
+  status: string,
+): { message: string; type: "success" | "danger" | "info" } {
+  if (status === "success") {
+    return { message: `${systemName}: Upgrade complete`, type: "success" };
+  }
+  if (status === "warning") {
+    return {
+      message: `${systemName}: Upgrade state resynced after backend restart`,
+      type: "info",
+    };
+  }
+  return { message: `${systemName}: Upgrade failed`, type: "danger" };
 }
 
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
@@ -227,8 +251,17 @@ export default function Dashboard() {
     });
   };
 
-  const systemsWithUpdates = systems?.filter((s) => s.updateCount > 0 && !isUpgrading(s.id)) ?? [];
-  const orderedSystemsWithUpdates = [...systemsWithUpdates].sort(compareUpgradeOrder);
+  const hasUpgradeInProgress =
+    upgradingCount > 0 ||
+    (systems?.some((s) => isUpgrading(s.id) || hasActiveUpgradeOperation(s)) ?? false);
+  const systemsWithUpdates = useMemo(
+    () => systems?.filter((s) => isUpgradeAllEligible(s, isUpgrading(s.id))) ?? [],
+    [systems, isUpgrading]
+  );
+  const orderedSystemsWithUpdates = useMemo(
+    () => [...systemsWithUpdates].sort(compareUpgradeOrder),
+    [systemsWithUpdates]
+  );
   const modalSystems = showUpgradeConfirm ? upgradeModalSystems : orderedSystemsWithUpdates;
   const excludedSystems = orderedSystemsWithUpdates.filter((s) => s.excludeFromUpgradeAll === 1);
   const defaultSelectedSystemIds = orderedSystemsWithUpdates
@@ -240,6 +273,28 @@ export default function Dashboard() {
   useEffect(() => {
     upgradeModalSystemsRef.current = upgradeModalSystems;
   }, [upgradeModalSystems]);
+
+  useEffect(() => {
+    if (!showUpgradeConfirm) return;
+
+    const eligibleById = new Map(orderedSystemsWithUpdates.map((system) => [system.id, system]));
+    setUpgradeModalSystems((current) => {
+      const refreshedSystems = current
+        .map((system) => eligibleById.get(system.id))
+        .filter((system): system is System => Boolean(system));
+      const refreshedIds = new Set(refreshedSystems.map((system) => system.id));
+      const newlyEligibleSystems = orderedSystemsWithUpdates.filter((system) => !refreshedIds.has(system.id));
+      return [...refreshedSystems, ...newlyEligibleSystems];
+    });
+    setSelectedSystemIds((current) => current.filter((systemId) => eligibleById.has(systemId)));
+    setFullUpgradeSelections((current) => {
+      const next: Record<number, boolean> = {};
+      for (const system of orderedSystemsWithUpdates) {
+        next[system.id] = current[system.id] ?? isDefaultFullUpgradeEnabled(system);
+      }
+      return next;
+    });
+  }, [showUpgradeConfirm, orderedSystemsWithUpdates]);
 
   useEffect(() => {
     const list = upgradeListRef.current;
@@ -358,7 +413,15 @@ export default function Dashboard() {
   };
 
   const handleUpgradeAll = () => {
-    const systemsToUpgrade = selectedSystems;
+    const latestSystemsById = new Map((systems ?? []).map((system) => [system.id, system]));
+    const systemsToUpgrade = modalSystems
+      .map((system) => latestSystemsById.get(system.id) ?? system)
+      .filter((system) =>
+        selectedSystemIds.includes(system.id) &&
+        isUpgradeAllEligible(system, isUpgrading(system.id))
+      );
+    if (systemsToUpgrade.length === 0) return;
+
     const fullUpgradeBySystemId = fullUpgradeSelections;
     closeUpgradeConfirm();
     for (const s of systemsToUpgrade) {
@@ -370,15 +433,12 @@ export default function Dashboard() {
               defaultUpgradeModeOverride: fullUpgradeBySystemId[s.id]
                 ? "aggressive" as const
                 : "standard" as const,
-            };
+      };
       void upgradeAll(s.id, override, {
-        onSuccess: (d: any) =>
-          addToast(
-            d.status === "success"
-              ? `${s.name}: Upgrade complete`
-              : `${s.name}: Upgrade failed`,
-            d.status === "success" ? "success" : "danger"
-          ),
+        onSuccess: (d: any) => {
+          const toast = getDashboardUpgradeToast(s.name, d.status);
+          addToast(toast.message, toast.type);
+        },
         onError: (err: Error) => addToast(`${s.name}: ${err.message}`, "danger"),
       });
     }
@@ -392,18 +452,18 @@ export default function Dashboard() {
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
             onClick={handleRefresh}
-            disabled={refreshCache.isPending}
+            disabled={refreshCache.isPending || hasUpgradeInProgress}
             className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 whitespace-nowrap"
           >
             {refreshCache.isPending ? <span className="spinner spinner-sm" /> : "Refresh All"}
           </button>
-          {(systemsWithUpdates.length > 0 || upgradingCount > 0) && (
+          {(systemsWithUpdates.length > 0 || hasUpgradeInProgress) && (
             <button
               onClick={openUpgradeConfirm}
-              disabled={upgradingCount > 0}
+              disabled={hasUpgradeInProgress}
               className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
             >
-              {upgradingCount > 0 ? (
+              {hasUpgradeInProgress ? (
                 <span className="flex items-center gap-1.5">
                   <span className="spinner spinner-sm" />
                   Upgrading...
@@ -555,7 +615,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={handleUpgradeAll}
-            disabled={selectedSystemIds.length === 0}
+            disabled={selectedSystems.length === 0 || hasUpgradeInProgress}
             className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 sm:w-auto"
           >
             Upgrade All

@@ -2,11 +2,26 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { apiFetch, pollJob } from "./client";
 
 export type DefaultUpgradeModeOverride = "standard" | "aggressive";
+export const LOST_UPGRADE_JOB_RECOVERY_OUTPUT =
+  "The backend restarted before the job result could be read. Dashboard state was resynced from the server.";
 
 async function invalidateSystemOperationQueries(qc: QueryClient, systemId: number): Promise<void> {
   await qc.invalidateQueries({ queryKey: ["system", systemId] });
   await qc.invalidateQueries({ queryKey: ["systems"] });
   await qc.invalidateQueries({ queryKey: ["dashboard"] });
+}
+
+export async function recoverLostUpgradeJob<T extends { status: string; output: string }>(
+  qc: QueryClient,
+  systemId: number,
+  result: Partial<T> = {},
+): Promise<T> {
+  await invalidateSystemOperationQueries(qc, systemId);
+  return {
+    ...result,
+    status: "warning",
+    output: LOST_UPGRADE_JOB_RECOVERY_OUTPUT,
+  } as T;
 }
 
 export function useCheckUpdates() {
@@ -76,7 +91,9 @@ export function useUpgradeAll() {
             : undefined,
         }
       );
-      return pollJob<{ status: string; output: string }>(jobId, 3000);
+      return pollJob<{ status: string; output: string }>(jobId, 3000, 300, {
+        recoverMissingJob: () => recoverLostUpgradeJob(qc, systemId),
+      });
     },
     onSettled: async (_data, _error, vars) => {
       const systemId = typeof vars === "number" ? vars : vars?.systemId;
@@ -95,7 +112,9 @@ export function useFullUpgradeAll() {
         `/systems/${systemId}/full-upgrade`,
         { method: "POST" }
       );
-      return pollJob<{ status: string; output: string }>(jobId, 3000);
+      return pollJob<{ status: string; output: string }>(jobId, 3000, 300, {
+        recoverMissingJob: () => recoverLostUpgradeJob(qc, systemId),
+      });
     },
     onSettled: async (_data, _error, systemId) => {
       if (systemId !== undefined) {
@@ -150,7 +169,18 @@ export function useUpgradePackages() {
           body: JSON.stringify({ packageNames }),
         }
       );
-      return pollJob<{ status: string; packageCount: number; packages: string[]; output: string }>(jobId, 3000);
+      return pollJob<{ status: string; packageCount: number; packages: string[]; output: string }>(jobId, 3000, 300, {
+        recoverMissingJob: () =>
+          recoverLostUpgradeJob<{
+            status: string;
+            packageCount: number;
+            packages: string[];
+            output: string;
+          }>(qc, systemId, {
+            packageCount: packageNames.length,
+            packages: packageNames,
+          }),
+      });
     },
     onSettled: async (_data, _error, vars) => {
       if (vars) {

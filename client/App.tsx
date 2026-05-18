@@ -13,19 +13,22 @@ const Schedules = lazy(() => import("./pages/Schedules"));
 const Credentials = lazy(() => import("./pages/Credentials"));
 const Scripts = lazy(() => import("./pages/Scripts"));
 
-function PageLoader() {
+function PageLoader({ message }: { message?: string }) {
   return (
-    <div className="flex items-center justify-center min-h-screen">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3">
       <span className="spinner !w-8 !h-8 text-blue-500" />
+      {message && (
+        <p className="text-sm text-slate-500 dark:text-slate-400">{message}</p>
+      )}
     </div>
   );
 }
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, loading, setupRequired } = useAuth();
+  const { user, loading, setupRequired, backendUnavailable } = useAuth();
 
   if (loading) {
-    return <PageLoader />;
+    return <PageLoader message={backendUnavailable ? "Reconnecting to backend..." : undefined} />;
   }
 
   if (setupRequired) return <Navigate to="/setup" replace />;
@@ -35,10 +38,10 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const { loading, setupRequired, user } = useAuth();
+  const { loading, setupRequired, user, backendUnavailable } = useAuth();
 
   if (loading) {
-    return <PageLoader />;
+    return <PageLoader message={backendUnavailable ? "Reconnecting to backend..." : undefined} />;
   }
 
   return (

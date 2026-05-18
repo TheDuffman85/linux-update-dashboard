@@ -3,6 +3,7 @@ const CSRF_COOKIE = "ludash_csrf";
 const CSRF_HEADER = "X-CSRF-Token";
 
 function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
   const entries = document.cookie ? document.cookie.split(";") : [];
   for (const entry of entries) {
     const [rawKey, ...rest] = entry.split("=");
@@ -59,12 +60,27 @@ export async function apiFetch<T>(
 export async function pollJob<T>(
   jobId: string,
   intervalMs = 2000,
-  maxAttempts = 300 // 10 minutes at 2s interval
+  maxAttempts = 300, // 10 minutes at 2s interval
+  options?: {
+    recoverMissingJob?: () => Promise<T> | T;
+  }
 ): Promise<T> {
   for (let i = 0; i < maxAttempts; i++) {
-    const job = await apiFetch<{ status: string; result?: T }>(
-      `/jobs/${jobId}`
-    );
+    let job: { status: string; result?: T };
+    try {
+      job = await apiFetch<{ status: string; result?: T }>(`/jobs/${jobId}`);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 401 || error.status === 403) throw error;
+        if (error.status === 404 && error.message === "Job not found" && options?.recoverMissingJob) {
+          return options.recoverMissingJob();
+        }
+        if (error.status < 500) throw error;
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+      continue;
+    }
+
     if (job.status === "done") return job.result as T;
     if (job.status === "failed") {
       const err = (job.result as { error?: string })?.error ?? "Job failed";
