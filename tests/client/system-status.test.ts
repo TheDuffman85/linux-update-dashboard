@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { deriveSystemUpdateState, getUpdatesPanelState } from "../../client/lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState, shouldClearLocalUpgrade } from "../../client/lib/system-status";
 import type { ActiveOperation, LastCheckSummary } from "../../client/lib/systems";
 
 function makeLastCheck(status: LastCheckSummary["status"], error: string | null = null): LastCheckSummary {
@@ -94,6 +94,31 @@ describe("deriveSystemUpdateState", () => {
         { upgrading: true },
       ),
     ).toBe("checking");
+  });
+});
+
+describe("shouldClearLocalUpgrade", () => {
+  test("clears local upgrade state when the server has no active operation", () => {
+    expect(shouldClearLocalUpgrade(null)).toBe(true);
+  });
+
+  test("clears local upgrade state during post-upgrade recheck", () => {
+    expect(
+      shouldClearLocalUpgrade({
+        type: "upgrade_all",
+        startedAt: "2026-01-01 10:02:00",
+        phase: "rechecking",
+      }),
+    ).toBe(true);
+  });
+
+  test("keeps local upgrade state while the server upgrade is still active", () => {
+    expect(
+      shouldClearLocalUpgrade({
+        type: "full_upgrade_all",
+        startedAt: "2026-01-01 10:02:00",
+      }),
+    ).toBe(false);
   });
 });
 

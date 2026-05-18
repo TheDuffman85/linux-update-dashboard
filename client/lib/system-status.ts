@@ -32,6 +32,10 @@ export function isPostUpgradeRecheck(activeOperation: ActiveOperation | null | u
   return activeOperation?.phase === "rechecking" && activeOperation.type.includes("upgrade");
 }
 
+export function shouldClearLocalUpgrade(activeOperation: ActiveOperation | null | undefined): boolean {
+  return !activeOperation || isPostUpgradeRecheck(activeOperation);
+}
+
 export function deriveSystemUpdateState(
   system: SystemStatusInput,
   options?: DeriveOptions,

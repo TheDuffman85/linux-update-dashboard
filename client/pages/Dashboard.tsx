@@ -15,7 +15,7 @@ import {
 import type { System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
-import { deriveSystemUpdateState, isPostUpgradeRecheck } from "../lib/system-status";
+import { deriveSystemUpdateState, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -214,7 +214,7 @@ export default function Dashboard() {
     for (const [systemId, entry] of upgradingSystems) {
       if (dataUpdatedAt < entry.addedAt) continue;
       const serverSystem = systems.find((s) => s.id === systemId);
-      if (serverSystem && (!serverSystem.activeOperation || isPostUpgradeRecheck(serverSystem.activeOperation))) {
+      if (serverSystem && shouldClearLocalUpgrade(serverSystem.activeOperation)) {
         removeUpgrading(systemId);
       }
     }
