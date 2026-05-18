@@ -56,7 +56,7 @@ vi.mock("../../client/components/Layout", () => ({
   ),
 }));
 
-import Dashboard from "../../client/pages/Dashboard";
+import Dashboard, { getDashboardUpgradeToast } from "../../client/pages/Dashboard";
 
 describe("Dashboard", () => {
   beforeEach(() => {
@@ -166,5 +166,12 @@ describe("Dashboard", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Refresh All<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Upgrading\.\.\..*<\/button>/s);
     expect(html).not.toContain(">Upgrade All</button>");
+  });
+
+  test("treats recovered upgrade warnings as informational dashboard toasts", () => {
+    expect(getDashboardUpgradeToast("Alpha", "warning")).toEqual({
+      message: "Alpha: Upgrade state resynced after backend restart",
+      type: "info",
+    });
   });
 });

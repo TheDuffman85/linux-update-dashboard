@@ -1,12 +1,12 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { apiFetch } from "../lib/client";
+import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ApiError, apiFetch } from "../lib/client";
 
 interface User {
   userId: number;
   username: string;
 }
 
-interface AuthState {
+export interface AuthState {
   user: User | null;
   loading: boolean;
   setupRequired: boolean;
@@ -14,6 +14,7 @@ interface AuthState {
   passwordLoginDisabled: boolean;
   passkeysEnabled: boolean;
   hasPassword: boolean;
+  backendUnavailable: boolean;
 }
 
 interface AuthContextType extends AuthState {
@@ -25,6 +26,18 @@ interface AuthContextType extends AuthState {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+export function isHardAuthRefreshFailure(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
+
+export function getRecoverableAuthRefreshState(state: AuthState): AuthState {
+  return {
+    ...state,
+    loading: !state.user,
+    backendUnavailable: true,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -34,9 +47,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     passwordLoginDisabled: false,
     passkeysEnabled: false,
     hasPassword: false,
+    backendUnavailable: false,
   });
+  const retryTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
+    clearTimeout(retryTimer.current);
     try {
       const data = await apiFetch<{
         setupRequired: boolean;
@@ -56,15 +72,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         passwordLoginDisabled: data.passwordLoginDisabled,
         passkeysEnabled: data.passkeysEnabled,
         hasPassword: data.hasPassword,
+        backendUnavailable: false,
       });
-    } catch {
-      setState((s) => ({ ...s, loading: false }));
+    } catch (error) {
+      if (isHardAuthRefreshFailure(error)) {
+        setState((s) => ({
+          ...s,
+          user: null,
+          loading: false,
+          backendUnavailable: false,
+        }));
+        return;
+      }
+
+      setState(getRecoverableAuthRefreshState);
+      retryTimer.current = setTimeout(() => {
+        void refresh();
+      }, 3000);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    refresh();
-  }, []);
+    void refresh();
+    return () => clearTimeout(retryTimer.current);
+  }, [refresh]);
 
   const login = async (username: string, password: string) => {
     await apiFetch("/auth/login", {

@@ -106,6 +106,22 @@ function isDefaultFullUpgradeEnabled(system: System): boolean {
   );
 }
 
+export function getDashboardUpgradeToast(
+  systemName: string,
+  status: string,
+): { message: string; type: "success" | "danger" | "info" } {
+  if (status === "success") {
+    return { message: `${systemName}: Upgrade complete`, type: "success" };
+  }
+  if (status === "warning") {
+    return {
+      message: `${systemName}: Upgrade state resynced after backend restart`,
+      type: "info",
+    };
+  }
+  return { message: `${systemName}: Upgrade failed`, type: "danger" };
+}
+
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 text-center">
@@ -417,15 +433,12 @@ export default function Dashboard() {
               defaultUpgradeModeOverride: fullUpgradeBySystemId[s.id]
                 ? "aggressive" as const
                 : "standard" as const,
-            };
+      };
       void upgradeAll(s.id, override, {
-        onSuccess: (d: any) =>
-          addToast(
-            d.status === "success"
-              ? `${s.name}: Upgrade complete`
-              : `${s.name}: Upgrade failed`,
-            d.status === "success" ? "success" : "danger"
-          ),
+        onSuccess: (d: any) => {
+          const toast = getDashboardUpgradeToast(s.name, d.status);
+          addToast(toast.message, toast.type);
+        },
         onError: (err: Error) => addToast(`${s.name}: ${err.message}`, "danger"),
       });
     }
