@@ -46,6 +46,7 @@ import {
 type VisibleCachedUpdate = ReturnType<typeof hiddenUpdateService.getVisibleCachedUpdates>[number];
 export type DefaultUpgradeModeOverride = "standard" | "aggressive";
 type OperationResult = { success: boolean; output: string; warning?: boolean; cancelled?: boolean };
+type RebootResult = { success: boolean; message: string; blocked?: boolean };
 
 function withDefaultUpgradeModeOverride(
   configs: PackageManagerConfigs | null,
@@ -1878,9 +1879,23 @@ export async function applyUpgradePackages(
   });
 }
 
-export async function rebootSystem(
-  systemId: number
-): Promise<{ success: boolean; message: string }> {
+const PRE_REBOOT_SAFETY_CHECKS_LABEL = "Pre-reboot safety checks";
+
+function isProxmoxBackupGuardStep(step: { label: string | null }): boolean {
+  return step.label === PRE_REBOOT_SAFETY_CHECKS_LABEL;
+}
+
+function normalizeProxmoxBackupGuardMessage(output: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const blockedLine = lines.find((line) => line.startsWith("Reboot blocked:"));
+  if (blockedLine) return blockedLine;
+  return "Reboot blocked: could not verify Proxmox backup activity.";
+}
+
+export async function rebootSystem(systemId: number): Promise<RebootResult> {
   return withLock(systemId, async () => {
     const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "reboot", startedAt: now });
@@ -1893,11 +1908,17 @@ export async function rebootSystem(
       const sshManager = getSSHManager();
       const signal = getCancellationSignal(systemId);
       const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
-      const cmd = resolveRuntimeSteps({ systemId, operation: "reboot" })[0]?.command;
-      if (!cmd) return { success: false, message: "No reboot script configured" };
-      const stepStartedAt = getCurrentTimestamp();
-      const histId = insertStartedEntry(systemId, "reboot", "system", cmd, stepStartedAt);
-      outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: "system", startedAt: stepStartedAt });
+      const steps = resolveRuntimeSteps({ systemId, operation: "reboot" });
+      if (!steps.length) return { success: false, message: "No reboot script configured" };
+      const historyStartedAt = getCurrentTimestamp();
+      const histId = insertStartedEntry(
+        systemId,
+        "reboot",
+        "system",
+        steps.map((step) => step.command).join(" && "),
+        historyStartedAt,
+      );
+      const activitySteps: ActivityStep[] = [];
 
       let conn;
       try {
@@ -1906,40 +1927,49 @@ export async function rebootSystem(
           systemId,
         });
         throwIfActiveOperationCancelled(systemId);
-        let streamedOutput = "";
-        const result = await sshManager.runCommand(conn, cmd, 30, sudoPassword, (chunk, stream) => {
-          streamedOutput += chunk;
-          outputStream.publish(systemId, { type: "output", data: chunk, stream });
-        }, signal);
-        const stepCompletedAt = getCurrentTimestamp();
 
-        if (isCancelledResult(result.exitCode)) {
-          finishEntry(histId, "cancelled", {
-            steps: createSingleStepHistory({
-              label: null,
+        for (const step of steps) {
+          const cmd = step.command;
+          const label = step.label || null;
+          const stepStartedAt = getCurrentTimestamp();
+          outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: "system", startedAt: stepStartedAt });
+          if (label) outputStream.publish(systemId, { type: "phase", phase: label });
+
+          let streamedOutput = "";
+          const result = await sshManager.runCommand(conn, cmd, 30, sudoPassword, (chunk, stream) => {
+            streamedOutput += chunk;
+            outputStream.publish(systemId, { type: "output", data: chunk, stream });
+          }, signal);
+          const stepCompletedAt = getCurrentTimestamp();
+          const combinedOutput = streamedOutput || result.stdout || result.stderr;
+
+          if (isCancelledResult(result.exitCode)) {
+            const message = "Operation cancelled";
+            activitySteps.push(createActivityStep({
+              label,
               pkgManager: "system",
               command: cmd,
-              output: streamedOutput || result.stdout || result.stderr,
-              error: "Operation cancelled",
+              output: combinedOutput,
+              error: message,
               status: "cancelled",
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
-            }),
-            error: "Operation cancelled",
-          });
-          outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
-          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-          return { success: false, message: "Operation cancelled" };
-        }
+            }));
+            finishEntry(histId, "cancelled", {
+              steps: activitySteps,
+              error: message,
+            });
+            outputStream.publish(systemId, { type: "warning", message });
+            outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+            return { success: false, message };
+          }
 
-        if (result.exitCode !== 0) {
-          const errorText = result.stderr || result.stdout || `reboot exited with code ${result.exitCode}`;
-          if (isExpectedRebootDisconnect(errorText)) {
-            const outputText = streamedOutput || result.stdout || "Reboot command sent (connection closed)";
-            systemService.markUnreachable(systemId);
-            finishEntry(histId, "success", {
-              steps: createSingleStepHistory({
-                label: null,
+          if (result.exitCode !== 0) {
+            const errorText = result.stderr || result.stdout || combinedOutput || `reboot exited with code ${result.exitCode}`;
+            if (!isProxmoxBackupGuardStep(step) && isExpectedRebootDisconnect(errorText)) {
+              const outputText = combinedOutput || "Reboot command sent (connection closed)";
+              activitySteps.push(createActivityStep({
+                label,
                 pkgManager: "system",
                 command: cmd,
                 output: outputText,
@@ -1947,62 +1977,77 @@ export async function rebootSystem(
                 status: "success",
                 startedAt: stepStartedAt,
                 completedAt: stepCompletedAt,
-              }),
-              output: outputText,
-            });
-            outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
-            return { success: true, message: "Reboot command sent" };
-          }
+              }));
+              systemService.markUnreachable(systemId);
+              finishEntry(histId, "success", {
+                steps: activitySteps,
+                output: outputText,
+              });
+              outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
+              return { success: true, message: "Reboot command sent" };
+            }
 
-          finishEntry(histId, "failed", {
-            steps: createSingleStepHistory({
-              label: null,
+            const blocked = isProxmoxBackupGuardStep(step);
+            const message = blocked
+              ? normalizeProxmoxBackupGuardMessage(errorText)
+              : `Reboot failed: ${errorText}`;
+            activitySteps.push(createActivityStep({
+              label,
               pkgManager: "system",
               command: cmd,
-              output: streamedOutput || result.stdout || result.stderr,
-              error: errorText,
+              output: combinedOutput,
+              error: message,
               status: "failed",
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
-            }),
-            error: errorText,
-          });
-          outputStream.publish(systemId, { type: "error", message: errorText });
-          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-          return { success: false, message: `Reboot failed: ${errorText}` };
-        }
+            }));
+            finishEntry(histId, "failed", {
+              steps: activitySteps,
+              output: combinedOutput,
+              error: message,
+            });
+            outputStream.publish(systemId, { type: "error", message });
+            outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+            return { success: false, message, blocked };
+          }
 
-        // Reboot succeeded or the connection was dropped (expected)
-        systemService.markUnreachable(systemId);
-        finishEntry(histId, "success", {
-          steps: createSingleStepHistory({
-            label: null,
+          activitySteps.push(createActivityStep({
+            label,
             pkgManager: "system",
             command: cmd,
-            output: streamedOutput || result.stdout || "Reboot command sent",
+            output: combinedOutput,
             error: null,
             status: "success",
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
-          }),
-          output: result.stdout || "Reboot command sent",
+          }));
+        }
+
+        systemService.markUnreachable(systemId);
+        finishEntry(histId, "success", {
+          steps: activitySteps,
+          output: "Reboot command sent",
         });
         outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
         return { success: true, message: "Reboot command sent" };
       } catch (e) {
         if (isOperationCancelledError(e)) {
+          const step = steps[Math.min(activitySteps.length, steps.length - 1)];
           const stepCompletedAt = getCurrentTimestamp();
-          finishEntry(histId, "cancelled", {
-            steps: createSingleStepHistory({
-              label: null,
+          if (step) {
+            activitySteps.push(createActivityStep({
+              label: step.label || null,
               pkgManager: "system",
-              command: cmd,
+              command: step.command,
               output: null,
               error: e.message,
               status: "cancelled",
-              startedAt: stepStartedAt,
+              startedAt: stepCompletedAt,
               completedAt: stepCompletedAt,
-            }),
+            }));
+          }
+          finishEntry(histId, "cancelled", {
+            steps: activitySteps,
             error: e.message,
           });
           outputStream.publish(systemId, { type: "warning", message: e.message });
@@ -2011,36 +2056,62 @@ export async function rebootSystem(
         }
         const errMsg = String(e);
         const stepCompletedAt = getCurrentTimestamp();
-        // A closed connection after reboot is expected
+        const currentStep = steps[Math.min(activitySteps.length, steps.length - 1)];
+        if (currentStep && isProxmoxBackupGuardStep(currentStep)) {
+          const message = "Reboot blocked: could not verify Proxmox backup activity.";
+          activitySteps.push(createActivityStep({
+            label: currentStep.label || null,
+            pkgManager: "system",
+            command: currentStep.command,
+            output: null,
+            error: message,
+            status: "failed",
+            startedAt: stepCompletedAt,
+            completedAt: stepCompletedAt,
+          }));
+          finishEntry(histId, "failed", {
+            steps: activitySteps,
+            error: message,
+          });
+          outputStream.publish(systemId, { type: "error", message });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, message, blocked: true };
+        }
         if (isExpectedRebootDisconnect(errMsg)) {
-          systemService.markUnreachable(systemId);
-          finishEntry(histId, "success", {
-            steps: createSingleStepHistory({
-              label: null,
+          if (currentStep) {
+            activitySteps.push(createActivityStep({
+              label: currentStep.label || null,
               pkgManager: "system",
-              command: cmd,
+              command: currentStep.command,
               output: "Reboot command sent (connection closed)",
               error: null,
               status: "success",
-              startedAt: stepStartedAt,
+              startedAt: stepCompletedAt,
               completedAt: stepCompletedAt,
-            }),
+            }));
+          }
+          systemService.markUnreachable(systemId);
+          finishEntry(histId, "success", {
+            steps: activitySteps,
             output: "Reboot command sent (connection closed)",
           });
           outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
           return { success: true, message: "Reboot command sent" };
         }
-        finishEntry(histId, "failed", {
-          steps: createSingleStepHistory({
-            label: null,
+        if (currentStep) {
+          activitySteps.push(createActivityStep({
+            label: currentStep.label || null,
             pkgManager: "system",
-            command: cmd,
+            command: currentStep.command,
             output: null,
             error: errMsg,
             status: "failed",
-            startedAt: stepStartedAt,
+            startedAt: stepCompletedAt,
             completedAt: stepCompletedAt,
-          }),
+          }));
+        }
+        finishEntry(histId, "failed", {
+          steps: activitySteps,
           error: errMsg,
         });
         outputStream.publish(systemId, { type: "error", message: errMsg });

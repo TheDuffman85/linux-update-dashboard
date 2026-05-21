@@ -40,11 +40,16 @@ describe("rebootSystem", () => {
     const sshManager = initSSHManager(1, 1, 1, encryptor);
     (sshManager as any).connect = async () => ({});
     (sshManager as any).disconnect = () => {};
-    (sshManager as any).runCommand = async () => ({
-      stdout: "",
-      stderr: "Failed to talk to init daemon.\n",
-      exitCode: 1,
-    });
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command.includes("/cluster/tasks")) {
+        return { stdout: "[]", stderr: "", exitCode: 0 };
+      }
+      return {
+        stdout: "",
+        stderr: "Failed to talk to init daemon.\n",
+        exitCode: 1,
+      };
+    };
 
     const result = await rebootSystem(inserted.id);
     expect(result.success).toBe(false);
@@ -59,11 +64,12 @@ describe("rebootSystem", () => {
       .all()
       .at(-1);
     expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      { label: "Pre-reboot safety checks", pkgManager: "system", status: "success" },
       {
         pkgManager: "system",
         status: "failed",
         command: expect.stringContaining("reboot"),
-        error: "Failed to talk to init daemon.\n",
+        error: "Reboot failed: Failed to talk to init daemon.\n",
       },
     ]);
   });
@@ -83,11 +89,16 @@ describe("rebootSystem", () => {
     const sshManager = initSSHManager(1, 1, 1, encryptor);
     (sshManager as any).connect = async () => ({});
     (sshManager as any).disconnect = () => {};
-    (sshManager as any).runCommand = async () => ({
-      stdout: "",
-      stderr: "read ECONNRESET",
-      exitCode: -1,
-    });
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command.includes("/cluster/tasks")) {
+        return { stdout: "[]", stderr: "", exitCode: 0 };
+      }
+      return {
+        stdout: "",
+        stderr: "read ECONNRESET",
+        exitCode: -1,
+      };
+    };
 
     const result = await rebootSystem(inserted.id);
     expect(result).toEqual({ success: true, message: "Reboot command sent" });
@@ -102,11 +113,67 @@ describe("rebootSystem", () => {
       .at(-1);
     expect(history?.status).toBe("success");
     expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      { label: "Pre-reboot safety checks", pkgManager: "system", status: "success" },
       {
         pkgManager: "system",
         status: "success",
         command: expect.stringContaining("reboot"),
         error: null,
+      },
+    ]);
+  });
+
+  test("blocks reboot when Proxmox backup activity is detected", async () => {
+    const db = getDb();
+    const encryptor = getEncryptor();
+    const inserted = db.insert(systems).values({
+      name: "Proxmox",
+      hostname: "localhost",
+      port: 2006,
+      authType: "password",
+      username: "testuser",
+      encryptedPassword: encryptor.encrypt("testpass"),
+    }).returning({ id: systems.id }).get();
+
+    const sshManager = initSSHManager(1, 1, 1, encryptor);
+    const commands: string[] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      commands.push(command);
+      return {
+        stdout: 'Reboot blocked: Proxmox backup task is running.\n[{"type":"vzdump","status":"running"}]\n',
+        stderr: "",
+        exitCode: 1,
+      };
+    };
+
+    const result = await rebootSystem(inserted.id);
+
+    expect(result).toEqual({
+      success: false,
+      message: "Reboot blocked: Proxmox backup task is running.",
+      blocked: true,
+    });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain("/cluster/tasks");
+
+    const system = db.select().from(systems).where(eq(systems.id, inserted.id)).get();
+    expect(system?.isReachable).toBe(0);
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, inserted.id))
+      .all()
+      .at(-1);
+    expect(history?.status).toBe("failed");
+    expect(history?.error).toBe("Reboot blocked: Proxmox backup task is running.");
+    expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      {
+        label: "Pre-reboot safety checks",
+        pkgManager: "system",
+        status: "failed",
+        error: "Reboot blocked: Proxmox backup task is running.",
       },
     ]);
   });
@@ -145,5 +212,50 @@ describe("rebootSystem", () => {
 
     expect(result).toEqual({ success: true, message: "Reboot command sent" });
     expect(commands).toEqual(["echo custom-reboot"]);
+  });
+
+  test("stops multi-step reboot scripts before later steps when an earlier step fails", async () => {
+    const db = getDb();
+    const encryptor = getEncryptor();
+    const inserted = db.insert(systems).values({
+      name: "Debian",
+      hostname: "localhost",
+      port: 2007,
+      authType: "password",
+      username: "testuser",
+      encryptedPassword: encryptor.encrypt("testpass"),
+    }).returning({ id: systems.id }).get();
+    const script = createScript({
+      name: "Guarded reboot",
+      type: "system",
+      operation: "reboot",
+      steps: [
+        { label: "Local preflight", command: "echo custom-preflight" },
+        { label: "Custom reboot", command: "echo custom-reboot" },
+      ],
+    });
+    setSystemOverrides(inserted.id, {
+      [buildOperationKey("reboot")]: script.id,
+    });
+
+    const sshManager = initSSHManager(1, 1, 1, encryptor);
+    const commands: string[] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      commands.push(command);
+      if (command.includes("/cluster/tasks")) {
+        return { stdout: "[]", stderr: "", exitCode: 0 };
+      }
+      if (command === "echo custom-preflight") {
+        return { stdout: "", stderr: "preflight failed", exitCode: 2 };
+      }
+      return { stdout: "should not run", stderr: "", exitCode: 0 };
+    };
+
+    const result = await rebootSystem(inserted.id);
+
+    expect(result).toEqual({ success: false, message: "Reboot failed: preflight failed", blocked: false });
+    expect(commands).toEqual(["echo custom-preflight"]);
   });
 });

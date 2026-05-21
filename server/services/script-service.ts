@@ -15,7 +15,7 @@ import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { APT_DPKG_AUDIT_PREFIX } from "../ssh/parsers/apt";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
-import { getRebootCommand } from "../ssh/reboot";
+import { getProxmoxBackupGuardCommand, getRebootCommand } from "../ssh/reboot";
 import {
   SYSTEM_INFO_CMD,
   parseSystemInfo,
@@ -871,7 +871,10 @@ export function getBuiltinScripts(): ScriptDefinition[] {
       null,
       "Reboot system",
       "Reboots the remote system.",
-      [{ label: "Reboot system", command: getRebootCommand() }],
+      [
+        { label: "Pre-reboot safety checks", command: getProxmoxBackupGuardCommand() },
+        { label: "Reboot system", command: getRebootCommand() },
+      ],
     ),
   ];
 }

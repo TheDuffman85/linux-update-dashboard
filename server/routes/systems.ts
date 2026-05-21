@@ -869,6 +869,9 @@ systems.post("/:id/reboot", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const result = await updateService.rebootSystem(id);
+  if (result.blocked) {
+    return c.json({ error: result.message, success: false, message: result.message, blocked: true }, 409);
+  }
   return c.json(result, result.success ? 200 : 500);
 });
 

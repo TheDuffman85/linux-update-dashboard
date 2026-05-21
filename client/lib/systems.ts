@@ -367,7 +367,7 @@ export function useRebootSystem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) =>
-      apiFetch<{ success: boolean; message: string }>(`/systems/${id}/reboot`, { method: "POST" }),
+      apiFetch<{ success: boolean; message: string; blocked?: boolean }>(`/systems/${id}/reboot`, { method: "POST" }),
     onSuccess: async (_data, id) => {
       await qc.invalidateQueries({ queryKey: ["system", id] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
