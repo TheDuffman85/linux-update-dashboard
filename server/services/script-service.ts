@@ -1252,6 +1252,13 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
   const next = { ...existing, ...input, readonly: false, id: scriptId };
   const error = validateScriptInput(next);
   if (error) throw new Error(error);
+  const scopeChanged =
+    existing.type !== next.type ||
+    existing.operation !== next.operation ||
+    existing.pkgManager !== next.pkgManager;
+  if (scopeChanged && listScriptUsages(scriptId).length > 0) {
+    throw new Error("Script operation or package manager cannot be changed while assigned to systems");
+  }
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   if (next.isDefault) clearOtherDefaults(next, parsed.id);
   const row = getDb()
@@ -1595,7 +1602,7 @@ export function resolveScript(
     .get();
   if (override) {
     const script = getScriptById(override.scriptId);
-    if (script) return script;
+    if (script && buildOperationKey(script.operation, script.pkgManager) === operationKey) return script;
   }
   const explicitDefaultId = getExplicitDefaultScriptId({
     type: pkgManager == null ? "system" : "package_manager",

@@ -1137,6 +1137,58 @@ describe("systems reorder route", () => {
     }
   });
 
+  test("bearer tokens cannot mutate script-affecting package manager fields", async () => {
+    const token = await createBearerToken();
+    const protectedApp = new Hono();
+    protectedApp.use("/api/*", authMiddleware);
+    protectedApp.route("/api/systems", systemsRoutes);
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    const incoming = {
+      socket: {
+        remoteAddress: "127.0.0.1",
+        remotePort: 12345,
+        remoteFamily: "IPv4",
+      },
+    };
+
+    const cases = [
+      {
+        path: "/api/systems",
+        body: { detectedPkgManagers: ["custom-apt"] },
+        error: "API tokens cannot modify detected package managers",
+      },
+      {
+        path: "/api/systems",
+        body: { pkgManagerConfigs: { "custom-apt": { channel: "edge" } } },
+        error: "API tokens cannot modify package manager configs",
+      },
+      {
+        path: "/api/systems/1",
+        body: { detectedPkgManagers: ["custom-apt"] },
+        error: "API tokens cannot modify detected package managers",
+      },
+      {
+        path: "/api/systems/1",
+        body: { pkgManagerConfigs: { "custom-apt": { channel: "edge" } } },
+        error: "API tokens cannot modify package manager configs",
+      },
+    ];
+
+    for (const entry of cases) {
+      const res = await protectedApp.request(entry.path, {
+        method: entry.path.endsWith("/systems") ? "POST" : "PUT",
+        headers,
+        body: JSON.stringify(entry.body),
+      }, { incoming });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: entry.error });
+    }
+  });
+
   test("filters hidden systems when requesting visible scope", async () => {
     const db = getDb();
     db.insert(systems).values([

@@ -55,6 +55,18 @@ function isApiTokenRequest(c: Context<SystemsEnv>): boolean {
   return c.get("apiToken") === true;
 }
 
+function getApiTokenRestrictedSystemField(body: Record<string, unknown>): string | null {
+  const restrictedFields: Array<[string, string]> = [
+    ["scriptOverrides", "script overrides"],
+    ["detectedPkgManagers", "detected package managers"],
+    ["pkgManagerConfigs", "package manager configs"],
+  ];
+  for (const [field, label] of restrictedFields) {
+    if (body[field] !== undefined) return label;
+  }
+  return null;
+}
+
 const VALID_HOSTNAME = /^[a-zA-Z0-9]([a-zA-Z0-9._:-]*[a-zA-Z0-9])?$/;
 
 function validateSystemInput(body: Record<string, unknown>): string | null {
@@ -700,8 +712,11 @@ systems.post("/", async (c) => {
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
-  if (isApiTokenRequest(c) && body.scriptOverrides !== undefined) {
-    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  const restrictedApiTokenField = isApiTokenRequest(c)
+    ? getApiTokenRestrictedSystemField(body)
+    : null;
+  if (restrictedApiTokenField) {
+    return c.json({ error: `API tokens cannot modify ${restrictedApiTokenField}` }, 403);
   }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
@@ -891,8 +906,11 @@ systems.put("/:id", async (c) => {
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
-  if (isApiTokenRequest(c) && body.scriptOverrides !== undefined) {
-    return c.json({ error: "API tokens cannot modify script overrides" }, 403);
+  const restrictedApiTokenField = isApiTokenRequest(c)
+    ? getApiTokenRestrictedSystemField(body)
+    : null;
+  if (restrictedApiTokenField) {
+    return c.json({ error: `API tokens cannot modify ${restrictedApiTokenField}` }, 403);
   }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);

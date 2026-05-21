@@ -129,6 +129,50 @@ describe("script service", () => {
     expect(() => deleteScript(copy.id)).toThrow(/assigned/);
   });
 
+  test("does not allow assigned scripts to change operation scope", () => {
+    const script = createBuiltinCopy("builtin:apt:check_updates");
+    insertSystem(20);
+    setSystemOverrides(20, {
+      [buildOperationKey("check_updates", "apt")]: script.id,
+    });
+
+    expect(() => updateScript(script.id, {
+      operation: "upgrade_all",
+      steps: [{ label: "Upgrade", command: "echo changed" }],
+    })).toThrow(/cannot be changed while assigned/);
+
+    expect(resolveRuntimeSteps({
+      systemId: 20,
+      operation: "check_updates",
+      pkgManager: "apt",
+    })[0]?.command).not.toBe("echo changed");
+  });
+
+  test("ignores stale incompatible overrides at runtime", () => {
+    const script = createScript({
+      name: "APT upgrade script",
+      type: "package_manager",
+      operation: "upgrade_all",
+      pkgManager: "apt",
+      steps: [{ label: "Upgrade", command: "echo should-not-run" }],
+    });
+    insertSystem(21);
+    getDb().insert(systemScriptOverrides).values({
+      systemId: 21,
+      operationKey: buildOperationKey("check_updates", "apt"),
+      scriptId: script.id,
+    }).run();
+
+    const steps = resolveRuntimeSteps({
+      systemId: 21,
+      operation: "check_updates",
+      pkgManager: "apt",
+    });
+
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.map((step) => step.command)).not.toContain("echo should-not-run");
+  });
+
   test("rejects updates and deletes for built-in scripts", () => {
     expect(() => updateScript("builtin:apt:detect", {
       name: "Edited built-in",
