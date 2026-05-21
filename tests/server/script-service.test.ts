@@ -168,6 +168,17 @@ describe("script service", () => {
     })).toThrow(/at most 8/);
 
     expect(() => createScript({
+      name: "Ambiguous detection",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [
+        { label: "Detect apt", command: "command -v apt" },
+        { label: "Detect apt-get", command: "command -v apt-get" },
+      ],
+    })).toThrow(/exactly one step/);
+
+    expect(() => createScript({
       name: "Bad step",
       type: "package_manager",
       operation: "detect",
@@ -206,6 +217,35 @@ describe("script service", () => {
         updateRegex: "^(?<packageName>\\S+)\\s+->\\s+(?<newVersion>\\S+)$",
       },
     })).not.toThrow();
+  });
+
+  test("validates parser output step against check script steps", () => {
+    expect(() => createScript({
+      name: "Two-step check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [
+        { label: "Refresh", command: "apt-get update" },
+        { label: "List", command: "apt list --upgradable" },
+      ],
+      parserConfig: {
+        parseStep: 1,
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+    })).not.toThrow();
+
+    expect(() => createScript({
+      name: "Missing parser step",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "List", command: "apt list --upgradable" }],
+      parserConfig: {
+        parseStep: 1,
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+    })).toThrow(/reference an existing step/);
   });
 
   test("rejects oversized and invalid formatter input", async () => {

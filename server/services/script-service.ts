@@ -83,6 +83,19 @@ export interface ScriptUsage {
   operationKey: string;
 }
 
+export interface ScriptOperationProfile {
+  operation: ScriptOperation;
+  label: string;
+  allowedTypes: ScriptType[];
+  purpose: string;
+  stepBehavior: string;
+  outputConsumer: string;
+  parserBehavior: string;
+  exitCodeBehavior: string;
+  relevantPlaceholders: string[];
+  defaultStepBadge: string;
+}
+
 export interface CustomPackageManagerDefinition {
   id: number;
   builtin: boolean;
@@ -98,6 +111,7 @@ export interface ScriptListResponse {
   scripts: ScriptDefinition[];
   packageManagers: CustomPackageManagerDefinition[];
   placeholders: PlaceholderHelpEntry[];
+  operationProfiles: ScriptOperationProfile[];
 }
 
 export interface PlaceholderHelpEntry {
@@ -144,6 +158,120 @@ const SYSTEM_INFO_FIELDS = new Set<keyof SystemInfo>([
   "needsRestartingStatus",
   "needsReboot",
 ]);
+
+const OPERATION_PROFILE_ORDER: ScriptOperation[] = [
+  "detect",
+  "check_updates",
+  "repair_issue",
+  "upgrade_all",
+  "full_upgrade_all",
+  "upgrade_selected",
+  "system_info",
+  "reboot",
+];
+
+export const SCRIPT_OPERATION_PROFILES: Record<ScriptOperation, ScriptOperationProfile> = {
+  detect: {
+    operation: "detect",
+    label: "Detection",
+    allowedTypes: ["package_manager"],
+    purpose: "Determines whether a package manager is available on a remote system.",
+    stepBehavior: "Detection uses exactly one command so the result is unambiguous.",
+    outputConsumer: "The command must exit with 0 and print found on stdout to enable the manager.",
+    parserBehavior: "No update parser is used for detection output.",
+    exitCodeBehavior: "Exit code 0 with found means detected; any other result is treated as not detected.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}"],
+    defaultStepBadge: "detection output",
+  },
+  check_updates: {
+    operation: "check_updates",
+    label: "Check updates",
+    allowedTypes: ["package_manager"],
+    purpose: "Refreshes package metadata and turns command output into cached update rows.",
+    stepBehavior: "Steps run in order and stop at the first failed step.",
+    outputConsumer: "Built-in parsers inspect the command results they need; custom parsers read one selected step, defaulting to the last step.",
+    parserBehavior: "Custom package managers need an update regex with packageName and newVersion groups.",
+    exitCodeBehavior: "Built-in parsers and custom success/update exit-code lists decide whether a non-zero exit code is acceptable.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "parser input",
+  },
+  repair_issue: {
+    operation: "repair_issue",
+    label: "Repair issue",
+    allowedTypes: ["package_manager"],
+    purpose: "Runs the repair action offered for package-manager issue banners.",
+    stepBehavior: "The configured repair steps run in order and stop at the first failed step.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed into update rows.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code marks the repair operation as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  upgrade_all: {
+    operation: "upgrade_all",
+    label: "Upgrade all",
+    allowedTypes: ["package_manager"],
+    purpose: "Installs all available updates for one package manager.",
+    stepBehavior: "Upgrade commands run as the operation body for the selected manager.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while upgrading.",
+    exitCodeBehavior: "A non-zero exit code marks the upgrade as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  full_upgrade_all: {
+    operation: "full_upgrade_all",
+    label: "Full upgrade",
+    allowedTypes: ["package_manager"],
+    purpose: "Runs the fuller upgrade mode for package managers that support it.",
+    stepBehavior: "Full-upgrade commands run as the operation body for the selected manager.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while upgrading.",
+    exitCodeBehavior: "A non-zero exit code marks the full upgrade as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  upgrade_selected: {
+    operation: "upgrade_selected",
+    label: "Upgrade selected",
+    allowedTypes: ["package_manager"],
+    purpose: "Upgrades the packages selected by the user.",
+    stepBehavior: "Selected package placeholders are resolved immediately before SSH execution.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while upgrading selected packages.",
+    exitCodeBehavior: "A non-zero exit code marks the selected-package upgrade as failed.",
+    relevantPlaceholders: ["{{package}}", "{{packages}}", "{{quotedPackage}}", "{{quotedPackages}}", "{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  system_info: {
+    operation: "system_info",
+    label: "System info",
+    allowedTypes: ["system"],
+    purpose: "Collects OS, kernel, uptime, resource, boot, and reboot-required details.",
+    stepBehavior: "System-info steps run in order and their output is consumed by the configured mapping mode.",
+    outputConsumer: "The built-in parser reads dashboard sections; custom section mapping reads named output sections into system fields.",
+    parserBehavior: "Use built-in mode for copied standard scripts, or sectioned mode for custom output.",
+    exitCodeBehavior: "A non-zero exit code marks system-info collection as failed.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "system fields",
+  },
+  reboot: {
+    operation: "reboot",
+    label: "Reboot",
+    allowedTypes: ["system"],
+    purpose: "Reboots the remote system after any configured safety checks pass.",
+    stepBehavior: "Reboot steps run in order and stop before later steps when an earlier step fails.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed into system fields or update rows.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code before the reboot command prevents later steps from running.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+};
+
+export function getScriptOperationProfiles(): ScriptOperationProfile[] {
+  return OPERATION_PROFILE_ORDER.map((operation) => SCRIPT_OPERATION_PROFILES[operation]);
+}
 
 export const PLACEHOLDER_HELP: PlaceholderHelpEntry[] = [
   { name: "{{package}}", description: "The first selected package name, validated before execution.", example: "apt-get install --only-upgrade -y {{package}}" },
@@ -973,6 +1101,7 @@ export function listScripts(): ScriptListResponse {
     scripts,
     packageManagers,
     placeholders: buildPlaceholderHelp(),
+    operationProfiles: getScriptOperationProfiles(),
   };
 }
 
@@ -1033,6 +1162,9 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.steps.length > MAX_SCRIPT_STEPS) {
     return `steps must include at most ${MAX_SCRIPT_STEPS} commands`;
   }
+  if (input.operation === "detect" && input.steps.length !== 1) {
+    return "detection scripts must include exactly one step";
+  }
   for (const step of input.steps) {
     if (!isRecord(step)) return "each step must be an object";
     if (
@@ -1046,6 +1178,15 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
       return `each step needs a label and command (command max ${MAX_STEP_COMMAND_LENGTH} chars)`;
     }
   }
+  const parserConfigError = validateParserConfig(input.parserConfig);
+  if (parserConfigError) return parserConfigError;
+  if (
+    input.operation === "check_updates" &&
+    input.parserConfig?.parseStep !== undefined &&
+    input.parserConfig.parseStep >= input.steps.length
+  ) {
+    return "parserConfig.parseStep must reference an existing step";
+  }
   if (
     input.sourceScriptId !== undefined &&
     input.sourceScriptId !== null &&
@@ -1053,7 +1194,7 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   ) {
     return "sourceScriptId must be a valid script ID";
   }
-  return validateParserConfig(input.parserConfig) || validateSystemInfoConfig(input.systemInfoConfig);
+  return validateSystemInfoConfig(input.systemInfoConfig);
 }
 
 function defaultScopeCondition(input: Pick<ScriptDefinition, "type" | "operation" | "pkgManager">) {

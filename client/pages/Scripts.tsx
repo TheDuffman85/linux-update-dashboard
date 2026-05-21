@@ -20,6 +20,7 @@ import {
   type PlaceholderHelpEntry,
   type ScriptDefinition,
   type ScriptOperation,
+  type ScriptOperationProfile,
   type ScriptStep,
   type ScriptType,
   type CustomParserConfig,
@@ -41,6 +42,104 @@ const OPERATION_LABELS: Record<ScriptOperation, string> = {
   system_info: "System info",
   reboot: "Reboot",
 };
+const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
+  {
+    operation: "detect",
+    label: OPERATION_LABELS.detect,
+    allowedTypes: ["package_manager"],
+    purpose: "Determines whether a package manager is available on a remote system.",
+    stepBehavior: "Detection uses exactly one command so the result is unambiguous.",
+    outputConsumer: "The command must exit with 0 and print found on stdout to enable the manager.",
+    parserBehavior: "No update parser is used for detection output.",
+    exitCodeBehavior: "Exit code 0 with found means detected; any other result is treated as not detected.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}"],
+    defaultStepBadge: "detection output",
+  },
+  {
+    operation: "check_updates",
+    label: OPERATION_LABELS.check_updates,
+    allowedTypes: ["package_manager"],
+    purpose: "Refreshes package metadata and turns command output into cached update rows.",
+    stepBehavior: "Steps run in order and stop at the first failed step.",
+    outputConsumer: "Built-in parsers inspect the command results they need; custom parsers read one selected step, defaulting to the last step.",
+    parserBehavior: "Custom package managers need an update regex with packageName and newVersion groups.",
+    exitCodeBehavior: "Built-in parsers and custom success/update exit-code lists decide whether a non-zero exit code is acceptable.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "parser input",
+  },
+  {
+    operation: "repair_issue",
+    label: OPERATION_LABELS.repair_issue,
+    allowedTypes: ["package_manager"],
+    purpose: "Runs the repair action offered for package-manager issue banners.",
+    stepBehavior: "The configured repair steps run in order and stop at the first failed step.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed into update rows.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code marks the repair operation as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  {
+    operation: "upgrade_all",
+    label: OPERATION_LABELS.upgrade_all,
+    allowedTypes: ["package_manager"],
+    purpose: "Installs all available updates for one package manager.",
+    stepBehavior: "Upgrade commands run as the operation body for the selected manager.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while upgrading.",
+    exitCodeBehavior: "A non-zero exit code marks the upgrade as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  {
+    operation: "full_upgrade_all",
+    label: OPERATION_LABELS.full_upgrade_all,
+    allowedTypes: ["package_manager"],
+    purpose: "Runs the fuller upgrade mode for package managers that support it.",
+    stepBehavior: "Full-upgrade commands run as the operation body for the selected manager.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while upgrading.",
+    exitCodeBehavior: "A non-zero exit code marks the full upgrade as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  {
+    operation: "upgrade_selected",
+    label: OPERATION_LABELS.upgrade_selected,
+    allowedTypes: ["package_manager"],
+    purpose: "Upgrades the packages selected by the user.",
+    stepBehavior: "Selected package placeholders are resolved immediately before SSH execution.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while upgrading selected packages.",
+    exitCodeBehavior: "A non-zero exit code marks the selected-package upgrade as failed.",
+    relevantPlaceholders: ["{{package}}", "{{packages}}", "{{quotedPackage}}", "{{quotedPackages}}", "{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  {
+    operation: "system_info",
+    label: OPERATION_LABELS.system_info,
+    allowedTypes: ["system"],
+    purpose: "Collects OS, kernel, uptime, resource, boot, and reboot-required details.",
+    stepBehavior: "System-info steps run in order and their output is consumed by the configured mapping mode.",
+    outputConsumer: "The built-in parser reads dashboard sections; custom section mapping reads named output sections into system fields.",
+    parserBehavior: "Use built-in mode for copied standard scripts, or sectioned mode for custom output.",
+    exitCodeBehavior: "A non-zero exit code marks system-info collection as failed.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "system fields",
+  },
+  {
+    operation: "reboot",
+    label: OPERATION_LABELS.reboot,
+    allowedTypes: ["system"],
+    purpose: "Reboots the remote system after any configured safety checks pass.",
+    stepBehavior: "Reboot steps run in order and stop before later steps when an earlier step fails.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed into system fields or update rows.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code before the reboot command prevents later steps from running.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+];
 const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
   "detect",
   "check_updates",
@@ -529,6 +628,102 @@ function ScriptReferenceSection({
   );
 }
 
+function operationProfileMap(profiles: ScriptOperationProfile[] | undefined): Map<ScriptOperation, ScriptOperationProfile> {
+  return new Map((profiles?.length ? profiles : FALLBACK_OPERATION_PROFILES).map((profile) => [
+    profile.operation,
+    profile,
+  ]));
+}
+
+function RuntimeBehaviorPanel({
+  profile,
+  parseStepLabel,
+  parseStepOutOfRange,
+  usesBuiltinParser,
+  showParserConfig,
+}: {
+  profile: ScriptOperationProfile;
+  parseStepLabel: string;
+  parseStepOutOfRange: boolean;
+  usesBuiltinParser: boolean;
+  showParserConfig: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const outputDetail = showParserConfig
+    ? `Custom parser output: ${parseStepLabel}.`
+    : usesBuiltinParser && profile.operation === "check_updates"
+      ? "Built-in parser chooses the required command output from the completed steps."
+      : profile.outputConsumer;
+
+  return (
+    <section className="rounded-lg border border-blue-200 bg-blue-50/70 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 p-3 text-left"
+        aria-expanded={open}
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+              Runtime behavior
+            </span>
+            <Badge variant="info" small>{profile.label}</Badge>
+          </div>
+          <div className="mt-1 text-xs text-blue-700/80 dark:text-blue-200/80">
+            Steps, output, parser, and exit codes
+          </div>
+        </div>
+        <svg
+          className={`h-5 w-5 shrink-0 text-blue-600 transition-transform dark:text-blue-300 ${open ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="border-t border-blue-200 p-3 dark:border-blue-900/50">
+          <p>{profile.purpose}</p>
+          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Steps
+              </div>
+              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{profile.stepBehavior}</p>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Output
+              </div>
+              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{outputDetail}</p>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Parser
+              </div>
+              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{profile.parserBehavior}</p>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Exit codes
+              </div>
+              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{profile.exitCodeBehavior}</p>
+            </div>
+          </div>
+          {parseStepOutOfRange && (
+            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              The saved parser step no longer exists. Choose an existing step before saving this script.
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function readPackageManagersPanelOpen(): boolean {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(PACKAGE_MANAGERS_PANEL_STORAGE_KEY) === "1";
@@ -577,10 +772,11 @@ function buildSystemInfoConfig(
   return Object.keys(config).length ? config : null;
 }
 
-function ScriptEditor({
+export function ScriptEditor({
   script,
   packageManagers,
   placeholders,
+  operationProfiles,
   onSave,
   onCancel,
   busy,
@@ -588,6 +784,7 @@ function ScriptEditor({
   script: ScriptDefinition;
   packageManagers: Array<{ name: string; label: string; configEntries?: CustomPackageManagerConfigEntry[] }>;
   placeholders: PlaceholderHelpEntry[];
+  operationProfiles?: ScriptOperationProfile[];
   onSave: (script: ScriptDefinition) => void;
   onCancel: () => void;
   busy?: boolean;
@@ -620,6 +817,8 @@ function ScriptEditor({
   const stepsListRef = useRef<HTMLDivElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
   const operationOptions = draft.type === "system" ? SYSTEM_OPERATIONS : PACKAGE_MANAGER_OPERATIONS;
+  const profiles = useMemo(() => operationProfileMap(operationProfiles), [operationProfiles]);
+  const operationProfile = profiles.get(draft.operation) ?? FALLBACK_OPERATION_PROFILES[0];
   const selectedPackageManager = draft.pkgManager ?? "";
   const usesBuiltinParser = selectedPackageManager ? BUILTIN_PACKAGE_MANAGERS.includes(selectedPackageManager) : false;
   const customConfigKeys = packageManagers
@@ -653,6 +852,39 @@ function ScriptEditor({
     draft.operation === "check_updates" &&
     !usesBuiltinParser;
   const showSystemInfoConfig = draft.type === "system" && draft.operation === "system_info";
+  const singleStepOperation = draft.operation === "detect";
+  const explicitParseStep = parserConfig.parseStep.trim();
+  const parsedStepNumber = explicitParseStep
+    ? Number.parseInt(explicitParseStep, 10)
+    : steps.length - 1;
+  const parsedStepIndex = Number.isInteger(parsedStepNumber) ? parsedStepNumber : steps.length - 1;
+  const parseStepOutOfRange =
+    showParserConfig &&
+    (!Number.isInteger(parsedStepNumber) || parsedStepNumber < 0 || parsedStepNumber >= steps.length);
+  const parsedStepLabel = parseStepOutOfRange
+    ? Number.isInteger(parsedStepNumber)
+      ? `missing step ${parsedStepNumber + 1}`
+      : "invalid parser step"
+    : steps[parsedStepIndex]?.label || `step ${parsedStepIndex + 1}`;
+  const parseStepSummary = showParserConfig
+    ? parseStepOutOfRange
+      ? parsedStepLabel
+      : `Step ${parsedStepIndex + 1}: ${parsedStepLabel}`
+    : "";
+
+  const stepBadge = (index: number): string => {
+    if (draft.operation === "detect") return index === 0 ? "detection output" : "not used";
+    if (draft.operation === "check_updates") {
+      if (showParserConfig) {
+        if (parseStepOutOfRange) return "streamed only";
+        return index === parsedStepIndex ? "parsed output" : "streamed only";
+      }
+      return usesBuiltinParser ? "parser input" : operationProfile.defaultStepBadge;
+    }
+    if (draft.operation === "system_info") return "system fields";
+    if (draft.operation === "reboot") return index < steps.length - 1 ? "reboot guard" : "reboot command";
+    return operationProfile.defaultStepBadge;
+  };
 
   useEffect(() => {
     stepsRef.current = steps;
@@ -703,6 +935,7 @@ function ScriptEditor({
   };
 
   const addStep = () => {
+    if (singleStepOperation) return;
     setSteps((current) => [
       ...current,
       { label: `Step ${current.length + 1}`, command: "" },
@@ -745,6 +978,9 @@ function ScriptEditor({
       }));
       if (normalizedSteps.some((step) => !step.label || !step.command)) {
         throw new Error("Each step needs a label and command");
+      }
+      if (draft.operation === "detect" && normalizedSteps.length !== 1) {
+        throw new Error("Detection scripts use exactly one step");
       }
       const pkgManager = draft.type === "package_manager"
         ? draft.pkgManager?.trim() || null
@@ -839,6 +1075,14 @@ function ScriptEditor({
         />
       </div>
 
+      <RuntimeBehaviorPanel
+        profile={operationProfile}
+        parseStepLabel={parseStepSummary}
+        parseStepOutOfRange={parseStepOutOfRange}
+        usesBuiltinParser={usesBuiltinParser}
+        showParserConfig={showParserConfig}
+      />
+
       {showPackageManagerControls && (
         <ScriptReferenceSection
           title="Config Keys"
@@ -861,13 +1105,19 @@ function ScriptEditor({
           <button
             type="button"
             onClick={addStep}
-            className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-lg leading-none"
-            title="Add step"
+            disabled={singleStepOperation}
+            className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 transition-colors text-lg leading-none"
+            title={singleStepOperation ? "Detection scripts use one step" : "Add step"}
             aria-label="Add step"
           >
             +
           </button>
         </div>
+        {singleStepOperation && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Detection scripts use one command. It must exit with 0 and print found when the package manager is available.
+          </p>
+        )}
         <div ref={stepsListRef} className="space-y-3">
           {steps.map((step, index) => (
             <div key={`${index}-${step.label}`} className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3">
@@ -887,7 +1137,12 @@ function ScriptEditor({
                 </button>
                 <div className="min-w-0 flex-1 space-y-3">
                   <div>
-                    <label className={labelClass}>Step {index + 1} Label</label>
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <label className={`${labelClass} mb-0`}>Step {index + 1} Label</label>
+                      <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        {stepBadge(index)}
+                      </span>
+                    </div>
                     <input
                       value={step.label}
                       onChange={(e) => updateStep(index, { label: e.target.value })}
@@ -931,19 +1186,37 @@ function ScriptEditor({
           </summary>
           <div className="mt-4 space-y-4">
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Use named regex groups to turn check output into update rows. Required groups are packageName and newVersion.
+              Use named regex groups to turn the selected step output into update rows. Required groups are packageName and newVersion; other step output stays in activity history.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className={labelClass}>Parse Step</label>
-                <input
-                  type="number"
-                  min={0}
+                <label className={labelClass}>Output to Parse</label>
+                <select
                   value={parserConfig.parseStep}
                   onChange={(e) => setParserConfig({ ...parserConfig, parseStep: e.target.value })}
                   className={inputClass}
-                  placeholder="last step"
-                />
+                >
+                  <option value="">
+                    Last step ({steps.at(-1)?.label || `Step ${steps.length}`})
+                  </option>
+                  {steps.map((step, index) => (
+                    <option key={`${index}-${step.label}`} value={index.toString()}>
+                      Step {index + 1}: {step.label || `Step ${index + 1}`}
+                    </option>
+                  ))}
+                  {parseStepOutOfRange && (
+                    <option value={parserConfig.parseStep}>
+                      {Number.isInteger(parsedStepNumber)
+                        ? `Missing step ${parsedStepNumber + 1}`
+                        : "Invalid parser step"}
+                    </option>
+                  )}
+                </select>
+                {parseStepOutOfRange && (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                    The saved parser step is outside the current step list.
+                  </p>
+                )}
               </div>
               <div>
                 <label className={labelClass}>Successful Exit Codes</label>
@@ -1753,6 +2026,7 @@ export default function Scripts() {
             script={editing}
             packageManagers={packageManagerOptions}
             placeholders={data?.placeholders ?? []}
+            operationProfiles={data?.operationProfiles}
             onSave={saveScript}
             onCancel={() => setEditing(null)}
             busy={createScript.isPending || updateScript.isPending}

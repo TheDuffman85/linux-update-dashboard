@@ -51,6 +51,10 @@ describe("scripts routes security", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.scripts.some((script: { id: string }) => script.id === "builtin:apt:check_updates")).toBe(true);
+    expect(body.operationProfiles).toContainEqual(expect.objectContaining({
+      operation: "check_updates",
+      outputConsumer: expect.stringContaining("custom parsers read one selected step"),
+    }));
   });
 
   test("full app stack blocks unauthenticated script access", async () => {

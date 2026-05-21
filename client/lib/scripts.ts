@@ -58,6 +58,19 @@ export interface ScriptUsage {
   operationKey: string;
 }
 
+export interface ScriptOperationProfile {
+  operation: ScriptOperation;
+  label: string;
+  allowedTypes: ScriptType[];
+  purpose: string;
+  stepBehavior: string;
+  outputConsumer: string;
+  parserBehavior: string;
+  exitCodeBehavior: string;
+  relevantPlaceholders: string[];
+  defaultStepBadge: string;
+}
+
 export interface CustomPackageManagerDefinition {
   id: number;
   builtin: boolean;
@@ -79,6 +92,7 @@ export interface ScriptsResponse {
   scripts: ScriptDefinition[];
   packageManagers: CustomPackageManagerDefinition[];
   placeholders: PlaceholderHelpEntry[];
+  operationProfiles?: ScriptOperationProfile[];
 }
 
 export function buildOperationKey(operation: ScriptOperation, pkgManager?: string | null): string {
