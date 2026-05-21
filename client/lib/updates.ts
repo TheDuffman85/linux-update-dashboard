@@ -104,6 +104,24 @@ export function useUpgradeAll() {
   });
 }
 
+export function useUpgradeAllBatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: Array<{
+      systemId: number;
+      defaultUpgradeModeOverride?: DefaultUpgradeModeOverride;
+    }>) =>
+      apiFetch<{ status: string; batchId: number }>("/systems/upgrade-all", {
+        method: "POST",
+        body: JSON.stringify({ items }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
 export function useFullUpgradeAll() {
   const qc = useQueryClient();
   return useMutation({

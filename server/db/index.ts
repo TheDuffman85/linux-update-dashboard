@@ -114,6 +114,14 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   )`);
   migrateCredentialsTable();
 
+  _db.run(sql`CREATE TABLE IF NOT EXISTS upgrade_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
   _db.run(sql`CREATE TABLE IF NOT EXISTS systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -149,6 +157,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     memory TEXT,
     disk TEXT,
     exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
+    upgrade_group_id INTEGER REFERENCES upgrade_groups(id) ON DELETE SET NULL,
     upgrade_order INTEGER NOT NULL DEFAULT 1,
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
@@ -231,6 +240,39 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     output TEXT,
     error TEXT,
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS upgrade_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT,
+    completed_at TEXT
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS upgrade_batch_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL REFERENCES upgrade_batches(id) ON DELETE CASCADE,
+    system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    group_id INTEGER REFERENCES upgrade_groups(id) ON DELETE SET NULL,
+    group_sort_order INTEGER NOT NULL DEFAULT 0,
+    system_sort_order INTEGER NOT NULL DEFAULT 0,
+    default_upgrade_mode_override TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    command TEXT,
+    pkg_manager TEXT NOT NULL DEFAULT 'system',
+    history_id INTEGER REFERENCES update_history(id) ON DELETE SET NULL,
+    current_pkg_manager TEXT,
+    current_command TEXT,
+    remote_pid INTEGER,
+    remote_log_file TEXT,
+    remote_exit_file TEXT,
+    remote_script_file TEXT,
+    pre_upgrade_update_count INTEGER,
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT,
     completed_at TEXT
   )`);
 
@@ -630,6 +672,11 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN upgrade_group_id INTEGER`);
+  } catch {
+    // Column already exists
+  }
+  try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN upgrade_order INTEGER NOT NULL DEFAULT 1`);
   } catch {
     // Column already exists
@@ -751,7 +798,13 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
         THEN NULL
       ELSE 'Server restarted while operation was in progress'
     END
-    WHERE status = 'started'`);
+    WHERE status = 'started'
+      AND id NOT IN (
+        SELECT history_id
+        FROM upgrade_batch_items
+        WHERE history_id IS NOT NULL
+          AND status IN ('queued', 'running')
+      )`);
 
   // Cleanup: remove obsolete settings
   _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap', 'auto_hide_kept_back_updates')`);
@@ -1085,6 +1138,7 @@ function rebuildSystemsTable(
       memory TEXT,
       disk TEXT,
       exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
+      upgrade_group_id INTEGER,
       upgrade_order INTEGER NOT NULL DEFAULT 1,
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
@@ -1135,6 +1189,7 @@ function rebuildSystemsTable(
     "memory",
     "disk",
     "exclude_from_upgrade_all",
+    "upgrade_group_id",
     "upgrade_order",
     "hidden",
     "needs_reboot",
@@ -1188,6 +1243,7 @@ function rebuildSystemsTable(
     "memory",
     "disk",
     "exclude_from_upgrade_all",
+    "upgrade_group_id",
     "upgrade_order",
     "hidden",
     "needs_reboot",

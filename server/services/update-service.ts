@@ -48,6 +48,40 @@ export type DefaultUpgradeModeOverride = "standard" | "aggressive";
 type OperationResult = { success: boolean; output: string; warning?: boolean; cancelled?: boolean };
 type RebootResult = { success: boolean; message: string; blocked?: boolean };
 
+export interface UpgradeAllCommandSnapshot {
+  systemId: number;
+  pkgManagers: string[];
+  command: string | null;
+  pkgManager: string;
+  commands: Array<{ pkgManager: string; command: string }>;
+}
+
+interface QueuedUpgradeResumeState {
+  historyId: number;
+  pkgManager: string;
+  command: string;
+  persistentInfo: PersistentCommandInfo;
+  preUpgradeUpdateCount: number;
+}
+
+interface UpgradeAllExecutionOptions {
+  defaultUpgradeModeOverride?: DefaultUpgradeModeOverride;
+  queuedHistoryId?: number;
+  resume?: QueuedUpgradeResumeState;
+  onStepStarted?: (input: {
+    historyId: number;
+    pkgManager: string;
+    command: string;
+    preUpgradeUpdateCount: number;
+  }) => void;
+  onPersistentInfo?: (input: {
+    historyId: number;
+    pkgManager: string;
+    command: string;
+    info: PersistentCommandInfo;
+  }) => void;
+}
+
 function withDefaultUpgradeModeOverride(
   configs: PackageManagerConfigs | null,
   override?: DefaultUpgradeModeOverride,
@@ -218,6 +252,7 @@ interface ReconnectionResult {
   stdout: string;
   stderr: string;
   serverRebooted: boolean;
+  persistentInfo?: PersistentCommandInfo;
 }
 
 export type ActivityStepStatus = "success" | "warning" | "failed" | "started" | "cancelled";
@@ -345,6 +380,54 @@ export function getConfiguredUpgradeBehaviorDescriptions(systemId: number): stri
   if (!system) return [];
   const pkgManagers = systemService.getActivePkgManagers(system);
   return describeUpgradeBehaviors(pkgManagers, getSystemPackageManagerConfigs(system));
+}
+
+function getUpgradeAllPkgManagers(systemId: number, system: { pkgManager?: string | null }): string[] {
+  const db = getDb();
+  const cachedManagers = db
+    .selectDistinct({ pkgManager: updateCache.pkgManager })
+    .from(updateCache)
+    .where(eq(updateCache.systemId, systemId))
+    .all()
+    .map((r) => r.pkgManager);
+
+  return cachedManagers.length > 0
+    ? cachedManagers
+    : system.pkgManager
+      ? [system.pkgManager]
+      : [];
+}
+
+export function getUpgradeAllCommandSnapshot(
+  systemId: number,
+  options?: { defaultUpgradeModeOverride?: DefaultUpgradeModeOverride },
+): UpgradeAllCommandSnapshot {
+  const system = systemService.getSystem(systemId);
+  if (!system) {
+    return { systemId, pkgManagers: [], command: null, pkgManager: "system", commands: [] };
+  }
+  const pkgManagerConfigs = withDefaultUpgradeModeOverride(
+    getSystemPackageManagerConfigs(system),
+    options?.defaultUpgradeModeOverride,
+  );
+  const pkgManagers = getUpgradeAllPkgManagers(systemId, system);
+  const commands = pkgManagers.flatMap((pmName) => {
+    const steps = resolveRuntimeSteps({
+      systemId,
+      operation: "upgrade_all",
+      pkgManager: pmName,
+      pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+    });
+    const command = steps[0]?.command;
+    return command ? [{ pkgManager: pmName, command }] : [];
+  });
+  return {
+    systemId,
+    pkgManagers,
+    command: commands.map((entry) => entry.command).join(" && ") || null,
+    pkgManager: commands.map((entry) => entry.pkgManager).join(",") || pkgManagers.join(",") || "system",
+    commands,
+  };
 }
 
 interface SelectedPackageUpgradeResolution {
@@ -671,6 +754,26 @@ function insertStartedEntry(
     .get();
   pruneHistoryForSystem(systemId);
   return result.id;
+}
+
+function markEntryStarted(
+  id: number,
+  pkgManager: string,
+  command: string,
+  startedAt = getCurrentTimestamp(),
+): void {
+  getDb().update(updateHistory)
+    .set({
+      pkgManager,
+      status: "started",
+      command: sanitizeCommand(command),
+      startedAt,
+      completedAt: null,
+      output: null,
+      error: null,
+    })
+    .where(eq(updateHistory.id, id))
+    .run();
 }
 
 /** Update an existing history row to its final status. */
@@ -1162,7 +1265,7 @@ export async function solvePackageManagerIssue(
 
 export async function applyUpgradeAll(
   systemId: number,
-  options?: { defaultUpgradeModeOverride?: DefaultUpgradeModeOverride },
+  options?: UpgradeAllExecutionOptions,
 ): Promise<OperationResult> {
   return withLock(systemId, async () => {
     const now = getCurrentTimestamp();
@@ -1179,24 +1282,15 @@ export async function applyUpgradeAll(
       options?.defaultUpgradeModeOverride,
     );
 
-    // Collect all distinct package managers from the cached updates
     const db = getDb();
-    const cachedManagers = db
-      .selectDistinct({ pkgManager: updateCache.pkgManager })
-      .from(updateCache)
-      .where(eq(updateCache.systemId, systemId))
-      .all()
-      .map((r) => r.pkgManager);
-
-    // Fall back to stored primary manager if cache is empty
-    const pkgManagers =
-      cachedManagers.length > 0
-        ? cachedManagers
-        : system.pkgManager
-          ? [system.pkgManager]
-          : [];
+    const pkgManagers = getUpgradeAllPkgManagers(systemId, system);
 
     if (!pkgManagers.length) {
+      if (options?.queuedHistoryId) {
+        finishEntry(options.queuedHistoryId, "failed", {
+          error: "No package manager detected",
+        });
+      }
       return { success: false, output: "No package manager detected" };
     }
 
@@ -1211,12 +1305,19 @@ export async function applyUpgradeAll(
     let conn;
     try {
       throwIfActiveOperationCancelled(systemId);
-      conn = await sshManager.connect(system as Record<string, unknown>, {
-        systemId,
-      });
-      throwIfActiveOperationCancelled(systemId);
+      if (!options?.resume) {
+        conn = await sshManager.connect(system as Record<string, unknown>, {
+          systemId,
+        });
+        throwIfActiveOperationCancelled(systemId);
+      }
 
-      for (const pmName of pkgManagers) {
+      const resumeIndex = options?.resume
+        ? pkgManagers.findIndex((pmName) => pmName === options.resume?.pkgManager)
+        : -1;
+      const startIndex = resumeIndex >= 0 ? resumeIndex : 0;
+
+      for (const pmName of pkgManagers.slice(startIndex)) {
         throwIfActiveOperationCancelled(systemId);
         const steps = resolveRuntimeSteps({
           systemId,
@@ -1226,9 +1327,35 @@ export async function applyUpgradeAll(
         });
         const cmd = steps[0]?.command;
         if (!cmd) continue;
+        const isResumeStep = options?.resume?.pkgManager === pmName;
+        if (!isResumeStep && !conn) {
+          conn = await sshManager.connect(system as Record<string, unknown>, {
+            systemId,
+          });
+          throwIfActiveOperationCancelled(systemId);
+        }
         allCommands.push(cmd);
         const stepStartedAt = getCurrentTimestamp();
-        const histId = insertStartedEntry(systemId, "upgrade_all", pmName, cmd, stepStartedAt);
+        const histId =
+          isResumeStep
+            ? options.resume!.historyId
+            : options?.queuedHistoryId && allCommands.length === 1 && startIndex === 0
+              ? options.queuedHistoryId
+              : insertStartedEntry(systemId, "upgrade_all", pmName, cmd, stepStartedAt);
+        if (isResumeStep || histId === options?.queuedHistoryId) {
+          markEntryStarted(histId, pmName, cmd, stepStartedAt);
+        }
+        const preCount = db
+          .select()
+          .from(updateCache)
+          .where(eq(updateCache.systemId, systemId))
+          .all().length;
+        options?.onStepStarted?.({
+          historyId: histId,
+          pkgManager: pmName,
+          command: cmd,
+          preUpgradeUpdateCount: preCount,
+        });
         outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName, startedAt: stepStartedAt });
         let streamedOutput = "";
 
@@ -1237,17 +1364,32 @@ export async function applyUpgradeAll(
           outputStream.publish(systemId, { type: "output", data: chunk, stream });
         };
 
-        const result = await sshManager.runPersistentCommand(
-          conn!,
-          cmd,
-          3600,
-          sudoPassword,
-          onDataCb,
-          {
-            signal,
-            onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
-          },
-        );
+        const result = isResumeStep
+          ? await attemptReconnection(
+              systemId,
+              options.resume!.persistentInfo,
+              options.resume!.preUpgradeUpdateCount,
+              onDataCb,
+            )
+          : await sshManager.runPersistentCommand(
+              conn!,
+              cmd,
+              3600,
+              sudoPassword,
+              onDataCb,
+              {
+                signal,
+                onPersistentInfo: (info) => {
+                  setActiveOperationPersistentInfo(systemId, info);
+                  options?.onPersistentInfo?.({
+                    historyId: histId,
+                    pkgManager: pmName,
+                    command: cmd,
+                    info,
+                  });
+                },
+              },
+            );
 
         let { stdout, stderr, exitCode } = result;
 
@@ -1277,12 +1419,6 @@ export async function applyUpgradeAll(
           // Connection lost — attempt reconnection
           try { sshManager.disconnect(conn!); } catch {}
           conn = undefined;
-
-          const preCount = db
-            .select()
-            .from(updateCache)
-            .where(eq(updateCache.systemId, systemId))
-            .all().length;
 
           const reconResult = await attemptReconnection(
             systemId,
@@ -1331,6 +1467,14 @@ export async function applyUpgradeAll(
 
         // If connection was lost, can't continue with remaining package managers
         if (reconnectionUsed) break;
+      }
+
+      if (allCommands.length === 0 && options?.queuedHistoryId) {
+        finishEntry(options.queuedHistoryId, "failed", {
+          error: "No upgrade command available",
+        });
+        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+        return { success: false, output: "No upgrade command available" };
       }
 
       // Re-check after upgrade (skip if reconnection already ran one)

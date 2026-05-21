@@ -364,7 +364,8 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
     }
   }
 
-  const reboot = getBuiltinSteps("reboot", null)[0];
+  const rebootSteps = getBuiltinSteps("reboot", null);
+  const reboot = rebootSteps[rebootSteps.length - 1];
   if (reboot) exact.push({
     id: "reboot",
     category: "reboot",

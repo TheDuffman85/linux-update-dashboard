@@ -1,32 +1,41 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Link } from "react-router";
 import Sortable from "sortablejs";
+import type { SortableEvent } from "sortablejs";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { useDashboardStats, useDashboardSystems } from "../lib/dashboard";
-import { useRefreshCache } from "../lib/updates";
+import { useRefreshCache, useUpgradeAllBatch } from "../lib/updates";
 import {
-  useReorderSystemUpgradeOrder,
+  useCreateUpgradeGroup,
+  useDeleteUpgradeGroup,
+  useReorderUpgradeGroups,
+  useUpdateSystemUpgradeGroups,
   useUpdateSystemUpgradeAllExclusion,
   useUpdateSystemUpgradeMode,
+  useUpdateUpgradeGroup,
+  useUpgradeGroups,
 } from "../lib/systems";
-import type { System } from "../lib/systems";
+import type { System, UpgradeGroup } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { deriveSystemUpdateState, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
-function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
-  if (fromIndex === toIndex) return items;
+const UNGROUPED_KEY = "ungrouped";
 
-  const nextItems = [...items];
-  const [movedItem] = nextItems.splice(fromIndex, 1);
-  nextItems.splice(toIndex, 0, movedItem);
-  return nextItems;
+function getGroupKey(groupId: number | null | undefined): string {
+  return groupId ? String(groupId) : UNGROUPED_KEY;
 }
 
 function compareUpgradeOrder(a: System, b: System): number {
+  const orderDiff = (a.upgradeOrder ?? 1) - (b.upgradeOrder ?? 1);
+  if (orderDiff !== 0) return orderDiff;
+  return a.name.localeCompare(b.name) || a.id - b.id;
+}
+
+function compareSystemsInGroup(a: System, b: System): number {
   const orderDiff = (a.upgradeOrder ?? 1) - (b.upgradeOrder ?? 1);
   if (orderDiff !== 0) return orderDiff;
   return a.name.localeCompare(b.name) || a.id - b.id;
@@ -131,7 +140,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system, upgrading, checking }: { system: { id: number; name: string; hostname: string; port: number; osName: string | null; isReachable: number; updateCount: number; securityCount: number; keptBackCount: number; needsReboot?: number; cacheAge: string | null; cacheTimestamp?: string | null; isStale?: boolean; lastCheck: { status: "success" | "warning" | "failed"; error: string | null; startedAt: string; completedAt: string | null } | null; activeOperation?: { type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair"; startedAt: string; phase?: "reconnecting" | "rechecking"; packageName?: string; packageNames?: string[]; cancelRequested?: boolean } | null }; upgrading: boolean; checking: boolean }) {
+function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
@@ -210,22 +219,34 @@ function SystemCard({ system, upgrading, checking }: { system: { id: number; nam
 }
 
 export default function Dashboard() {
-  const { upgradeAll, isUpgrading, removeUpgrading, upgradingSystems, upgradingCount } = useUpgrade();
+  const { isUpgrading, removeUpgrading, upgradingSystems, upgradingCount } = useUpgrade();
   const { data: systems, dataUpdatedAt } = useDashboardSystems(upgradingCount > 0);
   const hasActiveOps = systems?.some((s) => s.activeOperation) ?? false;
   const { data: stats } = useDashboardStats(hasActiveOps);
+  const { data: upgradeGroupConfig = { groups: [], ungroupedSortOrder: 1_000_000 } } = useUpgradeGroups();
+  const upgradeGroups = upgradeGroupConfig.groups;
   const refreshCache = useRefreshCache();
-  const reorderSystemUpgradeOrder = useReorderSystemUpgradeOrder();
+  const upgradeAllBatch = useUpgradeAllBatch();
+  const createUpgradeGroup = useCreateUpgradeGroup();
+  const updateUpgradeGroup = useUpdateUpgradeGroup();
+  const deleteUpgradeGroup = useDeleteUpgradeGroup();
+  const reorderUpgradeGroups = useReorderUpgradeGroups();
+  const updateSystemUpgradeGroups = useUpdateSystemUpgradeGroups();
   const updateSystemUpgradeAllExclusion = useUpdateSystemUpgradeAllExclusion();
   const updateSystemUpgradeMode = useUpdateSystemUpgradeMode();
   const { addToast } = useToast();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
+  const [upgradeEditMode, setUpgradeEditMode] = useState(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
   const [fullUpgradeSelections, setFullUpgradeSelections] = useState<Record<number, boolean>>({});
   const [upgradeModalSystems, setUpgradeModalSystems] = useState<System[]>([]);
+  const [renameGroup, setRenameGroup] = useState<{ id: number; name: string } | null>(null);
+  const [deleteGroup, setDeleteGroup] = useState<UpgradeGroup | null>(null);
   const upgradeModalSystemsRef = useRef<System[]>([]);
-  const upgradeListRef = useRef<HTMLUListElement | null>(null);
-  const upgradeSortableRef = useRef<Sortable | null>(null);
+  const groupListRef = useRef<HTMLDivElement | null>(null);
+  const groupSortableRef = useRef<Sortable | null>(null);
+  const systemListRefs = useRef(new Map<string, HTMLUListElement>());
+  const systemSortablesRef = useRef<Sortable[]>([]);
 
   // Sync client-side upgrading state with server's activeOperation.
   // React Query only fires inline mutation callbacks for the last .mutate() call,
@@ -262,99 +283,246 @@ export default function Dashboard() {
     () => [...systemsWithUpdates].sort(compareUpgradeOrder),
     [systemsWithUpdates]
   );
+  const orderedModalCandidateSystems = useMemo(
+    () =>
+      [...(systems ?? [])]
+        .filter((s) => !isUpgrading(s.id) && !hasActiveUpgradeOperation(s))
+        .sort((a, b) => {
+          const groupDiff = (a.upgradeGroupId ?? 1_000_000) - (b.upgradeGroupId ?? 1_000_000);
+          if (groupDiff !== 0) return groupDiff;
+          return compareSystemsInGroup(a, b);
+        }),
+    [systems, isUpgrading]
+  );
   const modalSystems = showUpgradeConfirm ? upgradeModalSystems : orderedSystemsWithUpdates;
+  const visibleModalSystems = upgradeEditMode
+    ? modalSystems
+    : modalSystems.filter((system) => system.updateCount > 0);
   const excludedSystems = orderedSystemsWithUpdates.filter((s) => s.excludeFromUpgradeAll === 1);
   const defaultSelectedSystemIds = orderedSystemsWithUpdates
     .filter((s) => s.excludeFromUpgradeAll !== 1)
     .map((s) => s.id);
-  const selectedSystems = modalSystems.filter((s) => selectedSystemIds.includes(s.id));
+  const selectedSystems = modalSystems.filter((s) => selectedSystemIds.includes(s.id) && s.updateCount > 0);
   const selectedUpdateCount = selectedSystems.reduce((sum, s) => sum + s.updateCount, 0);
+  const groupsById = useMemo(
+    () => new Map(upgradeGroups.map((group) => [group.id, group])),
+    [upgradeGroups]
+  );
+  const orderedGroupsForModal = useMemo(() => {
+    const groups: Array<{ key: string; id: number | null; name: string; sortOrder: number; systems: System[]; realGroup?: UpgradeGroup }> =
+      upgradeGroups
+        .slice()
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name) || a.id - b.id)
+        .map((group) => ({
+          key: String(group.id),
+          id: group.id,
+          name: group.name,
+          sortOrder: group.sortOrder,
+          systems: visibleModalSystems
+            .filter((system) => system.upgradeGroupId === group.id)
+            .sort(compareSystemsInGroup),
+          realGroup: group,
+        }));
+    const ungroupedSystems = visibleModalSystems
+      .filter((system) => !system.upgradeGroupId || !groupsById.has(system.upgradeGroupId))
+      .sort(compareSystemsInGroup);
+    if (upgradeGroups.length > 0) {
+      groups.push({
+        key: UNGROUPED_KEY,
+        id: null,
+        name: "Ungrouped",
+        sortOrder: upgradeGroupConfig.ungroupedSortOrder,
+        systems: ungroupedSystems,
+      });
+    } else if (ungroupedSystems.length > 0) {
+      groups.push({
+        key: UNGROUPED_KEY,
+        id: null,
+        name: "Systems",
+        sortOrder: 0,
+        systems: ungroupedSystems,
+      });
+    }
+    const sortedGroups = groups.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    return upgradeEditMode
+      ? sortedGroups
+      : sortedGroups.filter((group) => group.systems.length > 0);
+  }, [upgradeGroups, upgradeGroupConfig.ungroupedSortOrder, visibleModalSystems, groupsById, upgradeEditMode]);
+  const sortableLayoutKey = useMemo(
+    () =>
+      orderedGroupsForModal
+        .map((group) => `${group.key}:${group.systems.map((system) => system.id).join(",")}`)
+        .join("|"),
+    [orderedGroupsForModal]
+  );
 
   useEffect(() => {
     upgradeModalSystemsRef.current = upgradeModalSystems;
   }, [upgradeModalSystems]);
 
   useEffect(() => {
-    if (!showUpgradeConfirm) return;
+    if (!showUpgradeConfirm || !upgradeEditMode) return;
 
-    const eligibleById = new Map(orderedSystemsWithUpdates.map((system) => [system.id, system]));
+    const systemsById = new Map(orderedModalCandidateSystems.map((system) => [system.id, system]));
     setUpgradeModalSystems((current) => {
       const refreshedSystems = current
-        .map((system) => eligibleById.get(system.id))
+        .map((system) => systemsById.get(system.id))
         .filter((system): system is System => Boolean(system));
       const refreshedIds = new Set(refreshedSystems.map((system) => system.id));
-      const newlyEligibleSystems = orderedSystemsWithUpdates.filter((system) => !refreshedIds.has(system.id));
+      const newlyEligibleSystems = orderedModalCandidateSystems.filter((system) => !refreshedIds.has(system.id));
       return [...refreshedSystems, ...newlyEligibleSystems];
     });
-    setSelectedSystemIds((current) => current.filter((systemId) => eligibleById.has(systemId)));
+    setSelectedSystemIds((current) =>
+      current.filter((systemId) => {
+        const system = systemsById.get(systemId);
+        return !!system && system.updateCount > 0;
+      })
+    );
     setFullUpgradeSelections((current) => {
       const next: Record<number, boolean> = {};
-      for (const system of orderedSystemsWithUpdates) {
+      for (const system of orderedModalCandidateSystems) {
         next[system.id] = current[system.id] ?? isDefaultFullUpgradeEnabled(system);
       }
       return next;
     });
-  }, [showUpgradeConfirm, orderedSystemsWithUpdates]);
+  }, [showUpgradeConfirm, orderedModalCandidateSystems]);
 
-  useEffect(() => {
-    const list = upgradeListRef.current;
-    if (!showUpgradeConfirm || !list || upgradeModalSystems.length <= 1) {
-      upgradeSortableRef.current?.destroy();
-      upgradeSortableRef.current = null;
+  const restoreSortableDomMove = (evt: SortableEvent) => {
+    if (evt.oldIndex === undefined) return;
+
+    const refIndex =
+      evt.from === evt.to &&
+      evt.newIndex !== undefined &&
+      evt.newIndex < evt.oldIndex
+        ? evt.oldIndex + 1
+        : evt.oldIndex;
+    evt.from.insertBefore(evt.item, evt.from.children[refIndex] ?? null);
+  };
+
+  const persistSystemGroupingFromDom = (evt: SortableEvent) => {
+    const root = groupListRef.current;
+    if (!root) {
+      restoreSortableDomMove(evt);
       return;
     }
-
-    upgradeSortableRef.current?.destroy();
-    upgradeSortableRef.current = new Sortable(list, {
-      animation: 150,
-      handle: ".upgrade-drag-handle",
-      ghostClass: "sortable-ghost",
-      chosenClass: "sortable-chosen",
-      onEnd: (evt) => {
-        if (
-          evt.oldIndex === undefined ||
-          evt.newIndex === undefined ||
-          evt.oldIndex === evt.newIndex
-        ) {
-          return;
+    const updates = new Map<number, { groupId: number | null; upgradeOrder: number }>();
+    for (const list of Array.from(root.querySelectorAll<HTMLUListElement>("[data-system-list-group]"))) {
+      const rawGroupId = list.dataset.systemListGroup;
+      const groupId = rawGroupId && rawGroupId !== UNGROUPED_KEY ? Number(rawGroupId) : null;
+      Array.from(list.querySelectorAll<HTMLElement>("[data-system-id]")).forEach((node, index) => {
+        const systemId = Number(node.dataset.systemId);
+        if (Number.isInteger(systemId) && systemId > 0) {
+          updates.set(systemId, { groupId, upgradeOrder: index + 1 });
         }
-
-        const previousSystems = upgradeModalSystemsRef.current;
-        const nextSystems = moveSystem(previousSystems, evt.oldIndex, evt.newIndex);
-
-        setUpgradeModalSystems(nextSystems);
-        reorderSystemUpgradeOrder.mutate(nextSystems.map((system) => system.id), {
-          onError: (err) => {
-            setUpgradeModalSystems(previousSystems);
-            addToast(err.message, "danger");
-          },
-        });
-      },
-    });
-
-    return () => {
-      upgradeSortableRef.current?.destroy();
-      upgradeSortableRef.current = null;
-    };
-  }, [showUpgradeConfirm, upgradeModalSystems.length, reorderSystemUpgradeOrder, addToast]);
+      });
+    }
+    if (updates.size === 0) {
+      restoreSortableDomMove(evt);
+      return;
+    }
+    const payload = Array.from(updates.entries()).map(([systemId, update]) => ({
+      systemId,
+      groupId: update.groupId,
+      upgradeOrder: update.upgradeOrder,
+    }));
+    const previousSystems = upgradeModalSystemsRef.current;
+    restoreSortableDomMove(evt);
+    setUpgradeModalSystems((current) =>
+      current.map((system) => {
+        const update = updates.get(system.id);
+        return update
+          ? { ...system, upgradeGroupId: update.groupId, upgradeOrder: update.upgradeOrder }
+          : system;
+      })
+    );
+    window.setTimeout(() => {
+      updateSystemUpgradeGroups.mutate(payload, {
+        onError: (err) => {
+          setUpgradeModalSystems(previousSystems);
+          addToast(err.message, "danger");
+        },
+      });
+    }, 0);
+  };
 
   useEffect(() => {
-    upgradeSortableRef.current?.option("disabled", reorderSystemUpgradeOrder.isPending);
-  }, [reorderSystemUpgradeOrder.isPending]);
+    systemSortablesRef.current.forEach((sortable) => sortable.destroy());
+    systemSortablesRef.current = [];
+    groupSortableRef.current?.destroy();
+    groupSortableRef.current = null;
+
+    if (!showUpgradeConfirm) return;
+
+    const root = groupListRef.current;
+    if (root && orderedGroupsForModal.length > 1) {
+      groupSortableRef.current = new Sortable(root, {
+        animation: 150,
+        handle: ".upgrade-group-drag-handle",
+        draggable: "[data-upgrade-group-key]",
+        ghostClass: "sortable-ghost",
+        chosenClass: "sortable-chosen",
+        onEnd: (evt) => {
+          const groupKeys = Array.from(root.querySelectorAll<HTMLElement>("[data-upgrade-group-key]"))
+            .map((node) => node.dataset.upgradeGroupKey)
+            .map((key) => key === UNGROUPED_KEY ? UNGROUPED_KEY : Number(key))
+            .filter((key): key is number | typeof UNGROUPED_KEY => key === UNGROUPED_KEY || (Number.isInteger(key) && key > 0));
+          restoreSortableDomMove(evt);
+          if (groupKeys.length === orderedGroupsForModal.length) {
+            window.setTimeout(() => {
+              reorderUpgradeGroups.mutate(groupKeys, {
+                onError: (err) => addToast(err.message, "danger"),
+              });
+            }, 0);
+          }
+        },
+      });
+    }
+
+    for (const [groupKey, list] of systemListRefs.current.entries()) {
+      if (!list) continue;
+      const sortable = new Sortable(list, {
+        animation: 150,
+        group: "upgrade-systems",
+        handle: ".upgrade-drag-handle",
+        ghostClass: "sortable-ghost",
+        chosenClass: "sortable-chosen",
+        onEnd: persistSystemGroupingFromDom,
+      });
+      systemSortablesRef.current.push(sortable);
+      if (!groupKey) sortable.option("disabled", true);
+    }
+
+    return () => {
+      systemSortablesRef.current.forEach((sortable) => sortable.destroy());
+      systemSortablesRef.current = [];
+      groupSortableRef.current?.destroy();
+      groupSortableRef.current = null;
+    };
+  }, [showUpgradeConfirm, upgradeEditMode, sortableLayoutKey, orderedGroupsForModal.length, reorderUpgradeGroups, addToast]);
+
+  useEffect(() => {
+    const disabled = !upgradeEditMode || updateSystemUpgradeGroups.isPending || reorderUpgradeGroups.isPending;
+    systemSortablesRef.current.forEach((sortable) => sortable.option("disabled", disabled));
+    groupSortableRef.current?.option("disabled", disabled);
+  }, [upgradeEditMode, updateSystemUpgradeGroups.isPending, reorderUpgradeGroups.isPending]);
 
   const openUpgradeConfirm = () => {
     setSelectedSystemIds(defaultSelectedSystemIds);
-    setUpgradeModalSystems(orderedSystemsWithUpdates);
+    setUpgradeEditMode(false);
+    setUpgradeModalSystems(orderedModalCandidateSystems);
     setFullUpgradeSelections(Object.fromEntries(
-      orderedSystemsWithUpdates.map((s) => [s.id, isDefaultFullUpgradeEnabled(s)])
+      orderedModalCandidateSystems.map((s) => [s.id, isDefaultFullUpgradeEnabled(s)])
     ));
     setShowUpgradeConfirm(true);
   };
 
   const closeUpgradeConfirm = () => {
     setShowUpgradeConfirm(false);
+    setUpgradeEditMode(false);
     setSelectedSystemIds([]);
     setUpgradeModalSystems([]);
+    setRenameGroup(null);
+    setDeleteGroup(null);
     setFullUpgradeSelections({});
   };
 
@@ -412,36 +580,80 @@ export default function Dashboard() {
     );
   };
 
+  const handleCreateGroup = () => {
+    const existingNames = new Set(upgradeGroups.map((group) => group.name.trim().toLowerCase()));
+    let index = 1;
+    while (existingNames.has(`group ${index}`)) index += 1;
+    const name = `Group ${index}`;
+    createUpgradeGroup.mutate(name, {
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const openRenameGroup = (group: UpgradeGroup) => {
+    setRenameGroup({ id: group.id, name: group.name });
+  };
+
+  const saveRenameGroup = () => {
+    if (!renameGroup) return;
+    const name = renameGroup.name.trim();
+    const currentGroup = upgradeGroups.find((group) => group.id === renameGroup.id);
+    if (!name || !currentGroup) return;
+    if (name === currentGroup.name) {
+      setRenameGroup(null);
+      return;
+    }
+    updateUpgradeGroup.mutate(
+      { groupId: renameGroup.id, name },
+      {
+        onSuccess: () => setRenameGroup(null),
+        onError: (err) => addToast(err.message, "danger"),
+      }
+    );
+  };
+
+  const handleDeleteGroup = (group: UpgradeGroup) => {
+    setDeleteGroup(group);
+  };
+
+  const confirmDeleteGroup = () => {
+    if (!deleteGroup) return;
+    deleteUpgradeGroup.mutate(deleteGroup.id, {
+      onSuccess: () => setDeleteGroup(null),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
   const handleUpgradeAll = () => {
     const latestSystemsById = new Map((systems ?? []).map((system) => [system.id, system]));
     const systemsToUpgrade = modalSystems
       .map((system) => latestSystemsById.get(system.id) ?? system)
       .filter((system) =>
         selectedSystemIds.includes(system.id) &&
+        system.updateCount > 0 &&
         isUpgradeAllEligible(system, isUpgrading(system.id))
       );
     if (systemsToUpgrade.length === 0) return;
 
     const fullUpgradeBySystemId = fullUpgradeSelections;
     closeUpgradeConfirm();
-    for (const s of systemsToUpgrade) {
+    const items = systemsToUpgrade.map((s) => {
       const canOverrideMode = supportsDefaultUpgradeModeOverride(s);
-      const override =
+      const defaultUpgradeModeOverride =
         !canOverrideMode
           ? undefined
-          : {
-              defaultUpgradeModeOverride: fullUpgradeBySystemId[s.id]
+          : fullUpgradeBySystemId[s.id]
                 ? "aggressive" as const
-                : "standard" as const,
+                : "standard" as const;
+      return {
+        systemId: s.id,
+        defaultUpgradeModeOverride,
       };
-      void upgradeAll(s.id, override, {
-        onSuccess: (d: any) => {
-          const toast = getDashboardUpgradeToast(s.name, d.status);
-          addToast(toast.message, toast.type);
-        },
-        onError: (err: Error) => addToast(`${s.name}: ${err.message}`, "danger"),
-      });
-    }
+    });
+    upgradeAllBatch.mutate(items, {
+      onSuccess: () => addToast(`Upgrade All queued for ${items.length} system${items.length !== 1 ? "s" : ""}`, "info"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
   };
 
   return (
@@ -457,22 +669,20 @@ export default function Dashboard() {
           >
             {refreshCache.isPending ? <span className="spinner spinner-sm" /> : "Refresh All"}
           </button>
-          {(systemsWithUpdates.length > 0 || hasUpgradeInProgress) && (
-            <button
-              onClick={openUpgradeConfirm}
-              disabled={hasUpgradeInProgress}
-              className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
-            >
-              {hasUpgradeInProgress ? (
-                <span className="flex items-center gap-1.5">
-                  <span className="spinner spinner-sm" />
-                  Upgrading...
-                </span>
-              ) : (
-                "Upgrade All"
-              )}
-            </button>
-          )}
+          <button
+            onClick={openUpgradeConfirm}
+            disabled={hasUpgradeInProgress}
+            className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+          >
+            {hasUpgradeInProgress ? (
+              <span className="flex items-center gap-1.5">
+                <span className="spinner spinner-sm" />
+                Upgrading...
+              </span>
+            ) : (
+              "Upgrade All"
+            )}
+          </button>
         </div>
       }
     >
@@ -519,84 +729,197 @@ export default function Dashboard() {
         <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
           Apply {selectedUpdateCount} update{selectedUpdateCount !== 1 ? "s" : ""} across {selectedSystems.length} system{selectedSystems.length !== 1 ? "s" : ""}?
         </p>
-        {systemsWithUpdates.length > 0 && (
+        {modalSystems.length > 0 ? (
           <div className="mb-4">
-            <ul ref={upgradeListRef} className="space-y-2">
-              {modalSystems.map((s) => {
-                const isSelected = selectedSystemIds.includes(s.id);
-                const canOverrideMode = supportsDefaultUpgradeModeOverride(s);
-                const fullUpgradeEnabled = fullUpgradeSelections[s.id] ?? false;
-                const fullUpgradeSaving =
-                  updateSystemUpgradeMode.isPending &&
-                  updateSystemUpgradeMode.variables?.systemId === s.id;
-
-                return (
-                  <li
-                    key={s.id}
-                    className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${
-                      isSelected
-                        ? "bg-white dark:bg-slate-800/60"
-                        : "bg-slate-50 dark:bg-slate-700/50"
-                    } border-border`}
-                  >
-                    <span
-                      className={`upgrade-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
-                        reorderSystemUpgradeOrder.isPending || modalSystems.length < 2
-                          ? "cursor-not-allowed opacity-40"
-                          : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
-                      }`}
-                      title="Drag to set upgrade order"
-                      aria-label={`Drag to set upgrade order for ${s.name}`}
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
-                      </svg>
-                    </span>
-                    <div className="flex min-w-0 flex-wrap items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSystemSelection(s.id)}
-                        disabled={updateSystemUpgradeAllExclusion.isPending}
-                        className="shrink-0 rounded"
-                        aria-label={`${isSelected ? "Exclude" : "Include"} ${s.name} in Upgrade All`}
-                      />
-                      <span className="block min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200">
-                        {s.name}
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={upgradeEditMode}
+                onClick={() => setUpgradeEditMode((current) => !current)}
+                className="inline-flex w-fit items-center gap-2 rounded-md px-1 py-1 text-xs text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+              >
+                <span
+                  className={`relative h-5 w-9 rounded-full transition-colors ${
+                    upgradeEditMode ? "bg-blue-500" : "bg-slate-300 dark:bg-slate-600"
+                  }`}
+                  aria-hidden="true"
+                >
+                  <span
+                    className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                      upgradeEditMode ? "translate-x-4" : ""
+                    }`}
+                  />
+                </span>
+                Edit mode
+              </button>
+              {upgradeEditMode && (
+                <button
+                  type="button"
+                  onClick={handleCreateGroup}
+                  disabled={createUpgradeGroup.isPending}
+                  className="w-full rounded-md border border-border px-3 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700 sm:w-auto"
+                >
+                  Add group
+                </button>
+              )}
+            </div>
+            <div ref={groupListRef} className="space-y-3">
+              {orderedGroupsForModal.length === 0 && (
+                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-slate-500 dark:text-slate-400">
+                  No systems have updates right now. Enable edit mode to organize all systems.
+                </div>
+              )}
+              {orderedGroupsForModal.map((group) => (
+                <section
+                  key={group.key}
+                  data-group-id={group.id ?? undefined}
+                  data-upgrade-group-key={group.key}
+                  data-real-group={group.id ? "true" : "false"}
+                  className="rounded-lg border border-border bg-slate-50/60 p-2 dark:bg-slate-800/40"
+                >
+                  <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`upgrade-group-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
+                          upgradeEditMode && orderedGroupsForModal.length > 1
+                            ? "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                            : "cursor-default opacity-40"
+                        }`}
+                        title={upgradeEditMode && orderedGroupsForModal.length > 1 ? "Drag to reorder group" : undefined}
+                        aria-label={upgradeEditMode && orderedGroupsForModal.length > 1 ? `Drag to reorder ${group.name}` : undefined}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+                        </svg>
                       </span>
-                      {canOverrideMode && (
+                      <h3 className="min-w-0 truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
+                        {group.name}
+                      </h3>
+                      <Badge variant="muted" small>{group.systems.length}</Badge>
+                    </div>
+                    {upgradeEditMode && group.realGroup && (
+                      <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => toggleFullUpgradeSelection(s.id)}
-                          disabled={!isSelected || fullUpgradeSaving}
-                          aria-pressed={fullUpgradeEnabled}
-                          className={`shrink-0 rounded-md border px-2.5 py-1 text-xs whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                            fullUpgradeEnabled
-                              ? "border-blue-600 bg-blue-600 text-white"
-                              : "border-border bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                          }`}
-                          title="Toggle and save full upgrade for this system"
+                          onClick={() => openRenameGroup(group.realGroup!)}
+                          className="rounded p-1.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
+                          title="Edit group name"
                         >
-                          Full upgrade
+                          <span className="sr-only">Edit group name</span>
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
                         </button>
-                      )}
-                    </div>
-                    <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-start-auto sm:justify-end">
-                      <Badge variant="warning" small>{s.updateCount} updates</Badge>
-                      {s.securityCount > 0 && (
-                        <Badge variant="danger" small>{s.securityCount} security</Badge>
-                      )}
-                      {s.keptBackCount > 0 && (
-                        <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-            {systemsWithUpdates.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteGroup(group.realGroup!)}
+                          className="rounded p-1.5 text-red-500 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
+                          title="Delete group"
+                        >
+                          <span className="sr-only">Delete group</span>
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <ul
+                    ref={(node) => {
+                      if (node) {
+                        systemListRefs.current.set(group.key, node);
+                      } else {
+                        systemListRefs.current.delete(group.key);
+                      }
+                    }}
+                    data-system-list-group={group.id ?? UNGROUPED_KEY}
+                    className="min-h-6 space-y-2"
+                  >
+                    {group.systems.map((s) => {
+                      const hasUpdates = s.updateCount > 0;
+                      const isSelected = selectedSystemIds.includes(s.id) && hasUpdates;
+                      const canOverrideMode = supportsDefaultUpgradeModeOverride(s);
+                      const fullUpgradeEnabled = fullUpgradeSelections[s.id] ?? false;
+                      const fullUpgradeSaving =
+                        updateSystemUpgradeMode.isPending &&
+                        updateSystemUpgradeMode.variables?.systemId === s.id;
+
+                      return (
+                        <li
+                          key={s.id}
+                          data-system-id={s.id}
+                          className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${
+                            isSelected
+                              ? "bg-white dark:bg-slate-800/80"
+                              : "bg-slate-50 dark:bg-slate-700/50"
+                          } ${hasUpdates ? "border-border" : "border-dashed border-slate-300 opacity-70 dark:border-slate-600"}`}
+                        >
+                          <span
+                            className={`upgrade-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
+                              upgradeEditMode && !updateSystemUpgradeGroups.isPending
+                                ? "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                                : "cursor-default opacity-40"
+                            }`}
+                            title={upgradeEditMode ? "Drag to set upgrade group and order" : undefined}
+                            aria-label={upgradeEditMode ? `Drag to set upgrade group and order for ${s.name}` : undefined}
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+                            </svg>
+                          </span>
+                          <div className="flex min-w-0 flex-wrap items-center gap-3">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => hasUpdates && toggleSystemSelection(s.id)}
+                              disabled={!hasUpdates || updateSystemUpgradeAllExclusion.isPending}
+                              className="shrink-0 rounded"
+                              aria-label={`${isSelected ? "Exclude" : "Include"} ${s.name} in Upgrade All`}
+                            />
+                            <span className="block min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200">
+                              {s.name}
+                            </span>
+                            {canOverrideMode && (
+                              <button
+                                type="button"
+                                onClick={() => toggleFullUpgradeSelection(s.id)}
+                                disabled={fullUpgradeSaving}
+                                aria-pressed={fullUpgradeEnabled}
+                                className={`shrink-0 rounded-md border px-2.5 py-1 text-xs whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  fullUpgradeEnabled
+                                    ? "border-blue-600 bg-blue-600 text-white"
+                                    : "border-border bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                                }`}
+                                title="Toggle and save full upgrade for this system"
+                              >
+                                Full upgrade
+                              </button>
+                            )}
+                          </div>
+                          <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-start-auto sm:justify-end">
+                            {hasUpdates ? (
+                              <Badge variant="warning" small>{s.updateCount} updates</Badge>
+                            ) : (
+                              <Badge variant="muted" small>no updates</Badge>
+                            )}
+                            {s.securityCount > 0 && (
+                              <Badge variant="danger" small>{s.securityCount} security</Badge>
+                            )}
+                            {s.keptBackCount > 0 && (
+                              <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </div>
+            {upgradeEditMode && modalSystems.length > 1 && (
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
-                Drag systems to set the saved upgrade order. Upgrade jobs are started from top to bottom without waiting for earlier systems to finish.
+                Drag groups and systems to set the saved upgrade order. Systems in the same group start together; the next group waits for the previous group to finish.
               </p>
             )}
             {systemsWithUpdates.length > 0 && (
@@ -604,6 +927,10 @@ export default function Dashboard() {
                 Check a system to include it in future Upgrade All runs; uncheck it to exclude it.
               </p>
             )}
+          </div>
+        ) : (
+          <div className="mb-4 rounded-lg border border-dashed border-border p-4 text-sm text-slate-500 dark:text-slate-400">
+            No systems are available to group yet.
           </div>
         )}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
@@ -620,6 +947,77 @@ export default function Dashboard() {
           >
             Upgrade All
           </button>
+        </div>
+      </Modal>
+      <Modal
+        open={!!renameGroup}
+        onClose={() => setRenameGroup(null)}
+        title="Rename Group"
+      >
+        <div className="space-y-4">
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Group name
+            </span>
+            <input
+              value={renameGroup?.name ?? ""}
+              onChange={(event) =>
+                setRenameGroup((current) =>
+                  current ? { ...current, name: event.target.value } : current
+                )
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") saveRenameGroup();
+              }}
+              autoFocus
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-slate-900"
+            />
+          </label>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setRenameGroup(null)}
+              className="w-full rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={saveRenameGroup}
+              disabled={!renameGroup?.name.trim() || updateUpgradeGroup.isPending}
+              className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:w-auto"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Modal>
+      <Modal
+        open={!!deleteGroup}
+        onClose={() => setDeleteGroup(null)}
+        title="Delete Group"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Delete {deleteGroup?.name}? Systems in this group will move to Ungrouped.
+          </p>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setDeleteGroup(null)}
+              className="w-full rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDeleteGroup}
+              disabled={deleteUpgradeGroup.isPending}
+              className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-50 sm:w-auto"
+            >
+              Delete
+            </button>
+          </div>
         </div>
       </Modal>
     </Layout>

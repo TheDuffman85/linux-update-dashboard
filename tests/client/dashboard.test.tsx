@@ -7,6 +7,13 @@ const {
   mockUseDashboardStats,
   mockUseDashboardSystems,
   mockUseRefreshCache,
+  mockUseUpgradeAllBatch,
+  mockUseUpgradeGroups,
+  mockUseCreateUpgradeGroup,
+  mockUseUpdateUpgradeGroup,
+  mockUseDeleteUpgradeGroup,
+  mockUseReorderUpgradeGroups,
+  mockUseUpdateSystemUpgradeGroups,
   mockUseReorderSystemUpgradeOrder,
   mockUseUpdateSystemUpgradeAllExclusion,
   mockUseUpdateSystemUpgradeMode,
@@ -16,6 +23,13 @@ const {
   mockUseDashboardStats: vi.fn(),
   mockUseDashboardSystems: vi.fn(),
   mockUseRefreshCache: vi.fn(),
+  mockUseUpgradeAllBatch: vi.fn(),
+  mockUseUpgradeGroups: vi.fn(),
+  mockUseCreateUpgradeGroup: vi.fn(),
+  mockUseUpdateUpgradeGroup: vi.fn(),
+  mockUseDeleteUpgradeGroup: vi.fn(),
+  mockUseReorderUpgradeGroups: vi.fn(),
+  mockUseUpdateSystemUpgradeGroups: vi.fn(),
   mockUseReorderSystemUpgradeOrder: vi.fn(),
   mockUseUpdateSystemUpgradeAllExclusion: vi.fn(),
   mockUseUpdateSystemUpgradeMode: vi.fn(),
@@ -30,9 +44,16 @@ vi.mock("../../client/lib/dashboard", () => ({
 
 vi.mock("../../client/lib/updates", () => ({
   useRefreshCache: mockUseRefreshCache,
+  useUpgradeAllBatch: mockUseUpgradeAllBatch,
 }));
 
 vi.mock("../../client/lib/systems", () => ({
+  useUpgradeGroups: mockUseUpgradeGroups,
+  useCreateUpgradeGroup: mockUseCreateUpgradeGroup,
+  useUpdateUpgradeGroup: mockUseUpdateUpgradeGroup,
+  useDeleteUpgradeGroup: mockUseDeleteUpgradeGroup,
+  useReorderUpgradeGroups: mockUseReorderUpgradeGroups,
+  useUpdateSystemUpgradeGroups: mockUseUpdateSystemUpgradeGroups,
   useReorderSystemUpgradeOrder: mockUseReorderSystemUpgradeOrder,
   useUpdateSystemUpgradeAllExclusion: mockUseUpdateSystemUpgradeAllExclusion,
   useUpdateSystemUpgradeMode: mockUseUpdateSystemUpgradeMode,
@@ -100,6 +121,13 @@ describe("Dashboard", () => {
       dataUpdatedAt: Date.now(),
     });
     mockUseRefreshCache.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpgradeAllBatch.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpgradeGroups.mockReturnValue({ data: { groups: [], ungroupedSortOrder: 1_000_000 } });
+    mockUseCreateUpgradeGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpdateUpgradeGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseDeleteUpgradeGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseReorderUpgradeGroups.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpdateSystemUpgradeGroups.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseReorderSystemUpgradeOrder.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseUpdateSystemUpgradeAllExclusion.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseUpdateSystemUpgradeMode.mockReturnValue({ mutate: vi.fn(), isPending: false, variables: undefined });

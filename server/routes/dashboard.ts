@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import * as updateService from "../services/update-service";
+import * as upgradeBatchService from "../services/upgrade-batch-service";
 
 const dashboard = new Hono();
 
@@ -21,7 +22,7 @@ dashboard.get("/stats", (c) => {
     cacheAge: cacheService.getCacheAge(s.id),
     cacheTimestamp: cacheService.getCacheTimestamp(s.id),
     isStale: cacheService.isCacheStale(s.id),
-    activeOperation: updateService.getActiveOperation(s.id),
+    activeOperation: updateService.getActiveOperation(s.id) ?? upgradeBatchService.getQueuedOrRunningOperation(s.id),
   }));
 
   const total = systemsWithMeta.length;
@@ -60,7 +61,7 @@ dashboard.get("/systems", (c) => {
     cacheAge: cacheService.getCacheAge(s.id),
     cacheTimestamp: cacheService.getCacheTimestamp(s.id),
     isStale: cacheService.isCacheStale(s.id),
-    activeOperation: updateService.getActiveOperation(s.id),
+    activeOperation: updateService.getActiveOperation(s.id) ?? upgradeBatchService.getQueuedOrRunningOperation(s.id),
   }));
 
   return c.json({ systems: systemsWithMeta });

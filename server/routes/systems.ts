@@ -5,6 +5,7 @@ import { buildCommandReference } from "../services/command-reference";
 import * as hiddenUpdateService from "../services/hidden-update-service";
 import * as packageIssueService from "../services/package-manager-issue-service";
 import * as updateService from "../services/update-service";
+import * as upgradeBatchService from "../services/upgrade-batch-service";
 import * as notificationRuntime from "../services/notification-runtime";
 import * as scriptService from "../services/script-service";
 import { getSSHManager } from "../ssh/connection";
@@ -163,6 +164,41 @@ function parseSystemIdList(value: unknown): number[] | null {
   if (ids.some((id) => id === null)) return null;
 
   return ids as number[];
+}
+
+function parseUpgradeGroupOrder(value: unknown): Array<number | "ungrouped"> | null {
+  if (!Array.isArray(value)) return null;
+
+  const keys: Array<number | "ungrouped"> = [];
+  for (const entry of value) {
+    if (entry === "ungrouped") {
+      keys.push("ungrouped");
+      continue;
+    }
+    const id = parseId(String(entry));
+    if (!id) return null;
+    keys.push(id);
+  }
+  return keys;
+}
+
+function parseSystemUpgradeGroupItems(value: unknown): Array<{ systemId: number; groupId: number | null; upgradeOrder: number }> | null {
+  if (!Array.isArray(value)) return null;
+  const items: Array<{ systemId: number; groupId: number | null; upgradeOrder: number }> = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const raw = entry as Record<string, unknown>;
+    const systemId = parseId(String(raw.systemId));
+    const groupId =
+      raw.groupId === null || raw.groupId === undefined
+        ? null
+        : parseId(String(raw.groupId));
+    const upgradeOrder = Number(raw.upgradeOrder);
+    if (!systemId || (raw.groupId !== null && raw.groupId !== undefined && !groupId)) return null;
+    if (!Number.isInteger(upgradeOrder) || upgradeOrder <= 0) return null;
+    items.push({ systemId, groupId, upgradeOrder });
+  }
+  return items;
 }
 
 function getSystemWriteErrorResponse(error: unknown): Response | null {
@@ -395,6 +431,87 @@ function getLastCheckMap(systemIds: number[]): Map<number, updateService.LastChe
   return updateService.getLatestCompletedChecks(systemIds);
 }
 
+systems.get("/upgrade-groups", (c) => {
+  return c.json({
+    groups: systemService.listUpgradeGroups(),
+    ungroupedSortOrder: systemService.getUngroupedUpgradeGroupSortOrder(),
+  });
+});
+
+systems.post("/upgrade-groups", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body || typeof body.name !== "string") {
+    return c.json({ error: "name is required" }, 400);
+  }
+  try {
+    const id = systemService.createUpgradeGroup(body.name);
+    return c.json({ id }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create upgrade group";
+    return c.json({ error: message }, 400);
+  }
+});
+
+systems.put("/upgrade-groups/reorder", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) return c.json({ error: "Invalid request body" }, 400);
+  const groupKeys = parseUpgradeGroupOrder(body.groupKeys ?? body.groupIds);
+  if (!groupKeys) {
+    return c.json({ error: "groupKeys must include group IDs and Ungrouped" }, 400);
+  }
+  try {
+    systemService.reorderUpgradeGroups(groupKeys);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to reorder upgrade groups";
+    return c.json({ error: message }, 400);
+  }
+  return c.json({ status: "ok" });
+});
+
+systems.put("/upgrade-groups/systems", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) return c.json({ error: "Invalid request body" }, 400);
+  const items = parseSystemUpgradeGroupItems(body.items);
+  if (!items) {
+    return c.json({ error: "items must include systemId, groupId, and upgradeOrder" }, 400);
+  }
+  try {
+    systemService.moveSystemsForUpgradeGroups(items);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update upgrade group systems";
+    return c.json({ error: message }, 400);
+  }
+  return c.json({ status: "ok" });
+});
+
+systems.put("/upgrade-groups/:id", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid group ID" }, 400);
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body || typeof body.name !== "string") {
+    return c.json({ error: "name is required" }, 400);
+  }
+  try {
+    systemService.updateUpgradeGroup(id, body.name);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update upgrade group";
+    return c.json({ error: message }, error instanceof Error && error.message.includes("not found") ? 404 : 400);
+  }
+  return c.json({ status: "ok" });
+});
+
+systems.delete("/upgrade-groups/:id", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid group ID" }, 400);
+  try {
+    systemService.deleteUpgradeGroup(id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to delete upgrade group";
+    return c.json({ error: message }, error instanceof Error && error.message.includes("not found") ? 404 : 400);
+  }
+  return c.json({ status: "ok" });
+});
+
 function isHostKeyFailure(summary: updateService.LastCheckSummary | null | undefined): boolean {
   const error = summary?.error ?? "";
   return /HostKeyVerificationError|SSH host key approval required|SSH host key verification failed/i.test(
@@ -448,7 +565,7 @@ systems.get("/", (c) => {
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
     cacheTimestamp: cacheService.getCacheTimestamp(s.id),
-    activeOperation: updateService.getActiveOperation(s.id),
+    activeOperation: updateService.getActiveOperation(s.id) ?? upgradeBatchService.getQueuedOrRunningOperation(s.id),
     supportsFullUpgrade: updateService.supportsFullUpgrade(s.id),
     packageIssueCount: issueCounts.get(s.id) ?? 0,
   }));
@@ -482,7 +599,7 @@ systems.get("/:id", (c) => {
       cacheAge: cacheService.getCacheAge(id),
       cacheTimestamp: cacheService.getCacheTimestamp(id),
       isStale: cacheService.isCacheStale(id),
-      activeOperation: updateService.getActiveOperation(id),
+      activeOperation: updateService.getActiveOperation(id) ?? upgradeBatchService.getQueuedOrRunningOperation(id),
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
     },
     commandReference: buildCommandReference({
