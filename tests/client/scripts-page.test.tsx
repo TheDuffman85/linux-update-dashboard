@@ -60,7 +60,23 @@ vi.mock("../../client/components/ConfirmDialog", () => ({
   ConfirmDialog: () => null,
 }));
 
-import Scripts from "../../client/pages/Scripts";
+import Scripts, { ScriptEditor } from "../../client/pages/Scripts";
+import type { ScriptDefinition } from "../../client/lib/scripts";
+
+function renderEditor(script: ScriptDefinition): string {
+  return renderToStaticMarkup(
+    <ScriptEditor
+      script={script}
+      packageManagers={[
+        { name: "apt", label: "APT" },
+        { name: "brewlinux", label: "Linuxbrew" },
+      ]}
+      placeholders={[]}
+      onSave={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+}
 
 describe("Scripts page", () => {
   beforeEach(() => {
@@ -200,5 +216,134 @@ describe("Scripts page", () => {
     expect(html).toContain("Assigned to web-42");
     expect(html).toContain("web-42");
     expect(html).toContain("Detection");
+  });
+
+  test("explains built-in package-manager check runtime behavior", () => {
+    const html = renderEditor({
+      id: "builtin:apt:check_updates",
+      readonly: true,
+      name: "Check APT updates",
+      description: null,
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "List updates", command: "apt list --upgradable" }],
+      parserConfig: null,
+      systemInfoConfig: null,
+      sourceScriptId: null,
+    });
+
+    expect(html).toContain("Runtime behavior");
+    expect(html).toContain("Steps, output, parser, and exit codes");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("parser input");
+  });
+
+  test("keeps detection scripts to one clear step", () => {
+    const html = renderEditor({
+      id: "custom:10",
+      readonly: false,
+      name: "Detect Linuxbrew",
+      description: null,
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Detect Linuxbrew", command: "command -v brew && echo found" }],
+      parserConfig: null,
+      systemInfoConfig: null,
+      sourceScriptId: null,
+    });
+
+    expect(html).toContain("Detection scripts use one command");
+    expect(html).toContain("Detection scripts use one step");
+    expect(html).toContain("detection output");
+  });
+
+  test("shows custom parser output selection and step badges", () => {
+    const html = renderEditor({
+      id: "custom:11",
+      readonly: false,
+      name: "Check Linuxbrew",
+      description: null,
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [
+        { label: "Refresh metadata", command: "brew update" },
+        { label: "List updates", command: "brew outdated" },
+      ],
+      parserConfig: {
+        parseStep: 0,
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+      systemInfoConfig: null,
+      sourceScriptId: null,
+    });
+
+    expect(html).toContain("Output to Parse");
+    expect(html).toContain("Step 1: Refresh metadata");
+    expect(html).toContain("Last step (List updates)");
+    expect(html).toContain("parsed output");
+    expect(html).toContain("streamed only");
+  });
+
+  test("warns when a saved parser output step no longer exists", () => {
+    const html = renderEditor({
+      id: "custom:12",
+      readonly: false,
+      name: "Broken custom check",
+      description: null,
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "List updates", command: "brew outdated" }],
+      parserConfig: {
+        parseStep: 3,
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+      systemInfoConfig: null,
+      sourceScriptId: null,
+    });
+
+    expect(html).toContain("The saved parser step is outside the current step list.");
+    expect(html).toContain("Missing step 4");
+  });
+
+  test("explains system-info and reboot step output behavior", () => {
+    const systemInfoHtml = renderEditor({
+      id: "custom:13",
+      readonly: false,
+      name: "System info",
+      description: null,
+      type: "system",
+      operation: "system_info",
+      pkgManager: null,
+      steps: [{ label: "Collect", command: "echo OS" }],
+      parserConfig: null,
+      systemInfoConfig: { mode: "sectioned" },
+      sourceScriptId: null,
+    });
+    const rebootHtml = renderEditor({
+      id: "custom:14",
+      readonly: false,
+      name: "Reboot",
+      description: null,
+      type: "system",
+      operation: "reboot",
+      pkgManager: null,
+      steps: [
+        { label: "Safety check", command: "true" },
+        { label: "Reboot", command: "reboot" },
+      ],
+      parserConfig: null,
+      systemInfoConfig: null,
+      sourceScriptId: null,
+    });
+
+    expect(systemInfoHtml).toContain("system fields");
+    expect(systemInfoHtml).toContain("Advanced system-info mapping");
+    expect(rebootHtml).toContain("reboot guard");
+    expect(rebootHtml).toContain("reboot command");
+    expect(rebootHtml).toContain("Steps, output, parser, and exit codes");
   });
 });

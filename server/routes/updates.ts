@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import * as updateService from "../services/update-service";
 import * as cacheService from "../services/cache-service";
 import * as hiddenUpdateService from "../services/hidden-update-service";
+import * as upgradeBatchService from "../services/upgrade-batch-service";
 import { validatePackageName } from "../ssh/parsers/types";
 import { logger } from "../logger";
 
@@ -103,6 +104,44 @@ updates.post("/systems/check-all", async (c) => {
     logger.error("Check-all request failed", { error: String(error) });
   });
   return c.json({ status: "checking_all" });
+});
+
+updates.post("/systems/upgrade-all", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body || !Array.isArray(body.items)) {
+    return c.json({ error: "items must be an array" }, 400);
+  }
+  const items = body.items.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const raw = entry as Record<string, unknown>;
+    const systemId = parseId(String(raw.systemId));
+    if (!systemId) return null;
+    const defaultUpgradeModeOverride = raw.defaultUpgradeModeOverride;
+    if (
+      defaultUpgradeModeOverride !== undefined &&
+      defaultUpgradeModeOverride !== "standard" &&
+      defaultUpgradeModeOverride !== "aggressive"
+    ) {
+      return null;
+    }
+    return {
+      systemId,
+      defaultUpgradeModeOverride,
+    };
+  });
+  if (items.some((item) => item === null)) {
+    return c.json({ error: "items must include valid systemId and defaultUpgradeModeOverride" }, 400);
+  }
+  try {
+    const { batchId } = upgradeBatchService.createUpgradeBatch(items as Array<{
+      systemId: number;
+      defaultUpgradeModeOverride?: "standard" | "aggressive";
+    }>);
+    return c.json({ status: "queued", batchId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to start Upgrade All batch";
+    return c.json({ error: message }, message.includes("already queued or running") ? 409 : 400);
+  }
 });
 
 // Upgrade all packages on a system (async)

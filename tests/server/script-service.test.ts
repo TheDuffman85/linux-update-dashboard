@@ -129,6 +129,50 @@ describe("script service", () => {
     expect(() => deleteScript(copy.id)).toThrow(/assigned/);
   });
 
+  test("does not allow assigned scripts to change operation scope", () => {
+    const script = createBuiltinCopy("builtin:apt:check_updates");
+    insertSystem(20);
+    setSystemOverrides(20, {
+      [buildOperationKey("check_updates", "apt")]: script.id,
+    });
+
+    expect(() => updateScript(script.id, {
+      operation: "upgrade_all",
+      steps: [{ label: "Upgrade", command: "echo changed" }],
+    })).toThrow(/cannot be changed while assigned/);
+
+    expect(resolveRuntimeSteps({
+      systemId: 20,
+      operation: "check_updates",
+      pkgManager: "apt",
+    })[0]?.command).not.toBe("echo changed");
+  });
+
+  test("ignores stale incompatible overrides at runtime", () => {
+    const script = createScript({
+      name: "APT upgrade script",
+      type: "package_manager",
+      operation: "upgrade_all",
+      pkgManager: "apt",
+      steps: [{ label: "Upgrade", command: "echo should-not-run" }],
+    });
+    insertSystem(21);
+    getDb().insert(systemScriptOverrides).values({
+      systemId: 21,
+      operationKey: buildOperationKey("check_updates", "apt"),
+      scriptId: script.id,
+    }).run();
+
+    const steps = resolveRuntimeSteps({
+      systemId: 21,
+      operation: "check_updates",
+      pkgManager: "apt",
+    });
+
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.map((step) => step.command)).not.toContain("echo should-not-run");
+  });
+
   test("rejects updates and deletes for built-in scripts", () => {
     expect(() => updateScript("builtin:apt:detect", {
       name: "Edited built-in",
@@ -166,6 +210,17 @@ describe("script service", () => {
         command: "true",
       })),
     })).toThrow(/at most 8/);
+
+    expect(() => createScript({
+      name: "Ambiguous detection",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [
+        { label: "Detect apt", command: "command -v apt" },
+        { label: "Detect apt-get", command: "command -v apt-get" },
+      ],
+    })).toThrow(/exactly one step/);
 
     expect(() => createScript({
       name: "Bad step",
@@ -206,6 +261,35 @@ describe("script service", () => {
         updateRegex: "^(?<packageName>\\S+)\\s+->\\s+(?<newVersion>\\S+)$",
       },
     })).not.toThrow();
+  });
+
+  test("validates parser output step against check script steps", () => {
+    expect(() => createScript({
+      name: "Two-step check",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [
+        { label: "Refresh", command: "apt-get update" },
+        { label: "List", command: "apt list --upgradable" },
+      ],
+      parserConfig: {
+        parseStep: 1,
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+    })).not.toThrow();
+
+    expect(() => createScript({
+      name: "Missing parser step",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "List", command: "apt list --upgradable" }],
+      parserConfig: {
+        parseStep: 1,
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+    })).toThrow(/reference an existing step/);
   });
 
   test("rejects oversized and invalid formatter input", async () => {
@@ -448,10 +532,16 @@ describe("script service", () => {
     const reboot = getBuiltinScripts().find((script) => script.id === "builtin:system:reboot");
 
     const formattedApt = await formatShellCommand(aptUpgrade?.steps[0]?.command ?? "");
-    const formattedReboot = await formatShellCommand(reboot?.steps[0]?.command ?? "");
+    const formattedRebootGuard = await formatShellCommand(reboot?.steps[0]?.command ?? "");
+    const formattedReboot = await formatShellCommand(reboot?.steps[1]?.command ?? "");
 
     expect(formattedApt).toContain('if [ "$upgrade_mode" != "full-upgrade" ]; then\n  upgrade_mode="upgrade"\nfi');
     expect(formattedApt).toContain('elif command -v sudo > /dev/null 2>&1; then\n  sudo -S -p');
+    expect(reboot?.steps.map((step) => step.label)).toEqual([
+      "Pre-reboot safety checks",
+      "Reboot system",
+    ]);
+    expect(formattedRebootGuard).toContain("pvesh get /cluster/tasks");
     expect(formattedReboot).toContain('if [ "$(id -u)" = "0" ]; then\n  reboot\nelif command -v sudo > /dev/null 2>&1; then');
   });
 

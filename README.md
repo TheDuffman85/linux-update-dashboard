@@ -4,11 +4,11 @@
 
 <div align="center">
 
-  [![Build](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/release.yml?style=flat-square&logo=github&label=build)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/release.yml)
-  [![Trivy Scan](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/trivy-scan.yml?style=flat-square&logo=aqua&label=security)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/trivy-scan.yml)
-  [![GitHub License](https://img.shields.io/github/license/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/blob/main/LICENSE)
-  [![GitHub last commit](https://img.shields.io/github/last-commit/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/commits/main)
-  [![Latest Container](https://img.shields.io/badge/ghcr.io-latest-blue?style=flat-square&logo=github)](https://github.com/users/TheDuffman85/packages/container/package/linux-update-dashboard)
+[![Build](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/release.yml?style=flat-square&logo=github&label=build)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/release.yml)
+[![Trivy Scan](https://img.shields.io/github/actions/workflow/status/TheDuffman85/linux-update-dashboard/trivy-scan.yml?style=flat-square&logo=aqua&label=security)](https://github.com/TheDuffman85/linux-update-dashboard/actions/workflows/trivy-scan.yml)
+[![GitHub License](https://img.shields.io/github/license/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/blob/main/LICENSE)
+[![GitHub last commit](https://img.shields.io/github/last-commit/TheDuffman85/linux-update-dashboard?style=flat-square&logo=github)](https://github.com/TheDuffman85/linux-update-dashboard/commits/main)
+[![Latest Container](https://img.shields.io/badge/ghcr.io-latest-blue?style=flat-square&logo=github)](https://github.com/users/TheDuffman85/packages/container/package/linux-update-dashboard)
 
 </div>
 
@@ -35,8 +35,8 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Per-system package-manager behavior:** configure manager-specific upgrade/check behavior such as APT full-upgrade defaults, DNF distro-sync defaults, and refresh toggles for DNF, Pacman, APK, and Flatpak
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, add custom package managers, and assign per-system script overrides
-- **Granular updates:** upgrade everything at once or pick individual packages per system
-- **Background scheduling:** periodic checks keep your dashboard up to date with a configurable scheduler interval and cache duration
+- **Granular updates:** upgrade everything at once, queue grouped Upgrade All batches, or pick individual packages per system
+- **Cron-based scheduling:** create refresh, update, and notification schedules with per-schedule system scope and cache behavior
 - **APT kept-back auto-hide:** optionally move kept-back APT packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
 - **Home Assistant MQTT update entities:** publish one Linux Update Dashboard app update entity plus per-system package update entities with discovery, icons/images, rich JSON attributes, and optional install commands
@@ -49,6 +49,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
 - **System duplication:** clone an existing system entry (including encrypted credentials) to quickly add similar servers
 - **Exclude from Upgrade All:** make individual systems start unchecked in the Upgrade All Systems dialog
+- **Upgrade groups:** organize systems into ordered groups so Upgrade All can run systems in the same group together before moving to the next group
 - **Visibility controls:** hide systems from the main dashboard without deleting them
 - **Notification schedules:** deliver notifications immediately or batch them on one or more cron-based schedules
 - **Dark mode:** dark/light theme with OS preference detection
@@ -60,47 +61,56 @@ A self-hosted web app for managing Linux package updates across multiple servers
 ## Screenshots
 
 ### Dashboard
+
 Overview of all systems with summary cards, update totals, and color-coded status tiles for quick triage.
 
 ![Dashboard](screenshots/1.png)
 
 ### System Detail
+
 Detailed system view with connection data, OS and resource information, available updates, and expandable activity output.
 
 ![System Detail](screenshots/2.png)
 
 ### Systems List
+
 Table view of all configured systems with OS, status, update counts, last check time, and quick actions.
 
 ![Systems List](screenshots/3.png)
 
 ### Edit System
+
 Edit an existing system's connection settings, SSH credential, host-key approval, and visibility options.
 
 ![Edit System](screenshots/4.png)
 
 ### Credentials
+
 Manage saved SSH credentials and see which systems reference each one.
 
 ![Credentials](screenshots/5.png)
 
 ### Add Credential
+
 Create a new SSH key or password credential for reuse across systems.
 
 ![Add Credential](screenshots/6.png)
 
 ### Notifications
+
 Manage notification channels with delivery status, enabled state, supported events, and per-channel actions.
 
 ![Notifications](screenshots/7.png)
 
 ### Add Notification
+
 Configure a new notification channel with event filters, system scope, schedule, and provider-specific fields.
 
 ![Add Notification](screenshots/8.png)
 
 ### Settings
-Configure scheduler intervals, SSH timeouts, password settings, and other application options.
+
+Configure activity history retention, SSH timeouts, password settings, SSO, passkeys, and API tokens.
 
 ![Settings](screenshots/9.png)
 
@@ -297,26 +307,26 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `LUDASH_ENCRYPTION_KEY` | **Yes** | - | AES-256 key for encrypting stored SSH credentials |
-| `LUDASH_ENCRYPTION_KEY_FILE` | No | - | Optional alternative: read `LUDASH_ENCRYPTION_KEY` value from file (Docker secrets) |
-| `LUDASH_DB_PATH` | No | `./data/dashboard.db` | SQLite database file path |
-| `LUDASH_SECRET_KEY` | No | Auto-generated | JWT session signing secret (auto-persisted to `.secret_key`) |
-| `LUDASH_SECRET_KEY_FILE` | No | Auto-generated | Read `LUDASH_SECRET_KEY` value from file (Docker secrets) |
-| `LUDASH_PORT` | No | `3001` | HTTP server port |
-| `LUDASH_HOST` | No | `0.0.0.0` | HTTP server bind address |
-| `LUDASH_BASE_URL` | No | `http://localhost:3001` | Recommended to always set. Public URL used for WebAuthn/OIDC and Home Assistant URLs such as `entity_picture`/`origin.url`. Set it to the URL users and integrations actually use |
-| `LUDASH_TRUST_PROXY` | No | `false` | Set to `true` behind a reverse proxy so `X-Forwarded-*` headers are trusted. Recommended whenever the public URL is provided by a proxy |
-| `TZ` | No | `UTC` | Standard container timezone used by Docker and Node.js. Set it to a value like `Europe/Berlin` if you want the UI and notification times to use a specific timezone |
-| `LUDASH_LOG_LEVEL` | No | `info` | Server log level: `debug`, `info`, `warn`, or `error`. Routine per-attempt SSH and scheduler refresh logs are only shown at `debug` |
-| `LUDASH_DEFAULT_CACHE_HOURS` | No | `12` | How long update results are reused before re-checking; `0` disables cache reuse |
-| `LUDASH_DEFAULT_SSH_TIMEOUT` | No | `30` | SSH connection timeout in seconds |
-| `LUDASH_DEFAULT_CMD_TIMEOUT` | No | `120` | SSH command execution timeout in seconds |
-| `LUDASH_MAX_CONCURRENT_CONNECTIONS` | No | `5` | Max simultaneous SSH connections |
-| `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES` | No | `5` | Minimum allowed interval for cron-based schedules |
-| `NODE_EXTRA_CA_CERTS` | No | - | Path to a PEM CA bundle to trust additional/self-signed certificates for outbound TLS (OIDC, SMTP, Gotify, ntfy, webhooks, etc.) |
-| `NODE_ENV` | No | - | Set to `production` for static file serving |
+| Variable                               | Required | Default                 | Description                                                                                                                                                                       |
+| -------------------------------------- | -------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LUDASH_ENCRYPTION_KEY`                | **Yes**  | -                       | AES-256 key for encrypting stored SSH credentials                                                                                                                                 |
+| `LUDASH_ENCRYPTION_KEY_FILE`           | No       | -                       | Optional alternative: read `LUDASH_ENCRYPTION_KEY` value from file (Docker secrets)                                                                                               |
+| `LUDASH_DB_PATH`                       | No       | `./data/dashboard.db`   | SQLite database file path                                                                                                                                                         |
+| `LUDASH_SECRET_KEY`                    | No       | Auto-generated          | JWT session signing secret (auto-persisted to `.secret_key`)                                                                                                                      |
+| `LUDASH_SECRET_KEY_FILE`               | No       | Auto-generated          | Read `LUDASH_SECRET_KEY` value from file (Docker secrets)                                                                                                                         |
+| `LUDASH_PORT`                          | No       | `3001`                  | HTTP server port                                                                                                                                                                  |
+| `LUDASH_HOST`                          | No       | `0.0.0.0`               | HTTP server bind address                                                                                                                                                          |
+| `LUDASH_BASE_URL`                      | No       | `http://localhost:3001` | Recommended to always set. Public URL used for WebAuthn/OIDC and Home Assistant URLs such as `entity_picture`/`origin.url`. Set it to the URL users and integrations actually use |
+| `LUDASH_TRUST_PROXY`                   | No       | `false`                 | Set to `true` behind a reverse proxy so `X-Forwarded-*` headers are trusted. Recommended whenever the public URL is provided by a proxy                                           |
+| `TZ`                                   | No       | `UTC`                   | Standard container timezone used by Docker and Node.js. Set it to a value like `Europe/Berlin` if you want the UI and notification times to use a specific timezone               |
+| `LUDASH_LOG_LEVEL`                     | No       | `info`                  | Server log level: `debug`, `info`, `warn`, or `error`. Routine per-attempt SSH and scheduler refresh logs are only shown at `debug`                                               |
+| `LUDASH_DEFAULT_CACHE_HOURS`           | No       | `12`                    | How long update results are reused before re-checking; `0` disables cache reuse                                                                                                   |
+| `LUDASH_DEFAULT_SSH_TIMEOUT`           | No       | `30`                    | SSH connection timeout in seconds                                                                                                                                                 |
+| `LUDASH_DEFAULT_CMD_TIMEOUT`           | No       | `120`                   | SSH command execution timeout in seconds                                                                                                                                          |
+| `LUDASH_MAX_CONCURRENT_CONNECTIONS`    | No       | `5`                     | Max simultaneous SSH connections                                                                                                                                                  |
+| `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES` | No       | `5`                     | Minimum allowed interval for cron-based schedules                                                                                                                                 |
+| `NODE_EXTRA_CA_CERTS`                  | No       | -                       | Path to a PEM CA bundle to trust additional/self-signed certificates for outbound TLS (OIDC, SMTP, Gotify, ntfy, webhooks, etc.)                                                  |
+| `NODE_ENV`                             | No       | -                       | Set to `production` for static file serving                                                                                                                                       |
 
 If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
 
@@ -333,6 +343,12 @@ cache duration settings.
 Schedules use standard five-field cron expressions in the container timezone. Set the Docker `TZ` environment variable, such as `TZ=Europe/Berlin`, when you want schedules to follow a local timezone instead of UTC. The default minimum interval is **5 minutes**; schedules that run more frequently are rejected by the API. Set `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES` to adjust the server-side limit. If you build the client yourself and change the server limit, set `VITE_MIN_SCHEDULE_INTERVAL_MINUTES` to the same value so UI warnings match.
 
 Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger immediate checks outside configured schedules. Notification channels can be assigned to multiple notification schedules, and the same pending event batch is delivered when any selected schedule runs.
+
+## Upgrade All Groups
+
+The **Upgrade All Systems** dialog can save an upgrade order with optional groups. Systems in the same group run together; the next group starts only after every queued system in the current group finishes. Ungrouped systems are kept in the same ordered flow and can be positioned before, between, or after named groups.
+
+Use edit mode in the dialog to create, rename, delete, and reorder groups, or drag systems between groups. Hidden systems and systems excluded from Upgrade All are not queued unless you explicitly include eligible visible systems in the dialog.
 
 ## Debugging SSH Connection Failures
 
@@ -403,6 +419,7 @@ Bearer tokens for external API consumers (e.g. [gethomepage](https://gethomepage
 - **Rate-limited:** failed bearer attempts are rate-limited (20/min per IP), max 25 tokens per user
 
 Usage:
+
 ```bash
 curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/stats
 ```
@@ -427,14 +444,14 @@ Scheduled delivery buffers matching events until the next selected schedule runs
 
 ### Channel Overview
 
-| Type | Best for | Notes |
-|------|----------|-------|
-| `Email` | inbox-based alerts | SMTP transport with optional auth and importance override |
-| `Gotify` | mobile/self-hosted push | app token stored encrypted |
-| `MQTT` | brokers, automations, and Home Assistant | generic event publishing plus optional Home Assistant MQTT Update entities |
-| `ntfy` | lightweight push topics | topic-based delivery with optional bearer token |
-| `Telegram` | chat notifications and optional remote actions | private-chat only |
-| `Webhook` | integrations with automation tools, chat ops, and custom receivers | supports templates, auth, retries, and a Discord preset |
+| Type       | Best for                                                           | Notes                                                                      |
+| ---------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `Email`    | inbox-based alerts                                                 | SMTP transport with optional auth and importance override                  |
+| `Gotify`   | mobile/self-hosted push                                            | app token stored encrypted                                                 |
+| `MQTT`     | brokers, automations, and Home Assistant                           | generic event publishing plus optional Home Assistant MQTT Update entities |
+| `ntfy`     | lightweight push topics                                            | topic-based delivery with optional bearer token                            |
+| `Telegram` | chat notifications and optional remote actions                     | private-chat only                                                          |
+| `Webhook`  | integrations with automation tools, chat ops, and custom receivers | supports templates, auth, retries, and a Discord preset                    |
 
 ### Email / SMTP
 
@@ -649,15 +666,15 @@ The `discord` preset keeps the webhook in JSON mode and uses a Discord embed pay
 
 ## Supported Package Managers
 
-| Package Manager | Distributions |
-|----------------|---------------|
-| APT | Debian, Ubuntu, Linux Mint |
-| DNF | Fedora, RHEL 8+, AlmaLinux, Rocky |
-| YUM | CentOS, older RHEL |
-| Pacman | Arch Linux, Manjaro |
-| APK | Alpine Linux |
-| Flatpak | Any (cross-distribution) |
-| Snap | Any (cross-distribution) |
+| Package Manager | Distributions                     |
+| --------------- | --------------------------------- |
+| APT             | Debian, Ubuntu, Linux Mint        |
+| DNF             | Fedora, RHEL 8+, AlmaLinux, Rocky |
+| YUM             | CentOS, older RHEL                |
+| Pacman          | Arch Linux, Manjaro               |
+| APK             | Alpine Linux                      |
+| Flatpak         | Any (cross-distribution)          |
+| Snap            | Any (cross-distribution)          |
 
 Package managers are auto-detected on each system over SSH when you test the connection or run the first check. Detected managers are enabled by default, and you can toggle them individually per system in the edit dialog. Security updates are identified where possible (e.g. APT security repos).
 
@@ -684,15 +701,15 @@ The **Scripts** page exposes the SSH command templates that power package-manage
 
 Script commands support placeholders that are resolved immediately before SSH execution:
 
-| Placeholder | Meaning |
-|-------------|---------|
-| `{{package}}` | First selected package name after package-name validation |
-| `{{packages}}` | All selected package names joined with spaces after validation |
-| `{{quotedPackage}}` | First selected package shell-quoted with single quotes |
-| `{{quotedPackages}}` | All selected packages shell-quoted and joined with spaces |
-| `{{manager}}` | Current package-manager key, such as `apt` or a custom manager name |
+| Placeholder          | Meaning                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `{{package}}`        | First selected package name after package-name validation                             |
+| `{{packages}}`       | All selected package names joined with spaces after validation                        |
+| `{{quotedPackage}}`  | First selected package shell-quoted with single quotes                                |
+| `{{quotedPackages}}` | All selected packages shell-quoted and joined with spaces                             |
+| `{{manager}}`        | Current package-manager key, such as `apt` or a custom manager name                   |
 | `{{config.someKey}}` | Per-system package-manager config value, including custom config entries and defaults |
-| `{{sudo:COMMAND}}` | Wraps `COMMAND` with the dashboard sudo fallback helper |
+| `{{sudo:COMMAND}}`   | Wraps `COMMAND` with the dashboard sudo fallback helper                               |
 
 For custom update parsers, the update regex should use named capture groups. `packageName` and `newVersion` are required for an update to be recorded; optional groups include `currentVersion`, `architecture`, and `repository`. Separate security and kept-back regexes can mark matching lines. Custom success and update exit-code lists are available for package managers whose check command uses non-zero exit codes to mean "updates available".
 
@@ -721,7 +738,7 @@ Custom system-info scripts can either keep the built-in sectioned parser or map 
 │   ├── routes/               # API route handlers
 │   ├── services/             # Business logic, caching, scheduling
 │   └── ssh/                  # SSH connection manager + parsers
-├── tests/server/             # Bun test suites
+├── tests/server/             # Vitest server test suites
 ├── docker/                   # Dockerfile, compose, entrypoint
 │   └── test-systems/         # Docker test containers
 ├── run.sh                    # Local dev/production/test runner
@@ -735,11 +752,13 @@ Custom system-info scripts can either keep the built-in sectioned parser or map 
 There's a helper script `run.sh` to manage services.
 
 **Development mode** (hot reload, server on :3001, client on :5173):
+
 ```bash
 ./run.sh dev
 ```
 
 **Production mode** (build and start on :3001):
+
 ```bash
 ./run.sh
 ```
@@ -760,6 +779,7 @@ pnpm test
 # Type check
 pnpm run check
 ```
+
 The app creates and upgrades the SQLite schema automatically on startup.
 
 ### Test Systems
@@ -767,11 +787,13 @@ The app creates and upgrades the SQLite schema automatically on startup.
 The project includes Docker-based test systems that simulate real Linux servers with pending updates. This lets you develop and test the dashboard without needing actual remote machines.
 
 **Start the dashboard with test systems:**
+
 ```bash
 ./run.sh test
 ```
 
 This will:
+
 1. Stop any running dev/production services
 2. Build and start 14 Docker containers (including Alpine, fish-shell, sudo-password APT, and partial multi-manager fixtures)
 3. Build the frontend in production mode
@@ -780,58 +802,64 @@ This will:
 The server initializes or upgrades the SQLite schema automatically during startup.
 
 **SSH credentials for all test systems:**
+
 - User: `testuser`
 - Password: `testpass`
 - `Sudo password`: `testpass` (required for `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`, optional for others)
 - Passwordless `sudo` is pre-configured on all test systems except `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`
 
-| Container | SSH Port | Package Manager | Login Shell | Base Image |
-|-----------|----------|-----------------|-------------|------------|
-| `ludash-test-ubuntu` | 2001 | APT | `bash` | Ubuntu 24.04 |
-| `ludash-test-fedora` | 2002 | DNF | `bash` | Fedora 41 |
-| `ludash-test-centos7` | 2003 | YUM | `bash` | CentOS 7 |
-| `ludash-test-archlinux` | 2004 | Pacman | `bash` | Arch Linux |
-| `ludash-test-flatpak` | 2005 | Flatpak | `bash` | Ubuntu 24.04 |
-| `ludash-test-snap` | 2006 | Snap | `bash` | Ubuntu 24.04 |
-| `ludash-test-ubuntu-sudo` | 2007 | APT (sudo password) | `bash` | Ubuntu 24.04 |
-| `ludash-test-debian-fish` | 2008 | APT | `fish` | Debian 12 |
-| `ludash-test-debian-fish-sudo` | 2009 | APT (sudo password) | `fish` | Debian 12 |
-| `ludash-test-alpine` | 2010 | APK | `bash` | Alpine 3.16 |
-| `ludash-test-apt-keptback` | 2011 | APT (kept-back fixture) | `bash` | Debian 12 |
-| `ludash-test-apt-snap-partial` | 2012 | APT + Snap (Snap check fails) | `bash` | Ubuntu 24.04 |
-| `ludash-test-dnf-gpg-prompt` | 2013 | DNF (GPG key prompt fixture) | `bash` | Fedora 41 |
-| `ludash-test-dnf-eula-prompt` | 2014 | DNF (EULA prompt fixture) | `bash` | Fedora 41 |
-| `ludash-test-apt-dpkg-interrupted` | 2015 | APT (interrupted dpkg fixture) | `bash` | Debian 12 |
+| Container                          | SSH Port | Package Manager                | Login Shell | Base Image   |
+| ---------------------------------- | -------- | ------------------------------ | ----------- | ------------ |
+| `ludash-test-ubuntu`               | 2001     | APT                            | `bash`      | Ubuntu 24.04 |
+| `ludash-test-fedora`               | 2002     | DNF                            | `bash`      | Fedora 41    |
+| `ludash-test-centos7`              | 2003     | YUM                            | `bash`      | CentOS 7     |
+| `ludash-test-archlinux`            | 2004     | Pacman                         | `bash`      | Arch Linux   |
+| `ludash-test-flatpak`              | 2005     | Flatpak                        | `bash`      | Ubuntu 24.04 |
+| `ludash-test-snap`                 | 2006     | Snap                           | `bash`      | Ubuntu 24.04 |
+| `ludash-test-ubuntu-sudo`          | 2007     | APT (sudo password)            | `bash`      | Ubuntu 24.04 |
+| `ludash-test-debian-fish`          | 2008     | APT                            | `fish`      | Debian 12    |
+| `ludash-test-debian-fish-sudo`     | 2009     | APT (sudo password)            | `fish`      | Debian 12    |
+| `ludash-test-alpine`               | 2010     | APK                            | `bash`      | Alpine 3.16  |
+| `ludash-test-apt-keptback`         | 2011     | APT (kept-back fixture)        | `bash`      | Debian 12    |
+| `ludash-test-apt-snap-partial`     | 2012     | APT + Snap (Snap check fails)  | `bash`      | Ubuntu 24.04 |
+| `ludash-test-dnf-gpg-prompt`       | 2013     | DNF (GPG key prompt fixture)   | `bash`      | Fedora 41    |
+| `ludash-test-dnf-eula-prompt`      | 2014     | DNF (EULA prompt fixture)      | `bash`      | Fedora 41    |
+| `ludash-test-apt-dpkg-interrupted` | 2015     | APT (interrupted dpkg fixture) | `bash`      | Debian 12    |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
 Each container is built with **older package versions** pinned from archived repositories, while current repos remain active. This means `apt list --upgradable`, `dnf check-update`, `pacman -Qu`, `apk list -u`, etc. will always report pending updates — giving you realistic data to work with in the dashboard.
 
 `ludash-test-apt-keptback` is a special fixture with a self-contained local APT repo. It intentionally exposes:
+
 - one normal upgrade: `normal-app`
 - one kept-back upgrade: `keptback-app`
 
 That makes it useful for verifying the dashboard’s `isKeptBack` badge/count behavior without depending on upstream repository state.
 
 `ludash-test-apt-snap-partial` is a special multi-manager fixture. It intentionally exposes:
+
 - a working APT refresh with pending package updates
 - a detected Snap installation whose checks fail because `snapd` is not running inside the container
 
 That makes it useful for verifying the dashboard’s semi-working warning state where one package manager succeeds and another fails in the same check run.
 
 `ludash-test-dnf-gpg-prompt` is a special self-contained DNF fixture. It intentionally exposes:
+
 - one local RPM update: `prompt-app` 1.0 -> 2.0
 - a repository metadata signature whose public key exists on disk but is not yet trusted by RPM
 
 That makes it useful for verifying the dashboard’s fail-closed handling of `dnf check-update` when a new repository signing key would normally trigger an interactive `Is this ok [y/N]` prompt.
 
 `ludash-test-dnf-eula-prompt` is a special self-contained DNF fixture. It intentionally exposes:
+
 - one local RPM update: `eula-app` 1.0 -> 2.0
 - an upgrade `%pre` scriptlet that reads from `/dev/tty` unless `ACCEPT_EULA=Y` is set
 
 That makes it useful for verifying the dashboard’s opt-in DNF/YUM EULA automation for non-interactive upgrades without depending on third-party repositories.
 
 `ludash-test-apt-dpkg-interrupted` is a special APT fixture. It intentionally leaves a local package in a failed configure state so APT commands report:
+
 - `dpkg was interrupted, you must manually run 'sudo dpkg --configure -a'`
 
 That makes it useful for verifying the package manager issue banner, including the **Solve** action that runs `dpkg --configure -a` and then rechecks updates.
@@ -841,6 +869,7 @@ The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](dock
 ### Branch Management
 
 To reset the `dev` branch to match `main` (force push):
+
 ```bash
 ./reset-dev-branch.sh
 ```
@@ -851,134 +880,149 @@ All endpoints require authentication unless noted. Responses are JSON.
 
 ### Health
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Health check (localhost: no auth, external: requires auth) |
+| Method | Endpoint      | Description                                                |
+| ------ | ------------- | ---------------------------------------------------------- |
+| GET    | `/api/health` | Health check (localhost: no auth, external: requires auth) |
 
 ### Auth (`/api/auth/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/auth/status` | Auth state, setup status, OIDC availability |
-| POST | `/api/auth/setup` | Create initial admin account |
-| POST | `/api/auth/login` | Password login |
-| POST | `/api/auth/logout` | Clear session |
-| GET | `/api/auth/me` | Current user info |
-| POST | `/api/auth/change-password` | Change the current user's password |
-| POST | `/api/auth/webauthn/register/options` | Start passkey registration |
-| POST | `/api/auth/webauthn/register/verify` | Complete passkey registration |
-| POST | `/api/auth/webauthn/login/options` | Start passkey login |
-| POST | `/api/auth/webauthn/login/verify` | Complete passkey login |
-| GET | `/api/auth/oidc/login` | Redirect to OIDC provider |
-| GET | `/api/auth/oidc/callback` | OIDC callback handler |
+| Method | Endpoint                              | Description                                 |
+| ------ | ------------------------------------- | ------------------------------------------- |
+| GET    | `/api/auth/status`                    | Auth state, setup status, OIDC availability |
+| POST   | `/api/auth/setup`                     | Create initial admin account                |
+| POST   | `/api/auth/login`                     | Password login                              |
+| POST   | `/api/auth/logout`                    | Clear session                               |
+| GET    | `/api/auth/me`                        | Current user info                           |
+| POST   | `/api/auth/change-password`           | Change the current user's password          |
+| POST   | `/api/auth/webauthn/register/options` | Start passkey registration                  |
+| POST   | `/api/auth/webauthn/register/verify`  | Complete passkey registration               |
+| POST   | `/api/auth/webauthn/login/options`    | Start passkey login                         |
+| POST   | `/api/auth/webauthn/login/verify`     | Complete passkey login                      |
+| GET    | `/api/auth/oidc/login`                | Redirect to OIDC provider                   |
+| GET    | `/api/auth/oidc/callback`             | OIDC callback handler                       |
 
 ### Systems (`/api/systems/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/systems` | List all systems with update counts |
-| GET | `/api/systems/:id` | System detail with updates and history |
-| POST | `/api/systems` | Add a new system |
-| PUT | `/api/systems/reorder` | Reorder systems |
-| PUT | `/api/systems/:id` | Update system configuration |
-| POST | `/api/systems/test-connection` | Test SSH connectivity |
-| POST | `/api/systems/:id/reboot` | Reboot a system |
-| POST | `/api/systems/:id/revoke-host-key` | Clear the stored trusted host key |
-| DELETE | `/api/systems/:id` | Remove a system |
-| GET | `/api/systems/:id/updates` | Cached updates for a system |
-| GET | `/api/systems/:id/history` | Upgrade history for a system |
+| Method | Endpoint                                           | Description                                                     |
+| ------ | -------------------------------------------------- | --------------------------------------------------------------- |
+| GET    | `/api/systems`                                     | List all systems with update counts                             |
+| GET    | `/api/systems/:id`                                 | System detail with updates and history                          |
+| POST   | `/api/systems`                                     | Add a new system                                                |
+| PUT    | `/api/systems/reorder`                             | Reorder systems                                                 |
+| PUT    | `/api/systems/upgrade-order`                       | Reorder the default Upgrade All system order                    |
+| GET    | `/api/systems/upgrade-groups`                      | List saved Upgrade All groups and the Ungrouped position        |
+| POST   | `/api/systems/upgrade-groups`                      | Create an Upgrade All group                                     |
+| PUT    | `/api/systems/upgrade-groups/reorder`              | Reorder Upgrade All groups and Ungrouped                        |
+| PUT    | `/api/systems/upgrade-groups/systems`              | Move systems between Upgrade All groups and set per-group order |
+| PUT    | `/api/systems/upgrade-groups/:id`                  | Rename an Upgrade All group                                     |
+| DELETE | `/api/systems/upgrade-groups/:id`                  | Delete an Upgrade All group                                     |
+| PUT    | `/api/systems/:id`                                 | Update system configuration                                     |
+| PUT    | `/api/systems/:id/upgrade-mode`                    | Toggle the system's default full-upgrade mode where supported   |
+| PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Include or exclude a system from Upgrade All by default         |
+| POST   | `/api/systems/test-connection`                     | Test SSH connectivity                                           |
+| POST   | `/api/systems/:id/reboot`                          | Reboot a system                                                 |
+| POST   | `/api/systems/:id/revoke-host-key`                 | Clear the stored trusted host key                               |
+| DELETE | `/api/systems/:id`                                 | Remove a system                                                 |
+| GET    | `/api/systems/:id/updates`                         | Cached updates for a system                                     |
+| GET    | `/api/systems/:id/history`                         | Upgrade history for a system                                    |
+| POST   | `/api/systems/:id/hidden-updates`                  | Hide one visible update from counts and dashboards              |
+| DELETE | `/api/systems/:id/hidden-updates/:hiddenUpdateId`  | Unhide an update                                                |
+| POST   | `/api/systems/:id/package-issues/:issueId/dismiss` | Dismiss a visible package-manager issue                         |
 
 ### Updates
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/systems/:id/check` | Check one system for updates |
-| POST | `/api/systems/:id/cancel` | Request cancellation of the running operation on a system |
-| POST | `/api/systems/check-all` | Check all systems (background) |
-| POST | `/api/systems/:id/upgrade` | Upgrade all packages on a system |
-| POST | `/api/systems/:id/full-upgrade` | Full/dist upgrade on a system |
-| POST | `/api/systems/:id/upgrade-packages` | Upgrade one or more selected visible packages on a system |
-| POST | `/api/systems/:id/upgrade/:packageName` | Upgrade one selected package (compatibility alias) |
-| POST | `/api/cache/refresh` | Invalidate cache and re-check all systems |
-| GET | `/api/jobs/:id` | Poll background job status |
+| Method | Endpoint                                         | Description                                               |
+| ------ | ------------------------------------------------ | --------------------------------------------------------- |
+| POST   | `/api/systems/:id/check`                         | Check one system for updates                              |
+| POST   | `/api/systems/:id/cancel`                        | Request cancellation of the running operation on a system |
+| POST   | `/api/systems/:id/package-issues/:issueId/solve` | Run the repair action for a package-manager issue         |
+| POST   | `/api/systems/check-all`                         | Check all systems (background)                            |
+| POST   | `/api/systems/upgrade-all`                       | Queue an Upgrade All batch for selected systems           |
+| POST   | `/api/systems/:id/upgrade`                       | Upgrade all packages on a system                          |
+| POST   | `/api/systems/:id/full-upgrade`                  | Full/dist upgrade on a system                             |
+| POST   | `/api/systems/:id/upgrade-packages`              | Upgrade one or more selected visible packages on a system |
+| POST   | `/api/systems/:id/upgrade/:packageName`          | Upgrade one selected package (compatibility alias)        |
+| POST   | `/api/cache/refresh`                             | Invalidate cache and re-check all systems                 |
+| GET    | `/api/jobs/:id`                                  | Poll background job status                                |
 
 ### Notifications (`/api/notifications/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/notifications` | List all notification channels |
-| PUT | `/api/notifications/reorder` | Reorder notification channels |
-| GET | `/api/notifications/:id` | Get a notification channel |
-| POST | `/api/notifications` | Create a notification channel |
-| PUT | `/api/notifications/:id` | Update a notification channel |
-| DELETE | `/api/notifications/:id` | Delete a notification channel |
-| POST | `/api/notifications/:id/telegram/link` | Create a one-time Telegram chat binding link |
-| POST | `/api/notifications/:id/telegram/unlink` | Remove the Telegram chat binding and revoke any generated command token |
-| POST | `/api/notifications/:id/telegram/reissue-command-token` | Rotate the Telegram command token for a linked channel with commands enabled |
-| POST | `/api/notifications/test` | Test a notification config inline (before saving) |
-| POST | `/api/notifications/:id/test` | Send a test notification |
+| Method | Endpoint                                                | Description                                                                  |
+| ------ | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| GET    | `/api/notifications`                                    | List all notification channels                                               |
+| PUT    | `/api/notifications/reorder`                            | Reorder notification channels                                                |
+| GET    | `/api/notifications/:id`                                | Get a notification channel                                                   |
+| POST   | `/api/notifications`                                    | Create a notification channel                                                |
+| PUT    | `/api/notifications/:id`                                | Update a notification channel                                                |
+| DELETE | `/api/notifications/:id`                                | Delete a notification channel                                                |
+| POST   | `/api/notifications/:id/telegram/link`                  | Create a one-time Telegram chat binding link                                 |
+| POST   | `/api/notifications/:id/telegram/unlink`                | Remove the Telegram chat binding and revoke any generated command token      |
+| POST   | `/api/notifications/:id/telegram/reissue-command-token` | Rotate the Telegram command token for a linked channel with commands enabled |
+| POST   | `/api/notifications/:id/reset-update-dedupe`            | Reset update notification deduplication for a channel                        |
+| POST   | `/api/notifications/test`                               | Test a notification config inline (before saving)                            |
+| POST   | `/api/notifications/:id/test`                           | Send a test notification                                                     |
 
 ### Schedules (`/api/schedules/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/schedules` | List all schedules |
-| PUT | `/api/schedules/reorder` | Reorder schedules |
-| GET | `/api/schedules/:id` | Get a schedule |
-| POST | `/api/schedules` | Create a schedule |
-| PUT | `/api/schedules/:id` | Update a schedule |
-| DELETE | `/api/schedules/:id` | Delete a schedule |
+| Method | Endpoint                 | Description        |
+| ------ | ------------------------ | ------------------ |
+| GET    | `/api/schedules`         | List all schedules |
+| PUT    | `/api/schedules/reorder` | Reorder schedules  |
+| GET    | `/api/schedules/:id`     | Get a schedule     |
+| POST   | `/api/schedules`         | Create a schedule  |
+| PUT    | `/api/schedules/:id`     | Update a schedule  |
+| DELETE | `/api/schedules/:id`     | Delete a schedule  |
 
 ### Scripts (`/api/scripts/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/scripts` | List built-in and custom scripts, package-manager definitions, and placeholder help |
-| POST | `/api/scripts` | Create a custom script |
-| PUT | `/api/scripts/:id` | Update a custom script |
-| DELETE | `/api/scripts/:id` | Delete an unused custom script |
-| POST | `/api/scripts/package-managers` | Create a custom package-manager definition |
-| PUT | `/api/scripts/package-managers/:name` | Update package-manager metadata, parser settings, and custom config entries |
-| DELETE | `/api/scripts/package-managers/:name` | Delete an unused custom package-manager definition |
-| POST | `/api/scripts/validate-parser` | Test custom parser settings against sample command output |
-| POST | `/api/scripts/format` | Format a shell command for display/editing |
+| Method | Endpoint                              | Description                                                                         |
+| ------ | ------------------------------------- | ----------------------------------------------------------------------------------- |
+| GET    | `/api/scripts`                        | List built-in and custom scripts, package-manager definitions, and placeholder help |
+| POST   | `/api/scripts`                        | Create a custom script                                                              |
+| PUT    | `/api/scripts/:id`                    | Update a custom script                                                              |
+| DELETE | `/api/scripts/:id`                    | Delete an unused custom script                                                      |
+| POST   | `/api/scripts/package-managers`       | Create a custom package-manager definition                                          |
+| PUT    | `/api/scripts/package-managers/:name` | Update package-manager metadata, parser settings, and custom config entries         |
+| DELETE | `/api/scripts/package-managers/:name` | Delete an unused custom package-manager definition                                  |
+| POST   | `/api/scripts/validate-parser`        | Test custom parser settings against sample command output                           |
+| POST   | `/api/scripts/format`                 | Format a shell command for display/editing                                          |
 
 ### Credentials (`/api/credentials/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/credentials` | List saved credentials |
-| PUT | `/api/credentials/reorder` | Reorder credentials |
-| GET | `/api/credentials/:id` | Get a credential with masked secrets |
-| POST | `/api/credentials` | Create a credential |
-| PUT | `/api/credentials/:id` | Update a credential |
-| DELETE | `/api/credentials/:id` | Delete a credential |
+| Method | Endpoint                   | Description                          |
+| ------ | -------------------------- | ------------------------------------ |
+| GET    | `/api/credentials`         | List saved credentials               |
+| PUT    | `/api/credentials/reorder` | Reorder credentials                  |
+| GET    | `/api/credentials/:id`     | Get a credential with masked secrets |
+| POST   | `/api/credentials`         | Create a credential                  |
+| PUT    | `/api/credentials/:id`     | Update a credential                  |
+| DELETE | `/api/credentials/:id`     | Delete a credential                  |
 
 ### Passkeys (`/api/passkeys/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/passkeys` | List passkeys for the authenticated user |
-| PATCH | `/api/passkeys/:id` | Rename a passkey |
-| DELETE | `/api/passkeys/:id` | Remove a passkey |
+| Method | Endpoint            | Description                              |
+| ------ | ------------------- | ---------------------------------------- |
+| GET    | `/api/passkeys`     | List passkeys for the authenticated user |
+| PATCH  | `/api/passkeys/:id` | Rename a passkey                         |
+| DELETE | `/api/passkeys/:id` | Remove a passkey                         |
 
 ### API Tokens (`/api/tokens/*`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/tokens` | List tokens for the authenticated user |
-| POST | `/api/tokens` | Create a new token (name, expiresInDays, readOnly) |
-| PATCH | `/api/tokens/:id` | Rename a token |
-| DELETE | `/api/tokens/:id` | Revoke a token |
+| Method | Endpoint          | Description                                        |
+| ------ | ----------------- | -------------------------------------------------- |
+| GET    | `/api/tokens`     | List tokens for the authenticated user             |
+| POST   | `/api/tokens`     | Create a new token (name, expiresInDays, readOnly) |
+| PATCH  | `/api/tokens/:id` | Rename a token                                     |
+| DELETE | `/api/tokens/:id` | Revoke a token                                     |
 
 ### Dashboard & Settings
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/dashboard/stats` | Summary statistics |
-| GET | `/api/dashboard/systems` | All systems with status metadata |
-| GET | `/api/settings` | Current settings |
-| PUT | `/api/settings` | Update settings |
+| Method | Endpoint                 | Description                      |
+| ------ | ------------------------ | -------------------------------- |
+| GET    | `/api/dashboard/stats`   | Summary statistics               |
+| GET    | `/api/dashboard/systems` | All systems with status metadata |
+| GET    | `/api/settings`          | Current settings                 |
+| PUT    | `/api/settings`          | Update settings                  |
 
 ## Security
 
@@ -1015,19 +1059,19 @@ All upgrade operations (upgrade all, full upgrade, selected packages) run via **
 
 If the SSH connection drops while monitoring, the dashboard shows a warning:
 
-> *SSH connection lost during upgrade. The process may still be running on the remote system.*
+> _SSH connection lost during upgrade. The process may still be running on the remote system._
 
 The upgrade itself continues on the remote host unaffected. Temporary files are cleaned up once the exit code is read.
 
 ### What uses SSH-safe mode
 
-| Operation | SSH-safe |
-|-----------|----------|
-| Upgrade all packages | Yes |
-| Full upgrade (dist upgrade) | Yes |
-| Upgrade selected packages | Yes |
-| Check for updates | No (read-only, safe to retry) |
-| Reboot | No (fire-and-forget) |
+| Operation                   | SSH-safe                      |
+| --------------------------- | ----------------------------- |
+| Upgrade all packages        | Yes                           |
+| Full upgrade (dist upgrade) | Yes                           |
+| Upgrade selected packages   | Yes                           |
+| Check for updates           | No (read-only, safe to retry) |
+| Reboot                      | No (fire-and-forget)          |
 
 The UI marks SSH-safe operations with an **SSH-safe** badge in the activity history.
 

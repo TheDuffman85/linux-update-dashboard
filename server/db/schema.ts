@@ -101,6 +101,10 @@ export const systems = sqliteTable(
     excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
       .notNull()
       .default(0),
+    upgradeGroupId: integer("upgrade_group_id").references(
+      (): AnySQLiteColumn => upgradeGroups.id,
+      { onDelete: "set null" }
+    ),
     upgradeOrder: integer("upgrade_order").notNull().default(1),
     hidden: integer("hidden").notNull().default(0),
     needsReboot: integer("needs_reboot").notNull().default(0),
@@ -116,6 +120,18 @@ export const systems = sqliteTable(
       .default(sql`(datetime('now'))`),
   }
 );
+
+export const upgradeGroups = sqliteTable("upgrade_groups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
 
 export const updateCache = sqliteTable(
   "update_cache",
@@ -230,6 +246,47 @@ export const updateHistory = sqliteTable("update_history", {
   startedAt: text("started_at")
     .notNull()
     .default(sql`(datetime('now'))`),
+  completedAt: text("completed_at"),
+});
+
+export const upgradeBatches = sqliteTable("upgrade_batches", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  status: text("status").notNull().default("queued"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+});
+
+export const upgradeBatchItems = sqliteTable("upgrade_batch_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  batchId: integer("batch_id")
+    .notNull()
+    .references(() => upgradeBatches.id, { onDelete: "cascade" }),
+  systemId: integer("system_id")
+    .notNull()
+    .references(() => systems.id, { onDelete: "cascade" }),
+  groupId: integer("group_id").references(() => upgradeGroups.id, { onDelete: "set null" }),
+  groupSortOrder: integer("group_sort_order").notNull().default(0),
+  systemSortOrder: integer("system_sort_order").notNull().default(0),
+  defaultUpgradeModeOverride: text("default_upgrade_mode_override"),
+  status: text("status").notNull().default("queued"),
+  command: text("command"),
+  pkgManager: text("pkg_manager").notNull().default("system"),
+  historyId: integer("history_id").references(() => updateHistory.id, { onDelete: "set null" }),
+  currentPkgManager: text("current_pkg_manager"),
+  currentCommand: text("current_command"),
+  remotePid: integer("remote_pid"),
+  remoteLogFile: text("remote_log_file"),
+  remoteExitFile: text("remote_exit_file"),
+  remoteScriptFile: text("remote_script_file"),
+  preUpgradeUpdateCount: integer("pre_upgrade_update_count"),
+  error: text("error"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  startedAt: text("started_at"),
   completedAt: text("completed_at"),
 });
 

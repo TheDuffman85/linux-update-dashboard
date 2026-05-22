@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ApiError, pollJob } from "../../client/lib/client";
+import { ApiError, apiFetch, pollJob } from "../../client/lib/client";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -59,5 +59,22 @@ describe("pollJob", () => {
       pollJob("job-1", 0, 3, { recoverMissingJob }),
     ).rejects.toMatchObject({ status: 401 } satisfies Partial<ApiError>);
     expect(recoverMissingJob).not.toHaveBeenCalled();
+  });
+});
+
+describe("apiFetch", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("surfaces conflict response messages", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      jsonResponse({ error: "Reboot blocked: Proxmox backup task is running." }, 409)
+    ));
+
+    await expect(apiFetch("/systems/1/reboot", { method: "POST" })).rejects.toMatchObject({
+      status: 409,
+      message: "Reboot blocked: Proxmox backup task is running.",
+    } satisfies Partial<ApiError>);
   });
 });

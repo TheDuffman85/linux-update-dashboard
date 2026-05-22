@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { apiTokens, credentials, hiddenUpdates, settings, systems, updateCache, updateHistory, users } from "../../server/db/schema";
+import { apiTokens, credentials, hiddenUpdates, settings, systems, updateCache, updateHistory, upgradeGroups, users } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { authMiddleware } from "../../server/middleware/auth";
 import { hashToken } from "../../server/auth/api-token";
@@ -174,6 +174,101 @@ describe("systems reorder route", () => {
       Charlie: 1,
       Alpha: 2,
       Bravo: 3,
+    });
+  });
+
+  test("creates, renames, reorders, and deletes upgrade groups", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const createAlpha = await app.request("/api/systems/upgrade-groups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Alpha group" }),
+    });
+    const createBeta = await app.request("/api/systems/upgrade-groups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Beta group" }),
+    });
+
+    expect(createAlpha.status).toBe(201);
+    expect(createBeta.status).toBe(201);
+    const alpha = await createAlpha.json() as { id: number };
+    const beta = await createBeta.json() as { id: number };
+    expect(getDb().select().from(upgradeGroups).orderBy(upgradeGroups.sortOrder).all().map((group) => group.name)).toEqual([
+      "Beta group",
+      "Alpha group",
+    ]);
+
+    const rename = await app.request(`/api/systems/upgrade-groups/${alpha.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Core" }),
+    });
+    const reorder = await app.request("/api/systems/upgrade-groups/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupKeys: [beta.id, "ungrouped", alpha.id] }),
+    });
+
+    expect(rename.status).toBe(200);
+    expect(reorder.status).toBe(200);
+    expect(getDb().select().from(upgradeGroups).orderBy(upgradeGroups.sortOrder).all().map((group) => group.name)).toEqual([
+      "Beta group",
+      "Core",
+    ]);
+    const list = await app.request("/api/systems/upgrade-groups");
+    const listBody = await list.json() as { ungroupedSortOrder: number };
+    expect(listBody.ungroupedSortOrder).toBe(1);
+
+    const remove = await app.request(`/api/systems/upgrade-groups/${beta.id}`, { method: "DELETE" });
+    expect(remove.status).toBe(200);
+    expect(getDb().select().from(upgradeGroups).all().map((group) => group.name)).toEqual(["Core"]);
+  });
+
+  test("moves systems between upgrade groups and ungrouped", async () => {
+    const db = getDb();
+    const group = db.insert(upgradeGroups).values({ name: "Wave 1", sortOrder: 0 }).returning({ id: upgradeGroups.id }).get();
+    const inserted = db.insert(systems).values([
+      {
+        name: "Alpha",
+        hostname: "alpha.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+      {
+        name: "Bravo",
+        hostname: "bravo.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+      },
+    ]).returning({ id: systems.id }).all();
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const res = await app.request("/api/systems/upgrade-groups/systems", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: [
+          { systemId: inserted[0].id, groupId: group.id, upgradeOrder: 2 },
+          { systemId: inserted[1].id, groupId: null, upgradeOrder: 1 },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const rows = db
+      .select({ name: systems.name, upgradeGroupId: systems.upgradeGroupId, upgradeOrder: systems.upgradeOrder })
+      .from(systems)
+      .all();
+    expect(Object.fromEntries(rows.map((row) => [row.name, { groupId: row.upgradeGroupId, order: row.upgradeOrder }]))).toEqual({
+      Alpha: { groupId: group.id, order: 2 },
+      Bravo: { groupId: null, order: 1 },
     });
   });
 
@@ -1043,6 +1138,58 @@ describe("systems reorder route", () => {
       expect(await res.json()).toEqual({
         error: "API tokens cannot modify script overrides",
       });
+    }
+  });
+
+  test("bearer tokens cannot mutate script-affecting package manager fields", async () => {
+    const token = await createBearerToken();
+    const protectedApp = new Hono();
+    protectedApp.use("/api/*", authMiddleware);
+    protectedApp.route("/api/systems", systemsRoutes);
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    const incoming = {
+      socket: {
+        remoteAddress: "127.0.0.1",
+        remotePort: 12345,
+        remoteFamily: "IPv4",
+      },
+    };
+
+    const cases = [
+      {
+        path: "/api/systems",
+        body: { detectedPkgManagers: ["custom-apt"] },
+        error: "API tokens cannot modify detected package managers",
+      },
+      {
+        path: "/api/systems",
+        body: { pkgManagerConfigs: { "custom-apt": { channel: "edge" } } },
+        error: "API tokens cannot modify package manager configs",
+      },
+      {
+        path: "/api/systems/1",
+        body: { detectedPkgManagers: ["custom-apt"] },
+        error: "API tokens cannot modify detected package managers",
+      },
+      {
+        path: "/api/systems/1",
+        body: { pkgManagerConfigs: { "custom-apt": { channel: "edge" } } },
+        error: "API tokens cannot modify package manager configs",
+      },
+    ];
+
+    for (const entry of cases) {
+      const res = await protectedApp.request(entry.path, {
+        method: entry.path.endsWith("/systems") ? "POST" : "PUT",
+        headers,
+        body: JSON.stringify(entry.body),
+      }, { incoming });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: entry.error });
     }
   });
 

@@ -6,7 +6,7 @@ import type { HostKeyStatus } from "./host-key-status";
 export interface ActiveOperation {
   type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair";
   startedAt: string;
-  phase?: "reconnecting" | "rechecking";
+  phase?: "queued" | "reconnecting" | "rechecking";
   packageName?: string;
   packageNames?: string[];
   cancelRequested?: boolean;
@@ -56,6 +56,7 @@ export interface System {
   rebootDismissedUptimeSeconds: number | null;
   rebootDismissedAt: string | null;
   excludeFromUpgradeAll: number;
+  upgradeGroupId: number | null;
   upgradeOrder: number;
   hidden: number;
   needsReboot: number;
@@ -74,6 +75,19 @@ export interface System {
   supportsFullUpgrade?: boolean;
   packageIssueCount?: number;
   scriptOverrides: Record<string, string>;
+}
+
+export interface UpgradeGroup {
+  id: number;
+  name: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpgradeGroupConfig {
+  groups: UpgradeGroup[];
+  ungroupedSortOrder: number;
 }
 
 export interface CachedUpdate {
@@ -307,6 +321,78 @@ export function useReorderSystemUpgradeOrder() {
   });
 }
 
+export function useUpgradeGroups() {
+  return useQuery({
+    queryKey: ["upgrade-groups"],
+    queryFn: () =>
+      apiFetch<UpgradeGroupConfig>("/systems/upgrade-groups"),
+  });
+}
+
+function invalidateUpgradeGroupQueries(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ["upgrade-groups"] });
+  void qc.invalidateQueries({ queryKey: ["systems"] });
+  void qc.invalidateQueries({ queryKey: ["system"] });
+  void qc.invalidateQueries({ queryKey: ["dashboard"] });
+}
+
+export function useCreateUpgradeGroup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiFetch<{ id: number }>("/systems/upgrade-groups", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+  });
+}
+
+export function useUpdateUpgradeGroup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, name }: { groupId: number; name: string }) =>
+      apiFetch(`/systems/upgrade-groups/${groupId}`, {
+        method: "PUT",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+  });
+}
+
+export function useDeleteUpgradeGroup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (groupId: number) =>
+      apiFetch(`/systems/upgrade-groups/${groupId}`, { method: "DELETE" }),
+    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+  });
+}
+
+export function useReorderUpgradeGroups() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (groupKeys: Array<number | "ungrouped">) =>
+      apiFetch("/systems/upgrade-groups/reorder", {
+        method: "PUT",
+        body: JSON.stringify({ groupKeys }),
+      }),
+    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+  });
+}
+
+export function useUpdateSystemUpgradeGroups() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: Array<{ systemId: number; groupId: number | null; upgradeOrder: number }>) =>
+      apiFetch("/systems/upgrade-groups/systems", {
+        method: "PUT",
+        body: JSON.stringify({ items }),
+      }),
+    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+  });
+}
+
 export function useUpdateSystemUpgradeMode() {
   const qc = useQueryClient();
   return useMutation({
@@ -367,7 +453,7 @@ export function useRebootSystem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) =>
-      apiFetch<{ success: boolean; message: string }>(`/systems/${id}/reboot`, { method: "POST" }),
+      apiFetch<{ success: boolean; message: string; blocked?: boolean }>(`/systems/${id}/reboot`, { method: "POST" }),
     onSuccess: async (_data, id) => {
       await qc.invalidateQueries({ queryKey: ["system", id] });
       await qc.invalidateQueries({ queryKey: ["systems"] });

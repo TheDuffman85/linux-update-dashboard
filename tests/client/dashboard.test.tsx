@@ -7,6 +7,13 @@ const {
   mockUseDashboardStats,
   mockUseDashboardSystems,
   mockUseRefreshCache,
+  mockUseUpgradeAllBatch,
+  mockUseUpgradeGroups,
+  mockUseCreateUpgradeGroup,
+  mockUseUpdateUpgradeGroup,
+  mockUseDeleteUpgradeGroup,
+  mockUseReorderUpgradeGroups,
+  mockUseUpdateSystemUpgradeGroups,
   mockUseReorderSystemUpgradeOrder,
   mockUseUpdateSystemUpgradeAllExclusion,
   mockUseUpdateSystemUpgradeMode,
@@ -16,6 +23,13 @@ const {
   mockUseDashboardStats: vi.fn(),
   mockUseDashboardSystems: vi.fn(),
   mockUseRefreshCache: vi.fn(),
+  mockUseUpgradeAllBatch: vi.fn(),
+  mockUseUpgradeGroups: vi.fn(),
+  mockUseCreateUpgradeGroup: vi.fn(),
+  mockUseUpdateUpgradeGroup: vi.fn(),
+  mockUseDeleteUpgradeGroup: vi.fn(),
+  mockUseReorderUpgradeGroups: vi.fn(),
+  mockUseUpdateSystemUpgradeGroups: vi.fn(),
   mockUseReorderSystemUpgradeOrder: vi.fn(),
   mockUseUpdateSystemUpgradeAllExclusion: vi.fn(),
   mockUseUpdateSystemUpgradeMode: vi.fn(),
@@ -30,9 +44,16 @@ vi.mock("../../client/lib/dashboard", () => ({
 
 vi.mock("../../client/lib/updates", () => ({
   useRefreshCache: mockUseRefreshCache,
+  useUpgradeAllBatch: mockUseUpgradeAllBatch,
 }));
 
 vi.mock("../../client/lib/systems", () => ({
+  useUpgradeGroups: mockUseUpgradeGroups,
+  useCreateUpgradeGroup: mockUseCreateUpgradeGroup,
+  useUpdateUpgradeGroup: mockUseUpdateUpgradeGroup,
+  useDeleteUpgradeGroup: mockUseDeleteUpgradeGroup,
+  useReorderUpgradeGroups: mockUseReorderUpgradeGroups,
+  useUpdateSystemUpgradeGroups: mockUseUpdateSystemUpgradeGroups,
   useReorderSystemUpgradeOrder: mockUseReorderSystemUpgradeOrder,
   useUpdateSystemUpgradeAllExclusion: mockUseUpdateSystemUpgradeAllExclusion,
   useUpdateSystemUpgradeMode: mockUseUpdateSystemUpgradeMode,
@@ -56,7 +77,12 @@ vi.mock("../../client/components/Layout", () => ({
   ),
 }));
 
-import Dashboard, { getDashboardUpgradeToast } from "../../client/pages/Dashboard";
+import Dashboard, {
+  applyUpgradeSystemPlacements,
+  canToggleUpgradePreset,
+  getDashboardUpgradeToast,
+  isUpgradePresetSelected,
+} from "../../client/pages/Dashboard";
 
 describe("Dashboard", () => {
   beforeEach(() => {
@@ -100,6 +126,13 @@ describe("Dashboard", () => {
       dataUpdatedAt: Date.now(),
     });
     mockUseRefreshCache.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpgradeAllBatch.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpgradeGroups.mockReturnValue({ data: { groups: [], ungroupedSortOrder: 1_000_000 } });
+    mockUseCreateUpgradeGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpdateUpgradeGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseDeleteUpgradeGroup.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseReorderUpgradeGroups.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpdateSystemUpgradeGroups.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseReorderSystemUpgradeOrder.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseUpdateSystemUpgradeAllExclusion.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseUpdateSystemUpgradeMode.mockReturnValue({ mutate: vi.fn(), isPending: false, variables: undefined });
@@ -173,5 +206,28 @@ describe("Dashboard", () => {
       message: "Alpha: Upgrade state resynced after backend restart",
       type: "info",
     });
+  });
+
+  test("allows edit mode to toggle Upgrade All presets for systems without updates", () => {
+    const systemWithoutUpdates = { id: 1, updateCount: 0 };
+
+    expect(isUpgradePresetSelected(systemWithoutUpdates, [1])).toBe(true);
+    expect(canToggleUpgradePreset(systemWithoutUpdates, false)).toBe(false);
+    expect(canToggleUpgradePreset(systemWithoutUpdates, true)).toBe(true);
+  });
+
+  test("applies pending upgrade group placements over stale system rows", () => {
+    const systems = [
+      { id: 1, upgradeGroupId: null, upgradeOrder: 1, name: "Alpha" },
+      { id: 2, upgradeGroupId: 3, upgradeOrder: 1, name: "Bravo" },
+    ];
+    const placements = new Map([
+      [1, { groupId: 3, upgradeOrder: 2 }],
+    ]);
+
+    expect(applyUpgradeSystemPlacements(systems, placements)).toEqual([
+      { id: 1, upgradeGroupId: 3, upgradeOrder: 2, name: "Alpha" },
+      { id: 2, upgradeGroupId: 3, upgradeOrder: 1, name: "Bravo" },
+    ]);
   });
 });

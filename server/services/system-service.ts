@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { systems } from "../db/schema";
+import { settings, systems, upgradeGroups } from "../db/schema";
 import { getEncryptor } from "../security";
 import { resolveSystemCredential } from "./credential-service";
 import * as cacheService from "./cache-service";
@@ -25,6 +25,8 @@ const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
 const SYSTEM_CONNECTION_UNIQUE_INDEX = "systems_connection_identity_idx";
 export const MAX_PROXY_JUMP_DEPTH = 10;
+const UPGRADE_UNGROUPED_SORT_ORDER_KEY = "upgrade_ungrouped_sort_order";
+const DEFAULT_UNGROUPED_UPGRADE_SORT_ORDER = 1_000_000;
 
 export class DuplicateSystemConnectionError extends Error {
   constructor() {
@@ -207,6 +209,134 @@ export function listVisibleSystems() {
     .where(eq(systems.hidden, 0))
     .orderBy(asc(systems.sortOrder), asc(systems.name), asc(systems.id))
     .all();
+}
+
+export function listUpgradeGroups() {
+  return getDb()
+    .select()
+    .from(upgradeGroups)
+    .orderBy(asc(upgradeGroups.sortOrder), asc(upgradeGroups.name), asc(upgradeGroups.id))
+    .all();
+}
+
+function getStoredUngroupedUpgradeGroupSortOrder(): number | null {
+  const value = getDb()
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, UPGRADE_UNGROUPED_SORT_ORDER_KEY))
+    .get()?.value;
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+export function getUngroupedUpgradeGroupSortOrder(): number {
+  return getStoredUngroupedUpgradeGroupSortOrder() ?? DEFAULT_UNGROUPED_UPGRADE_SORT_ORDER;
+}
+
+function setUngroupedUpgradeGroupSortOrder(sortOrder: number): void {
+  getDb()
+    .insert(settings)
+    .values({
+      key: UPGRADE_UNGROUPED_SORT_ORDER_KEY,
+      value: String(sortOrder),
+      description: "Sort position of the implicit Ungrouped upgrade group",
+    })
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: {
+        value: String(sortOrder),
+        updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+      },
+    })
+    .run();
+}
+
+export function createUpgradeGroup(name: string): number {
+  const trimmedName = name.trim();
+  if (!trimmedName || trimmedName.length > 100) {
+    throw new Error("Group name is required (max 100 chars)");
+  }
+  const storedUngroupedSortOrder = getStoredUngroupedUpgradeGroupSortOrder();
+  const minRealGroupSortOrder = getDb()
+    .select({ value: sql<number>`MIN(${upgradeGroups.sortOrder})` })
+    .from(upgradeGroups)
+    .get()?.value;
+  const firstSortOrder = Math.min(
+    storedUngroupedSortOrder ?? DEFAULT_UNGROUPED_UPGRADE_SORT_ORDER,
+    minRealGroupSortOrder ?? DEFAULT_UNGROUPED_UPGRADE_SORT_ORDER,
+  );
+  const inserted = getDb()
+    .insert(upgradeGroups)
+    .values({
+      name: trimmedName,
+      sortOrder: firstSortOrder - 1,
+    })
+    .returning({ id: upgradeGroups.id })
+    .get();
+  return inserted.id;
+}
+
+export function updateUpgradeGroup(groupId: number, name: string): void {
+  const trimmedName = name.trim();
+  if (!trimmedName || trimmedName.length > 100) {
+    throw new Error("Group name is required (max 100 chars)");
+  }
+  const result = getDb()
+    .update(upgradeGroups)
+    .set({
+      name: trimmedName,
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(upgradeGroups.id, groupId))
+    .run();
+  if (result.changes === 0) throw new Error("Upgrade group not found");
+}
+
+export function deleteUpgradeGroup(groupId: number): void {
+  const db = getDb();
+  const existing = db
+    .select({ id: upgradeGroups.id })
+    .from(upgradeGroups)
+    .where(eq(upgradeGroups.id, groupId))
+    .get();
+  if (!existing) throw new Error("Upgrade group not found");
+  db.update(systems)
+    .set({
+      upgradeGroupId: null,
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(systems.upgradeGroupId, groupId))
+    .run();
+  db.delete(upgradeGroups).where(eq(upgradeGroups.id, groupId)).run();
+}
+
+export function reorderUpgradeGroups(groupKeys: Array<number | "ungrouped">): void {
+  const existingIds = listUpgradeGroups().map((group) => group.id);
+  const ungroupedCount = groupKeys.filter((key) => key === "ungrouped").length;
+  const groupIds = groupKeys.filter((key): key is number => typeof key === "number");
+  if (ungroupedCount !== 1) {
+    throw new Error("Group order must include Ungrouped exactly once");
+  }
+  if (groupIds.length !== existingIds.length) {
+    throw new Error("Group order must include every saved group exactly once");
+  }
+  if (new Set(groupIds).size !== groupIds.length) {
+    throw new Error("Group order contains duplicate IDs");
+  }
+  if (!existingIds.every((id) => groupIds.includes(id))) {
+    throw new Error("Group order contains unknown IDs");
+  }
+  for (const [sortOrder, key] of groupKeys.entries()) {
+    if (key === "ungrouped") {
+      setUngroupedUpgradeGroupSortOrder(sortOrder);
+    } else {
+      getDb()
+        .update(upgradeGroups)
+        .set({ sortOrder, updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19) })
+        .where(eq(upgradeGroups.id, key))
+        .run();
+    }
+  }
 }
 
 export function isSystemVisible(systemId: number): boolean {
@@ -552,6 +682,65 @@ export function reorderSystemUpgradeOrder(systemIds: number[]): void {
     db.update(systems)
       .set({ upgradeOrder: index + 1 })
       .where(eq(systems.id, id))
+      .run();
+  }
+}
+
+export function moveSystemsForUpgradeGroups(
+  items: Array<{ systemId: number; groupId: number | null; upgradeOrder: number }>
+): void {
+  if (items.length === 0) throw new Error("At least one system is required");
+  const systemIds = items.map((item) => item.systemId);
+  if (new Set(systemIds).size !== systemIds.length) {
+    throw new Error("System list contains duplicate IDs");
+  }
+  if (items.some((item) => !Number.isInteger(item.systemId) || item.systemId <= 0)) {
+    throw new Error("System IDs must be positive integers");
+  }
+  if (items.some((item) => item.groupId !== null && (!Number.isInteger(item.groupId) || item.groupId <= 0))) {
+    throw new Error("Group IDs must be positive integers or null");
+  }
+  if (items.some((item) => !Number.isInteger(item.upgradeOrder) || item.upgradeOrder <= 0)) {
+    throw new Error("Upgrade order values must be positive integers");
+  }
+
+  const db = getDb();
+  const existingSystemIds = new Set(
+    db
+      .select({ id: systems.id })
+      .from(systems)
+      .where(inArray(systems.id, systemIds))
+      .all()
+      .map((system) => system.id)
+  );
+  if (!systemIds.every((id) => existingSystemIds.has(id))) {
+    throw new Error("System list contains unknown IDs");
+  }
+
+  const groupIds = Array.from(new Set(items.map((item) => item.groupId).filter((id): id is number => id !== null)));
+  if (groupIds.length > 0) {
+    const existingGroupIds = new Set(
+      db
+        .select({ id: upgradeGroups.id })
+        .from(upgradeGroups)
+        .where(inArray(upgradeGroups.id, groupIds))
+        .all()
+        .map((group) => group.id)
+    );
+    if (!groupIds.every((id) => existingGroupIds.has(id))) {
+      throw new Error("System list contains unknown group IDs");
+    }
+  }
+
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  for (const item of items) {
+    db.update(systems)
+      .set({
+        upgradeGroupId: item.groupId,
+        upgradeOrder: item.upgradeOrder,
+        updatedAt: now,
+      })
+      .where(eq(systems.id, item.systemId))
       .run();
   }
 }

@@ -13,6 +13,7 @@ import * as scheduler from "./services/scheduler";
 import { createApp } from "./app";
 import { logger } from "./logger";
 import * as notificationRuntime from "./services/notification-runtime";
+import * as upgradeBatchService from "./services/upgrade-batch-service";
 import { migrateEncryptionSalt, migrateLegacyAuthTags } from "./encryption-migration";
 import { syncSSHManagerWithSettings } from "./services/settings-service";
 
@@ -68,6 +69,7 @@ syncSSHManagerWithSettings();
 // Start background scheduler
 logger.info("Starting update scheduler");
 scheduler.start();
+upgradeBatchService.resumeUpgradeBatches();
 
 // Create and start Hono app
 const app = createApp();
