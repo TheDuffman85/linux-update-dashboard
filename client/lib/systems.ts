@@ -332,6 +332,7 @@ export function useUpgradeGroups() {
 function invalidateUpgradeGroupQueries(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ["upgrade-groups"] });
   void qc.invalidateQueries({ queryKey: ["systems"] });
+  void qc.invalidateQueries({ queryKey: ["system"] });
   void qc.invalidateQueries({ queryKey: ["dashboard"] });
 }
 

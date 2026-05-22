@@ -78,6 +78,7 @@ vi.mock("../../client/components/Layout", () => ({
 }));
 
 import Dashboard, {
+  applyUpgradeSystemPlacements,
   canToggleUpgradePreset,
   getDashboardUpgradeToast,
   isUpgradePresetSelected,
@@ -213,5 +214,20 @@ describe("Dashboard", () => {
     expect(isUpgradePresetSelected(systemWithoutUpdates, [1])).toBe(true);
     expect(canToggleUpgradePreset(systemWithoutUpdates, false)).toBe(false);
     expect(canToggleUpgradePreset(systemWithoutUpdates, true)).toBe(true);
+  });
+
+  test("applies pending upgrade group placements over stale system rows", () => {
+    const systems = [
+      { id: 1, upgradeGroupId: null, upgradeOrder: 1, name: "Alpha" },
+      { id: 2, upgradeGroupId: 3, upgradeOrder: 1, name: "Bravo" },
+    ];
+    const placements = new Map([
+      [1, { groupId: 3, upgradeOrder: 2 }],
+    ]);
+
+    expect(applyUpgradeSystemPlacements(systems, placements)).toEqual([
+      { id: 1, upgradeGroupId: 3, upgradeOrder: 2, name: "Alpha" },
+      { id: 2, upgradeGroupId: 3, upgradeOrder: 1, name: "Bravo" },
+    ]);
   });
 });

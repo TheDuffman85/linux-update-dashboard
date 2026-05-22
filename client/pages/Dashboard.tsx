@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { flushSync } from "react-dom";
 import { Link } from "react-router";
-import Sortable from "sortablejs";
-import type { SortableEvent } from "sortablejs";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
@@ -24,9 +23,42 @@ import { useUpgrade } from "../context/UpgradeContext";
 import { deriveSystemUpdateState, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 const UNGROUPED_KEY = "ungrouped";
+type UpgradeSystemPlacement = { groupId: number | null; upgradeOrder: number };
+type DropPosition = "before" | "after" | "end";
+type ModalUpgradeGroup = {
+  key: string;
+  id: number | null;
+  name: string;
+  sortOrder: number;
+  systems: System[];
+  realGroup?: UpgradeGroup;
+};
 
 function getGroupKey(groupId: number | null | undefined): string {
   return groupId ? String(groupId) : UNGROUPED_KEY;
+}
+
+function sameUpgradeSystemPlacement(
+  system: Pick<System, "upgradeGroupId" | "upgradeOrder">,
+  placement: UpgradeSystemPlacement,
+): boolean {
+  return (
+    (system.upgradeGroupId ?? null) === placement.groupId &&
+    system.upgradeOrder === placement.upgradeOrder
+  );
+}
+
+export function applyUpgradeSystemPlacements<T extends Pick<System, "id" | "upgradeGroupId" | "upgradeOrder">>(
+  systems: T[],
+  placements: Map<number, UpgradeSystemPlacement>,
+): T[] {
+  if (placements.size === 0) return systems;
+  return systems.map((system) => {
+    const placement = placements.get(system.id);
+    return placement
+      ? { ...system, upgradeGroupId: placement.groupId, upgradeOrder: placement.upgradeOrder }
+      : system;
+  });
 }
 
 function compareUpgradeOrder(a: System, b: System): number {
@@ -303,13 +335,24 @@ export default function Dashboard() {
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
   const [fullUpgradeSelections, setFullUpgradeSelections] = useState<Record<number, boolean>>({});
   const [upgradeModalSystems, setUpgradeModalSystems] = useState<System[]>([]);
+  const [localGroupOrderKeys, setLocalGroupOrderKeys] = useState<string[] | null>(null);
   const [renameGroup, setRenameGroup] = useState<{ id: number; name: string } | null>(null);
   const [deleteGroup, setDeleteGroup] = useState<UpgradeGroup | null>(null);
+  const upgradeGroupContainerRef = useRef<HTMLDivElement | null>(null);
   const upgradeModalSystemsRef = useRef<System[]>([]);
-  const groupListRef = useRef<HTMLDivElement | null>(null);
-  const groupSortableRef = useRef<Sortable | null>(null);
-  const systemListRefs = useRef(new Map<string, HTMLUListElement>());
-  const systemSortablesRef = useRef<Sortable[]>([]);
+  const orderedGroupsForModalRef = useRef<ModalUpgradeGroup[]>([]);
+  const pendingSystemPlacementsRef = useRef<Map<number, UpgradeSystemPlacement>>(new Map());
+  const draggedSystemIdRef = useRef<number | null>(null);
+  const draggedGroupKeyRef = useRef<string | null>(null);
+  const dragPreviewRef = useRef<HTMLElement | null>(null);
+  const dragPreviewOffsetRef = useRef({ x: 0, y: 0 });
+  const dragPreviewCleanupRef = useRef<(() => void) | null>(null);
+  const dragInitialModalSystemsRef = useRef<System[]>([]);
+  const dragSystemPlacementsRef = useRef<Map<number, UpgradeSystemPlacement> | null>(null);
+  const dragSystemLayoutKeyRef = useRef<string>("");
+  const dragInitialGroupKeysRef = useRef<string[]>([]);
+  const dragGroupKeysRef = useRef<string[] | null>(null);
+  const dragDocumentStylesRef = useRef<{ userSelect: string; touchAction: string; overscrollBehavior: string } | null>(null);
 
   // Sync client-side upgrading state with server's activeOperation.
   // React Query only fires inline mutation callbacks for the last .mutate() call,
@@ -372,7 +415,7 @@ export default function Dashboard() {
     [upgradeGroups]
   );
   const orderedGroupsForModal = useMemo(() => {
-    const groups: Array<{ key: string; id: number | null; name: string; sortOrder: number; systems: System[]; realGroup?: UpgradeGroup }> =
+    const groups: ModalUpgradeGroup[] =
       upgradeGroups
         .slice()
         .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name) || a.id - b.id)
@@ -406,18 +449,19 @@ export default function Dashboard() {
         systems: ungroupedSystems,
       });
     }
-    const sortedGroups = groups.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    let sortedGroups = groups.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    if (localGroupOrderKeys) {
+      const orderByKey = new Map(localGroupOrderKeys.map((key, index) => [key, index]));
+      sortedGroups = sortedGroups.sort((a, b) => {
+        const aOrder = orderByKey.get(a.key) ?? Number.MAX_SAFE_INTEGER;
+        const bOrder = orderByKey.get(b.key) ?? Number.MAX_SAFE_INTEGER;
+        return aOrder - bOrder || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
+      });
+    }
     return upgradeEditMode
       ? sortedGroups
       : sortedGroups.filter((group) => group.systems.length > 0);
-  }, [upgradeGroups, upgradeGroupConfig.ungroupedSortOrder, visibleModalSystems, groupsById, upgradeEditMode]);
-  const sortableLayoutKey = useMemo(
-    () =>
-      orderedGroupsForModal
-        .map((group) => `${group.key}:${group.systems.map((system) => system.id).join(",")}`)
-        .join("|"),
-    [orderedGroupsForModal]
-  );
+  }, [upgradeGroups, upgradeGroupConfig.ungroupedSortOrder, visibleModalSystems, groupsById, upgradeEditMode, localGroupOrderKeys]);
   const upgradeSortingDisabled =
     !upgradeEditMode || updateSystemUpgradeGroups.isPending || reorderUpgradeGroups.isPending;
 
@@ -426,16 +470,29 @@ export default function Dashboard() {
   }, [upgradeModalSystems]);
 
   useEffect(() => {
+    orderedGroupsForModalRef.current = orderedGroupsForModal;
+  }, [orderedGroupsForModal]);
+
+  useEffect(() => {
     if (!showUpgradeConfirm || !upgradeEditMode) return;
 
     const systemsById = new Map(orderedModalCandidateSystems.map((system) => [system.id, system]));
+    for (const [systemId, placement] of pendingSystemPlacementsRef.current) {
+      const refreshedSystem = systemsById.get(systemId);
+      if (refreshedSystem && sameUpgradeSystemPlacement(refreshedSystem, placement)) {
+        pendingSystemPlacementsRef.current.delete(systemId);
+      }
+    }
     setUpgradeModalSystems((current) => {
       const refreshedSystems = current
         .map((system) => systemsById.get(system.id))
         .filter((system): system is System => Boolean(system));
       const refreshedIds = new Set(refreshedSystems.map((system) => system.id));
       const newlyEligibleSystems = orderedModalCandidateSystems.filter((system) => !refreshedIds.has(system.id));
-      return [...refreshedSystems, ...newlyEligibleSystems];
+      return applyUpgradeSystemPlacements(
+        [...refreshedSystems, ...newlyEligibleSystems],
+        pendingSystemPlacementsRef.current,
+      );
     });
     setSelectedSystemIds((current) =>
       current.filter((systemId) => {
@@ -450,128 +507,410 @@ export default function Dashboard() {
       }
       return next;
     });
-  }, [showUpgradeConfirm, orderedModalCandidateSystems]);
+  }, [showUpgradeConfirm, upgradeEditMode, orderedModalCandidateSystems]);
 
-  const restoreSortableDomMove = (evt: SortableEvent) => {
-    if (evt.oldIndex === undefined) return;
-
-    const refIndex =
-      evt.from === evt.to &&
-      evt.newIndex !== undefined &&
-      evt.newIndex < evt.oldIndex
-        ? evt.oldIndex + 1
-        : evt.oldIndex;
-    evt.from.insertBefore(evt.item, evt.from.children[refIndex] ?? null);
-  };
-
-  const persistSystemGroupingFromDom = (evt: SortableEvent) => {
-    const root = groupListRef.current;
-    if (!root) {
-      restoreSortableDomMove(evt);
-      return;
-    }
-    const updates = new Map<number, { groupId: number | null; upgradeOrder: number }>();
-    for (const list of Array.from(root.querySelectorAll<HTMLUListElement>("[data-system-list-group]"))) {
-      const rawGroupId = list.dataset.systemListGroup;
-      const groupId = rawGroupId && rawGroupId !== UNGROUPED_KEY ? Number(rawGroupId) : null;
-      Array.from(list.querySelectorAll<HTMLElement>("[data-system-id]")).forEach((node, index) => {
-        const systemId = Number(node.dataset.systemId);
-        if (Number.isInteger(systemId) && systemId > 0) {
-          updates.set(systemId, { groupId, upgradeOrder: index + 1 });
-        }
-      });
-    }
-    if (updates.size === 0) {
-      restoreSortableDomMove(evt);
-      return;
-    }
+  const persistSystemPlacements = (
+    updates: Map<number, UpgradeSystemPlacement>,
+    previousSystems = upgradeModalSystemsRef.current,
+  ) => {
     const payload = Array.from(updates.entries()).map(([systemId, update]) => ({
       systemId,
       groupId: update.groupId,
       upgradeOrder: update.upgradeOrder,
     }));
-    const previousSystems = upgradeModalSystemsRef.current;
-    restoreSortableDomMove(evt);
-    setUpgradeModalSystems((current) =>
-      current.map((system) => {
-        const update = updates.get(system.id);
-        return update
-          ? { ...system, upgradeGroupId: update.groupId, upgradeOrder: update.upgradeOrder }
-          : system;
-      })
-    );
-    window.setTimeout(() => {
-      updateSystemUpgradeGroups.mutate(payload, {
-        onError: (err) => {
-          setUpgradeModalSystems(previousSystems);
-          addToast(err.message, "danger");
-        },
-      });
-    }, 0);
+    const previousSystemsById = new Map(previousSystems.map((system) => [system.id, system]));
+    const hasChanges = payload.some((update) => {
+      const system = previousSystemsById.get(update.systemId);
+      return system
+        ? (system.upgradeGroupId ?? null) !== update.groupId || system.upgradeOrder !== update.upgradeOrder
+        : false;
+    });
+    if (!hasChanges) return;
+
+    pendingSystemPlacementsRef.current = updates;
+    setUpgradeModalSystems((current) => applyUpgradeSystemPlacements(current, updates));
+    updateSystemUpgradeGroups.mutate(payload, {
+      onError: (err) => {
+        pendingSystemPlacementsRef.current = new Map();
+        setUpgradeModalSystems(previousSystems);
+        addToast(err.message, "danger");
+      },
+    });
   };
 
-  useEffect(() => {
-    systemSortablesRef.current.forEach((sortable) => sortable.destroy());
-    systemSortablesRef.current = [];
-    groupSortableRef.current?.destroy();
-    groupSortableRef.current = null;
+  const getDragLayoutKey = (element: HTMLElement): string | null => {
+    if (element.dataset.systemId) return `system:${element.dataset.systemId}`;
+    if (element.dataset.upgradeGroupKey) return `group:${element.dataset.upgradeGroupKey}`;
+    return null;
+  };
 
-    if (!showUpgradeConfirm) return;
+  const captureDragLayout = (): Map<string, DOMRect> => {
+    const root = upgradeGroupContainerRef.current;
+    const rects = new Map<string, DOMRect>();
+    if (!root) return rects;
 
-    const root = groupListRef.current;
-    if (root && orderedGroupsForModal.length > 1) {
-      groupSortableRef.current = new Sortable(root, {
-        animation: 150,
-        handle: ".upgrade-group-drag-handle",
-        draggable: "[data-upgrade-group-key]",
-        disabled: upgradeSortingDisabled,
-        ghostClass: "sortable-ghost",
-        chosenClass: "sortable-chosen",
-        onEnd: (evt) => {
-          const groupKeys = Array.from(root.querySelectorAll<HTMLElement>("[data-upgrade-group-key]"))
-            .map((node) => node.dataset.upgradeGroupKey)
-            .map((key) => key === UNGROUPED_KEY ? UNGROUPED_KEY : Number(key))
-            .filter((key): key is number | typeof UNGROUPED_KEY => key === UNGROUPED_KEY || (Number.isInteger(key) && key > 0));
-          restoreSortableDomMove(evt);
-          if (groupKeys.length === orderedGroupsForModal.length) {
-            window.setTimeout(() => {
-              reorderUpgradeGroups.mutate(groupKeys, {
-                onError: (err) => addToast(err.message, "danger"),
-              });
-            }, 0);
-          }
-        },
-      });
+    for (const element of Array.from(root.querySelectorAll<HTMLElement>("[data-upgrade-group-key], [data-system-id]"))) {
+      const key = getDragLayoutKey(element);
+      if (key) rects.set(key, element.getBoundingClientRect());
+    }
+    return rects;
+  };
+
+  const animateDragLayoutFrom = (previousRects: Map<string, DOMRect>) => {
+    if (previousRects.size === 0) return;
+
+    const root = upgradeGroupContainerRef.current;
+    if (!root) return;
+
+    const animatedElements: HTMLElement[] = [];
+    for (const element of Array.from(root.querySelectorAll<HTMLElement>("[data-upgrade-group-key], [data-system-id]"))) {
+      const key = getDragLayoutKey(element);
+      const previousRect = key ? previousRects.get(key) : undefined;
+      if (!previousRect) continue;
+
+      const nextRect = element.getBoundingClientRect();
+      const deltaX = previousRect.left - nextRect.left;
+      const deltaY = previousRect.top - nextRect.top;
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) continue;
+
+      element.style.transition = "none";
+      element.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
+      element.style.willChange = "transform";
+      animatedElements.push(element);
     }
 
-    for (const list of systemListRefs.current.values()) {
-      if (!list) continue;
-      const sortable = new Sortable(list, {
-        animation: 150,
-        group: "upgrade-systems",
-        handle: ".upgrade-drag-handle",
-        disabled: upgradeSortingDisabled,
-        ghostClass: "sortable-ghost",
-        chosenClass: "sortable-chosen",
-        onEnd: persistSystemGroupingFromDom,
-      });
-      systemSortablesRef.current.push(sortable);
-    }
+    if (animatedElements.length === 0) return;
+    document.body.offsetHeight;
+    window.requestAnimationFrame(() => {
+      for (const element of animatedElements) {
+        element.style.transition = "transform 150ms ease-out";
+        element.style.transform = "";
+      }
+      window.setTimeout(() => {
+        for (const element of animatedElements) {
+          element.style.transition = "";
+          element.style.transform = "";
+          element.style.willChange = "";
+        }
+      }, 180);
+    });
+  };
 
-    return () => {
-      systemSortablesRef.current.forEach((sortable) => sortable.destroy());
-      systemSortablesRef.current = [];
-      groupSortableRef.current?.destroy();
-      groupSortableRef.current = null;
+  const clearDragPreview = () => {
+    dragPreviewCleanupRef.current?.();
+    dragPreviewCleanupRef.current = null;
+    dragPreviewRef.current?.remove();
+    dragPreviewRef.current = null;
+  };
+
+  const lockPointerDragDocument = () => {
+    if (dragDocumentStylesRef.current) return;
+    dragDocumentStylesRef.current = {
+      userSelect: document.body.style.userSelect,
+      touchAction: document.body.style.touchAction,
+      overscrollBehavior: document.body.style.overscrollBehavior,
     };
-  }, [showUpgradeConfirm, upgradeSortingDisabled, sortableLayoutKey, orderedGroupsForModal.length, reorderUpgradeGroups, addToast]);
+    document.body.style.userSelect = "none";
+    document.body.style.touchAction = "none";
+    document.body.style.overscrollBehavior = "contain";
+  };
 
-  useEffect(() => {
-    systemSortablesRef.current.forEach((sortable) => sortable.option("disabled", upgradeSortingDisabled));
-    groupSortableRef.current?.option("disabled", upgradeSortingDisabled);
-  }, [upgradeSortingDisabled]);
+  const unlockPointerDragDocument = () => {
+    const previousStyles = dragDocumentStylesRef.current;
+    if (!previousStyles) return;
+    document.body.style.userSelect = previousStyles.userSelect;
+    document.body.style.touchAction = previousStyles.touchAction;
+    document.body.style.overscrollBehavior = previousStyles.overscrollBehavior;
+    dragDocumentStylesRef.current = null;
+  };
+
+  const moveDragPreview = (clientX: number, clientY: number) => {
+    if (!dragPreviewRef.current || (clientX === 0 && clientY === 0)) return;
+    const { x, y } = dragPreviewOffsetRef.current;
+    dragPreviewRef.current.style.transform = `translate3d(${clientX - x}px, ${clientY - y}px, 0)`;
+  };
+
+  const setPointerDragPreview = (event: ReactPointerEvent<HTMLElement>, source: HTMLElement | null) => {
+    clearDragPreview();
+    if (!source) return;
+
+    const rect = source.getBoundingClientRect();
+    const preview = source.cloneNode(true) as HTMLElement;
+    preview.removeAttribute("id");
+    preview.setAttribute("aria-hidden", "true");
+    preview.style.position = "fixed";
+    preview.style.left = "0";
+    preview.style.top = "0";
+    preview.style.width = `${rect.width}px`;
+    preview.style.pointerEvents = "none";
+    preview.style.zIndex = "9999";
+    preview.style.opacity = "0.94";
+    preview.style.boxShadow = "0 18px 45px rgba(15, 23, 42, 0.35)";
+    preview.style.willChange = "transform";
+    document.body.appendChild(preview);
+    dragPreviewRef.current = preview;
+    dragPreviewOffsetRef.current = {
+      x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+      y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+    };
+    moveDragPreview(event.clientX, event.clientY);
+  };
+
+  const getSystemDropTarget = (
+    clientX: number,
+    clientY: number,
+  ): { groupKey: string; systemId: number | null; position: DropPosition } | null => {
+    const target = document.elementFromPoint(clientX, clientY);
+    if (!(target instanceof HTMLElement)) return null;
+
+    const row = target.closest<HTMLElement>("[data-system-id]");
+    if (row) {
+      const list = row.closest<HTMLElement>("[data-system-list-group]");
+      const groupKey = list?.dataset.systemListGroup;
+      const systemId = Number(row.dataset.systemId);
+      if (groupKey && Number.isInteger(systemId) && systemId > 0) {
+        const rect = row.getBoundingClientRect();
+        return {
+          groupKey,
+          systemId,
+          position: clientY > rect.top + rect.height / 2 ? "after" : "before",
+        };
+      }
+    }
+
+    const list = target.closest<HTMLElement>("[data-system-list-group]");
+    if (list?.dataset.systemListGroup) {
+      return { groupKey: list.dataset.systemListGroup, systemId: null, position: "end" };
+    }
+
+    const group = target.closest<HTMLElement>("[data-upgrade-group-key]");
+    if (group?.dataset.upgradeGroupKey) {
+      return { groupKey: group.dataset.upgradeGroupKey, systemId: null, position: "end" };
+    }
+
+    return null;
+  };
+
+  const getSystemPlacementsForMove = (
+    targetGroupKey: string,
+    targetSystemId: number | null,
+    position: DropPosition,
+  ): Map<number, UpgradeSystemPlacement> | null => {
+    const draggedSystemId = draggedSystemIdRef.current;
+    if (!draggedSystemId || upgradeSortingDisabled) return null;
+    if (targetSystemId === draggedSystemId) return null;
+
+    const groups = orderedGroupsForModalRef.current;
+    const groupsByKey = new Map(groups.map((group) => [group.key, group]));
+    if (!groupsByKey.has(targetGroupKey)) return null;
+
+    const systemIdsByGroup = new Map(
+      groups.map((group) => [
+        group.key,
+        group.systems.map((system) => system.id).filter((systemId) => systemId !== draggedSystemId),
+      ]),
+    );
+    const targetSystemIds = systemIdsByGroup.get(targetGroupKey);
+    if (!targetSystemIds) return null;
+
+    let insertIndex = targetSystemIds.length;
+    if (targetSystemId !== null && position !== "end") {
+      const targetIndex = targetSystemIds.indexOf(targetSystemId);
+      if (targetIndex >= 0) {
+        insertIndex = targetIndex + (position === "after" ? 1 : 0);
+      }
+    }
+    targetSystemIds.splice(Math.min(insertIndex, targetSystemIds.length), 0, draggedSystemId);
+
+    const updates = new Map<number, UpgradeSystemPlacement>();
+    for (const group of groups) {
+      const groupSystemIds = systemIdsByGroup.get(group.key) ?? [];
+      for (const [index, systemId] of groupSystemIds.entries()) {
+        updates.set(systemId, { groupId: group.id, upgradeOrder: index + 1 });
+      }
+    }
+    return updates;
+  };
+
+  const getSystemLayoutKey = (placements: Map<number, UpgradeSystemPlacement>): string =>
+    Array.from(placements.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([systemId, placement]) => `${systemId}:${placement.groupId ?? UNGROUPED_KEY}:${placement.upgradeOrder}`)
+      .join("|");
+
+  const moveDraggedSystemPreview = (clientX: number, clientY: number) => {
+    const target = getSystemDropTarget(clientX, clientY);
+    if (!target) return;
+    const placements = getSystemPlacementsForMove(target.groupKey, target.systemId, target.position);
+    if (!placements) return;
+
+    const layoutKey = getSystemLayoutKey(placements);
+    if (layoutKey === dragSystemLayoutKeyRef.current) return;
+
+    const previousRects = captureDragLayout();
+    dragSystemLayoutKeyRef.current = layoutKey;
+    dragSystemPlacementsRef.current = placements;
+    flushSync(() => {
+      setUpgradeModalSystems((current) => applyUpgradeSystemPlacements(current, placements));
+    });
+    animateDragLayoutFrom(previousRects);
+  };
+
+  const getGroupDropTarget = (clientX: number, clientY: number): { groupKey: string; position: Exclude<DropPosition, "end"> } | null => {
+    const target = document.elementFromPoint(clientX, clientY);
+    if (!(target instanceof HTMLElement)) return null;
+    const group = target.closest<HTMLElement>("[data-upgrade-group-key]");
+    const groupKey = group?.dataset.upgradeGroupKey;
+    if (!group || !groupKey) return null;
+    const rect = group.getBoundingClientRect();
+    return { groupKey, position: clientY > rect.top + rect.height / 2 ? "after" : "before" };
+  };
+
+  const moveDraggedGroupPreview = (clientX: number, clientY: number) => {
+    const draggedGroupKey = draggedGroupKeyRef.current;
+    if (!draggedGroupKey || upgradeSortingDisabled) return;
+
+    const target = getGroupDropTarget(clientX, clientY);
+    if (!target || target.groupKey === draggedGroupKey) return;
+
+    const currentKeys = dragGroupKeysRef.current ?? orderedGroupsForModalRef.current.map((group) => group.key);
+    const groupKeys = currentKeys.filter((key) => key !== draggedGroupKey);
+    const targetIndex = groupKeys.indexOf(target.groupKey);
+    if (targetIndex < 0) return;
+
+    const insertIndex = target.position === "after" ? targetIndex + 1 : targetIndex;
+    groupKeys.splice(insertIndex, 0, draggedGroupKey);
+    if (groupKeys.join("|") === currentKeys.join("|")) return;
+
+    const previousRects = captureDragLayout();
+    dragGroupKeysRef.current = groupKeys;
+    flushSync(() => {
+      setLocalGroupOrderKeys(groupKeys);
+    });
+    animateDragLayoutFrom(previousRects);
+  };
+
+  const finishPointerDrag = () => {
+    const systemPlacements = dragSystemPlacementsRef.current;
+    const groupKeys = dragGroupKeysRef.current;
+    const initialGroupKeys = dragInitialGroupKeysRef.current;
+    const initialModalSystems = dragInitialModalSystemsRef.current;
+
+    clearDragPreview();
+    unlockPointerDragDocument();
+    dragPreviewCleanupRef.current?.();
+    dragPreviewCleanupRef.current = null;
+
+    if (systemPlacements) {
+      persistSystemPlacements(systemPlacements, initialModalSystems);
+    }
+
+    if (groupKeys && groupKeys.join("|") !== initialGroupKeys.join("|")) {
+      const payload = groupKeys
+        .map((key) => key === UNGROUPED_KEY ? UNGROUPED_KEY : Number(key))
+        .filter((key): key is number | typeof UNGROUPED_KEY => key === UNGROUPED_KEY || (Number.isInteger(key) && key > 0));
+      if (payload.length === orderedGroupsForModalRef.current.length) {
+        reorderUpgradeGroups.mutate(payload, {
+          onError: (err) => {
+            setLocalGroupOrderKeys(initialGroupKeys);
+            addToast(err.message, "danger");
+          },
+        });
+      }
+    }
+
+    draggedSystemIdRef.current = null;
+    draggedGroupKeyRef.current = null;
+    dragSystemPlacementsRef.current = null;
+    dragSystemLayoutKeyRef.current = "";
+    dragGroupKeysRef.current = null;
+    dragInitialGroupKeysRef.current = [];
+    dragInitialModalSystemsRef.current = [];
+  };
+
+  const cancelPointerDrag = () => {
+    const initialSystems = dragInitialModalSystemsRef.current;
+    if (dragSystemPlacementsRef.current && initialSystems.length > 0) {
+      setUpgradeModalSystems(initialSystems);
+    }
+    if (dragGroupKeysRef.current) {
+      setLocalGroupOrderKeys(dragInitialGroupKeysRef.current.length > 0 ? dragInitialGroupKeysRef.current : null);
+    }
+    clearDragPreview();
+    unlockPointerDragDocument();
+    draggedSystemIdRef.current = null;
+    draggedGroupKeyRef.current = null;
+    dragSystemPlacementsRef.current = null;
+    dragSystemLayoutKeyRef.current = "";
+    dragGroupKeysRef.current = null;
+    dragInitialGroupKeysRef.current = [];
+    dragInitialModalSystemsRef.current = [];
+  };
+
+  const startPointerDrag = (
+    event: ReactPointerEvent<HTMLElement>,
+    source: HTMLElement | null,
+    onMove: (clientX: number, clientY: number) => void,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    lockPointerDragDocument();
+    setPointerDragPreview(event, source);
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      pointerEvent.preventDefault();
+      moveDragPreview(pointerEvent.clientX, pointerEvent.clientY);
+      onMove(pointerEvent.clientX, pointerEvent.clientY);
+    };
+    const handlePointerUp = (pointerEvent: PointerEvent) => {
+      pointerEvent.preventDefault();
+      cleanupPointerListeners();
+      finishPointerDrag();
+    };
+    const handlePointerCancel = () => {
+      cleanupPointerListeners();
+      cancelPointerDrag();
+    };
+    const cleanupPointerListeners = () => {
+      document.removeEventListener("pointermove", handlePointerMove, true);
+      document.removeEventListener("pointerup", handlePointerUp, true);
+      document.removeEventListener("pointercancel", handlePointerCancel, true);
+    };
+
+    document.addEventListener("pointermove", handlePointerMove, true);
+    document.addEventListener("pointerup", handlePointerUp, true);
+    document.addEventListener("pointercancel", handlePointerCancel, true);
+    dragPreviewCleanupRef.current = cleanupPointerListeners;
+  };
+
+  const handleSystemPointerDown = (event: ReactPointerEvent<HTMLElement>, systemId: number) => {
+    if (upgradeSortingDisabled) return;
+    draggedSystemIdRef.current = systemId;
+    dragInitialModalSystemsRef.current = upgradeModalSystemsRef.current;
+    dragSystemPlacementsRef.current = null;
+    dragSystemLayoutKeyRef.current = "";
+    startPointerDrag(event, event.currentTarget.closest("li"), moveDraggedSystemPreview);
+  };
+
+  const handleGroupPointerDown = (event: ReactPointerEvent<HTMLElement>, groupKey: string) => {
+    if (upgradeSortingDisabled || orderedGroupsForModal.length <= 1) return;
+    draggedGroupKeyRef.current = groupKey;
+    const groupKeys = orderedGroupsForModalRef.current.map((group) => group.key);
+    dragInitialGroupKeysRef.current = groupKeys;
+    dragGroupKeysRef.current = groupKeys;
+    startPointerDrag(event, event.currentTarget.closest("section"), moveDraggedGroupPreview);
+  };
 
   const openUpgradeConfirm = () => {
+    clearDragPreview();
+    unlockPointerDragDocument();
+    pendingSystemPlacementsRef.current = new Map();
+    draggedSystemIdRef.current = null;
+    draggedGroupKeyRef.current = null;
+    dragSystemPlacementsRef.current = null;
+    dragGroupKeysRef.current = null;
+    setLocalGroupOrderKeys(null);
     setSelectedSystemIds(defaultSelectedSystemIds);
     setUpgradeEditMode(false);
     setUpgradeModalSystems(orderedModalCandidateSystems);
@@ -582,6 +921,14 @@ export default function Dashboard() {
   };
 
   const closeUpgradeConfirm = () => {
+    clearDragPreview();
+    unlockPointerDragDocument();
+    pendingSystemPlacementsRef.current = new Map();
+    draggedSystemIdRef.current = null;
+    draggedGroupKeyRef.current = null;
+    dragSystemPlacementsRef.current = null;
+    dragGroupKeysRef.current = null;
+    setLocalGroupOrderKeys(null);
     setShowUpgradeConfirm(false);
     setUpgradeEditMode(false);
     setSelectedSystemIds([]);
@@ -829,7 +1176,7 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
-            <div ref={groupListRef} className="space-y-3">
+            <div ref={upgradeGroupContainerRef} className="space-y-3">
               {orderedGroupsForModal.length === 0 && (
                 <div className="rounded-lg border border-dashed border-border p-4 text-sm text-slate-500 dark:text-slate-400">
                   No systems have updates right now. Enable edit mode to organize all systems.
@@ -853,6 +1200,8 @@ export default function Dashboard() {
                         }`}
                         title={!upgradeSortingDisabled && orderedGroupsForModal.length > 1 ? "Drag to reorder group" : undefined}
                         aria-label={!upgradeSortingDisabled && orderedGroupsForModal.length > 1 ? `Drag to reorder ${group.name}` : undefined}
+                        onPointerDown={(event) => handleGroupPointerDown(event, group.key)}
+                        style={{ touchAction: "none" }}
                       >
                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
@@ -891,13 +1240,6 @@ export default function Dashboard() {
                     )}
                   </div>
                   <ul
-                    ref={(node) => {
-                      if (node) {
-                        systemListRefs.current.set(group.key, node);
-                      } else {
-                        systemListRefs.current.delete(group.key);
-                      }
-                    }}
                     data-system-list-group={group.id ?? UNGROUPED_KEY}
                     className="min-h-6 space-y-2"
                   >
@@ -925,6 +1267,8 @@ export default function Dashboard() {
                             }`}
                             title={!upgradeSortingDisabled ? "Drag to set upgrade group and order" : undefined}
                             aria-label={!upgradeSortingDisabled ? `Drag to set upgrade group and order for ${s.name}` : undefined}
+                            onPointerDown={(event) => handleSystemPointerDown(event, s.id)}
+                            style={{ touchAction: "none" }}
                           >
                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
