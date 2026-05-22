@@ -418,6 +418,8 @@ export default function Dashboard() {
         .join("|"),
     [orderedGroupsForModal]
   );
+  const upgradeSortingDisabled =
+    !upgradeEditMode || updateSystemUpgradeGroups.isPending || reorderUpgradeGroups.isPending;
 
   useEffect(() => {
     upgradeModalSystemsRef.current = upgradeModalSystems;
@@ -522,6 +524,7 @@ export default function Dashboard() {
         animation: 150,
         handle: ".upgrade-group-drag-handle",
         draggable: "[data-upgrade-group-key]",
+        disabled: upgradeSortingDisabled,
         ghostClass: "sortable-ghost",
         chosenClass: "sortable-chosen",
         onEnd: (evt) => {
@@ -541,18 +544,18 @@ export default function Dashboard() {
       });
     }
 
-    for (const [groupKey, list] of systemListRefs.current.entries()) {
+    for (const list of systemListRefs.current.values()) {
       if (!list) continue;
       const sortable = new Sortable(list, {
         animation: 150,
         group: "upgrade-systems",
         handle: ".upgrade-drag-handle",
+        disabled: upgradeSortingDisabled,
         ghostClass: "sortable-ghost",
         chosenClass: "sortable-chosen",
         onEnd: persistSystemGroupingFromDom,
       });
       systemSortablesRef.current.push(sortable);
-      if (!groupKey) sortable.option("disabled", true);
     }
 
     return () => {
@@ -561,13 +564,12 @@ export default function Dashboard() {
       groupSortableRef.current?.destroy();
       groupSortableRef.current = null;
     };
-  }, [showUpgradeConfirm, upgradeEditMode, sortableLayoutKey, orderedGroupsForModal.length, reorderUpgradeGroups, addToast]);
+  }, [showUpgradeConfirm, upgradeSortingDisabled, sortableLayoutKey, orderedGroupsForModal.length, reorderUpgradeGroups, addToast]);
 
   useEffect(() => {
-    const disabled = !upgradeEditMode || updateSystemUpgradeGroups.isPending || reorderUpgradeGroups.isPending;
-    systemSortablesRef.current.forEach((sortable) => sortable.option("disabled", disabled));
-    groupSortableRef.current?.option("disabled", disabled);
-  }, [upgradeEditMode, updateSystemUpgradeGroups.isPending, reorderUpgradeGroups.isPending]);
+    systemSortablesRef.current.forEach((sortable) => sortable.option("disabled", upgradeSortingDisabled));
+    groupSortableRef.current?.option("disabled", upgradeSortingDisabled);
+  }, [upgradeSortingDisabled]);
 
   const openUpgradeConfirm = () => {
     setSelectedSystemIds(defaultSelectedSystemIds);
@@ -845,12 +847,12 @@ export default function Dashboard() {
                     <div className="flex min-w-0 items-center gap-2">
                       <span
                         className={`upgrade-group-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
-                          upgradeEditMode && orderedGroupsForModal.length > 1
+                          !upgradeSortingDisabled && orderedGroupsForModal.length > 1
                             ? "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                             : "cursor-default opacity-40"
                         }`}
-                        title={upgradeEditMode && orderedGroupsForModal.length > 1 ? "Drag to reorder group" : undefined}
-                        aria-label={upgradeEditMode && orderedGroupsForModal.length > 1 ? `Drag to reorder ${group.name}` : undefined}
+                        title={!upgradeSortingDisabled && orderedGroupsForModal.length > 1 ? "Drag to reorder group" : undefined}
+                        aria-label={!upgradeSortingDisabled && orderedGroupsForModal.length > 1 ? `Drag to reorder ${group.name}` : undefined}
                       >
                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
@@ -917,12 +919,12 @@ export default function Dashboard() {
                         >
                           <span
                             className={`upgrade-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
-                              upgradeEditMode && !updateSystemUpgradeGroups.isPending
+                              !upgradeSortingDisabled
                                 ? "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                                 : "cursor-default opacity-40"
                             }`}
-                            title={upgradeEditMode ? "Drag to set upgrade group and order" : undefined}
-                            aria-label={upgradeEditMode ? `Drag to set upgrade group and order for ${s.name}` : undefined}
+                            title={!upgradeSortingDisabled ? "Drag to set upgrade group and order" : undefined}
+                            aria-label={!upgradeSortingDisabled ? `Drag to set upgrade group and order for ${s.name}` : undefined}
                           >
                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
