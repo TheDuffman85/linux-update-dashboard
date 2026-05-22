@@ -257,19 +257,19 @@ export function createUpgradeGroup(name: string): number {
     throw new Error("Group name is required (max 100 chars)");
   }
   const storedUngroupedSortOrder = getStoredUngroupedUpgradeGroupSortOrder();
-  const maxRealGroupSortOrder = getDb()
-    .select({ value: sql<number>`COALESCE(MAX(${upgradeGroups.sortOrder}), -1)` })
+  const minRealGroupSortOrder = getDb()
+    .select({ value: sql<number>`MIN(${upgradeGroups.sortOrder})` })
     .from(upgradeGroups)
-    .get()?.value ?? -1;
-  const maxSortOrder =
-    storedUngroupedSortOrder === null
-      ? maxRealGroupSortOrder
-      : Math.max(storedUngroupedSortOrder, maxRealGroupSortOrder);
+    .get()?.value;
+  const firstSortOrder = Math.min(
+    storedUngroupedSortOrder ?? DEFAULT_UNGROUPED_UPGRADE_SORT_ORDER,
+    minRealGroupSortOrder ?? DEFAULT_UNGROUPED_UPGRADE_SORT_ORDER,
+  );
   const inserted = getDb()
     .insert(upgradeGroups)
     .values({
       name: trimmedName,
-      sortOrder: maxSortOrder + 1,
+      sortOrder: firstSortOrder - 1,
     })
     .returning({ id: upgradeGroups.id })
     .get();

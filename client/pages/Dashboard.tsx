@@ -117,6 +117,55 @@ function supportsDefaultUpgradeModeOverride(system: System): boolean {
   return managers.includes("apt") || managers.includes("dnf");
 }
 
+function getUpgradeSystemRowClass({
+  hasUpdates,
+  isSelected,
+}: {
+  hasUpdates: boolean;
+  isSelected: boolean;
+}): string {
+  const baseClass =
+    "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto]";
+
+  if (!hasUpdates) {
+    return [
+      baseClass,
+      "border-dashed border-slate-300 bg-slate-50/60",
+      "dark:border-slate-600 dark:bg-slate-900/20",
+    ].join(" ");
+  }
+
+  if (isSelected) {
+    return [
+      baseClass,
+      "border-slate-300 bg-white ring-1 ring-inset ring-slate-100",
+      "dark:border-slate-500 dark:bg-slate-700/55 dark:ring-slate-500/20",
+    ].join(" ");
+  }
+
+  return [
+    baseClass,
+    "border-slate-200 bg-slate-50/70",
+    "dark:border-slate-700 dark:bg-slate-800/45",
+  ].join(" ");
+}
+
+function getUpgradeSystemNameClass({
+  hasUpdates,
+  isSelected,
+}: {
+  hasUpdates: boolean;
+  isSelected: boolean;
+}): string {
+  if (!hasUpdates) {
+    return "block min-w-0 flex-1 truncate text-sm text-slate-500 dark:text-slate-400";
+  }
+
+  return isSelected
+    ? "block min-w-0 flex-1 truncate text-sm font-medium text-slate-900 dark:text-slate-50"
+    : "block min-w-0 flex-1 truncate text-sm text-slate-500 dark:text-slate-400";
+}
+
 function isDefaultFullUpgradeEnabled(system: System): boolean {
   const managers = getActiveManagers(system);
   const configs = parseConfigObject(system.pkgManagerConfigs);
@@ -745,7 +794,7 @@ export default function Dashboard() {
         </p>
         {modalSystems.length > 0 ? (
           <div className="mb-4">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-3 flex items-center justify-between gap-2">
               <button
                 type="button"
                 role="switch"
@@ -772,7 +821,7 @@ export default function Dashboard() {
                   type="button"
                   onClick={handleCreateGroup}
                   disabled={createUpgradeGroup.isPending}
-                  className="w-full rounded-md border border-border px-3 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700 sm:w-auto"
+                  className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700"
                 >
                   Add group
                 </button>
@@ -792,7 +841,7 @@ export default function Dashboard() {
                   data-real-group={group.id ? "true" : "false"}
                   className="rounded-lg border border-border bg-slate-50/60 p-2 dark:bg-slate-800/40"
                 >
-                  <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <span
                         className={`upgrade-group-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
@@ -813,7 +862,7 @@ export default function Dashboard() {
                       <Badge variant="muted" small>{group.systems.length}</Badge>
                     </div>
                     {upgradeEditMode && group.realGroup && (
-                      <div className="flex gap-2">
+                      <div className="flex shrink-0 gap-2">
                         <button
                           type="button"
                           onClick={() => openRenameGroup(group.realGroup!)}
@@ -864,11 +913,7 @@ export default function Dashboard() {
                         <li
                           key={s.id}
                           data-system-id={s.id}
-                          className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${
-                            isSelected
-                              ? "bg-white dark:bg-slate-800/80"
-                              : "bg-slate-50 dark:bg-slate-700/50"
-                          } ${hasUpdates ? "border-border" : "border-dashed border-slate-300 opacity-70 dark:border-slate-600"}`}
+                          className={getUpgradeSystemRowClass({ hasUpdates, isSelected })}
                         >
                           <span
                             className={`upgrade-drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
@@ -892,7 +937,7 @@ export default function Dashboard() {
                               className="shrink-0 rounded"
                               aria-label={`${isSelected ? "Exclude" : "Include"} ${s.name} in Upgrade All`}
                             />
-                            <span className="block min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200">
+                            <span className={getUpgradeSystemNameClass({ hasUpdates, isSelected })}>
                               {s.name}
                             </span>
                             {canOverrideMode && (

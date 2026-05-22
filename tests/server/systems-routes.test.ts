@@ -196,6 +196,10 @@ describe("systems reorder route", () => {
     expect(createBeta.status).toBe(201);
     const alpha = await createAlpha.json() as { id: number };
     const beta = await createBeta.json() as { id: number };
+    expect(getDb().select().from(upgradeGroups).orderBy(upgradeGroups.sortOrder).all().map((group) => group.name)).toEqual([
+      "Beta group",
+      "Alpha group",
+    ]);
 
     const rename = await app.request(`/api/systems/upgrade-groups/${alpha.id}`, {
       method: "PUT",
