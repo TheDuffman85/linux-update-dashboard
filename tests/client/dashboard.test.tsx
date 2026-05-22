@@ -77,7 +77,11 @@ vi.mock("../../client/components/Layout", () => ({
   ),
 }));
 
-import Dashboard, { getDashboardUpgradeToast } from "../../client/pages/Dashboard";
+import Dashboard, {
+  canToggleUpgradePreset,
+  getDashboardUpgradeToast,
+  isUpgradePresetSelected,
+} from "../../client/pages/Dashboard";
 
 describe("Dashboard", () => {
   beforeEach(() => {
@@ -201,5 +205,13 @@ describe("Dashboard", () => {
       message: "Alpha: Upgrade state resynced after backend restart",
       type: "info",
     });
+  });
+
+  test("allows edit mode to toggle Upgrade All presets for systems without updates", () => {
+    const systemWithoutUpdates = { id: 1, updateCount: 0 };
+
+    expect(isUpgradePresetSelected(systemWithoutUpdates, [1])).toBe(true);
+    expect(canToggleUpgradePreset(systemWithoutUpdates, false)).toBe(false);
+    expect(canToggleUpgradePreset(systemWithoutUpdates, true)).toBe(true);
   });
 });

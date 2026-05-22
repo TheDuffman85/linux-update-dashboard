@@ -49,6 +49,20 @@ function isUpgradeAllEligible(system: System, locallyUpgrading: boolean): boolea
   return system.updateCount > 0 && !locallyUpgrading && !hasActiveUpgradeOperation(system);
 }
 
+export function isUpgradePresetSelected(
+  system: Pick<System, "id">,
+  selectedSystemIds: number[],
+): boolean {
+  return selectedSystemIds.includes(system.id);
+}
+
+export function canToggleUpgradePreset(
+  system: Pick<System, "updateCount">,
+  upgradeEditMode: boolean,
+): boolean {
+  return upgradeEditMode || system.updateCount > 0;
+}
+
 function parseManagerList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.filter((entry): entry is string => typeof entry === "string");
@@ -299,7 +313,7 @@ export default function Dashboard() {
     ? modalSystems
     : modalSystems.filter((system) => system.updateCount > 0);
   const excludedSystems = orderedSystemsWithUpdates.filter((s) => s.excludeFromUpgradeAll === 1);
-  const defaultSelectedSystemIds = orderedSystemsWithUpdates
+  const defaultSelectedSystemIds = orderedModalCandidateSystems
     .filter((s) => s.excludeFromUpgradeAll !== 1)
     .map((s) => s.id);
   const selectedSystems = modalSystems.filter((s) => selectedSystemIds.includes(s.id) && s.updateCount > 0);
@@ -375,7 +389,7 @@ export default function Dashboard() {
     setSelectedSystemIds((current) =>
       current.filter((systemId) => {
         const system = systemsById.get(systemId);
-        return !!system && system.updateCount > 0;
+        return !!system;
       })
     );
     setFullUpgradeSelections((current) => {
@@ -838,7 +852,8 @@ export default function Dashboard() {
                   >
                     {group.systems.map((s) => {
                       const hasUpdates = s.updateCount > 0;
-                      const isSelected = selectedSystemIds.includes(s.id) && hasUpdates;
+                      const isSelected = isUpgradePresetSelected(s, selectedSystemIds);
+                      const canTogglePreset = canToggleUpgradePreset(s, upgradeEditMode);
                       const canOverrideMode = supportsDefaultUpgradeModeOverride(s);
                       const fullUpgradeEnabled = fullUpgradeSelections[s.id] ?? false;
                       const fullUpgradeSaving =
@@ -872,8 +887,8 @@ export default function Dashboard() {
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => hasUpdates && toggleSystemSelection(s.id)}
-                              disabled={!hasUpdates || updateSystemUpgradeAllExclusion.isPending}
+                              onChange={() => canTogglePreset && toggleSystemSelection(s.id)}
+                              disabled={!canTogglePreset || updateSystemUpgradeAllExclusion.isPending}
                               className="shrink-0 rounded"
                               aria-label={`${isSelected ? "Exclude" : "Include"} ${s.name} in Upgrade All`}
                             />
