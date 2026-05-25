@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
+import { CopyableCodeBlock } from "../components/CopyableCodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -246,9 +247,15 @@ function UpdateCheckNotice({
       <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
       <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
       {state.error && (
-        <pre className={`mt-3 overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}>
-          {state.error}
-        </pre>
+        <div className="mt-3">
+          <CopyableCodeBlock
+            text={state.error}
+            className={`overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}
+            successMessage="Copied check output"
+          >
+            {state.error}
+          </CopyableCodeBlock>
+        </div>
       )}
     </div>
   );
@@ -735,11 +742,13 @@ function StepPanel({
   title,
   children,
   className,
+  copyText,
   followContentKey,
 }: {
   title: string;
   children: React.ReactNode;
   className: string;
+  copyText: string;
   followContentKey?: string;
 }) {
   const containerRef = useRef<HTMLPreElement>(null);
@@ -759,13 +768,15 @@ function StepPanel({
   return (
     <div>
       <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">{title}</p>
-      <pre
+      <CopyableCodeBlock
+        text={copyText}
         ref={containerRef}
         onScroll={followContentKey ? handleScroll : undefined}
         className={className}
+        successMessage={`Copied ${title.toLowerCase()}`}
       >
         {children}
-      </pre>
+      </CopyableCodeBlock>
     </div>
   );
 }
@@ -785,6 +796,7 @@ function LegacyActivityDetails({
         <StepPanel
           title="Command"
           className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
+          copyText={command}
         >
           {command}
         </StepPanel>
@@ -793,6 +805,7 @@ function LegacyActivityDetails({
         <StepPanel
           title="Output"
           className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          copyText={output ?? ""}
         >
           {output || <span className="text-slate-500 italic">No output</span>}
         </StepPanel>
@@ -801,6 +814,7 @@ function LegacyActivityDetails({
         <StepPanel
           title="Error"
           className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          copyText={error}
         >
           {error}
         </StepPanel>
@@ -934,6 +948,7 @@ export function ActivityStepViewer({
         <StepPanel
           title="Command"
           className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
+          copyText={selectedStep.command}
         >
           {selectedStep.command}
         </StepPanel>
@@ -941,6 +956,7 @@ export function ActivityStepViewer({
         <StepPanel
           title="Output"
           className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          copyText={selectedStep.output ?? ""}
           followContentKey={isLive ? `${selectedIndex}:${selectedStep.output || ""}` : undefined}
         >
           {selectedStep.output || <span className="text-slate-500 italic">No output</span>}
@@ -950,6 +966,7 @@ export function ActivityStepViewer({
           <StepPanel
             title="Error"
             className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+            copyText={selectedStep.error}
           >
             {selectedStep.error}
           </StepPanel>

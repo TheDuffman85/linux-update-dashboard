@@ -40,6 +40,7 @@ vi.mock("../../client/lib/scripts", async () => {
 
 vi.mock("../../client/context/ToastContext", () => ({
   useToast: mockUseToast,
+  useOptionalToast: mockUseToast,
 }));
 
 vi.mock("../../client/components/Layout", () => ({
