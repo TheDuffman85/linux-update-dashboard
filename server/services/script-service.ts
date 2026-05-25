@@ -12,7 +12,7 @@ import {
 } from "../package-manager-configs";
 import { getPackageManagerDetectionCommands } from "../ssh/detector";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
-import { APT_DPKG_AUDIT_PREFIX } from "../ssh/parsers/apt";
+import { APT_REFRESH_COMMAND } from "../ssh/parsers/apt";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
 import { getProxmoxBackupGuardCommand, getRebootCommand } from "../ssh/reboot";
@@ -737,7 +737,7 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
           label: "Fetching package lists",
           command: commentedCommand(
             "Audit dpkg state, then refresh APT package metadata before listing available updates.",
-            `${APT_DPKG_AUDIT_PREFIX}; ${sudo("apt-get -o DPkg::Lock::Timeout=60 update -qq")} 2>&1`,
+            APT_REFRESH_COMMAND,
           ),
         },
         {

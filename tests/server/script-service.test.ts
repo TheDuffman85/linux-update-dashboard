@@ -26,6 +26,7 @@ import {
   updateScript,
   updateCustomPackageManager,
 } from "../../server/services/script-service";
+import { APT_REFRESH_COMMAND } from "../../server/ssh/parsers/apt";
 
 describe("script service", () => {
   let tempDir: string;
@@ -73,6 +74,16 @@ describe("script service", () => {
     expect(scripts.some((script) => script.id === "builtin:snap:detect" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:system:system_info" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:system:reboot" && script.readonly)).toBe(true);
+  });
+
+  test("shows the elevated APT audit refresh command in built-in scripts", () => {
+    const checkApt = getBuiltinScripts().find((script) => script.id === "builtin:apt:check_updates");
+
+    expect(checkApt?.steps[0]?.command).toContain(APT_REFRESH_COMMAND);
+    expect(checkApt?.steps[0]?.command).toContain("sudo -S -p '' sh \"$apt_check_script\"");
+    expect(checkApt?.steps[0]?.command).toContain("LUDASH_APT_CHECK");
+    expect(checkApt?.steps[0]?.command).toContain("dpkg --audit 2>&1");
+    expect(checkApt?.steps[0]?.command).not.toContain("dpkg --audit 2>&1 || true");
   });
 
   test("resolves built-in runtime steps from the canonical script templates", () => {
@@ -529,14 +540,20 @@ describe("script service", () => {
 
   test("formats compact built-in shell commands for display", async () => {
     const aptUpgrade = getBuiltinScripts().find((script) => script.id === "builtin:apt:upgrade_all");
+    const aptCheck = getBuiltinScripts().find((script) => script.id === "builtin:apt:check_updates");
     const reboot = getBuiltinScripts().find((script) => script.id === "builtin:system:reboot");
 
     const formattedApt = await formatShellCommand(aptUpgrade?.steps[0]?.command ?? "");
+    const formattedAptCheck = await formatShellCommand(aptCheck?.steps[0]?.command ?? "");
     const formattedRebootGuard = await formatShellCommand(reboot?.steps[0]?.command ?? "");
     const formattedReboot = await formatShellCommand(reboot?.steps[1]?.command ?? "");
 
     expect(formattedApt).toContain('if [ "$upgrade_mode" != "full-upgrade" ]; then\n  upgrade_mode="upgrade"\nfi');
     expect(formattedApt).toContain('elif command -v sudo > /dev/null 2>&1; then\n  sudo -S -p');
+    expect(formattedAptCheck).toContain("Audit dpkg state, then refresh APT package metadata before listing available updates.");
+    expect(formattedAptCheck).toContain('audit="$(dpkg --audit 2>&1)"');
+    expect(formattedAptCheck).toContain("LUDASH_APT_CHECK");
+    expect(formattedAptCheck).toContain("sudo -S -p");
     expect(reboot?.steps.map((step) => step.label)).toEqual([
       "Pre-reboot safety checks",
       "Reboot system",

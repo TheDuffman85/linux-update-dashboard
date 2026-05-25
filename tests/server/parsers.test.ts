@@ -76,6 +76,9 @@ describe("AptParser", () => {
     expect(cmds).toHaveLength(3);
     expect(cmds[0]).toContain("apt-get");
     expect(cmds[0]).toContain("update");
+    expect(cmds[0]).toContain("dpkg --audit");
+    expect(cmds[0]).toContain("sudo -S -p '' sh \"$apt_check_script\"");
+    expect(cmds[0]).toContain("LUDASH_APT_CHECK");
     expect(cmds[2]).toContain("Debug::NoLocking=1");
   });
 

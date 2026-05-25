@@ -25,9 +25,10 @@ import type {
   HistoryEntry,
   ActiveOperation,
   ActivityStep,
+  LastCheckSummary,
   PackageManagerIssue,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck, shouldClearLocalUpgrade, type UpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
@@ -221,11 +222,53 @@ function HiddenUpdatesSection({
   );
 }
 
+function isPackageIssueWarningBlock(
+  block: string,
+  packageIssues: PackageManagerIssue[],
+): boolean {
+  const normalizedBlock = block.trim().toLowerCase();
+  if (!normalizedBlock) return true;
+  return packageIssues.some((issue) => {
+    if (issue.active !== 1) return false;
+    const message = issue.message.trim().toLowerCase();
+    if (!message) return false;
+    return normalizedBlock === `[${issue.pkgManager}] ${message}` || normalizedBlock.includes(message);
+  });
+}
+
+export function dedupePackageIssueUpdateNotice(
+  state: UpdatesPanelState,
+  packageIssues: PackageManagerIssue[],
+): UpdatesPanelState | null {
+  if (state.kind !== "check_warning" || !state.error || packageIssues.length === 0) return state;
+
+  const remainingErrors = state.error
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter((block) => !isPackageIssueWarningBlock(block, packageIssues));
+
+  if (remainingErrors.length === 0) return null;
+  return { ...state, error: remainingErrors.join("\n\n") };
+}
+
+function isSudoCredentialFailure(lastCheck: LastCheckSummary | null): boolean {
+  if (lastCheck?.status !== "failed" || !lastCheck.error) return false;
+  return /sudo:.*(?:password is required|authentication failure|incorrect password)|sudo password/i.test(lastCheck.error);
+}
+
+export function getVisiblePackageIssuesForCurrentCheck(
+  packageIssues: PackageManagerIssue[],
+  lastCheck: LastCheckSummary | null,
+): PackageManagerIssue[] {
+  return isSudoCredentialFailure(lastCheck) ? [] : packageIssues;
+}
+
 function UpdateCheckNotice({
   state,
 }: {
-  state: ReturnType<typeof getUpdatesPanelState>;
+  state: UpdatesPanelState | null;
 }) {
+  if (!state) return null;
   if (state.kind !== "check_failed" && state.kind !== "check_warning") return null;
 
   const tone = state.kind === "check_failed"
@@ -1324,10 +1367,12 @@ export default function SystemDetail() {
   }
 
   const { system, updates, hiddenUpdates, packageIssues, history } = data;
+  const visiblePackageIssues = getVisiblePackageIssuesForCurrentCheck(packageIssues, system.lastCheck);
   const selectionBusy = upgrading || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
+  const dedupedUpdatesPanelState = dedupePackageIssueUpdateNotice(updatesPanelState, visiblePackageIssues);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
@@ -1726,7 +1771,7 @@ export default function SystemDetail() {
       </div>
 
       <PackageManagerIssueBanner
-        issues={packageIssues}
+        issues={visiblePackageIssues}
         busy={upgrading || checking || rebooting || repairingPackageIssue}
         solvingIssueId={solvePackageIssue.isPending ? solvePackageIssue.variables?.issueId ?? null : null}
         dismissingIssueId={dismissPackageIssue.isPending ? dismissPackageIssue.variables?.issueId ?? null : null}
@@ -1788,7 +1833,7 @@ export default function SystemDetail() {
             <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
           )}
         </div>
-        <UpdateCheckNotice state={updatesPanelState} />
+        <UpdateCheckNotice state={dedupedUpdatesPanelState} />
         {updates.length > 0 ? (
           <UpdatesTable
             updates={updates}

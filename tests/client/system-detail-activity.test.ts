@@ -2,8 +2,10 @@ import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   buildActivityDisplayRows,
+  dedupePackageIssueUpdateNotice,
   getActivityTitle,
   getPackageSelectionState,
+  getVisiblePackageIssuesForCurrentCheck,
   isScrollNearBottom,
   matchesHistoryEntryToSession,
   PackageManagerIssueBanner,
@@ -455,26 +457,26 @@ describe("buildActivityDisplayRows", () => {
 });
 
 describe("PackageManagerIssueBanner", () => {
-  test("renders solve and dismiss actions for visible package manager issues", () => {
-    const issue: PackageManagerIssue = {
-      id: 7,
-      systemId: 1,
-      pkgManager: "apt",
-      issueKey: "apt_dpkg_interrupted",
-      title: "APT needs repair",
-      message: "dpkg was interrupted",
-      repairCommand: "dpkg --configure -a",
-      active: 1,
-      dismissedBootId: null,
-      dismissedUptimeSeconds: null,
-      dismissedAt: null,
-      detectedAt: "2026-05-17 10:00:00",
-      lastSeenAt: "2026-05-17 10:00:00",
-      resolvedAt: null,
-      createdAt: "2026-05-17 10:00:00",
-      updatedAt: "2026-05-17 10:00:00",
-    };
+  const issue: PackageManagerIssue = {
+    id: 7,
+    systemId: 1,
+    pkgManager: "apt",
+    issueKey: "apt_dpkg_interrupted",
+    title: "APT needs repair",
+    message: "dpkg was interrupted. Run dpkg --configure -a to finish pending package configuration before checking for updates again.",
+    repairCommand: "dpkg --configure -a",
+    active: 1,
+    dismissedBootId: null,
+    dismissedUptimeSeconds: null,
+    dismissedAt: null,
+    detectedAt: "2026-05-17 10:00:00",
+    lastSeenAt: "2026-05-17 10:00:00",
+    resolvedAt: null,
+    createdAt: "2026-05-17 10:00:00",
+    updatedAt: "2026-05-17 10:00:00",
+  };
 
+  test("renders solve and dismiss actions for visible package manager issues", () => {
     const html = renderToStaticMarkup(PackageManagerIssueBanner({
       issues: [issue],
       onSolve: () => {},
@@ -485,6 +487,40 @@ describe("PackageManagerIssueBanner", () => {
     expect(html).toContain("dpkg was interrupted");
     expect(html).toContain("Solve");
     expect(html).toContain("Dismiss");
+  });
+
+  test("hides update warning when package issue banner already shows the same warning", () => {
+    const state = dedupePackageIssueUpdateNotice({
+      kind: "check_warning",
+      title: "Update check completed with warnings",
+      message: "Showing the updates that were found before one or more package manager checks failed.",
+      error: `[apt] ${issue.message}`,
+    }, [issue]);
+
+    expect(state).toBeNull();
+  });
+
+  test("keeps unrelated update warning text after removing package issue duplicate", () => {
+    const state = dedupePackageIssueUpdateNotice({
+      kind: "check_warning",
+      title: "Update check completed with warnings",
+      message: "Showing the updates that were found before one or more package manager checks failed.",
+      error: `[apt] ${issue.message}\n\n[flatpak] remote metadata refresh failed`,
+    }, [issue]);
+
+    expect(state).toMatchObject({
+      kind: "check_warning",
+      error: "[flatpak] remote metadata refresh failed",
+    });
+  });
+
+  test("hides package issue actions while sudo credentials block the latest check", () => {
+    expect(getVisiblePackageIssuesForCurrentCheck([issue], {
+      status: "failed",
+      error: "[apt] sudo: a password is required",
+      startedAt: "2026-05-17 10:00:00",
+      completedAt: "2026-05-17 10:00:01",
+    })).toEqual([]);
   });
 });
 
