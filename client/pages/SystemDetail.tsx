@@ -879,7 +879,7 @@ function TerminalOutputPanel({
       title={title}
       className={`text-xs font-mono rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all ${
         tone === "error"
-          ? "bg-red-950/50 text-red-300"
+          ? "bg-red-950 text-red-100 dark:bg-red-950/50 dark:text-red-200"
           : "bg-slate-900 text-slate-300"
       }`}
       copyText={output ?? ""}
