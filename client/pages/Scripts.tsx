@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import hljs from "highlight.js/lib/core";
-import bashLanguage from "highlight.js/lib/languages/bash";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
@@ -8,6 +6,7 @@ import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CopyableCodeBlock, CopyButton } from "../components/CopyableCodeBlock";
 import { useToast } from "../context/ToastContext";
+import { highlightShell } from "../lib/shell-highlight";
 import {
   useCreatePackageManager,
   useCreateScript,
@@ -29,9 +28,6 @@ import {
   type ScriptUsage,
 } from "../lib/scripts";
 import type { CustomPackageManagerConfigEntry } from "../lib/package-manager-configs";
-
-hljs.registerLanguage("bash", bashLanguage);
-hljs.configure({ ignoreUnescapedHTML: true });
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -413,26 +409,6 @@ function parseExitCodes(value: string): number[] | undefined {
     throw new Error("Exit codes must be comma-separated non-negative integers");
   }
   return codes;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function highlightShell(value: string): string {
-  try {
-    return hljs.highlight(value || "\n", {
-      language: "bash",
-      ignoreIllegals: true,
-    }).value;
-  } catch {
-    return escapeHtml(value);
-  }
 }
 
 async function formatShellScript(command: string): Promise<string> {

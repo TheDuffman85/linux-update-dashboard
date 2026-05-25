@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
@@ -32,6 +32,8 @@ import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck, sh
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
+import { highlightShell } from "../lib/shell-highlight";
+import { formatScriptCommand } from "../lib/scripts";
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -824,6 +826,40 @@ function StepPanel({
   );
 }
 
+function ShellCommandPanel({ command }: { command: string }) {
+  const [displayCommand, setDisplayCommand] = useState(command);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplayCommand(command);
+    if (!command.trim()) return;
+
+    formatScriptCommand(command)
+      .then((formatted) => {
+        if (!cancelled) setDisplayCommand(formatted);
+      })
+      .catch(() => {
+        if (!cancelled) setDisplayCommand(command);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [command]);
+
+  const highlighted = useMemo(() => highlightShell(displayCommand), [displayCommand]);
+
+  return (
+    <StepPanel
+      title="Command"
+      className="script-code text-xs font-mono bg-slate-900 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words"
+      copyText={displayCommand}
+    >
+      <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+    </StepPanel>
+  );
+}
+
 function LegacyActivityDetails({
   command,
   output,
@@ -836,13 +872,7 @@ function LegacyActivityDetails({
   return (
     <>
       {command && (
-        <StepPanel
-          title="Command"
-          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
-          copyText={command}
-        >
-          {command}
-        </StepPanel>
+        <ShellCommandPanel command={command} />
       )}
       {(command || output) && (
         <StepPanel
@@ -988,13 +1018,7 @@ export function ActivityStepViewer({
           </span>
         </div>
 
-        <StepPanel
-          title="Command"
-          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
-          copyText={selectedStep.command}
-        >
-          {selectedStep.command}
-        </StepPanel>
+        <ShellCommandPanel command={selectedStep.command} />
 
         <StepPanel
           title="Output"
