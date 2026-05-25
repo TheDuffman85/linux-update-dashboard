@@ -1,6 +1,7 @@
 import { useRef, useEffect, useMemo } from "react";
 import type { WsMessage } from "../hooks/useCommandOutput";
 import { CopyButton } from "./CopyableCodeBlock";
+import { TerminalText } from "./TerminalText";
 
 interface TerminalOutputProps {
   messages: WsMessage[];
@@ -113,11 +114,8 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
               );
             case "output":
               return (
-                <span
-                  key={i}
-                  className={msg.stream === "stderr" ? "text-red-400" : undefined}
-                >
-                  {msg.data}
+                <span key={i}>
+                  <TerminalText text={msg.data} stream={msg.stream} />
                 </span>
               );
             case "phase":

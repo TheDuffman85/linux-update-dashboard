@@ -5,6 +5,7 @@ import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { CopyableCodeBlock } from "../components/CopyableCodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { TerminalText } from "../components/TerminalText";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useSystem,
@@ -860,6 +861,39 @@ function ShellCommandPanel({ command }: { command: string }) {
   );
 }
 
+function TerminalOutputPanel({
+  title,
+  output,
+  emptyText = "No output",
+  followContentKey,
+  tone = "default",
+}: {
+  title: string;
+  output: string | null;
+  emptyText?: string;
+  followContentKey?: string;
+  tone?: "default" | "error";
+}) {
+  return (
+    <StepPanel
+      title={title}
+      className={`text-xs font-mono rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all ${
+        tone === "error"
+          ? "bg-red-950/50 text-red-300"
+          : "bg-slate-900 text-slate-300"
+      }`}
+      copyText={output ?? ""}
+      followContentKey={followContentKey}
+    >
+      {output ? (
+        <TerminalText text={output} stream={tone === "error" ? "stderr" : "stdout"} />
+      ) : (
+        <span className="text-slate-500 italic">{emptyText}</span>
+      )}
+    </StepPanel>
+  );
+}
+
 function LegacyActivityDetails({
   command,
   output,
@@ -875,22 +909,17 @@ function LegacyActivityDetails({
         <ShellCommandPanel command={command} />
       )}
       {(command || output) && (
-        <StepPanel
+        <TerminalOutputPanel
           title="Output"
-          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-          copyText={output ?? ""}
-        >
-          {output || <span className="text-slate-500 italic">No output</span>}
-        </StepPanel>
+          output={output}
+        />
       )}
       {error && (
-        <StepPanel
+        <TerminalOutputPanel
           title="Error"
-          className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-          copyText={error}
-        >
-          {error}
-        </StepPanel>
+          output={error}
+          tone="error"
+        />
       )}
     </>
   );
@@ -1020,23 +1049,18 @@ export function ActivityStepViewer({
 
         <ShellCommandPanel command={selectedStep.command} />
 
-        <StepPanel
+        <TerminalOutputPanel
           title="Output"
-          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-          copyText={selectedStep.output ?? ""}
+          output={selectedStep.output}
           followContentKey={isLive ? `${selectedIndex}:${selectedStep.output || ""}` : undefined}
-        >
-          {selectedStep.output || <span className="text-slate-500 italic">No output</span>}
-        </StepPanel>
+        />
 
         {selectedStep.error && (
-          <StepPanel
+          <TerminalOutputPanel
             title="Error"
-            className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-            copyText={selectedStep.error}
-          >
-            {selectedStep.error}
-          </StepPanel>
+            output={selectedStep.error}
+            tone="error"
+          />
         )}
       </div>
     </div>
