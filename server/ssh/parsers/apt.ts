@@ -49,15 +49,44 @@ function findCommandResult(
 }
 
 export const APT_LOCK_WAIT = "-o DPkg::Lock::Timeout=60";
-export const APT_DPKG_AUDIT_PREFIX =
-  'audit="$(dpkg --audit 2>&1 || true)"; if [ -n "$audit" ]; then printf "%s\\n" "dpkg was interrupted, you must manually run \'sudo dpkg --configure -a\' to correct the problem."; printf "%s\\n" "$audit"; fi';
+
+export const APT_DPKG_AUDIT_SCRIPT = [
+  'audit="$(dpkg --audit 2>&1)"',
+  "audit_rc=$?",
+  'if [ "$audit_rc" -ne 0 ]; then',
+  '  printf "%s\\n" "$audit"',
+  '  exit "$audit_rc"',
+  "fi",
+  'if [ -n "$audit" ]; then',
+  `  printf "%s\\n" "dpkg was interrupted, you must manually run 'sudo dpkg --configure -a' to correct the problem."`,
+  '  printf "%s\\n" "$audit"',
+  "fi",
+  `apt-get ${APT_LOCK_WAIT} update -qq`,
+].join("\n");
+
+export const APT_REFRESH_COMMAND = [
+  'apt_check_script="$(mktemp /tmp/ludash_apt_check_XXXXXX.sh)"',
+  'cleanup() { rm -f "$apt_check_script"; }',
+  "trap cleanup EXIT HUP INT TERM",
+  'cat > "$apt_check_script" <<\'LUDASH_APT_CHECK\'',
+  APT_DPKG_AUDIT_SCRIPT,
+  "LUDASH_APT_CHECK",
+  'chmod 700 "$apt_check_script"',
+  'if [ "$(id -u)" = "0" ]; then',
+  '  sh "$apt_check_script"',
+  "elif command -v sudo >/dev/null 2>&1; then",
+  `  sudo -S -p '' sh "$apt_check_script"`,
+  "else",
+  '  sh "$apt_check_script"',
+  "fi 2>&1",
+].join("\n");
 
 export const aptParser: PackageParser = {
   name: "apt",
 
   getCheckCommands() {
     return [
-      `${APT_DPKG_AUDIT_PREFIX}; ${sudo(`apt-get ${APT_LOCK_WAIT} update -qq`)} 2>&1`,
+      APT_REFRESH_COMMAND,
       "DEBIAN_FRONTEND=noninteractive apt list --upgradable 2>/dev/null | tail -n +2",
       "DEBIAN_FRONTEND=noninteractive apt-get -s -o Debug::NoLocking=1 upgrade 2>&1",
     ];

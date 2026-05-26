@@ -140,6 +140,31 @@ describe("package manager issues", () => {
     expect(issues[0].repairCommand).toContain("dpkg --configure -a");
   });
 
+  test("does not detect interrupted dpkg when apt audit cannot read dpkg state", async () => {
+    const systemId = createAptSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        return {
+          stdout: "dpkg: error: unable to check lock file for dpkg database directory /var/lib/dpkg: Permission denied\n",
+          stderr: "",
+          exitCode: 2,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await expect(checkUpdates(systemId)).rejects.toThrow("Permission denied");
+
+    expect(listVisiblePackageManagerIssues(systemId)).toHaveLength(0);
+  });
+
   test("detects interrupted dpkg from successful apt audit output while keeping updates", async () => {
     const systemId = createAptSystem();
     const sshManager = initSSHManager(1, 1, 1, getEncryptor());

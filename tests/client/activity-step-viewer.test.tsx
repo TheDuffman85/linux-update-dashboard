@@ -49,4 +49,30 @@ describe("ActivityStepViewer", () => {
     expect(html).not.toContain("Runtime 1m 5s");
     expect(html).toContain("Listing available updates");
   });
+
+  test("syntax highlights shell commands", () => {
+    const html = renderToStaticMarkup(
+      <ActivityStepViewer
+        viewerId="highlighted-step"
+        steps={[
+          {
+            ...baseStep,
+            command: "# Fetch package lists\napt-get update",
+          },
+        ]}
+      />
+    );
+
+    expect(html).toContain("script-code");
+    expect(html).toContain("hljs-comment");
+  });
+
+  test("caps command panes to match output panes", () => {
+    const html = renderToStaticMarkup(
+      <ActivityStepViewer viewerId="single-step" steps={[baseStep]} />
+    );
+
+    expect(html).toContain("script-code");
+    expect(html).toContain("max-h-64 overflow-y-auto");
+  });
 });

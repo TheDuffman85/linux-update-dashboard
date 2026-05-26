@@ -1,9 +1,11 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
+import { CopyableCodeBlock } from "../components/CopyableCodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { TerminalText } from "../components/TerminalText";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useSystem,
@@ -24,12 +26,17 @@ import type {
   HistoryEntry,
   ActiveOperation,
   ActivityStep,
+  LastCheckSummary,
   PackageManagerIssue,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck, shouldClearLocalUpgrade, type UpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
+import { highlightShell } from "../lib/shell-highlight";
+import { formatScriptCommand } from "../lib/scripts";
+
+const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -220,11 +227,53 @@ function HiddenUpdatesSection({
   );
 }
 
+function isPackageIssueWarningBlock(
+  block: string,
+  packageIssues: PackageManagerIssue[],
+): boolean {
+  const normalizedBlock = block.trim().toLowerCase();
+  if (!normalizedBlock) return true;
+  return packageIssues.some((issue) => {
+    if (issue.active !== 1) return false;
+    const message = issue.message.trim().toLowerCase();
+    if (!message) return false;
+    return normalizedBlock === `[${issue.pkgManager}] ${message}` || normalizedBlock.includes(message);
+  });
+}
+
+export function dedupePackageIssueUpdateNotice(
+  state: UpdatesPanelState,
+  packageIssues: PackageManagerIssue[],
+): UpdatesPanelState | null {
+  if (state.kind !== "check_warning" || !state.error || packageIssues.length === 0) return state;
+
+  const remainingErrors = state.error
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter((block) => !isPackageIssueWarningBlock(block, packageIssues));
+
+  if (remainingErrors.length === 0) return null;
+  return { ...state, error: remainingErrors.join("\n\n") };
+}
+
+function isSudoCredentialFailure(lastCheck: LastCheckSummary | null): boolean {
+  if (lastCheck?.status !== "failed" || !lastCheck.error) return false;
+  return /sudo:.*(?:password is required|authentication failure|incorrect password)|sudo password/i.test(lastCheck.error);
+}
+
+export function getVisiblePackageIssuesForCurrentCheck(
+  packageIssues: PackageManagerIssue[],
+  lastCheck: LastCheckSummary | null,
+): PackageManagerIssue[] {
+  return isSudoCredentialFailure(lastCheck) ? [] : packageIssues;
+}
+
 function UpdateCheckNotice({
   state,
 }: {
-  state: ReturnType<typeof getUpdatesPanelState>;
+  state: UpdatesPanelState | null;
 }) {
+  if (!state) return null;
   if (state.kind !== "check_failed" && state.kind !== "check_warning") return null;
 
   const tone = state.kind === "check_failed"
@@ -246,9 +295,15 @@ function UpdateCheckNotice({
       <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
       <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
       {state.error && (
-        <pre className={`mt-3 overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}>
-          {state.error}
-        </pre>
+        <div className="mt-3">
+          <CopyableCodeBlock
+            text={state.error}
+            className={`overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}
+            successMessage="Copied check output"
+          >
+            {state.error}
+          </CopyableCodeBlock>
+        </div>
       )}
     </div>
   );
@@ -474,6 +529,63 @@ type ActivitySession = {
   packageName?: string;
   packageNames?: string[];
 };
+
+type ActivityScrollAnchor = {
+  key: string;
+  index: number;
+  top: number;
+};
+
+function getVisibleActivityScrollAnchor(container: HTMLDivElement | null): ActivityScrollAnchor | null {
+  if (!container || typeof window === "undefined") return null;
+
+  const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-activity-row-key]"));
+  const viewportTop = 72;
+  const viewportBottom = window.innerHeight;
+
+  for (const [index, row] of rows.entries()) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom > viewportTop && rect.top < viewportBottom) {
+      return {
+        key: row.dataset.activityRowKey ?? "",
+        index,
+        top: rect.top,
+      };
+    }
+  }
+
+  return null;
+}
+
+function useActivityScrollAnchor(renderKey: string) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pendingAnchorRef = useRef<ActivityScrollAnchor | null>(null);
+
+  useBrowserLayoutEffect(() => {
+    const pendingAnchor = pendingAnchorRef.current;
+    if (pendingAnchor?.key && typeof window !== "undefined") {
+      const rows = Array.from(
+        containerRef.current?.querySelectorAll<HTMLElement>("[data-activity-row-key]") ?? [],
+      );
+      const nextAnchor =
+        rows.find((row) => row.dataset.activityRowKey === pendingAnchor.key) ??
+        rows[pendingAnchor.index];
+
+      if (nextAnchor) {
+        const delta = nextAnchor.getBoundingClientRect().top - pendingAnchor.top;
+        if (Math.abs(delta) > 1) {
+          window.scrollBy(0, delta);
+        }
+      }
+    }
+
+    return () => {
+      pendingAnchorRef.current = getVisibleActivityScrollAnchor(containerRef.current);
+    };
+  }, [renderKey]);
+
+  return containerRef;
+}
 
 function getFirstStartedMessage(
   messages: WsMessage[],
@@ -735,11 +847,13 @@ function StepPanel({
   title,
   children,
   className,
+  copyText,
   followContentKey,
 }: {
   title: string;
   children: React.ReactNode;
   className: string;
+  copyText: string;
   followContentKey?: string;
 }) {
   const containerRef = useRef<HTMLPreElement>(null);
@@ -759,14 +873,83 @@ function StepPanel({
   return (
     <div>
       <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1 font-semibold">{title}</p>
-      <pre
+      <CopyableCodeBlock
+        text={copyText}
         ref={containerRef}
         onScroll={followContentKey ? handleScroll : undefined}
         className={className}
+        successMessage={`Copied ${title.toLowerCase()}`}
       >
         {children}
-      </pre>
+      </CopyableCodeBlock>
     </div>
+  );
+}
+
+function ShellCommandPanel({ command }: { command: string }) {
+  const [displayCommand, setDisplayCommand] = useState(command);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplayCommand(command);
+    if (!command.trim()) return;
+
+    formatScriptCommand(command)
+      .then((formatted) => {
+        if (!cancelled) setDisplayCommand(formatted);
+      })
+      .catch(() => {
+        if (!cancelled) setDisplayCommand(command);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [command]);
+
+  const highlighted = useMemo(() => highlightShell(displayCommand), [displayCommand]);
+
+  return (
+    <StepPanel
+      title="Command"
+      className="script-code text-xs font-mono bg-slate-900 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-words"
+      copyText={displayCommand}
+    >
+      <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+    </StepPanel>
+  );
+}
+
+function TerminalOutputPanel({
+  title,
+  output,
+  emptyText = "No output",
+  followContentKey,
+  tone = "default",
+}: {
+  title: string;
+  output: string | null;
+  emptyText?: string;
+  followContentKey?: string;
+  tone?: "default" | "error";
+}) {
+  return (
+    <StepPanel
+      title={title}
+      className={`text-xs font-mono rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all ${
+        tone === "error"
+          ? "bg-red-950 text-red-100 dark:bg-red-950/50 dark:text-red-200"
+          : "bg-slate-900 text-slate-300"
+      }`}
+      copyText={output ?? ""}
+      followContentKey={followContentKey}
+    >
+      {output ? (
+        <TerminalText text={output} stream={tone === "error" ? "stderr" : "stdout"} />
+      ) : (
+        <span className="text-slate-500 italic">{emptyText}</span>
+      )}
+    </StepPanel>
   );
 }
 
@@ -782,28 +965,20 @@ function LegacyActivityDetails({
   return (
     <>
       {command && (
-        <StepPanel
-          title="Command"
-          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
-        >
-          {command}
-        </StepPanel>
+        <ShellCommandPanel command={command} />
       )}
       {(command || output) && (
-        <StepPanel
+        <TerminalOutputPanel
           title="Output"
-          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-        >
-          {output || <span className="text-slate-500 italic">No output</span>}
-        </StepPanel>
+          output={output}
+        />
       )}
       {error && (
-        <StepPanel
+        <TerminalOutputPanel
           title="Error"
-          className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-        >
-          {error}
-        </StepPanel>
+          output={error}
+          tone="error"
+        />
       )}
     </>
   );
@@ -931,28 +1106,20 @@ export function ActivityStepViewer({
           </span>
         </div>
 
-        <StepPanel
-          title="Command"
-          className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all"
-        >
-          {selectedStep.command}
-        </StepPanel>
+        <ShellCommandPanel command={selectedStep.command} />
 
-        <StepPanel
+        <TerminalOutputPanel
           title="Output"
-          className="text-xs font-mono bg-slate-900 text-slate-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          output={selectedStep.output}
           followContentKey={isLive ? `${selectedIndex}:${selectedStep.output || ""}` : undefined}
-        >
-          {selectedStep.output || <span className="text-slate-500 italic">No output</span>}
-        </StepPanel>
+        />
 
         {selectedStep.error && (
-          <StepPanel
+          <TerminalOutputPanel
             title="Error"
-            className="text-xs font-mono bg-red-950/50 text-red-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-          >
-            {selectedStep.error}
-          </StepPanel>
+            output={selectedStep.error}
+            tone="error"
+          />
         )}
       </div>
     </div>
@@ -1016,6 +1183,18 @@ function HistoryList({
   });
   const showSynthetic = displayRows.some((row) => row.historyId === null);
   const nowMs = useNowTicker(showSynthetic || !!startedEntry);
+  const activityRenderKey = displayRows
+    .map((row) => [
+      row.key,
+      row.historyId ?? "live",
+      row.status,
+      row.isRunning ? "running" : "done",
+      row.useLiveDetails ? "live-details" : "stored-details",
+      row.steps?.length ?? 0,
+      row.liveSteps.length,
+    ].join(":"))
+    .join("|");
+  const activityScrollRef = useActivityScrollAnchor(activityRenderKey);
 
   // For upgrade-type ops: clear pendingExpand when the "started" DB entry appears.
   useEffect(() => {
@@ -1059,7 +1238,7 @@ function HistoryList({
   }
 
   return (
-    <div className="space-y-1">
+    <div ref={activityScrollRef} className="space-y-1">
       {displayRows.map((row) => {
         const totalRuntime = formatDurationBetween(
           row.startedAt,
@@ -1085,7 +1264,7 @@ function HistoryList({
         const isOpen = expanded.has(row.key);
 
         return (
-          <div key={row.key}>
+          <div key={row.key} data-activity-row-key={row.key}>
             <button
               type="button"
               onClick={() => hasDetails && toggle(row.key)}
@@ -1307,10 +1486,12 @@ export default function SystemDetail() {
   }
 
   const { system, updates, hiddenUpdates, packageIssues, history } = data;
+  const visiblePackageIssues = getVisiblePackageIssuesForCurrentCheck(packageIssues, system.lastCheck);
   const selectionBusy = upgrading || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
+  const dedupedUpdatesPanelState = dedupePackageIssueUpdateNotice(updatesPanelState, visiblePackageIssues);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
@@ -1709,7 +1890,7 @@ export default function SystemDetail() {
       </div>
 
       <PackageManagerIssueBanner
-        issues={packageIssues}
+        issues={visiblePackageIssues}
         busy={upgrading || checking || rebooting || repairingPackageIssue}
         solvingIssueId={solvePackageIssue.isPending ? solvePackageIssue.variables?.issueId ?? null : null}
         dismissingIssueId={dismissPackageIssue.isPending ? dismissPackageIssue.variables?.issueId ?? null : null}
@@ -1771,7 +1952,7 @@ export default function SystemDetail() {
             <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
           )}
         </div>
-        <UpdateCheckNotice state={updatesPanelState} />
+        <UpdateCheckNotice state={dedupedUpdatesPanelState} />
         {updates.length > 0 ? (
           <UpdatesTable
             updates={updates}

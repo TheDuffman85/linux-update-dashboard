@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import hljs from "highlight.js/lib/core";
-import bashLanguage from "highlight.js/lib/languages/bash";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { CopyableCodeBlock, CopyButton } from "../components/CopyableCodeBlock";
 import { useToast } from "../context/ToastContext";
+import { highlightShell } from "../lib/shell-highlight";
 import {
   useCreatePackageManager,
   useCreateScript,
@@ -28,9 +28,6 @@ import {
   type ScriptUsage,
 } from "../lib/scripts";
 import type { CustomPackageManagerConfigEntry } from "../lib/package-manager-configs";
-
-hljs.registerLanguage("bash", bashLanguage);
-hljs.configure({ ignoreUnescapedHTML: true });
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -414,26 +411,6 @@ function parseExitCodes(value: string): number[] | undefined {
   return codes;
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function highlightShell(value: string): string {
-  try {
-    return hljs.highlight(value || "\n", {
-      language: "bash",
-      ignoreIllegals: true,
-    }).value;
-  } catch {
-    return escapeHtml(value);
-  }
-}
-
 async function formatShellScript(command: string): Promise<string> {
   return formatScriptCommand(command);
 }
@@ -467,9 +444,13 @@ function ShellCodeBlock({
 
   const highlighted = useMemo(() => highlightShell(displayCode), [displayCode]);
   return (
-    <pre className={`script-code overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 whitespace-pre-wrap break-words ${className}`}>
+    <CopyableCodeBlock
+      text={displayCode}
+      className={`script-code overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 whitespace-pre-wrap break-words ${className}`}
+      successMessage="Copied script command"
+    >
       <code dangerouslySetInnerHTML={{ __html: highlighted }} />
-    </pre>
+    </CopyableCodeBlock>
   );
 }
 
@@ -493,20 +474,27 @@ function ShellCommandEditor({
     <div>
       <div className="mb-1 flex items-center justify-between gap-3">
         <label htmlFor={id} className={`${labelClass} mb-0`}>Command</label>
-        <button
-          type="button"
-          onClick={onBeautify}
-          disabled={beautifying || !value.trim()}
-          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700"
-          title="Beautify command"
-        >
-          {beautifying ? <span className="spinner spinner-sm" /> : (
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 20l8.5-8.5m0 0L14 7l3 3-4.5 1.5zm3-14h.01M18 4h.01M20 10h.01M14 20h.01" />
-            </svg>
-          )}
-          Beautify
-        </button>
+        <div className="flex items-center gap-2">
+          <CopyButton
+            text={value}
+            successMessage="Copied command"
+            className="border-border bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-700"
+          />
+          <button
+            type="button"
+            onClick={onBeautify}
+            disabled={beautifying || !value.trim()}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700"
+            title="Beautify command"
+          >
+            {beautifying ? <span className="spinner spinner-sm" /> : (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 20l8.5-8.5m0 0L14 7l3 3-4.5 1.5zm3-14h.01M18 4h.01M20 10h.01M14 20h.01" />
+              </svg>
+            )}
+            Beautify
+          </button>
+        </div>
       </div>
       <div className="relative min-h-36 overflow-hidden rounded-lg border border-border bg-slate-950 focus-within:ring-2 focus-within:ring-blue-500">
         <pre

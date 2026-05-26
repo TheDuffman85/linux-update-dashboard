@@ -1,5 +1,7 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useMemo } from "react";
 import type { WsMessage } from "../hooks/useCommandOutput";
+import { CopyButton } from "./CopyableCodeBlock";
+import { TerminalText } from "./TerminalText";
 
 interface TerminalOutputProps {
   messages: WsMessage[];
@@ -11,6 +13,26 @@ interface TerminalOutputProps {
 export function TerminalOutput({ messages, isActive, phase, connected }: TerminalOutputProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isScrolledToBottom = useRef(true);
+  const copyText = useMemo(() => {
+    return messages.map((msg) => {
+      switch (msg.type) {
+        case "started":
+          return `$ ${msg.command}\n`;
+        case "output":
+          return msg.data;
+        case "phase":
+          return `--- ${msg.phase === "rechecking" ? "Rechecking for updates..." : msg.phase} ---\n`;
+        case "done":
+          return `${msg.success ? "Done." : "Failed."}\n`;
+        case "error":
+          return `Error: ${msg.message}\n`;
+        case "warning":
+          return `Warning: ${msg.message}\n`;
+        default:
+          return "";
+      }
+    }).join("");
+  }, [messages]);
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -63,6 +85,11 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
           {!connected && (
             <span className="text-xs text-amber-400">Disconnected</span>
           )}
+          <CopyButton
+            text={copyText}
+            className="h-6 w-6"
+            successMessage="Copied command output"
+          />
         </div>
       </div>
 
@@ -87,11 +114,8 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
               );
             case "output":
               return (
-                <span
-                  key={i}
-                  className={msg.stream === "stderr" ? "text-red-400" : undefined}
-                >
-                  {msg.data}
+                <span key={i}>
+                  <TerminalText text={msg.data} stream={msg.stream} />
                 </span>
               );
             case "phase":
