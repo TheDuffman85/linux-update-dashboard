@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
@@ -35,6 +35,8 @@ import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
 import { highlightShell } from "../lib/shell-highlight";
 import { formatScriptCommand } from "../lib/scripts";
+
+const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -527,6 +529,63 @@ type ActivitySession = {
   packageName?: string;
   packageNames?: string[];
 };
+
+type ActivityScrollAnchor = {
+  key: string;
+  index: number;
+  top: number;
+};
+
+function getVisibleActivityScrollAnchor(container: HTMLDivElement | null): ActivityScrollAnchor | null {
+  if (!container || typeof window === "undefined") return null;
+
+  const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-activity-row-key]"));
+  const viewportTop = 72;
+  const viewportBottom = window.innerHeight;
+
+  for (const [index, row] of rows.entries()) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom > viewportTop && rect.top < viewportBottom) {
+      return {
+        key: row.dataset.activityRowKey ?? "",
+        index,
+        top: rect.top,
+      };
+    }
+  }
+
+  return null;
+}
+
+function useActivityScrollAnchor(renderKey: string) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pendingAnchorRef = useRef<ActivityScrollAnchor | null>(null);
+
+  useBrowserLayoutEffect(() => {
+    const pendingAnchor = pendingAnchorRef.current;
+    if (pendingAnchor?.key && typeof window !== "undefined") {
+      const rows = Array.from(
+        containerRef.current?.querySelectorAll<HTMLElement>("[data-activity-row-key]") ?? [],
+      );
+      const nextAnchor =
+        rows.find((row) => row.dataset.activityRowKey === pendingAnchor.key) ??
+        rows[pendingAnchor.index];
+
+      if (nextAnchor) {
+        const delta = nextAnchor.getBoundingClientRect().top - pendingAnchor.top;
+        if (Math.abs(delta) > 1) {
+          window.scrollBy(0, delta);
+        }
+      }
+    }
+
+    return () => {
+      pendingAnchorRef.current = getVisibleActivityScrollAnchor(containerRef.current);
+    };
+  }, [renderKey]);
+
+  return containerRef;
+}
 
 function getFirstStartedMessage(
   messages: WsMessage[],
@@ -1124,6 +1183,18 @@ function HistoryList({
   });
   const showSynthetic = displayRows.some((row) => row.historyId === null);
   const nowMs = useNowTicker(showSynthetic || !!startedEntry);
+  const activityRenderKey = displayRows
+    .map((row) => [
+      row.key,
+      row.historyId ?? "live",
+      row.status,
+      row.isRunning ? "running" : "done",
+      row.useLiveDetails ? "live-details" : "stored-details",
+      row.steps?.length ?? 0,
+      row.liveSteps.length,
+    ].join(":"))
+    .join("|");
+  const activityScrollRef = useActivityScrollAnchor(activityRenderKey);
 
   // For upgrade-type ops: clear pendingExpand when the "started" DB entry appears.
   useEffect(() => {
@@ -1167,7 +1238,7 @@ function HistoryList({
   }
 
   return (
-    <div className="space-y-1">
+    <div ref={activityScrollRef} className="space-y-1">
       {displayRows.map((row) => {
         const totalRuntime = formatDurationBetween(
           row.startedAt,
@@ -1193,7 +1264,7 @@ function HistoryList({
         const isOpen = expanded.has(row.key);
 
         return (
-          <div key={row.key}>
+          <div key={row.key} data-activity-row-key={row.key}>
             <button
               type="button"
               onClick={() => hasDetails && toggle(row.key)}
