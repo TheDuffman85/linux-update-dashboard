@@ -853,7 +853,7 @@ function ShellCommandPanel({ command }: { command: string }) {
   return (
     <StepPanel
       title="Command"
-      className="script-code text-xs font-mono bg-slate-900 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words"
+      className="script-code text-xs font-mono bg-slate-900 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-words"
       copyText={displayCommand}
     >
       <code dangerouslySetInnerHTML={{ __html: highlighted }} />

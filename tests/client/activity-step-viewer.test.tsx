@@ -66,4 +66,13 @@ describe("ActivityStepViewer", () => {
     expect(html).toContain("script-code");
     expect(html).toContain("hljs-comment");
   });
+
+  test("caps command panes to match output panes", () => {
+    const html = renderToStaticMarkup(
+      <ActivityStepViewer viewerId="single-step" steps={[baseStep]} />
+    );
+
+    expect(html).toContain("script-code");
+    expect(html).toContain("max-h-64 overflow-y-auto");
+  });
 });
