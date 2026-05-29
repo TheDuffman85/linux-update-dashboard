@@ -12,6 +12,13 @@ import { getProxmoxBackupGuardCommand } from "../../server/ssh/reboot";
 import { buildOperationKey, createScript, setSystemOverrides } from "../../server/services/script-service";
 import { rebootSystem } from "../../server/services/update-service";
 
+const sshConnectStep = {
+  label: "Connect over SSH",
+  pkgManager: "system",
+  command: "",
+  status: "success",
+};
+
 describe("rebootSystem", () => {
   let tempDir: string;
 
@@ -65,6 +72,7 @@ describe("rebootSystem", () => {
       .all()
       .at(-1);
     expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      sshConnectStep,
       { label: "Pre-reboot safety checks", pkgManager: "system", status: "success" },
       {
         pkgManager: "system",
@@ -114,6 +122,7 @@ describe("rebootSystem", () => {
       .at(-1);
     expect(history?.status).toBe("success");
     expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      sshConnectStep,
       { label: "Pre-reboot safety checks", pkgManager: "system", status: "success" },
       {
         pkgManager: "system",
@@ -180,6 +189,7 @@ describe("rebootSystem", () => {
     expect(history?.status).toBe("failed");
     expect(history?.error).toBe("Reboot blocked: Proxmox backup task is running.");
     expect(JSON.parse(history?.steps || "[]")).toMatchObject([
+      sshConnectStep,
       {
         label: "Pre-reboot safety checks",
         pkgManager: "system",

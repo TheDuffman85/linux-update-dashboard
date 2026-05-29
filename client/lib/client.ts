@@ -50,7 +50,7 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.error || `Request failed: ${res.status}`);
+    throw new ApiError(res.status, body.error || body.message || `Request failed: ${res.status}`);
   }
 
   return res.json();

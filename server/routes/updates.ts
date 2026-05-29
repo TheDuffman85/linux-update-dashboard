@@ -60,7 +60,12 @@ updates.post("/systems/:id/check", async (c) => {
   const jobId = startJob(async () => {
     try {
       await updateService.checkUpdates(id);
-      return hiddenUpdateService.getVisibleUpdateSummary(id);
+      const latestCheck = updateService.getLatestCompletedCheck(id);
+      return {
+        ...hiddenUpdateService.getVisibleUpdateSummary(id),
+        status: latestCheck?.status ?? "success",
+        error: latestCheck?.error ?? null,
+      };
     } catch (error) {
       if (updateService.isOperationCancelledError(error)) {
         return { status: "cancelled", updateCount: 0 };

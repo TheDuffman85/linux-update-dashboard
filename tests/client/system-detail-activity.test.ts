@@ -73,6 +73,44 @@ describe("buildActivityDisplayRows", () => {
     expect(rows[0]?.isRunning).toBe(true);
   });
 
+  test("marks the current activity as connecting before the first command starts", () => {
+    const activeOp: ActiveOperation = {
+      type: "check",
+      startedAt: "2026-03-25 11:00:00",
+    };
+    const messages: WsMessage[] = [
+      { type: "started", command: "", pkgManager: "system", startedAt: "2026-03-25 11:00:00" },
+      { type: "phase", phase: "Connect over SSH" },
+    ];
+    const session = resolveCurrentActivitySession({
+      previousSession: null,
+      nextSessionKey: () => "activity-current-connecting",
+      history: [],
+      activeOp,
+      actionHint: "check",
+      messages,
+      isCommandActive: true,
+      pendingTransition: true,
+    });
+
+    const rows = buildActivityDisplayRows({
+      history: [],
+      activeOp,
+      messages,
+      isCommandActive: true,
+      pendingTransition: true,
+      currentSession: session,
+    });
+
+    expect(rows[0]?.isConnecting).toBe(true);
+    expect(rows[0]?.isRunning).toBe(true);
+    expect(rows[0]?.liveSteps[0]).toMatchObject({
+      label: "Connect over SSH",
+      command: "",
+      status: "started",
+    });
+  });
+
   test("keeps the same key from the first live render through the final history handoff", () => {
     const olderHistory = [
       createHistoryEntry({

@@ -77,4 +77,15 @@ describe("apiFetch", () => {
       message: "Reboot blocked: Proxmox backup task is running.",
     } satisfies Partial<ApiError>);
   });
+
+  test("surfaces message-only error responses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      jsonResponse({ success: false, message: "Reboot failed: Failed to talk to init daemon." }, 500)
+    ));
+
+    await expect(apiFetch("/systems/1/reboot", { method: "POST" })).rejects.toMatchObject({
+      status: 500,
+      message: "Reboot failed: Failed to talk to init daemon.",
+    } satisfies Partial<ApiError>);
+  });
 });

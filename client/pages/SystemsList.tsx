@@ -14,7 +14,7 @@ import {
   useReorderSystems,
 } from "../lib/systems";
 import type { System } from "../lib/systems";
-import { useCheckUpdates } from "../lib/updates";
+import { getCheckResultToast, useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
@@ -151,10 +151,8 @@ export default function SystemsList() {
   const handleCheck = (id: number) => {
     checkUpdates.mutate(id, {
       onSuccess: (data) => {
-        addToast(
-          `Check complete: ${data.updateCount} update${data.updateCount !== 1 ? "s" : ""} found`,
-          data.updateCount === 0 ? "success" : "info"
-        );
+        const toast = getCheckResultToast(data);
+        addToast(toast.message, toast.type);
       },
       onError: (err) => addToast(err.message, "danger"),
     });
