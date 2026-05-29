@@ -127,6 +127,21 @@ describe("script service", () => {
     }
   });
 
+  test("exposes the same built-in reboot steps to the Scripts page that runtime executes", () => {
+    insertSystem(13);
+    const scriptPageReboot = listScripts().scripts.find((script) => script.id === "builtin:system:reboot");
+    const runtimeSteps = resolveRuntimeSteps({
+      systemId: 13,
+      operation: "reboot",
+    });
+
+    expect(scriptPageReboot).toBeDefined();
+    expect(scriptPageReboot?.steps).toEqual(runtimeSteps);
+    expect(scriptPageReboot?.steps[0]?.command).toContain("pvesh get /cluster/tasks --output-format json");
+    expect(scriptPageReboot?.steps[0]?.command).not.toContain("--typefilter");
+    expect(scriptPageReboot?.steps[0]?.command).not.toContain("--statusfilter");
+  });
+
   test("drafted built-in copies are editable custom scripts and assigned scripts cannot be deleted", () => {
     const copy = createBuiltinCopy("builtin:apt:check_updates");
     expect(copy.readonly).toBe(false);

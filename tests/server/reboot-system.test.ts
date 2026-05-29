@@ -8,6 +8,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateHistory } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
+import { getProxmoxBackupGuardCommand } from "../../server/ssh/reboot";
 import { buildOperationKey, createScript, setSystemOverrides } from "../../server/services/script-service";
 import { rebootSystem } from "../../server/services/update-service";
 
@@ -121,6 +122,16 @@ describe("rebootSystem", () => {
         error: null,
       },
     ]);
+  });
+
+  test("uses a Proxmox backup guard compatible with pvesh versions without task filters", () => {
+    const command = getProxmoxBackupGuardCommand();
+
+    expect(command).toContain("pvesh get /cluster/tasks --output-format json");
+    expect(command).not.toContain("--typefilter");
+    expect(command).not.toContain("--statusfilter");
+    expect(command).toContain("exists $task->{pid}");
+    expect(command).toContain('($task->{status} // "") eq "running"');
   });
 
   test("blocks reboot when Proxmox backup activity is detected", async () => {
