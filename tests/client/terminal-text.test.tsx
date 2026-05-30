@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { ContentExpansionButton, isContentOverflowing } from "../../client/components/CopyableCodeBlock";
+import { ContentExpansionButton, CopyableCodeBlock, isContentOverflowing } from "../../client/components/CopyableCodeBlock";
 import { TerminalOutput } from "../../client/components/TerminalOutput";
 import { TerminalText, parseTerminalText } from "../../client/components/TerminalText";
 
@@ -22,6 +22,18 @@ describe("content expansion", () => {
     expect(collapsed).toContain('aria-expanded="false"');
     expect(expanded).toContain('aria-label="Collapse content"');
     expect(expanded).toContain('aria-expanded="true"');
+  });
+});
+
+describe("CopyableCodeBlock", () => {
+  test("keeps enough height for the overlaid copy control", () => {
+    const html = renderToStaticMarkup(
+      <CopyableCodeBlock text="apt update" className="px-3 py-2">
+        apt update
+      </CopyableCodeBlock>
+    );
+
+    expect(html).toContain("min-height:2.75rem");
   });
 });
 

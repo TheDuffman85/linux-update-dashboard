@@ -219,7 +219,7 @@ export const CopyableCodeBlock = forwardRef<
         }}
         onScroll={onScroll}
         className={className}
-        style={{ ...style, ...expansionStyle, paddingRight: expandable && canExpand ? "5.25rem" : "3.25rem" }}
+        style={{ minHeight: "2.75rem", ...style, ...expansionStyle, paddingRight: expandable && canExpand ? "5.25rem" : "3.25rem" }}
       >
         {children}
       </pre>
