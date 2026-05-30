@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { wrapRemoteCommand } from "../../server/ssh/connection";
 import { sudo } from "../../server/ssh/parsers/types";
+import { getRebootCommand } from "../../server/ssh/reboot";
 import { sanitizeCommand, sanitizeOutput } from "../../server/utils/sanitize";
 
 describe("sanitizeCommand", () => {
@@ -11,20 +12,23 @@ describe("sanitizeCommand", () => {
     );
   });
 
-  test("strips the shell wrapper before simplifying sudo", () => {
-    const command = wrapRemoteCommand(
-      `if [ "$(id -u)" = "0" ]; then apt-get upgrade -y; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apt-get upgrade -y; else apt-get upgrade -y; fi 2>&1`
-    );
+  test("strips the shell wrapper while preserving the runtime sudo helper", () => {
+    const runtimeCommand =
+      `if [ "$(id -u)" = "0" ]; then apt-get upgrade -y; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apt-get upgrade -y; else apt-get upgrade -y; fi 2>&1`;
+    const command = wrapRemoteCommand(runtimeCommand);
     expect(sanitizeCommand(command)).toBe(
-      "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; sudo apt-get upgrade -y 2>&1"
+      `export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ${runtimeCommand}`
     );
   });
 
-  test("simplifies sudo wrappers built by the shared helper", () => {
-    const command = wrapRemoteCommand(`${sudo("apt-get update -qq")} 2>&1`);
-    expect(sanitizeCommand(command)).toBe(
-      "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; sudo apt-get update -qq 2>&1"
-    );
+  test("preserves compact sudo wrappers built by the shared helper", () => {
+    const command = `${sudo("apt-get update -qq")} 2>&1`;
+    expect(sanitizeCommand(command)).toBe(command);
+  });
+
+  test("preserves multiline scripts instead of abbreviating their sudo wrappers", () => {
+    const command = getRebootCommand();
+    expect(sanitizeCommand(command)).toBe(command);
   });
 
   test("unescapes single quotes from wrapped commands", () => {

@@ -8,7 +8,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateHistory } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
-import { getProxmoxBackupGuardCommand } from "../../server/ssh/reboot";
+import { getProxmoxBackupGuardCommand, getRebootCommand } from "../../server/ssh/reboot";
 import { buildOperationKey, createScript, setSystemOverrides } from "../../server/services/script-service";
 import { rebootSystem } from "../../server/services/update-service";
 
@@ -77,7 +77,7 @@ describe("rebootSystem", () => {
       {
         pkgManager: "system",
         status: "failed",
-        command: expect.stringContaining("reboot"),
+        command: getRebootCommand(),
         error: "Reboot failed: Failed to talk to init daemon.\n",
       },
     ]);

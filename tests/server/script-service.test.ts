@@ -7,6 +7,7 @@ import { eq, sql } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systemScriptOverrides, systems } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
+import { sanitizeCommand } from "../../server/utils/sanitize";
 import {
   buildOperationKey,
   createCustomPackageManager,
@@ -157,6 +158,65 @@ describe("script service", () => {
     expect(scriptPageReboot?.steps[0]?.command).toContain("pvesh get /cluster/tasks --output-format json");
     expect(scriptPageReboot?.steps[0]?.command).not.toContain("--typefilter");
     expect(scriptPageReboot?.steps[0]?.command).not.toContain("--statusfilter");
+  });
+
+  test("preserves activity commands for every built-in operation and package manager", () => {
+    insertSystem(14);
+    const packages = ["curl", "openssl"];
+    const configs: Record<string, Record<string, unknown>> = {
+      apt: { defaultUpgradeMode: "full-upgrade" },
+      dnf: {
+        autoAcceptEulaOnUpgrade: true,
+        autoAcceptNewSigningKeysOnCheck: true,
+        defaultUpgradeMode: "upgrade",
+        refreshMetadataOnCheck: true,
+      },
+      yum: {
+        autoAcceptEulaOnUpgrade: true,
+        autoAcceptNewSigningKeysOnCheck: true,
+      },
+      pacman: { refreshDatabasesOnCheck: true },
+      apk: { refreshIndexesOnCheck: true },
+      flatpak: { refreshAppstreamOnCheck: true },
+    };
+
+    for (const script of getBuiltinScripts()) {
+      const runtimeSteps = resolveRuntimeSteps({
+        systemId: 14,
+        operation: script.operation,
+        pkgManager: script.pkgManager,
+        pkgManagerConfig: script.pkgManager ? configs[script.pkgManager] : undefined,
+        packages: script.operation === "upgrade_selected" ? packages : undefined,
+      });
+
+      expect(runtimeSteps.length, script.id).toBeGreaterThan(0);
+      for (const step of runtimeSteps) {
+        expect(sanitizeCommand(step.command), `${script.id}/${step.label}`).toBe(step.command);
+      }
+    }
+  });
+
+  test("preserves compact custom script commands after placeholder rendering", () => {
+    insertSystem(15);
+    const script = createScript({
+      name: "Compact custom APT upgrade",
+      type: "package_manager",
+      operation: "upgrade_all",
+      pkgManager: "apt",
+      steps: [{ label: "Upgrade", command: "{{sudo:apt-get upgrade -y}}" }],
+    });
+    setSystemOverrides(15, {
+      [buildOperationKey("upgrade_all", "apt")]: script.id,
+    });
+
+    const command = resolveRuntimeSteps({
+      systemId: 15,
+      operation: "upgrade_all",
+      pkgManager: "apt",
+    })[0]?.command;
+
+    expect(command).toBeDefined();
+    expect(sanitizeCommand(command ?? "")).toBe(command);
   });
 
   test("drafted built-in copies are editable custom scripts and assigned scripts cannot be deleted", () => {

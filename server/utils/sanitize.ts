@@ -48,10 +48,6 @@ export function sanitizeOutput(text: string): string {
 
 // ── Command display sanitization ─────────────────────────────────────────────
 
-// Matches the verbose sudo() wrapper from server/ssh/parsers/types.ts:
-//   if [ "$(id -u)" = "0" ]; then CMD; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' CMD; else CMD; fi
-const SUDO_WRAPPER_RE =
-  /if \[ "\$\(id -u\)" = "0" \]; then (.+?); elif command -v sudo >\/dev\/null 2>&1; then sudo -S(?: -p ''| -p "")? \1; else \1; fi/g;
 const POSIX_SHELL_WRAPPER_RE = /^sh -c '([\s\S]*)'$/;
 const SHELL_SINGLE_QUOTE_ESCAPE_RE = /'\"'\"'/g;
 
@@ -62,9 +58,8 @@ function unwrapShellCommand(command: string): string {
 }
 
 /**
- * Simplify the verbose sudo() shell wrapper into a readable "sudo CMD" form.
- * Non-sudo commands are returned unchanged.
+ * Remove SSH transport wrapping while preserving the runtime script body.
  */
 export function sanitizeCommand(command: string): string {
-  return unwrapShellCommand(command).replace(SUDO_WRAPPER_RE, "sudo $1");
+  return unwrapShellCommand(command);
 }
