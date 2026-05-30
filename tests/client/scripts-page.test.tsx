@@ -136,6 +136,35 @@ describe("Scripts page", () => {
     expect(html).toContain("sudo");
   });
 
+  test("caps script command previews with internal scrolling", () => {
+    mockUseScripts.mockReturnValue({
+      data: {
+        scripts: [
+          {
+            id: "builtin:system:system_info",
+            readonly: true,
+            name: "Collect system information",
+            description: "Collects system details.",
+            type: "system",
+            operation: "system_info",
+            pkgManager: null,
+            steps: [{ label: "Collect system information", command: "echo OS" }],
+            parserConfig: null,
+            systemInfoConfig: null,
+            sourceScriptId: null,
+          },
+        ],
+        packageManagers: [],
+        placeholders: [],
+      },
+      isLoading: false,
+    });
+
+    const html = renderToStaticMarkup(<Scripts />);
+
+    expect(html).toContain("script-code max-h-64 overflow-x-auto overflow-y-auto");
+  });
+
   test("summarizes package manager management while collapsed by default", () => {
     mockUseScripts.mockReturnValue({
       data: {
