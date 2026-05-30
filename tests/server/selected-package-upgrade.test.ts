@@ -138,6 +138,9 @@ describe("selected package upgrades", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
@@ -204,6 +207,9 @@ describe("selected package upgrades", () => {
     (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
       }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };

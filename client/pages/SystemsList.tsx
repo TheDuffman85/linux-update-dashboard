@@ -8,6 +8,7 @@ import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   useSystems,
+  useSystem,
   useCreateSystem,
   useUpdateSystem,
   useDeleteSystem,
@@ -18,6 +19,7 @@ import { getCheckResultToast, useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
+import { PotentialCommandsPanel } from "../components/systems/PotentialCommandsPanel";
 import { deriveSystemUpdateState, isPostUpgradeRecheck } from "../lib/system-status";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 
@@ -42,12 +44,16 @@ export default function SystemsList() {
   const [showForm, setShowForm] = useState(false);
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
   const [editSystem, setEditSystem] = useState<System | null>(null);
+  const [commandsSystem, setCommandsSystem] = useState<System | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [orderedSystems, setOrderedSystems] = useState<System[]>(() => systems ?? []);
   const systemsRef = useRef<System[]>([]);
   const orderedSystemsRef = useRef<System[]>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
+  const commandsQuery = useSystem(commandsSystem?.id ?? 0, {
+    enabled: commandsSystem !== null,
+  });
 
   useEffect(() => {
     systemsRef.current = systems ?? [];
@@ -328,6 +334,16 @@ export default function SystemsList() {
                         </svg>
                       </button>
                       <button
+                        onClick={() => setCommandsSystem(s)}
+                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        title="Potential commands"
+                        aria-label={`Potential commands for ${s.name}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                      <button
                         onClick={() => handleDuplicate(s)}
                         className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                         title="Duplicate system"
@@ -443,6 +459,27 @@ export default function SystemsList() {
             onCancel={() => setEditSystem(null)}
             loading={updateSystem.isPending}
           />
+        )}
+      </Modal>
+
+      <Modal
+        open={commandsSystem !== null}
+        onClose={() => setCommandsSystem(null)}
+        title={commandsSystem ? `Potential Commands for ${commandsSystem.name}` : "Potential Commands"}
+      >
+        {commandsSystem && commandsQuery.isLoading ? (
+          <div className="flex justify-center py-10">
+            <span className="spinner !w-6 !h-6 text-blue-500" />
+          </div>
+        ) : commandsSystem && commandsQuery.data ? (
+          <PotentialCommandsPanel
+            commandReference={commandsQuery.data.commandReference}
+            sudoersUser={commandsQuery.data.system.username}
+          />
+        ) : (
+          <div className="text-sm text-slate-500 dark:text-slate-400">
+            Unable to load potential commands for this system right now.
+          </div>
         )}
       </Modal>
 

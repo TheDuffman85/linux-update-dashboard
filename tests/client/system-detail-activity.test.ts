@@ -12,6 +12,7 @@ import {
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
 } from "../../client/pages/SystemDetail";
+import { PotentialCommandsPanel } from "../../client/components/systems/PotentialCommandsPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
 import type { WsMessage } from "../../client/hooks/useCommandOutput";
 
@@ -559,6 +560,68 @@ describe("PackageManagerIssueBanner", () => {
       startedAt: "2026-05-17 10:00:00",
       completedAt: "2026-05-17 10:00:01",
     })).toEqual([]);
+  });
+});
+
+describe("PotentialCommandsPanel", () => {
+  test("renders sudoers entries and unsafe-command warnings", () => {
+    const html = renderToStaticMarkup(PotentialCommandsPanel({
+      sudoersUser: "ludash",
+      commandReference: {
+        exact: [
+          {
+            id: "upgrade-all:apt",
+            category: "upgrade_all",
+            label: "Upgrade all APT packages",
+            purpose: "Installs all APT updates",
+            pkgManager: "apt",
+            command: "sudo -S -p '' apt-get upgrade -y",
+          },
+        ],
+        sudoers: [
+          {
+            id: "upgrade-all:apt:sudo:0",
+            category: "upgrade_all",
+            label: "Upgrade all APT packages",
+            purpose: "Installs all APT updates",
+            pkgManager: "apt",
+            command: "apt-get upgrade -y",
+            sudoersSafety: "exact",
+          },
+          {
+            id: "upgrade-selected:apt:sudo:0",
+            category: "upgrade_selected",
+            label: "Upgrade selected APT packages",
+            purpose: "Installs selected APT updates",
+            pkgManager: "apt",
+            command: "apt-get install --only-upgrade -y <package>",
+            sudoersSafety: "package_placeholder",
+            requiresWildcard: true,
+            warnings: ["Selected-package sudoers rules need package-specific entries or a carefully reviewed argument wildcard."],
+          },
+        ],
+        warnings: [
+          {
+            id: "custom:sudo:0",
+            category: "upgrade_all",
+            label: "Unsafe custom upgrade",
+            pkgManager: "apt",
+            message: "Runs a shell under sudo; prefer allowing the atomic command instead of a writable script or shell wrapper.",
+            command: "sh /tmp/ludash-upgrade.sh",
+          },
+        ],
+      },
+    }));
+
+    expect(html).toContain("This list is generated from the same backend command builders used at runtime.");
+    expect(html).toContain("Sudoers-relevant commands");
+    expect(html).toMatch(/<details open=""><summary[^>]*>Sudoers-relevant commands<\/summary>/);
+    expect(html).toContain("Exact remote commands");
+    expect(html).toMatch(/<details><summary[^>]*>Exact remote commands<\/summary>/);
+    expect(html).toContain("ludash ALL=(root) NOPASSWD: apt-get upgrade -y");
+    expect(html).toContain("package placeholder");
+    expect(html).toContain("Review before allowing");
+    expect(html).toContain("Runs a shell under sudo");
   });
 });
 

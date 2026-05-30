@@ -341,6 +341,9 @@ ABSENT
             exitCode: 0,
           };
         }
+        if (command.includes("dpkg --audit")) {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
         if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
           return { stdout: "", stderr: "", exitCode: 0 };
         }

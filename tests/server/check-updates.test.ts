@@ -137,7 +137,7 @@ describe("checkUpdates", () => {
           exitCode: 0,
         };
       }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+      if (command.includes("dpkg --audit")) {
         return {
           stdout: "sudo: a password is required\n",
           stderr: "",
@@ -169,7 +169,7 @@ describe("checkUpdates", () => {
     expect(history?.error).toContain("[apt] sudo: a password is required");
     expect(JSON.parse(history?.steps || "[]")).toMatchObject([
       {
-        label: "Fetching package lists",
+        label: "Auditing dpkg state",
         pkgManager: "apt",
         status: "failed",
       },
@@ -180,6 +180,7 @@ describe("checkUpdates", () => {
     const db = getDb();
     const systemId = createAptSystem();
     const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    const privilegedSudoPasswords: string[] = [];
 
     (sshManager as any).connect = async () => ({});
     (sshManager as any).disconnect = () => {};
@@ -187,13 +188,18 @@ describe("checkUpdates", () => {
       _conn: unknown,
       command: string,
       _timeout?: number,
-      _sudoPassword?: string,
+      sudoPassword?: string,
       onData?: (chunk: string, stream: "stdout" | "stderr") => void,
     ) => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
+      if (command.includes("dpkg --audit")) {
+        privilegedSudoPasswords.push(sudoPassword ?? "");
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        privilegedSudoPasswords.push(sudoPassword ?? "");
         onData?.("Hit:1 https://deb.debian.org stable InRelease\n", "stdout");
         return { stdout: "ignored-refresh", stderr: "", exitCode: 0 };
       }
@@ -225,10 +231,12 @@ describe("checkUpdates", () => {
       .at(-1);
 
     const steps = JSON.parse(history?.steps || "[]");
-    expect(steps).toHaveLength(3);
+    expect(steps).toHaveLength(4);
+    expect(privilegedSudoPasswords).toEqual(["testpass", "testpass"]);
     expect(history?.startedAt).toBe(steps[0].startedAt);
     expect(history?.completedAt).not.toBe(history?.startedAt);
     expect(steps.map((step: { label: string }) => step.label)).toEqual([
+      "Auditing dpkg state",
       "Fetching package lists",
       "Listing available updates",
       "Detecting kept-back packages",
@@ -236,17 +244,24 @@ describe("checkUpdates", () => {
     expect(steps[0]).toMatchObject({
       pkgManager: "apt",
       status: "success",
-      output: "Hit:1 https://deb.debian.org stable InRelease\n",
+      output: null,
       startedAt: expect.any(String),
       completedAt: expect.any(String),
     });
     expect(steps[1]).toMatchObject({
+      pkgManager: "apt",
+      status: "success",
+      output: "Hit:1 https://deb.debian.org stable InRelease\n",
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
+    });
+    expect(steps[2]).toMatchObject({
       command: expect.stringContaining("apt list --upgradable"),
       output: "curl/stable 8.0 amd64 [upgradable from: 7.0]\n",
       startedAt: expect.any(String),
       completedAt: expect.any(String),
     });
-    expect(steps[2]).toMatchObject({
+    expect(steps[3]).toMatchObject({
       command: expect.stringContaining("apt-get -s -o Debug::NoLocking=1 upgrade"),
       output: "Inst curl [7.0] (8.0 stable [amd64])\n",
       startedAt: expect.any(String),
@@ -380,6 +395,9 @@ describe("checkUpdates", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
@@ -449,6 +467,11 @@ describe("checkUpdates", () => {
     const steps = JSON.parse(history?.steps || "[]");
     expect(steps).toMatchObject([
       {
+        label: "Auditing dpkg state",
+        pkgManager: "apt",
+        status: "success",
+      },
+      {
         label: "Fetching package lists",
         pkgManager: "apt",
         status: "success",
@@ -482,6 +505,9 @@ describe("checkUpdates", () => {
     (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
       }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };
@@ -541,6 +567,9 @@ describe("checkUpdates", () => {
     (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
       }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };

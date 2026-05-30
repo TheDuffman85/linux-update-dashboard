@@ -26,7 +26,7 @@ import {
   updateScript,
   updateCustomPackageManager,
 } from "../../server/services/script-service";
-import { APT_REFRESH_COMMAND } from "../../server/ssh/parsers/apt";
+import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND } from "../../server/ssh/parsers/apt";
 
 describe("script service", () => {
   let tempDir: string;
@@ -76,14 +76,31 @@ describe("script service", () => {
     expect(scripts.some((script) => script.id === "builtin:system:reboot" && script.readonly)).toBe(true);
   });
 
-  test("shows the elevated APT audit refresh command in built-in scripts", () => {
+  test("shows separate elevated APT audit and refresh commands in built-in scripts", () => {
     const checkApt = getBuiltinScripts().find((script) => script.id === "builtin:apt:check_updates");
 
-    expect(checkApt?.steps[0]?.command).toContain(APT_REFRESH_COMMAND);
-    expect(checkApt?.steps[0]?.command).toContain("sudo -S -p '' sh \"$apt_check_script\"");
-    expect(checkApt?.steps[0]?.command).toContain("LUDASH_APT_CHECK");
-    expect(checkApt?.steps[0]?.command).toContain("dpkg --audit 2>&1");
+    expect(checkApt?.steps[0]?.command).toBe(APT_DPKG_AUDIT_SCRIPT);
+    expect(checkApt?.steps[1]?.command).toBe(APT_UPDATE_COMMAND);
+    expect(checkApt?.steps[0]?.command).toContain("sudo -S -p '' dpkg --audit");
+    expect(checkApt?.steps[1]?.command).toContain("sudo -S -p '' apt-get -o DPkg::Lock::Timeout=60 update -qq");
+    expect(checkApt?.steps[0]?.command).not.toContain("sudo -S -p '' sh \"$apt_check_script\"");
+    expect(checkApt?.steps[0]?.command).not.toContain("LUDASH_APT_CHECK");
     expect(checkApt?.steps[0]?.command).not.toContain("dpkg --audit 2>&1 || true");
+  });
+
+  test("labels sudoers-relevant commands in built-in scripts", () => {
+    for (const script of getBuiltinScripts()) {
+      for (const step of script.steps) {
+        const lines = step.command.split("\n");
+        for (const [index, line] of lines.entries()) {
+          if (!line.includes("sudo -S")) continue;
+          expect(
+            lines[index - 1],
+            `${script.id}/${step.label}`,
+          ).toContain("# Sudoers-relevant command:");
+        }
+      }
+    }
   });
 
   test("resolves built-in runtime steps from the canonical script templates", () => {
@@ -481,8 +498,8 @@ describe("script service", () => {
     });
 
     expect(copy.systemInfoConfig).toBeNull();
-    expect(steps[0]?.command).toContain('upgrade_mode="full-upgrade"');
-    expect(steps[0]?.command).toContain('${upgrade_mode} -y');
+    expect(steps[0]?.command).toContain("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y");
+    expect(steps[0]?.command).not.toContain("$upgrade_mode");
 
     const systemInfoCopy = createBuiltinCopy("builtin:system:system_info");
     expect(systemInfoCopy.systemInfoConfig).toEqual({ mode: "builtin" });
@@ -559,21 +576,25 @@ describe("script service", () => {
     const reboot = getBuiltinScripts().find((script) => script.id === "builtin:system:reboot");
 
     const formattedApt = await formatShellCommand(aptUpgrade?.steps[0]?.command ?? "");
-    const formattedAptCheck = await formatShellCommand(aptCheck?.steps[0]?.command ?? "");
+    const formattedAptAudit = await formatShellCommand(aptCheck?.steps[0]?.command ?? "");
+    const formattedAptRefresh = await formatShellCommand(aptCheck?.steps[1]?.command ?? "");
     const formattedRebootGuard = await formatShellCommand(reboot?.steps[0]?.command ?? "");
     const formattedReboot = await formatShellCommand(reboot?.steps[1]?.command ?? "");
 
-    expect(formattedApt).toContain('if [ "$upgrade_mode" != "full-upgrade" ]; then\n  upgrade_mode="upgrade"\nfi');
+    expect(formattedApt).toContain("apt-get -o DPkg::Lock::Timeout=60 {{config.defaultUpgradeMode}} -y");
     expect(formattedApt).toContain('elif command -v sudo > /dev/null 2>&1; then\n  sudo -S -p');
-    expect(formattedAptCheck).toContain("Audit dpkg state, then refresh APT package metadata before listing available updates.");
-    expect(formattedAptCheck).toContain('audit="$(dpkg --audit 2>&1)"');
-    expect(formattedAptCheck).toContain("LUDASH_APT_CHECK");
-    expect(formattedAptCheck).toContain("sudo -S -p");
+    expect(formattedAptAudit).toContain("sudo -S -p '' dpkg --audit");
+    expect(formattedAptRefresh).toContain("Sudoers-relevant command: apt-get -o DPkg::Lock::Timeout=60 update -qq");
+    expect(formattedAptRefresh).toContain("sudo -S -p '' apt-get -o DPkg::Lock::Timeout=60 update -qq");
+    expect(formattedAptAudit).not.toContain("LUDASH_APT_CHECK");
+    expect(formattedAptRefresh).toContain("sudo -S -p");
     expect(reboot?.steps.map((step) => step.label)).toEqual([
       "Pre-reboot safety checks",
       "Reboot system",
     ]);
     expect(formattedRebootGuard).toContain("pvesh get /cluster/tasks");
+    expect(formattedRebootGuard).toContain("Sudoers-relevant command: pvesh get /cluster/tasks --output-format json");
+    expect(formattedReboot).toContain("Sudoers-relevant command: reboot");
     expect(formattedReboot).toContain('if [ "$(id -u)" = "0" ]; then\n  reboot\nelif command -v sudo > /dev/null 2>&1; then');
   });
 

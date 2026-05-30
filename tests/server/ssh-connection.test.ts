@@ -93,6 +93,22 @@ describe("buildPersistentSetupCommand", () => {
     expect(useSudoLaunch).toBe(true);
     expect(setupCmd).toContain("sudo -S -p ''");
   });
+
+  test("uses non-interactive sudo inside detached scripts when no password is provided", () => {
+    const command =
+      `if [ "$(id -u)" = "0" ]; then apk upgrade; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apk upgrade; else apk upgrade; fi 2>&1`;
+    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+      command,
+      false
+    );
+
+    expect(useSudoLaunch).toBe(false);
+    const scriptBase64 = setupCmd.match(/printf '%s' '([^']+)' \| base64 -d/)?.[1];
+    expect(scriptBase64).toBeDefined();
+    const scriptBody = Buffer.from(scriptBase64 ?? "", "base64").toString("utf8");
+    expect(scriptBody).toContain("sudo -n apk upgrade");
+    expect(scriptBody).not.toContain("sudo -S -p '' apk upgrade");
+  });
 });
 
 describe("buildTailMonitorCommand", () => {

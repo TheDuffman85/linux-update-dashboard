@@ -30,11 +30,26 @@ export interface PotentialCommandEntry {
   purpose: string;
   pkgManager: string | null;
   command: string;
+  sourceCommand?: string;
+  sudoersSafety?: "exact" | "package_placeholder" | "unsafe";
+  requiresWildcard?: boolean;
+  requiresPasswordLauncher?: boolean;
+  warnings?: string[];
+}
+
+export interface CommandReferenceWarning {
+  id: string;
+  category: PotentialCommandCategory;
+  label: string;
+  pkgManager: string | null;
+  message: string;
+  command?: string;
 }
 
 export interface CommandReference {
   exact: PotentialCommandEntry[];
   sudoers: PotentialCommandEntry[];
+  warnings: CommandReferenceWarning[];
 }
 
 interface CommandReferenceSystem {
@@ -50,7 +65,8 @@ const MULTI_PACKAGE_PLACEHOLDER_ONE = "codex-package-placeholder-one";
 const MULTI_PACKAGE_PLACEHOLDER_TWO = "codex-package-placeholder-two";
 
 const CHECK_LABEL_PURPOSES: Record<string, string> = {
-  "Fetching package lists": "Audits dpkg state, then refreshes APT package list metadata before checking updates",
+  "Auditing dpkg state": "Checks for interrupted dpkg package configuration before refreshing APT metadata",
+  "Fetching package lists": "Refreshes APT package list metadata before checking updates",
   "Listing available updates": "Lists packages that have updates available",
   "Detecting kept-back packages": "Checks which APT updates are being kept back",
   "Checking for updates": "Checks for available updates on the remote system",
@@ -95,18 +111,93 @@ function getBuiltinSteps(
   })) ?? [];
 }
 
-function extractSudoCommand(command: string): string | null {
-  const match = /then sudo -S -p '' (.+?); else /.exec(command);
-  return match?.[1]?.trim() || null;
+function stripShellRedirects(command: string): string {
+  let next = command.trim();
+  let previous = "";
+  while (next !== previous) {
+    previous = next;
+    next = next
+      .replace(/\s+\d?>&\d\s*$/g, "")
+      .replace(/\s+\d?>\/dev\/null\s*$/g, "")
+      .replace(/\s+\d?>\/dev\/null\s*\|\|\s*true\s*$/g, "")
+      .trim();
+  }
+  return next;
 }
 
-function normalizeForSudoers(entry: PotentialCommandEntry): PotentialCommandEntry | null {
-  const command = extractSudoCommand(entry.command);
-  if (!command) return null;
+function extractSudoCommands(command: string): string[] {
+  const commands: string[] = [];
+  const sudoInvocation = /\bsudo\s+(?:-S(?:\s+-p\s+(?:''|""))?|-n)\s+([^\n;]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = sudoInvocation.exec(command)) !== null) {
+    const extracted = stripShellRedirects(match[1] ?? "");
+    if (extracted) commands.push(extracted);
+  }
+  return commands;
+}
 
+function getSudoersWarnings(command: string): string[] {
+  const warnings: string[] = [];
+  if (/^(?:sh|bash|dash|zsh|fish)\s/.test(command)) {
+    warnings.push("Runs a shell under sudo; prefer allowing the atomic command instead of a writable script or shell wrapper.");
+  }
+  if (/(?:^|\s)(?:\/tmp\/|\$\(|`)/.test(command)) {
+    warnings.push("Contains a writable path or command substitution, so it cannot be represented as a narrow sudoers rule safely.");
+  }
+  if (/\$(?:\{[^}]+\}|[a-zA-Z_][a-zA-Z0-9_]*)/.test(command)) {
+    warnings.push("Contains a shell variable expansion, so it cannot be represented as an exact sudoers rule safely.");
+  }
+  if (/\*/.test(command)) {
+    warnings.push("Contains a wildcard; review the sudoers rule manually before using it.");
+  }
+  return warnings;
+}
+
+function normalizeForSudoers(entry: PotentialCommandEntry): {
+  entries: PotentialCommandEntry[];
+  warnings: CommandReferenceWarning[];
+} {
+  const entries: PotentialCommandEntry[] = [];
+  const warnings: CommandReferenceWarning[] = [];
+  const sudoCommands = extractSudoCommands(entry.command);
+  if (sudoCommands.length === 0) return { entries, warnings };
+
+  for (const [index, rawCommand] of sudoCommands.entries()) {
+    const command = normalizeCommandTemplate(rawCommand);
+    if (command === "-v") continue;
+    const commandWarnings = getSudoersWarnings(command);
+    const warningId = `${entry.id}:sudo:${index}`;
+    if (commandWarnings.length > 0) {
+      for (const message of commandWarnings) {
+        warnings.push({
+          id: warningId,
+          category: entry.category,
+          label: entry.label,
+          pkgManager: entry.pkgManager,
+          message,
+          command,
+        });
+      }
+      continue;
+    }
+
+    const requiresWildcard = /<package\d?>/.test(command);
+    entries.push({
+      ...entry,
+      id: warningId,
+      command,
+      sourceCommand: entry.command,
+      sudoersSafety: requiresWildcard ? "package_placeholder" : "exact",
+      requiresWildcard,
+      requiresPasswordLauncher: false,
+      warnings: requiresWildcard
+        ? ["Selected-package sudoers rules need package-specific entries or a carefully reviewed argument wildcard."]
+        : undefined,
+    });
+  }
   return {
-    ...entry,
-    command: normalizeCommandTemplate(command),
+    entries,
+    warnings,
   };
 }
 
@@ -127,38 +218,12 @@ function dedupeCommands(entries: PotentialCommandEntry[]): PotentialCommandEntry
 export function buildCommandReference(system: CommandReferenceSystem): CommandReference {
   const configs = parsePackageManagerConfigs(system.pkgManagerConfigs ?? null, listPackageManagerDefinitions());
   const exact: PotentialCommandEntry[] = [];
+  const systemId = system.id ?? 0;
 
-  for (const script of getBuiltinScripts().filter((entry) => entry.operation === "detect" && entry.pkgManager)) {
-    const step = getBuiltinSteps("detect", script.pkgManager)[0];
-    if (!step || !script.pkgManager) continue;
-    exact.push({
-      id: `detection:${script.pkgManager}`,
-      category: "detection",
-      label: step.label || `Detect ${managerLabel(script.pkgManager)}`,
-      purpose: `Checks whether ${managerLabel(script.pkgManager)} is available on the remote system`,
-      pkgManager: script.pkgManager,
-      command: step.command,
-    });
-  }
-
-  const systemInfo = getBuiltinSteps("system_info", null)[0];
-  if (systemInfo) {
-  exact.push({
-    id: "system-info",
-    category: "system_info",
-    label: systemInfo.label,
-    purpose: "Collects OS, kernel, uptime, resources, and reboot-related system details",
-    pkgManager: null,
-    command: systemInfo.command,
-  });
-  }
-
-  const activeManagers = systemService.getActivePkgManagers(system);
-  if (system.id && system.id > 0) {
-    for (const manager of activeManagers) {
-      if (exact.some((entry) => entry.id === `detection:${manager}`)) continue;
+  if (systemId > 0) {
+    for (const { name: manager } of listPackageManagerDefinitions()) {
       const detectionStep = resolveRuntimeSteps({
-        systemId: system.id,
+        systemId,
         operation: "detect",
         pkgManager: manager,
       })[0];
@@ -172,10 +237,37 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         command: detectionStep.command,
       });
     }
+  } else {
+    for (const script of getBuiltinScripts().filter((entry) => entry.operation === "detect" && entry.pkgManager)) {
+      const step = getBuiltinSteps("detect", script.pkgManager)[0];
+      if (!step || !script.pkgManager) continue;
+      exact.push({
+        id: `detection:${script.pkgManager}`,
+        category: "detection",
+        label: step.label || `Detect ${managerLabel(script.pkgManager)}`,
+        purpose: `Checks whether ${managerLabel(script.pkgManager)} is available on the remote system`,
+        pkgManager: script.pkgManager,
+        command: step.command,
+      });
+    }
   }
 
+  const systemInfoSteps = systemId > 0
+    ? resolveRuntimeSteps({ systemId, operation: "system_info" })
+    : getBuiltinSteps("system_info", null);
+  for (const [index, systemInfo] of systemInfoSteps.entries()) {
+    exact.push({
+      id: index === 0 ? "system-info" : `system-info:${index}`,
+      category: "system_info",
+      label: systemInfo.label,
+      purpose: "Collects OS, kernel, uptime, resources, and reboot-related system details",
+      pkgManager: null,
+      command: systemInfo.command,
+    });
+  }
+
+  const activeManagers = systemService.getActivePkgManagers(system);
   for (const manager of activeManagers) {
-    const systemId = system.id ?? 0;
     const config = getManagerConfig(configs, manager);
     if (systemId > 0) {
       const checkSteps = resolveRuntimeSteps({
@@ -195,15 +287,15 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         });
       }
 
-      const repairIssue = resolveRuntimeSteps({
+      const repairIssueSteps = resolveRuntimeSteps({
         systemId,
         operation: "repair_issue",
         pkgManager: manager,
         pkgManagerConfig: config,
-      })[0];
-      if (repairIssue) {
+      });
+      for (const [index, repairIssue] of repairIssueSteps.entries()) {
         exact.push({
-          id: `repair-issue:${manager}`,
+          id: `repair-issue:${manager}:${index}`,
           category: "repair_issue",
           label: `Repair ${managerLabel(manager)} issue`,
           purpose: `Runs the package manager issue repair action for ${managerLabel(manager)}`,
@@ -297,10 +389,10 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
       });
     }
 
-    const repairIssue = getBuiltinSteps("repair_issue", manager, { config })[0];
-    if (repairIssue) {
+    const repairIssueSteps = getBuiltinSteps("repair_issue", manager, { config });
+    for (const [index, repairIssue] of repairIssueSteps.entries()) {
       exact.push({
-        id: `repair-issue:${manager}`,
+        id: `repair-issue:${manager}:${index}`,
         category: "repair_issue",
         label: `Repair ${managerLabel(manager)} issue`,
         purpose: `Runs the package manager issue repair action for ${managerLabel(manager)}`,
@@ -364,28 +456,34 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
     }
   }
 
-  const rebootSteps = getBuiltinSteps("reboot", null);
-  const reboot = rebootSteps[rebootSteps.length - 1];
-  if (reboot) exact.push({
-    id: "reboot",
-    category: "reboot",
-    label: reboot.label,
-    purpose: "Reboots the remote system",
-    pkgManager: null,
-    command: reboot.command,
-  });
+  const rebootSteps = systemId > 0
+    ? resolveRuntimeSteps({ systemId, operation: "reboot" })
+    : getBuiltinSteps("reboot", null);
+  for (const [index, reboot] of rebootSteps.entries()) {
+    exact.push({
+      id: index === rebootSteps.length - 1 ? "reboot" : `reboot:${index}`,
+      category: "reboot",
+      label: reboot.label,
+      purpose: index === rebootSteps.length - 1
+        ? "Reboots the remote system"
+        : "Runs a pre-reboot safety check",
+      pkgManager: null,
+      command: reboot.command,
+    });
+  }
+
+  const sudoersResults = exact.map((entry) => normalizeForSudoers(entry));
+  const sudoers = dedupeCommands(sudoersResults.flatMap((result) => result.entries));
+  const warnings = sudoersResults.flatMap((result) => result.warnings);
 
   return {
     exact,
-    sudoers: dedupeCommands(
-      exact
-        .map((entry) => normalizeForSudoers(entry))
-        .filter((entry): entry is PotentialCommandEntry => entry != null),
-    ),
+    sudoers,
+    warnings,
   };
 }
 
 export function normalizeCommandForSudoers(command: string): string | null {
-  const normalized = extractSudoCommand(command);
+  const normalized = extractSudoCommands(command)[0];
   return normalized ? normalizeCommandTemplate(normalized) : null;
 }

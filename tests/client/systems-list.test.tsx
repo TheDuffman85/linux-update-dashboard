@@ -136,14 +136,15 @@ describe("SystemsList", () => {
     mockUseAuth.mockReturnValue({ user: { username: "tester" } });
   });
 
-  test("does not render the removed potential commands action", () => {
+  test("renders a potential commands action and keeps its modal closed by default", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <SystemsList />
       </MemoryRouter>,
     );
 
-    expect(html).not.toContain('title="Potential commands"');
+    expect(html).toContain('title="Potential commands"');
+    expect(html).toContain('aria-label="Potential commands for Alpha"');
     expect(html).not.toContain("Potential Commands for Alpha");
   });
 });

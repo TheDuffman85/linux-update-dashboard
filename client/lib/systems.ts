@@ -178,11 +178,26 @@ export interface PotentialCommandEntry {
   purpose: string;
   pkgManager: string | null;
   command: string;
+  sourceCommand?: string;
+  sudoersSafety?: "exact" | "package_placeholder" | "unsafe";
+  requiresWildcard?: boolean;
+  requiresPasswordLauncher?: boolean;
+  warnings?: string[];
+}
+
+export interface CommandReferenceWarning {
+  id: string;
+  category: PotentialCommandEntry["category"];
+  label: string;
+  pkgManager: string | null;
+  message: string;
+  command?: string;
 }
 
 export interface CommandReference {
   exact: PotentialCommandEntry[];
   sudoers: PotentialCommandEntry[];
+  warnings: CommandReferenceWarning[];
 }
 
 export interface SystemDetailResponse {

@@ -6,13 +6,12 @@ import {
   normalizeCustomPackageManagerConfigEntries,
   parsePackageManagerConfigs,
   validateCustomPackageManagerConfigEntries,
-  type CustomPackageManagerConfig,
   type CustomPackageManagerConfigEntry,
   type PackageManagerConfigValue,
 } from "../package-manager-configs";
 import { getPackageManagerDetectionCommands } from "../ssh/detector";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
-import { APT_REFRESH_COMMAND } from "../ssh/parsers/apt";
+import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND } from "../ssh/parsers/apt";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
 import { getProxmoxBackupGuardCommand, getRebootCommand } from "../ssh/reboot";
@@ -469,6 +468,7 @@ export function renderCommandTemplate(
 ): string {
   const packages = context.packages ? validatePackageNames(context.packages) : [];
   const firstPackage = packages[0] ? validatePackageName(packages[0]) : "";
+  const config = withConfigDefaults(context.pkgManager, context.config);
   let rendered = command
     .replaceAll("{{manager}}", context.pkgManager ?? "")
     .replaceAll("{{package}}", firstPackage)
@@ -477,7 +477,7 @@ export function renderCommandTemplate(
     .replaceAll("{{quotedPackages}}", packages.map(shellQuote).join(" "));
 
   rendered = rendered.replace(/\{\{config\.([a-zA-Z0-9_.-]+)\}\}/g, (_match, path: string) =>
-    resolveConfigValue(context.config, path),
+    resolveConfigValue(config, path),
   );
   rendered = rendered.replace(/\{\{sudo:([\s\S]*?)\}\}/g, (_match, inner: string) => {
     return sudo(inner.trim());
@@ -662,27 +662,44 @@ function commandLines(...lines: string[]): string {
   return lines.join("\n");
 }
 
-function aptUpgradeModeScript(defaultMode: "upgrade" | "full-upgrade"): string {
+function indentCommand(command: string, indent = "  "): string {
+  return command
+    .split("\n")
+    .map((line) => `${indent}${line}`)
+    .join("\n");
+}
+
+function sudoersRelevantCommand(command: string): string {
   return commandLines(
-    "# Use the configured APT upgrade mode; fall back to the standard mode when unset.",
-    'upgrade_mode="{{config.defaultUpgradeMode}}"',
-    `if [ "$upgrade_mode" != "full-upgrade" ]; then upgrade_mode="${defaultMode}"; fi`,
+    `# Sudoers-relevant command: ${command}`,
+    sudo(command),
+  );
+}
+
+function aptUpgradeModeScript(defaultMode: "upgrade" | "full-upgrade"): string {
+  const command = defaultMode === "full-upgrade"
+    ? "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"
+    : "apt-get -o DPkg::Lock::Timeout=60 {{config.defaultUpgradeMode}} -y";
+  return commandLines(
+    defaultMode === "full-upgrade"
+      ? "# Run the full APT upgrade mode."
+      : "# Use the configured APT upgrade mode.",
     "export DEBIAN_FRONTEND=noninteractive",
-    sudo(`apt-get -o DPkg::Lock::Timeout=60 \${upgrade_mode} -y`) + " 2>&1",
+    sudoersRelevantCommand(command) + " 2>&1",
   );
 }
 
 function dnfCheckScript(tool: "dnf" | "yum"): string {
   const hasRefresh = tool === "dnf";
-  const checkLine = hasRefresh
-    ? 'if [ "{{config.refreshMetadataOnCheck}}" = "true" ]; then check_args="$check_args --refresh"; fi'
-    : "# Yum does not support the DNF metadata refresh flag here.";
+  const refreshArg = hasRefresh ? "{{config.refreshMetadataOnCheckArg}}" : "";
   return commandLines(
     `# Check ${tool.toUpperCase()} updates and keep exit code 100 as updates-available, not a failure.`,
-    'check_args=""',
-    'if [ "{{config.autoAcceptNewSigningKeysOnCheck}}" = "true" ]; then check_args="$check_args -y"; fi',
-    checkLine,
-    `updates="$(${tool} $check_args check-update --quiet 2>&1)"; rc=$?`,
+    'if [ "{{config.autoAcceptNewSigningKeysOnCheck}}" = "true" ]; then',
+    `  # Sudoers-relevant command: ${tool} -y check-update${refreshArg} --quiet`,
+    `  updates="$(${sudo(`${tool} -y check-update${refreshArg} --quiet`)} 2>&1)"; rc=$?`,
+    "else",
+    `  updates="$(${tool} check-update${refreshArg} --quiet 2>&1)"; rc=$?`,
+    "fi",
     'echo "$updates"',
     'echo "---INSTALLED---"',
     'if [ "$rc" -eq 100 ] && command -v rpm >/dev/null 2>&1; then',
@@ -695,23 +712,19 @@ function dnfCheckScript(tool: "dnf" | "yum"): string {
 
 function dnfLikeUpgradeScript(tool: "dnf" | "yum", command: string): string {
   return commandLines(
-    `# Run ${tool.toUpperCase()} with automatic EULA acceptance only when that system setting is enabled.`,
-    'if [ "{{config.autoAcceptEulaOnUpgrade}}" = "true" ]; then',
-    `  ${sudo(`env ACCEPT_EULA=Y ${command}`)} 2>&1`,
-    "else",
-    `  ${sudo(command)} 2>&1`,
-    "fi",
+    `# Run ${tool.toUpperCase()} with the configured EULA-acceptance environment prefix.`,
+    sudoersRelevantCommand(`{{config.autoAcceptEulaOnUpgradePrefix}}${command}`) + " 2>&1",
   );
 }
 
 function dnfUpgradeAllScript(full = false): string {
   const command = full
     ? "dnf distro-sync -y"
-    : 'dnf ${upgrade_command} -y';
+    : "dnf {{config.defaultUpgradeMode}} -y";
   return commandLines(
-    "# Use DNF distro-sync when configured; otherwise use the regular upgrade command.",
-    'upgrade_command="{{config.defaultUpgradeMode}}"',
-    'if [ "$upgrade_command" != "distro-sync" ]; then upgrade_command="upgrade"; fi',
+    full
+      ? "# Run DNF distro-sync."
+      : "# Use the configured DNF upgrade command.",
     dnfLikeUpgradeScript("dnf", command),
   );
 }
@@ -724,7 +737,7 @@ function maybeRefreshScript(
   return commandLines(
     `# ${comment}`,
     `if [ "{{config.${configKey}}}" != "false" ]; then`,
-    `  ${command}`,
+    indentCommand(command),
     "fi",
   );
 }
@@ -734,11 +747,12 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
     case "apt":
       return [
         {
+          label: "Auditing dpkg state",
+          command: APT_DPKG_AUDIT_SCRIPT,
+        },
+        {
           label: "Fetching package lists",
-          command: commentedCommand(
-            "Audit dpkg state, then refresh APT package metadata before listing available updates.",
-            APT_REFRESH_COMMAND,
-          ),
+          command: APT_UPDATE_COMMAND,
         },
         {
           label: "Listing available updates",
@@ -766,7 +780,7 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
           command: maybeRefreshScript(
             "Refresh Pacman package databases unless this system has disabled that check step.",
             "refreshDatabasesOnCheck",
-            sudo("pacman -Sy --noconfirm") + " 2>&1",
+            sudoersRelevantCommand("pacman -Sy --noconfirm") + " 2>&1",
           ),
         },
         {
@@ -791,7 +805,7 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
           command: maybeRefreshScript(
             "Refresh APK package indexes unless this system has disabled that check step.",
             "refreshIndexesOnCheck",
-            sudo("apk update") + " 2>&1",
+            sudoersRelevantCommand("apk update") + " 2>&1",
           ),
         },
         {
@@ -809,7 +823,7 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
           command: maybeRefreshScript(
             "Refresh Flatpak appstream data unless this system has disabled that check step.",
             "refreshAppstreamOnCheck",
-            sudo("flatpak update --appstream") + " 2>/dev/null; true",
+            sudoersRelevantCommand("flatpak update --appstream") + " 2>/dev/null; true",
           ),
         },
         {
@@ -838,7 +852,8 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
 function dnfLikeRepairIssueScript(tool: "dnf" | "yum"): string {
   return commandLines(
     `# Accept a newly presented ${tool.toUpperCase()} repository signing key for this one repair attempt.`,
-    `updates="$(${tool} -y check-update --quiet 2>&1)"; rc=$?`,
+    `# Sudoers-relevant command: ${tool} -y check-update --quiet`,
+    `updates="$(${sudo(`${tool} -y check-update --quiet`)} 2>&1)"; rc=$?`,
     'echo "$updates"',
     'if [ "$rc" -ne 0 ] && [ "$rc" -ne 100 ]; then exit "$rc"; fi',
   );
@@ -850,7 +865,7 @@ function builtinRepairIssueCommand(manager: string): string | null {
       return commandLines(
         "# Finish any interrupted dpkg package configuration.",
         "export DEBIAN_FRONTEND=noninteractive",
-        sudo("dpkg --configure -a") + " 2>&1",
+        sudoersRelevantCommand("dpkg --configure -a") + " 2>&1",
       );
     case "dnf":
       return dnfLikeRepairIssueScript("dnf");
@@ -870,13 +885,13 @@ function builtinUpgradeAllCommand(manager: string): string {
     case "yum":
       return dnfLikeUpgradeScript("yum", "yum update -y");
     case "pacman":
-      return commentedCommand("Upgrade all Pacman packages and refresh package databases.", sudo("pacman -Syu --noconfirm") + " 2>&1");
+      return commentedCommand("Upgrade all Pacman packages and refresh package databases.", sudoersRelevantCommand("pacman -Syu --noconfirm") + " 2>&1");
     case "apk":
-      return commentedCommand("Upgrade all APK packages from the configured repositories.", sudo("apk upgrade") + " 2>&1");
+      return commentedCommand("Upgrade all APK packages from the configured repositories.", sudoersRelevantCommand("apk upgrade") + " 2>&1");
     case "flatpak":
-      return commentedCommand("Upgrade all installed Flatpak applications and runtimes.", sudo("flatpak update -y") + " 2>&1");
+      return commentedCommand("Upgrade all installed Flatpak applications and runtimes.", sudoersRelevantCommand("flatpak update -y") + " 2>&1");
     case "snap":
-      return commentedCommand("Refresh all installed Snap packages.", sudo("snap refresh") + " 2>&1");
+      return commentedCommand("Refresh all installed Snap packages.", sudoersRelevantCommand("snap refresh") + " 2>&1");
     default:
       return "";
   }
@@ -899,20 +914,20 @@ function builtinUpgradeSelectedCommand(manager: string): string {
       return commandLines(
         "# Upgrade only the selected APT packages.",
         "export DEBIAN_FRONTEND=noninteractive",
-        sudo("apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y {{packages}}") + " 2>&1",
+        sudoersRelevantCommand("apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y {{packages}}") + " 2>&1",
       );
     case "dnf":
       return dnfLikeUpgradeScript("dnf", "dnf upgrade -y {{packages}}");
     case "yum":
       return dnfLikeUpgradeScript("yum", "yum update -y {{packages}}");
     case "pacman":
-      return commentedCommand("Upgrade only the selected Pacman packages.", sudo("pacman -S --noconfirm {{packages}}") + " 2>&1");
+      return commentedCommand("Upgrade only the selected Pacman packages.", sudoersRelevantCommand("pacman -S --noconfirm {{packages}}") + " 2>&1");
     case "apk":
-      return commentedCommand("Upgrade only the selected APK packages.", sudo("apk upgrade {{packages}}") + " 2>&1");
+      return commentedCommand("Upgrade only the selected APK packages.", sudoersRelevantCommand("apk upgrade {{packages}}") + " 2>&1");
     case "flatpak":
-      return commentedCommand("Upgrade only the selected Flatpak applications or runtimes.", sudo("flatpak update -y {{packages}}") + " 2>&1");
+      return commentedCommand("Upgrade only the selected Flatpak applications or runtimes.", sudoersRelevantCommand("flatpak update -y {{packages}}") + " 2>&1");
     case "snap":
-      return commentedCommand("Refresh only the selected Snap packages.", sudo("snap refresh {{packages}}") + " 2>&1");
+      return commentedCommand("Refresh only the selected Snap packages.", sudoersRelevantCommand("snap refresh {{packages}}") + " 2>&1");
     default:
       return "";
   }
@@ -1656,25 +1671,51 @@ function getRuntimeBuiltinScript(script: ScriptDefinition): ScriptDefinition | n
   return getBuiltinScripts().find((candidate) => candidate.id === script.sourceScriptId) ?? null;
 }
 
-function withCustomConfigDefaults(
+function withConfigDefaults(
   manager: string | null | undefined,
   config: PackageManagerConfigValue | undefined,
 ): PackageManagerConfigValue | undefined {
   if (!manager) return config;
-  const definition = listPackageManagerDefinitions().find((entry) => entry.name === manager);
-  if (!definition?.configEntries.length) return config;
   const configured = config && typeof config === "object" && !Array.isArray(config)
-    ? config as CustomPackageManagerConfig
+    ? config as Record<string, unknown>
     : {};
+  const builtinDefaults: Record<string, Record<string, unknown>> = {
+    apt: {
+      defaultUpgradeMode: "upgrade",
+    },
+    dnf: {
+      defaultUpgradeMode: "upgrade",
+    },
+  };
+  const builtinFragments: Record<string, Record<string, unknown>> = {
+    dnf: {
+      refreshMetadataOnCheckArg: configured.refreshMetadataOnCheck === true ? " --refresh" : "",
+      autoAcceptEulaOnUpgradePrefix: configured.autoAcceptEulaOnUpgrade === true
+        ? "env ACCEPT_EULA=Y "
+        : "",
+    },
+    yum: {
+      autoAcceptEulaOnUpgradePrefix: configured.autoAcceptEulaOnUpgrade === true
+        ? "env ACCEPT_EULA=Y "
+        : "",
+    },
+  };
+  const withBuiltinDefaults = {
+    ...(builtinDefaults[manager] ?? {}),
+    ...configured,
+    ...(builtinFragments[manager] ?? {}),
+  };
+  const definition = listPackageManagerDefinitions().find((entry) => entry.name === manager);
+  if (!definition?.configEntries.length) return withBuiltinDefaults;
   const defaults = Object.fromEntries(
     definition.configEntries.map((entry) => [
       entry.key,
-      configured[entry.key] ?? entry.defaultValue,
+      withBuiltinDefaults[entry.key] ?? entry.defaultValue,
     ]),
   );
   return {
     ...defaults,
-    ...configured,
+    ...withBuiltinDefaults,
   };
 }
 
@@ -1692,7 +1733,7 @@ export function resolveRuntimeSteps(args: {
     command: renderCommandTemplate(step.command, {
       pkgManager: args.pkgManager,
       packages: args.packages,
-      config: withCustomConfigDefaults(args.pkgManager, args.pkgManagerConfig),
+      config: args.pkgManagerConfig,
     }),
   }));
 }
@@ -1794,7 +1835,7 @@ export function getCustomCheckErrorMessage(
 }
 
 export function getSystemPackageManagerConfig(system: { pkgManagerConfigs?: string | null }, manager: string): PackageManagerConfigValue | undefined {
-  return withCustomConfigDefaults(
+  return withConfigDefaults(
     manager,
     getManagerConfig(parsePackageManagerConfigs(system.pkgManagerConfigs ?? null, listPackageManagerDefinitions()), manager),
   );

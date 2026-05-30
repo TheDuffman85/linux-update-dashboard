@@ -13,6 +13,7 @@ export function getProxmoxBackupGuardCommand(): string {
     "fi",
     "",
     "tasks=$(",
+    "  # Sudoers-relevant command: pvesh get /cluster/tasks --output-format json",
     `  ${sudo("pvesh get /cluster/tasks --output-format json")} 2>&1`,
     ")",
     "status=$?",
@@ -57,6 +58,7 @@ export function getProxmoxBackupGuardCommand(): string {
 export function getRebootCommand(): string {
   return [
     "# Reboot the remote system using sudo when the current user is not root.",
+    "# Sudoers-relevant command: reboot",
     sudo("reboot"),
   ].join("\n");
 }
