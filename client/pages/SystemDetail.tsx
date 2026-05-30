@@ -889,6 +889,7 @@ function StepPanel({
         onScroll={followContentKey ? handleScroll : undefined}
         className={className}
         successMessage={`Copied ${title.toLowerCase()}`}
+        expandable
       >
         {children}
       </CopyableCodeBlock>
