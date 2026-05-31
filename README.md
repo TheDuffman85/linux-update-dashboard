@@ -415,7 +415,7 @@ Bearer tokens for external API consumers (e.g. [gethomepage](https://gethomepage
 - **Permission levels:** read-only (GET/HEAD only) or read/write
 - **Configurable expiry:** 30, 60, 90, 365 days, or never
 - **Secure storage:** only the SHA-256 hash is stored; the plain token is shown once on creation
-- **Scoped access:** tokens cannot access management endpoints (auth, settings, tokens, passkeys, notifications)
+- **Scoped access:** tokens cannot access management endpoints (auth, settings, tokens, passkeys, notifications, schedules, scripts, credentials) or configure SSH connections
 - **Rate-limited:** failed bearer attempts are rate-limited (20/min per IP), max 25 tokens per user
 
 Usage:
@@ -1068,7 +1068,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **Input validation:** strict type, format, and range validation on all API inputs
 - **Notification URL validation:** outbound notification URLs are validated for correct format (http/https); private/local targets are allowed since they are admin-configured
 - **Rate limiting:** auth endpoints are rate-limited (3 req/min for setup, 5 req/min for login and WebAuthn verify, 20 failed bearer attempts/min per IP)
-- **API token security:** only SHA-256 hashes stored, tokens blocked from management endpoints, CSRF skipped for stateless bearer requests
+- **API token security:** only SHA-256 hashes stored, tokens blocked from management endpoints and SSH connection configuration, CSRF skipped for stateless bearer requests
 - **Telegram command safety:** Telegram commands are private-chat-only, disabled by default, scoped to the channel's allowed systems, and mutating actions require confirmation
 - **Password-disable safeguard:** password login cannot be disabled unless a passkey or SSO is configured (enforced server-side)
 - **Timing-safe login:** a pre-computed dummy hash is always compared on failed lookups to prevent username enumeration
