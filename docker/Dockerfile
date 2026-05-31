@@ -33,9 +33,24 @@ ENV VITE_APP_REPO_URL=$APP_REPO_URL
 COPY . .
 RUN pnpm run build \
     && pnpm prune --prod
-
 # Production image
 FROM base AS production
+
+ARG GOVC_VERSION=0.51.0
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates tar \
+ && arch="$(uname -m)"; case "$arch" in \
+      x86_64) govc_arch="x86_64" ;; \
+      aarch64|arm64) govc_arch="arm64" ;; \
+      *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/vmware/govmomi/releases/download/v${GOVC_VERSION}/govc_Linux_${govc_arch}.tar.gz" | tar -xz -C /usr/local/bin govc \
+ && chmod +x /usr/local/bin/govc \
+ && govc version \
+ && apt-get purge -y --auto-remove curl \
+ && rm -rf /var/lib/apt/lists/*
+
 ARG APP_VERSION=""
 ARG APP_BUILD_DATE=""
 ARG APP_COMMIT_HASH=""

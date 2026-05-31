@@ -11,6 +11,7 @@ import * as hiddenUpdateService from "./hidden-update-service";
 import * as packageIssueService from "./package-manager-issue-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
+import * as vsphereService from "./vsphere-service";
 import { logger } from "../logger";
 import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
 import {
@@ -1299,6 +1300,12 @@ export async function applyUpgradeAll(
     let overallSuccess = true;
     let reconnectionUsed = false;
 
+    const snapshotSystem = systemService.getSystem(systemId);
+    if (snapshotSystem?.snapshotBeforeUpgrade) {
+      await vsphereService.createPreUpgradeSnapshot(systemId, options?.queuedHistoryId ?? null);
+    }
+
+
     const sshManager = getSSHManager();
     const signal = getCancellationSignal(systemId);
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
@@ -1586,6 +1593,13 @@ export async function applyFullUpgradeAll(
     let overallSuccess = true;
     let reconnectionUsed = false;
 
+
+const snapshotSystem = systemService.getSystem(systemId);
+if (snapshotSystem?.snapshotBeforeUpgrade) {
+  await vsphereService.createPreUpgradeSnapshot(systemId, null);
+}
+
+
     const sshManager = getSSHManager();
     const signal = getCancellationSignal(systemId);
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
@@ -1818,6 +1832,10 @@ export async function applyUpgradePackages(
         packagesForManager.push(update.packageName);
         groupedUpdates.set(update.pkgManager, packagesForManager);
       }
+const snapshotSystem = systemService.getSystem(systemId);
+if (snapshotSystem?.snapshotBeforeUpgrade) {
+  await vsphereService.createPreUpgradeSnapshot(systemId, null);
+}
 
       const sshManager = getSSHManager();
       const signal = getCancellationSignal(systemId);

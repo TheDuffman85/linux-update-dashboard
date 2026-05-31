@@ -12,6 +12,7 @@ const Notifications = lazy(() => import("./pages/Notifications"));
 const Schedules = lazy(() => import("./pages/Schedules"));
 const Credentials = lazy(() => import("./pages/Credentials"));
 const Scripts = lazy(() => import("./pages/Scripts"));
+const VSphere = lazy(() => import("./pages/VSphere"));
 
 function PageLoader({ message }: { message?: string }) {
   return (
@@ -123,7 +124,17 @@ export default function App() {
             </AuthGuard>
           }
         />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        
+      <Route
+        path="/vsphere"
+        element={
+          <AuthGuard>
+            <VSphere />
+          </AuthGuard>
+        }
+      />
+
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Suspense>
   );

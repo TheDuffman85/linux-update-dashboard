@@ -7,3 +7,16 @@ data/
 .env
 .DS_Store
 *.tsbuildinfo
+
+# Local/private runtime data
+.env.*
+!.env.example
+docker/data/
+logs/
+*.log
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.bak
+*.backup

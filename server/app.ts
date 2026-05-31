@@ -17,7 +17,7 @@ import schedulesRoutes from "./routes/schedules";
 import passkeysRoutes from "./routes/passkeys";
 import apiTokensRoutes from "./routes/api-tokens";
 import credentialsRoutes from "./routes/credentials";
-import scriptsRoutes from "./routes/scripts";
+import scriptsRoutes from "./routes/scripts"; import vsphereRoutes from "./routes/vsphere";
 
 export function createApp() {
   const app = new Hono();
@@ -73,7 +73,7 @@ export function createApp() {
   app.route("/api/credentials", credentialsRoutes);
   app.route("/api/passkeys", passkeysRoutes);
   app.route("/api/tokens", apiTokensRoutes);
-  app.route("/api/scripts", scriptsRoutes);
+  app.route("/api/scripts", scriptsRoutes); app.route("/api/vsphere", vsphereRoutes);
 
   // Expose the canonical logo URL in every environment for external consumers
   // such as Home Assistant entity pictures.

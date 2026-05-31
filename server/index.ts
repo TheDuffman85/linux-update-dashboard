@@ -13,7 +13,7 @@ import * as scheduler from "./services/scheduler";
 import { createApp } from "./app";
 import { logger } from "./logger";
 import * as notificationRuntime from "./services/notification-runtime";
-import * as upgradeBatchService from "./services/upgrade-batch-service";
+import * as upgradeBatchService from "./services/upgrade-batch-service"; import * as vsphereService from "./services/vsphere-service";
 import { migrateEncryptionSalt, migrateLegacyAuthTags } from "./encryption-migration";
 import { syncSSHManagerWithSettings } from "./services/settings-service";
 
@@ -69,7 +69,7 @@ syncSSHManagerWithSettings();
 // Start background scheduler
 logger.info("Starting update scheduler");
 scheduler.start();
-upgradeBatchService.resumeUpgradeBatches();
+upgradeBatchService.resumeUpgradeBatches(); setInterval(() => { vsphereService.cleanupExpiredSnapshots().catch((error) => { logger.error("vSphere snapshot cleanup failed", { error: String(error) }); }); }, 60 * 60 * 1000).unref();
 
 // Create and start Hono app
 const app = createApp();

@@ -47,7 +47,7 @@ export const credentials = sqliteTable("credentials", {
     .default(sql`(datetime('now'))`),
 });
 
-export const systems = sqliteTable(
+export const vsphereConnections = sqliteTable("vsphere_connections", { id: integer("id").primaryKey({ autoIncrement: true }), name: text("name").notNull().unique(), url: text("url").notNull(), username: text("username").notNull(), encryptedPassword: text("encrypted_password").notNull(), tlsMode: text("tls_mode").notNull().default("strict"), createdAt: text("created_at").notNull().default(sql`(datetime('now'))`), updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`), }); export const systems = sqliteTable(
   "systems",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
@@ -105,7 +105,7 @@ export const systems = sqliteTable(
       (): AnySQLiteColumn => upgradeGroups.id,
       { onDelete: "set null" }
     ),
-    upgradeOrder: integer("upgrade_order").notNull().default(1),
+    upgradeOrder: integer("upgrade_order").notNull().default(1), vsphereConnectionId: integer("vsphere_connection_id").references(() => vsphereConnections.id, { onDelete: "set null" }), vsphereVmMoref: text("vsphere_vm_moref"), vsphereVmName: text("vsphere_vm_name"), snapshotBeforeUpgrade: integer("snapshot_before_upgrade").notNull().default(0), snapshotQuiesce: integer("snapshot_quiesce").notNull().default(1), snapshotMemory: integer("snapshot_memory").notNull().default(0), snapshotRetentionHours: integer("snapshot_retention_hours").notNull().default(72), 
     hidden: integer("hidden").notNull().default(0),
     needsReboot: integer("needs_reboot").notNull().default(0),
     systemInfoUpdatedAt: text("system_info_updated_at"),
@@ -133,7 +133,7 @@ export const upgradeGroups = sqliteTable("upgrade_groups", {
     .default(sql`(datetime('now'))`),
 });
 
-export const updateCache = sqliteTable(
+export const vmSnapshots = sqliteTable("vm_snapshots", { id: integer("id").primaryKey({ autoIncrement: true }), systemId: integer("system_id").notNull().references(() => systems.id, { onDelete: "cascade" }), vsphereConnectionId: integer("vsphere_connection_id").notNull().references(() => vsphereConnections.id, { onDelete: "restrict" }), vmMoref: text("vm_moref").notNull(), vmName: text("vm_name"), snapshotName: text("snapshot_name").notNull(), status: text("status").notNull().default("creating"), createdBeforeHistoryId: integer("created_before_history_id"), errorMessage: text("error_message"), createdAt: text("created_at").notNull().default(sql`(datetime('now'))`), deletedAt: text("deleted_at"), }); export const updateCache = sqliteTable(
   "update_cache",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
