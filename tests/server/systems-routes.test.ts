@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
@@ -1115,33 +1115,41 @@ describe("systems reorder route", () => {
       },
     };
 
-    const responses = await Promise.all([
-      protectedApp.request("/api/systems", {
+    const cases = [
+      {
+        path: "/api/systems",
         method: "POST",
-        headers,
         body: JSON.stringify({ scriptOverrides: {} }),
-      }, { incoming }),
-      protectedApp.request("/api/systems/1", {
+        error: "API tokens cannot configure SSH connections",
+      },
+      {
+        path: "/api/systems/1",
         method: "PUT",
-        headers,
         body: JSON.stringify({ scriptOverrides: {} }),
-      }, { incoming }),
-      protectedApp.request("/api/systems/1/script-overrides", {
+        error: "API tokens cannot configure SSH connections",
+      },
+      {
+        path: "/api/systems/1/script-overrides",
         method: "PUT",
-        headers,
         body: JSON.stringify({ scriptOverrides: {} }),
-      }, { incoming }),
-    ]);
+        error: "API tokens cannot modify script overrides",
+      },
+    ];
 
-    for (const res of responses) {
+    for (const entry of cases) {
+      const res = await protectedApp.request(entry.path, {
+        method: entry.method,
+        headers,
+        body: entry.body,
+      }, { incoming });
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({
-        error: "API tokens cannot modify script overrides",
+        error: entry.error,
       });
     }
   });
 
-  test("bearer tokens cannot mutate script-affecting package manager fields", async () => {
+  test("bearer tokens cannot bypass the connection configuration block with script-affecting fields", async () => {
     const token = await createBearerToken();
     const protectedApp = new Hono();
     protectedApp.use("/api/*", authMiddleware);
@@ -1162,22 +1170,18 @@ describe("systems reorder route", () => {
       {
         path: "/api/systems",
         body: { detectedPkgManagers: ["custom-apt"] },
-        error: "API tokens cannot modify detected package managers",
       },
       {
         path: "/api/systems",
         body: { pkgManagerConfigs: { "custom-apt": { channel: "edge" } } },
-        error: "API tokens cannot modify package manager configs",
       },
       {
         path: "/api/systems/1",
         body: { detectedPkgManagers: ["custom-apt"] },
-        error: "API tokens cannot modify detected package managers",
       },
       {
         path: "/api/systems/1",
         body: { pkgManagerConfigs: { "custom-apt": { channel: "edge" } } },
-        error: "API tokens cannot modify package manager configs",
       },
     ];
 
@@ -1189,8 +1193,73 @@ describe("systems reorder route", () => {
       }, { incoming });
 
       expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({ error: entry.error });
+      expect(await res.json()).toEqual({
+        error: "API tokens cannot configure SSH connections",
+      });
     }
+  });
+
+  test("bearer tokens cannot create, update, or test SSH connection configuration", async () => {
+    const token = await createBearerToken();
+    const protectedApp = new Hono();
+    protectedApp.use("/api/*", authMiddleware);
+    protectedApp.route("/api/systems", systemsRoutes);
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    const incoming = {
+      socket: {
+        remoteAddress: "127.0.0.1",
+        remotePort: 12345,
+        remoteFamily: "IPv4",
+      },
+    };
+    const credentialId = createSystemCredential("root");
+    const systemId = getDb().insert(systems).values({
+      name: "Existing",
+      hostname: "existing.local",
+      port: 22,
+      credentialId,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    const testConnection = vi.spyOn(sshManager, "testConnection");
+
+    const responses = await Promise.all([
+      protectedApp.request("/api/systems", {
+        method: "POST",
+        headers,
+        body: "{",
+      }, { incoming }),
+      protectedApp.request(`/api/systems/${systemId}`, {
+        method: "PUT",
+        headers,
+        body: "{",
+      }, { incoming }),
+      protectedApp.request("/api/systems/test-connection", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          hostname: "new.local",
+          port: 22,
+          credentialId,
+        }),
+      }, { incoming }),
+    ]);
+
+    for (const res of responses) {
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: "API tokens cannot configure SSH connections",
+      });
+    }
+
+    expect(getDb().select().from(systems).all()).toHaveLength(1);
+    expect(getDb().select().from(systems).where(eq(systems.id, systemId)).get()?.name).toBe("Existing");
+    expect(testConnection).not.toHaveBeenCalled();
+    testConnection.mockRestore();
   });
 
   test("filters hidden systems when requesting visible scope", async () => {

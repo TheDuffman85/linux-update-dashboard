@@ -55,18 +55,6 @@ function isApiTokenRequest(c: Context<SystemsEnv>): boolean {
   return c.get("apiToken") === true;
 }
 
-function getApiTokenRestrictedSystemField(body: Record<string, unknown>): string | null {
-  const restrictedFields: Array<[string, string]> = [
-    ["scriptOverrides", "script overrides"],
-    ["detectedPkgManagers", "detected package managers"],
-    ["pkgManagerConfigs", "package manager configs"],
-  ];
-  for (const [field, label] of restrictedFields) {
-    if (body[field] !== undefined) return label;
-  }
-  return null;
-}
-
 const VALID_HOSTNAME = /^[a-zA-Z0-9]([a-zA-Z0-9._:-]*[a-zA-Z0-9])?$/;
 
 function validateSystemInput(body: Record<string, unknown>): string | null {
@@ -708,15 +696,12 @@ systems.delete("/:id/hidden-updates/:hiddenUpdateId", (c) => {
 
 // Create system
 systems.post("/", async (c) => {
+  if (isApiTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot configure SSH connections" }, 403);
+  }
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
-  }
-  const restrictedApiTokenField = isApiTokenRequest(c)
-    ? getApiTokenRestrictedSystemField(body)
-    : null;
-  if (restrictedApiTokenField) {
-    return c.json({ error: `API tokens cannot modify ${restrictedApiTokenField}` }, 403);
   }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
@@ -900,17 +885,14 @@ systems.put("/:id/upgrade-all-exclusion", async (c) => {
 
 // Update system
 systems.put("/:id", async (c) => {
+  if (isApiTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot configure SSH connections" }, 403);
+  }
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
-  }
-  const restrictedApiTokenField = isApiTokenRequest(c)
-    ? getApiTokenRestrictedSystemField(body)
-    : null;
-  if (restrictedApiTokenField) {
-    return c.json({ error: `API tokens cannot modify ${restrictedApiTokenField}` }, 403);
   }
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
@@ -1080,6 +1062,9 @@ systems.delete("/:id", async (c) => {
 
 // Test connection with provided credentials
 systems.post("/test-connection", async (c) => {
+  if (isApiTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot configure SSH connections" }, 403);
+  }
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
