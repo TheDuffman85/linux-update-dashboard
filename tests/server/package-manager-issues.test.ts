@@ -117,7 +117,7 @@ describe("package manager issues", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+      if (command.includes("dpkg --audit")) {
         return {
           stdout: "dpkg was interrupted, you must manually run 'sudo dpkg --configure -a' to correct the problem.\n",
           stderr: "",
@@ -150,7 +150,7 @@ describe("package manager issues", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+      if (command.includes("dpkg --audit")) {
         return {
           stdout: "dpkg: error: unable to check lock file for dpkg database directory /var/lib/dpkg: Permission denied\n",
           stderr: "",
@@ -175,12 +175,15 @@ describe("package manager issues", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
-      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+      if (command.includes("dpkg --audit")) {
         return {
           stdout: "dpkg was interrupted, you must manually run 'sudo dpkg --configure -a' to correct the problem.\n",
           stderr: "",
           exitCode: 0,
         };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
       }
       if (command.includes("apt list --upgradable")) {
         return {
@@ -302,6 +305,9 @@ describe("package manager issues", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
@@ -359,6 +365,9 @@ describe("package manager issues", () => {
       }
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
       }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };

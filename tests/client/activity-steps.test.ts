@@ -59,6 +59,33 @@ describe("deriveLiveActivitySteps", () => {
       },
     ]);
   });
+
+  test("keeps a visible connection step before the first command", () => {
+    const messages: WsMessage[] = [
+      { type: "started", command: "", pkgManager: "system", startedAt: "2026-03-18 10:00:00" },
+      { type: "phase", phase: "Connect over SSH" },
+      { type: "started", command: "reboot", pkgManager: "system", startedAt: "2026-03-18 10:00:37" },
+      { type: "phase", phase: "Reboot system" },
+      { type: "done", success: true, completedAt: "2026-03-18 10:00:38" },
+    ];
+
+    expect(deriveLiveActivitySteps(messages)).toMatchObject([
+      {
+        label: "Connect over SSH",
+        command: "",
+        status: "success",
+        startedAt: "2026-03-18 10:00:00",
+        completedAt: "2026-03-18 10:00:37",
+      },
+      {
+        label: "Reboot system",
+        command: "reboot",
+        status: "success",
+        startedAt: "2026-03-18 10:00:37",
+        completedAt: "2026-03-18 10:00:38",
+      },
+    ]);
+  });
 });
 
 describe("activity step labels", () => {

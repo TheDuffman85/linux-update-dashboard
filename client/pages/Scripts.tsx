@@ -446,8 +446,9 @@ function ShellCodeBlock({
   return (
     <CopyableCodeBlock
       text={displayCode}
-      className={`script-code overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 whitespace-pre-wrap break-words ${className}`}
+      className={`script-code max-h-64 overflow-x-auto overflow-y-auto rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 whitespace-pre-wrap break-words ${className}`}
       successMessage="Copied script command"
+      expandable
     >
       <code dangerouslySetInnerHTML={{ __html: highlighted }} />
     </CopyableCodeBlock>

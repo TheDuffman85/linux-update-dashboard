@@ -715,6 +715,21 @@ For custom update parsers, the update regex should use named capture groups. `pa
 
 Custom system-info scripts can either keep the built-in sectioned parser or map named output sections to fields such as OS name, kernel, uptime, architecture, CPU, memory, disk, boot ID, and installed kernels. A reboot-required regex can also be configured when your target distribution reports reboot state differently.
 
+### Least-privilege SSH users
+
+For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Potential commands** action for each system that opens the effective SSH commands and generated sudoers allowlist entries for that system.
+
+Recommended sudoers posture:
+
+- grant `NOPASSWD` only for the generated root commands that system needs
+- prefer exact command rules for update checks, repairs, upgrades, and reboots
+- review selected-package upgrade entries carefully because they need package-specific rules or a controlled argument wildcard
+- avoid `NOPASSWD: ALL`, `sudo sh <writable-script>`, and broad globs such as `apt-get *`
+
+Treat the generated list as a command reference when writing `/etc/sudoers.d` rules: use each executable's absolute path and escape sudoers syntax characters in arguments. For example, the APT lock option is written as `DPkg\:\:Lock\:\:Timeout=60` in a sudoers file. The [`ludash-test-apt-least-privilege`](docker/test-systems/Dockerfile.apt-least-privilege) fixture contains a working APT example.
+
+Package-manager upgrade rights are still privileged maintenance rights: package post-install scripts run as root. The goal is to limit the dashboard account to package maintenance, not to make package maintenance unprivileged.
+
 ## Project Structure
 
 ```
@@ -795,7 +810,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 This will:
 
 1. Stop any running dev/production services
-2. Build and start 14 Docker containers (including Alpine, fish-shell, sudo-password APT, and partial multi-manager fixtures)
+2. Build and start 16 Docker containers (including Alpine, fish-shell, sudo-password APT, least-privilege APT, and partial multi-manager fixtures)
 3. Build the frontend in production mode
 4. Start the production server on `:3001`
 
@@ -807,6 +822,7 @@ The server initializes or upgrades the SQLite schema automatically during startu
 - Password: `testpass`
 - `Sudo password`: `testpass` (required for `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`, optional for others)
 - Passwordless `sudo` is pre-configured on all test systems except `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`
+- `ludash-test-apt-least-privilege` has restricted `NOPASSWD` rules for exact APT maintenance commands instead of `NOPASSWD: ALL`; leave its dashboard `Sudo password` unset
 
 | Container                          | SSH Port | Package Manager                | Login Shell | Base Image   |
 | ---------------------------------- | -------- | ------------------------------ | ----------- | ------------ |
@@ -825,6 +841,7 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-dnf-gpg-prompt`       | 2013     | DNF (GPG key prompt fixture)   | `bash`      | Fedora 41    |
 | `ludash-test-dnf-eula-prompt`      | 2014     | DNF (EULA prompt fixture)      | `bash`      | Fedora 41    |
 | `ludash-test-apt-dpkg-interrupted` | 2015     | APT (interrupted dpkg fixture) | `bash`      | Debian 12    |
+| `ludash-test-apt-least-privilege`  | 2016     | APT (restricted sudoers)       | `bash`      | Debian 12    |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -863,6 +880,21 @@ That makes it useful for verifying the dashboard’s opt-in DNF/YUM EULA automat
 - `dpkg was interrupted, you must manually run 'sudo dpkg --configure -a'`
 
 That makes it useful for verifying the package manager issue banner, including the **Solve** action that runs `dpkg --configure -a` and then rechecks updates.
+
+`ludash-test-apt-least-privilege` is a self-contained APT fixture for dedicated automation users. Its `testuser` account intentionally cannot run arbitrary root commands such as `sudo -n true`. It allows only exact APT refresh and upgrade commands, one fixed selected-package upgrade, `dpkg --audit`, and `dpkg --configure -a`. This makes it useful for verifying checks and SSH-safe detached upgrades with the dashboard `Sudo password` left unset.
+
+To run the opt-in Docker integration test for that restricted account:
+
+```bash
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/apt-least-privilege.integration.test.ts
+```
+
+To verify that password-based sudo receives credentials for each atomic APT
+check step, run the fish-shell fixture integration test:
+
+```bash
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/apt-sudo-password.integration.test.ts
+```
 
 The Docker Compose file and all Dockerfiles are in [`docker/test-systems/`](docker/test-systems/).
 
@@ -921,7 +953,9 @@ All endpoints require authentication unless noted. Responses are JSON.
 | PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Include or exclude a system from Upgrade All by default         |
 | POST   | `/api/systems/test-connection`                     | Test SSH connectivity                                           |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system                                                 |
+| POST   | `/api/systems/:id/dismiss-needs-reboot`            | Dismiss a stale reboot-needed indicator                         |
 | POST   | `/api/systems/:id/revoke-host-key`                 | Clear the stored trusted host key                               |
+| PUT    | `/api/systems/:id/script-overrides`                | Update per-system script overrides                              |
 | DELETE | `/api/systems/:id`                                 | Remove a system                                                 |
 | GET    | `/api/systems/:id/updates`                         | Cached updates for a system                                     |
 | GET    | `/api/systems/:id/history`                         | Upgrade history for a system                                    |

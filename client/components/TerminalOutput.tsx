@@ -1,6 +1,6 @@
 import { useRef, useEffect, useMemo } from "react";
 import type { WsMessage } from "../hooks/useCommandOutput";
-import { CopyButton } from "./CopyableCodeBlock";
+import { ContentExpansionButton, CopyButton, useContentExpansion } from "./CopyableCodeBlock";
 import { TerminalText } from "./TerminalText";
 
 interface TerminalOutputProps {
@@ -33,6 +33,12 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
       }
     }).join("");
   }, [messages]);
+  const {
+    expanded,
+    canExpand,
+    toggleExpanded,
+    expansionStyle,
+  } = useContentExpansion(containerRef, copyText);
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -85,6 +91,13 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
           {!connected && (
             <span className="text-xs text-amber-400">Disconnected</span>
           )}
+          {canExpand && (
+            <ContentExpansionButton
+              expanded={expanded}
+              onToggle={toggleExpanded}
+              className="h-6 w-6"
+            />
+          )}
           <CopyButton
             text={copyText}
             className="h-6 w-6"
@@ -98,6 +111,7 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
         ref={containerRef}
         onScroll={handleScroll}
         className="p-4 font-mono text-xs leading-relaxed text-slate-300 max-h-96 overflow-y-auto whitespace-pre-wrap break-all"
+        style={expansionStyle}
       >
         {messages.length === 0 && (
           <span className="text-slate-500 italic">

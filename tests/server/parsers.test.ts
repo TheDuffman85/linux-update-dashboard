@@ -73,13 +73,14 @@ describe("AptParser", () => {
 
   test("get commands", () => {
     const cmds = aptParser.getCheckCommands();
-    expect(cmds).toHaveLength(3);
-    expect(cmds[0]).toContain("apt-get");
-    expect(cmds[0]).toContain("update");
+    expect(cmds).toHaveLength(4);
     expect(cmds[0]).toContain("dpkg --audit");
-    expect(cmds[0]).toContain("sudo -S -p '' sh \"$apt_check_script\"");
-    expect(cmds[0]).toContain("LUDASH_APT_CHECK");
-    expect(cmds[2]).toContain("Debug::NoLocking=1");
+    expect(cmds[0]).not.toContain("sudo -S -p '' -v");
+    expect(cmds[0]).toContain("sudo -S -p '' dpkg --audit");
+    expect(cmds[1]).toContain("sudo -S -p '' apt-get -o DPkg::Lock::Timeout=60 update -qq");
+    expect(cmds[0]).not.toContain("sudo -S -p '' sh \"$apt_check_script\"");
+    expect(cmds[0]).not.toContain("LUDASH_APT_CHECK");
+    expect(cmds[3]).toContain("Debug::NoLocking=1");
   });
 
   test("upgrade commands", () => {
@@ -162,9 +163,9 @@ describe("DnfParser", () => {
   });
 
   test("can opt into automatic signing-key acceptance during checks", () => {
-    expect(
-      dnfParser.getCheckCommands({ autoAcceptNewSigningKeysOnCheck: true })[0],
-    ).toContain("dnf -y check-update --quiet");
+    const command = dnfParser.getCheckCommands({ autoAcceptNewSigningKeysOnCheck: true })[0];
+    expect(command).toContain("sudo -S -p '' dnf -y check-update --quiet");
+    expect(command).toContain("dnf -y check-update --quiet");
   });
 
   test("keeps automatic EULA acceptance disabled by default for upgrades", () => {
@@ -228,9 +229,9 @@ describe("YumParser", () => {
   });
 
   test("can opt into automatic signing-key acceptance during checks", () => {
-    expect(
-      yumParser.getCheckCommands({ autoAcceptNewSigningKeysOnCheck: true })[0],
-    ).toContain("yum -y check-update --quiet");
+    const command = yumParser.getCheckCommands({ autoAcceptNewSigningKeysOnCheck: true })[0];
+    expect(command).toContain("sudo -S -p '' yum -y check-update --quiet");
+    expect(command).toContain("yum -y check-update --quiet");
   });
 
   test("keeps automatic EULA acceptance disabled by default for upgrades", () => {

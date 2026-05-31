@@ -84,10 +84,13 @@ export function buildCheckCommand(
 ): string {
   const refreshMetadata = options?.refreshMetadata === true;
   const autoAcceptNewSigningKeys = options?.autoAcceptNewSigningKeys === true;
-  const checkUpdateCommand =
+  const baseCheckUpdateCommand =
     tool === "dnf" && refreshMetadata
-      ? `${tool}${autoAcceptNewSigningKeys ? " -y" : ""} check-update --refresh --quiet 2>&1`
-      : `${tool}${autoAcceptNewSigningKeys ? " -y" : ""} check-update --quiet 2>&1`;
+      ? `${tool}${autoAcceptNewSigningKeys ? " -y" : ""} check-update --refresh --quiet`
+      : `${tool}${autoAcceptNewSigningKeys ? " -y" : ""} check-update --quiet`;
+  const checkUpdateCommand = autoAcceptNewSigningKeys
+    ? `${sudo(baseCheckUpdateCommand)} 2>&1`
+    : `${baseCheckUpdateCommand} 2>&1`;
   // 1. Capture check-update output and its exit code
   // 2. Echo the update list for parsing
   // 3. Echo a separator, then query rpm for installed versions

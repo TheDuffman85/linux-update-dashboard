@@ -75,4 +75,73 @@ describe("ActivityStepViewer", () => {
     expect(html).toContain("script-code");
     expect(html).toContain("max-h-64 overflow-y-auto");
   });
+
+  test("shows connection timing outside the command step tabs", () => {
+    const html = renderToStaticMarkup(
+      <ActivityStepViewer
+        viewerId="connect-step"
+        steps={[
+          {
+            ...baseStep,
+            label: "Connect over SSH",
+            pkgManager: "system",
+            command: "",
+            output: null,
+            startedAt: "2026-03-18 10:00:00",
+            completedAt: "2026-03-18 10:00:37",
+          },
+          {
+            ...baseStep,
+            label: "Pre-reboot safety checks",
+            pkgManager: "system",
+            startedAt: "2026-03-18 10:00:37",
+            completedAt: "2026-03-18 10:00:37",
+          },
+          {
+            ...baseStep,
+            label: "Reboot system",
+            pkgManager: "system",
+            command: "reboot",
+            startedAt: "2026-03-18 10:00:37",
+            completedAt: "2026-03-18 10:00:38",
+          },
+        ]}
+      />
+    );
+
+    expect(html).toContain("SSH connected in 37s");
+    expect(html).toContain("1/2 system");
+    expect(html).toContain("2/2 system");
+    expect(html).not.toContain("1/3 system");
+  });
+
+  test("opens failed history on the failed step", () => {
+    const html = renderToStaticMarkup(
+      <ActivityStepViewer
+        viewerId="failed-step"
+        steps={[
+          {
+            ...baseStep,
+            label: "Pre-reboot safety checks",
+            pkgManager: "system",
+            command: "echo precheck",
+            output: null,
+          },
+          {
+            ...baseStep,
+            label: "Reboot system",
+            pkgManager: "system",
+            command: "reboot",
+            output: null,
+            error: "Reboot failed: Failed to talk to init daemon.",
+            status: "failed",
+          },
+        ]}
+      />
+    );
+
+    expect(html).toContain("Reboot failed: Failed to talk to init daemon.");
+    expect(html).toContain("reboot");
+    expect(html).not.toContain("echo precheck</code>");
+  });
 });

@@ -830,6 +830,10 @@ async function checkUpdatesUnlocked(
   let pkgManagers: string[] = [];
   try {
     throwIfActiveOperationCancelled(systemId);
+    publishSshConnectionStep(
+      pub,
+      getStoredActiveOperation(systemId)?.startedAt ?? getCurrentTimestamp(),
+    );
     conn = await sshManager.connect(system as Record<string, unknown>, {
       systemId,
     });
@@ -1136,6 +1140,10 @@ export async function solvePackageManagerIssue(
       let conn;
       try {
         throwIfActiveOperationCancelled(systemId);
+        publishSshConnectionStep(
+          (msg) => outputStream.publish(systemId, msg),
+          getStoredActiveOperation(systemId)?.startedAt ?? getCurrentTimestamp(),
+        );
         conn = await sshManager.connect(system as Record<string, unknown>, { systemId });
         throwIfActiveOperationCancelled(systemId);
 
@@ -1306,6 +1314,10 @@ export async function applyUpgradeAll(
     try {
       throwIfActiveOperationCancelled(systemId);
       if (!options?.resume) {
+        publishSshConnectionStep(
+          (msg) => outputStream.publish(systemId, msg),
+          getStoredActiveOperation(systemId)?.startedAt ?? getCurrentTimestamp(),
+        );
         conn = await sshManager.connect(system as Record<string, unknown>, {
           systemId,
         });
@@ -1592,6 +1604,10 @@ export async function applyFullUpgradeAll(
     let conn;
     try {
       throwIfActiveOperationCancelled(systemId);
+      publishSshConnectionStep(
+        (msg) => outputStream.publish(systemId, msg),
+        getStoredActiveOperation(systemId)?.startedAt ?? getCurrentTimestamp(),
+      );
       conn = await sshManager.connect(system as Record<string, unknown>, {
         systemId,
       });
@@ -1831,6 +1847,10 @@ export async function applyUpgradePackages(
 
       try {
         throwIfActiveOperationCancelled(systemId);
+        publishSshConnectionStep(
+          (msg) => outputStream.publish(systemId, msg),
+          getStoredActiveOperation(systemId)?.startedAt ?? getCurrentTimestamp(),
+        );
         conn = await sshManager.connect(system as Record<string, unknown>, {
           systemId,
         });
@@ -2024,6 +2044,21 @@ export async function applyUpgradePackages(
 }
 
 const PRE_REBOOT_SAFETY_CHECKS_LABEL = "Pre-reboot safety checks";
+const SSH_CONNECT_STEP_LABEL = "Connect over SSH";
+
+function publishSshConnectionStep(
+  publish: (msg: outputStream.WsMessage) => void,
+  startedAt: string,
+  pkgManager = "system",
+): void {
+  publish({
+    type: "started",
+    command: "",
+    pkgManager,
+    startedAt,
+  });
+  publish({ type: "phase", phase: SSH_CONNECT_STEP_LABEL });
+}
 
 function isProxmoxBackupGuardStep(step: { label: string | null }): boolean {
   return step.label === PRE_REBOOT_SAFETY_CHECKS_LABEL;
@@ -2063,12 +2098,25 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
         historyStartedAt,
       );
       const activitySteps: ActivityStep[] = [];
+      let connectionStep: ActivityStep | null = null;
+      const getStoredSteps = () => connectionStep ? [connectionStep, ...activitySteps] : activitySteps;
 
       let conn;
       try {
         throwIfActiveOperationCancelled(systemId);
+        publishSshConnectionStep((msg) => outputStream.publish(systemId, msg), historyStartedAt);
         conn = await sshManager.connect(system as Record<string, unknown>, {
           systemId,
+        });
+        connectionStep = createActivityStep({
+          label: SSH_CONNECT_STEP_LABEL,
+          pkgManager: "system",
+          command: "",
+          output: null,
+          error: null,
+          status: "success",
+          startedAt: historyStartedAt,
+          completedAt: getCurrentTimestamp(),
         });
         throwIfActiveOperationCancelled(systemId);
 
@@ -2100,7 +2148,7 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
               completedAt: stepCompletedAt,
             }));
             finishEntry(histId, "cancelled", {
-              steps: activitySteps,
+              steps: getStoredSteps(),
               error: message,
             });
             outputStream.publish(systemId, { type: "warning", message });
@@ -2124,7 +2172,7 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
               }));
               systemService.markUnreachable(systemId);
               finishEntry(histId, "success", {
-                steps: activitySteps,
+                steps: getStoredSteps(),
                 output: outputText,
               });
               outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
@@ -2146,7 +2194,7 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
               completedAt: stepCompletedAt,
             }));
             finishEntry(histId, "failed", {
-              steps: activitySteps,
+              steps: getStoredSteps(),
               output: combinedOutput,
               error: message,
             });
@@ -2169,16 +2217,27 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
 
         systemService.markUnreachable(systemId);
         finishEntry(histId, "success", {
-          steps: activitySteps,
+          steps: getStoredSteps(),
           output: "Reboot command sent",
         });
         outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
         return { success: true, message: "Reboot command sent" };
       } catch (e) {
         if (isOperationCancelledError(e)) {
-          const step = steps[Math.min(activitySteps.length, steps.length - 1)];
           const stepCompletedAt = getCurrentTimestamp();
-          if (step) {
+          const step = conn ? steps[Math.min(activitySteps.length, steps.length - 1)] : null;
+          if (!conn && !connectionStep) {
+            connectionStep = createActivityStep({
+              label: SSH_CONNECT_STEP_LABEL,
+              pkgManager: "system",
+              command: "",
+              output: null,
+              error: e.message,
+              status: "cancelled",
+              startedAt: historyStartedAt,
+              completedAt: stepCompletedAt,
+            });
+          } else if (step) {
             activitySteps.push(createActivityStep({
               label: step.label || null,
               pkgManager: "system",
@@ -2191,7 +2250,7 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
             }));
           }
           finishEntry(histId, "cancelled", {
-            steps: activitySteps,
+            steps: getStoredSteps(),
             error: e.message,
           });
           outputStream.publish(systemId, { type: "warning", message: e.message });
@@ -2200,6 +2259,26 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
         }
         const errMsg = String(e);
         const stepCompletedAt = getCurrentTimestamp();
+        if (!conn) {
+          const message = `Reboot failed: ${errMsg}`;
+          connectionStep = createActivityStep({
+            label: SSH_CONNECT_STEP_LABEL,
+            pkgManager: "system",
+            command: "",
+            output: null,
+            error: message,
+            status: "failed",
+            startedAt: historyStartedAt,
+            completedAt: stepCompletedAt,
+          });
+          finishEntry(histId, "failed", {
+            steps: getStoredSteps(),
+            error: message,
+          });
+          outputStream.publish(systemId, { type: "error", message });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, message };
+        }
         const currentStep = steps[Math.min(activitySteps.length, steps.length - 1)];
         if (currentStep && isProxmoxBackupGuardStep(currentStep)) {
           const message = "Reboot blocked: could not verify Proxmox backup activity.";
@@ -2214,7 +2293,7 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
             completedAt: stepCompletedAt,
           }));
           finishEntry(histId, "failed", {
-            steps: activitySteps,
+            steps: getStoredSteps(),
             error: message,
           });
           outputStream.publish(systemId, { type: "error", message });
@@ -2236,7 +2315,7 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
           }
           systemService.markUnreachable(systemId);
           finishEntry(histId, "success", {
-            steps: activitySteps,
+            steps: getStoredSteps(),
             output: "Reboot command sent (connection closed)",
           });
           outputStream.publish(systemId, { type: "done", success: true, completedAt: getCurrentTimestamp() });
@@ -2255,7 +2334,7 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
           }));
         }
         finishEntry(histId, "failed", {
-          steps: activitySteps,
+          steps: getStoredSteps(),
           error: errMsg,
         });
         outputStream.publish(systemId, { type: "error", message: errMsg });

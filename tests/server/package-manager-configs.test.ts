@@ -130,5 +130,9 @@ describe("package-manager configs", () => {
     ], [
       { name: "otherpm", configEntries: [{ key: "channel", defaultValue: "edge" }] },
     ])).toBe("Custom config key channel is already used by otherpm");
+
+    expect(validateCustomPackageManagerConfigEntries([
+      { key: "autoAcceptEulaOnUpgradePrefix", defaultValue: "unsafe" },
+    ], [], "dnf")).toBe("Custom config key autoAcceptEulaOnUpgradePrefix collides with a built-in dnf config key");
   });
 });

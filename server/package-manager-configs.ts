@@ -70,8 +70,19 @@ const UNSUPPORTED_CONFIG_MANAGERS = new Set(["snap"]);
 const CUSTOM_CONFIG_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 const BUILTIN_CONFIG_KEYS: Record<string, string[]> = {
   apt: ["defaultUpgradeMode", "autoHideKeptBackUpdates"],
-  dnf: ["defaultUpgradeMode", "refreshMetadataOnCheck", "autoAcceptNewSigningKeysOnCheck", "autoAcceptEulaOnUpgrade"],
-  yum: ["autoAcceptNewSigningKeysOnCheck", "autoAcceptEulaOnUpgrade"],
+  dnf: [
+    "defaultUpgradeMode",
+    "refreshMetadataOnCheck",
+    "autoAcceptNewSigningKeysOnCheck",
+    "autoAcceptEulaOnUpgrade",
+    "refreshMetadataOnCheckArg",
+    "autoAcceptEulaOnUpgradePrefix",
+  ],
+  yum: [
+    "autoAcceptNewSigningKeysOnCheck",
+    "autoAcceptEulaOnUpgrade",
+    "autoAcceptEulaOnUpgradePrefix",
+  ],
   pacman: ["refreshDatabasesOnCheck"],
   apk: ["refreshIndexesOnCheck"],
   flatpak: ["refreshAppstreamOnCheck"],

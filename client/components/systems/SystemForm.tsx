@@ -1175,19 +1175,19 @@ export function SystemForm({
         )}
 
         {(scriptsData?.scripts.length ?? 0) > 0 && (
-          <section className="rounded-xl border border-border bg-white dark:bg-slate-900">
+          <section className="space-y-4 rounded-lg border border-border p-3">
             <button
               type="button"
               aria-expanded={scriptsOpen}
               aria-controls="system-script-overrides"
               onClick={() => setScriptsOpen((open) => !open)}
-              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+              className="flex w-full items-center justify-between gap-3 text-left"
             >
               <div>
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">
                   Scripts
                 </h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                <p className="mt-1 text-xs text-slate-400">
                   Optional overrides; Standard uses the detected package manager defaults.
                 </p>
               </div>
@@ -1203,7 +1203,7 @@ export function SystemForm({
             </button>
 
             {scriptsOpen && (
-              <div id="system-script-overrides" className="space-y-4 border-t border-border px-4 pb-4 pt-3">
+              <div id="system-script-overrides" className="space-y-4">
                 <div className="rounded-lg border border-border p-3 space-y-3">
                   <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
                     System Operations

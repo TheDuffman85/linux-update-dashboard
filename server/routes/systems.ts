@@ -1007,7 +1007,10 @@ systems.post("/:id/reboot", async (c) => {
   if (result.blocked) {
     return c.json({ error: result.message, success: false, message: result.message, blocked: true }, 409);
   }
-  return c.json(result, result.success ? 200 : 500);
+  if (!result.success) {
+    return c.json({ ...result, error: result.message }, 500);
+  }
+  return c.json(result);
 });
 
 systems.put("/:id/script-overrides", async (c) => {

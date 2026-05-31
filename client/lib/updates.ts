@@ -1,9 +1,39 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch, pollJob } from "./client";
+import type { ToastType } from "../context/ToastContext";
 
 export type DefaultUpgradeModeOverride = "standard" | "aggressive";
+export type CheckUpdatesResult = {
+  updateCount: number;
+  securityCount?: number;
+  keptBackCount?: number;
+  status?: "success" | "warning" | "failed" | "cancelled";
+  error?: string | null;
+};
 export const LOST_UPGRADE_JOB_RECOVERY_OUTPUT =
   "The backend restarted before the job result could be read. Dashboard state was resynced from the server.";
+
+export function getCheckResultToast(data: CheckUpdatesResult): { message: string; type: ToastType } {
+  if (data.status === "cancelled") {
+    return { message: "Check cancelled", type: "info" };
+  }
+  if (data.status === "failed") {
+    return {
+      message: data.error ? `Check failed: ${data.error}` : "Check failed",
+      type: "danger",
+    };
+  }
+  if (data.status === "warning") {
+    return {
+      message: `Check completed with warnings: ${data.updateCount} update${data.updateCount !== 1 ? "s" : ""} found`,
+      type: "info",
+    };
+  }
+  return {
+    message: `Check complete: ${data.updateCount} update${data.updateCount !== 1 ? "s" : ""} found`,
+    type: data.updateCount === 0 ? "success" : "info",
+  };
+}
 
 async function invalidateSystemOperationQueries(qc: QueryClient, systemId: number): Promise<void> {
   await qc.invalidateQueries({ queryKey: ["system", systemId] });
@@ -32,7 +62,7 @@ export function useCheckUpdates() {
         `/systems/${systemId}/check`,
         { method: "POST" }
       );
-      return pollJob<{ updateCount: number; status?: string }>(jobId);
+      return pollJob<CheckUpdatesResult>(jobId);
     },
     onSettled: async (_data, _error, systemId) => {
       if (systemId !== undefined) {

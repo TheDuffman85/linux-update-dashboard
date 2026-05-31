@@ -14,7 +14,7 @@ import {
   useSolvePackageIssue,
   useDismissPackageIssue,
 } from "../lib/systems";
-import { useCancelOperation, useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
+import { getCheckResultToast, useCancelOperation, useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
@@ -516,6 +516,7 @@ type ActivityDisplayRow = {
   startedAt: string | null;
   completedAt: string | null;
   isRunning: boolean;
+  isConnecting: boolean;
   useLiveDetails: boolean;
   liveSteps: ActivityStep[];
   packageName?: string;
@@ -735,9 +736,17 @@ function createHistoryDisplayRow(
     startedAt: historyEntry.startedAt,
     completedAt: historyEntry.completedAt,
     isRunning: historyEntry.status === "started",
+    isConnecting: isActivityConnecting(liveSteps),
     useLiveDetails: historyEntry.status === "started" && liveSteps.length > 0,
     liveSteps,
   };
+}
+
+function isActivityConnecting(steps: ActivityStep[]): boolean {
+  if (!steps.length) return false;
+  const connectionStep = steps.find(isSshConnectionStep);
+  if (!connectionStep || connectionStep.status !== "started" || connectionStep.completedAt) return false;
+  return steps.every(isSshConnectionStep);
 }
 
 export function buildActivityDisplayRows({
@@ -827,6 +836,7 @@ export function buildActivityDisplayRows({
         startedAt: liveStartedAt,
         completedAt: lastDoneMessage?.completedAt ?? null,
         isRunning: liveStatus === "started",
+        isConnecting: isActivityConnecting(liveSteps),
         useLiveDetails: true,
         liveSteps,
         packageName: livePackageNames[0] ?? currentSession?.packageName,
@@ -879,6 +889,7 @@ function StepPanel({
         onScroll={followContentKey ? handleScroll : undefined}
         className={className}
         successMessage={`Copied ${title.toLowerCase()}`}
+        expandable
       >
         {children}
       </CopyableCodeBlock>
@@ -984,6 +995,40 @@ function LegacyActivityDetails({
   );
 }
 
+function isSshConnectionStep(step: ActivityStep): boolean {
+  return step.label === "Connect over SSH" && step.command.trim() === "";
+}
+
+function SshConnectionSummary({ step, nowMs }: { step: ActivityStep; nowMs: number }) {
+  const runtime = formatDurationBetween(step.startedAt, step.completedAt, nowMs);
+  const isConnecting = step.status === "started" && !step.completedAt;
+  const text = isConnecting
+    ? runtime
+      ? `Connecting over SSH for ${runtime}`
+      : "Connecting over SSH"
+    : runtime
+      ? `SSH connected in ${runtime}`
+      : "SSH connected";
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      <Badge variant={getStatusVariant(step.status)} small>
+        {isConnecting ? "connecting" : step.status}
+      </Badge>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function getDefaultActivityStepIndex(steps: ActivityStep[], defaultToLastStep: boolean): number {
+  if (steps.length === 0) return 0;
+  if (defaultToLastStep) return steps.length - 1;
+  const problemIndex = steps.findIndex((step) =>
+    step.status === "failed" || step.status === "cancelled" || step.status === "warning"
+  );
+  return problemIndex >= 0 ? problemIndex : 0;
+}
+
 export function ActivityStepViewer({
   viewerId,
   steps,
@@ -997,10 +1042,12 @@ export function ActivityStepViewer({
   isLive?: boolean;
   phase?: string | null;
 }) {
+  const connectionStep = steps.find(isSshConnectionStep);
+  const visibleSteps = steps.filter((step) => !isSshConnectionStep(step));
   const [selectedIndex, setSelectedIndex] = useState(() =>
-    defaultToLastStep && steps.length > 0 ? steps.length - 1 : 0
+    getDefaultActivityStepIndex(visibleSteps, defaultToLastStep)
   );
-  const prevStepCountRef = useRef(steps.length);
+  const prevStepCountRef = useRef(visibleSteps.length);
   const nowMs = useNowTicker(steps.some((step) => !!step.startedAt && !step.completedAt));
 
   useEffect(() => {
@@ -1009,30 +1056,35 @@ export function ActivityStepViewer({
       defaultToLastStep &&
       prevCount > 0 &&
       selectedIndex === prevCount - 1 &&
-      steps.length > prevCount;
+      visibleSteps.length > prevCount;
 
-    if (steps.length === 0) {
+    if (visibleSteps.length === 0) {
       setSelectedIndex(0);
     } else if (shouldFollowNewest) {
-      setSelectedIndex(steps.length - 1);
-    } else if (selectedIndex >= steps.length) {
-      setSelectedIndex(steps.length - 1);
+      setSelectedIndex(visibleSteps.length - 1);
+    } else if (selectedIndex >= visibleSteps.length) {
+      setSelectedIndex(visibleSteps.length - 1);
     }
 
-    prevStepCountRef.current = steps.length;
-  }, [defaultToLastStep, selectedIndex, steps.length]);
+    prevStepCountRef.current = visibleSteps.length;
+  }, [defaultToLastStep, selectedIndex, visibleSteps.length]);
 
-  const selectedStep = steps[selectedIndex];
+  const selectedStep = visibleSteps[selectedIndex];
   if (!selectedStep) {
     return (
-      <div className="text-xs text-slate-500 italic">
-        Waiting for output…
+      <div className="space-y-2">
+        {connectionStep && (
+          <SshConnectionSummary step={connectionStep} nowMs={nowMs} />
+        )}
+        <div className="text-xs text-slate-500 italic">
+          Waiting for output…
+        </div>
       </div>
     );
   }
 
   const isGlobalPhase = phase === "reconnecting" || phase === "rechecking";
-  const showStepTabs = steps.length > 1;
+  const showStepTabs = visibleSteps.length > 1;
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -1049,13 +1101,17 @@ export function ActivityStepViewer({
         )}
       </div>
 
+      {connectionStep && (
+        <SshConnectionSummary step={connectionStep} nowMs={nowMs} />
+      )}
+
       {showStepTabs && (
         <div
           className="flex gap-2 overflow-x-auto pb-1"
           role="tablist"
           aria-label="Activity steps"
         >
-          {steps.map((step, index) => {
+          {visibleSteps.map((step, index) => {
             const isSelected = index === selectedIndex;
             const stepRuntime = formatDurationBetween(step.startedAt, step.completedAt, nowMs);
             return (
@@ -1075,7 +1131,7 @@ export function ActivityStepViewer({
                 }`}
               >
                 <span className="block text-[10px] uppercase tracking-wide opacity-70">
-                  {index + 1}/{steps.length} {step.pkgManager}
+                  {index + 1}/{visibleSteps.length} {step.pkgManager}
                 </span>
                 <span className="block text-xs font-medium">
                   {getActivityStepLabel(step, index)}
@@ -1106,7 +1162,9 @@ export function ActivityStepViewer({
           </span>
         </div>
 
-        <ShellCommandPanel command={selectedStep.command} />
+        {selectedStep.command.trim() && (
+          <ShellCommandPanel command={selectedStep.command} />
+        )}
 
         <TerminalOutputPanel
           title="Output"
@@ -1245,6 +1303,10 @@ function HistoryList({
           row.isRunning ? null : row.completedAt,
           nowMs,
         );
+        const activityStateLabel = row.isConnecting ? "connecting" : row.isRunning ? "running" : row.status;
+        const activityRuntime = totalRuntime
+          ? `${row.isConnecting ? "connecting for" : row.isRunning ? "running for" : "completed in"} ${totalRuntime}`
+          : null;
         const displaySteps =
           row.useLiveDetails && row.liveSteps.length > 0
             ? row.liveSteps
@@ -1286,7 +1348,9 @@ function HistoryList({
               {!hasDetails && <span className="w-3.5 shrink-0" />}
               <Badge
                 variant={
-                  row.status === "success"
+                  row.isConnecting
+                    ? "info"
+                    : row.status === "success"
                     ? "success"
                     : row.status === "warning"
                       ? "warning"
@@ -1298,7 +1362,7 @@ function HistoryList({
                 }
                 small
               >
-                {row.isRunning ? "running" : row.status}
+                {activityStateLabel}
               </Badge>
               <div className="flex-1 min-w-0">
                 <p className="font-medium">
@@ -1319,7 +1383,7 @@ function HistoryList({
                     {joinMetaParts([
                       `${row.packageCount} update${row.packageCount !== 1 ? "s" : ""} found`,
                       row.pkgManager,
-                      totalRuntime ? `${row.isRunning ? "running for" : "completed in"} ${totalRuntime}` : null,
+                      activityRuntime,
                     ])}
                   </p>
                 )}
@@ -1327,7 +1391,7 @@ function HistoryList({
                   <p className="text-xs text-slate-500">
                     {joinMetaParts([
                       row.pkgManager,
-                      totalRuntime ? `${row.isRunning ? "running for" : "completed in"} ${totalRuntime}` : null,
+                      activityRuntime,
                     ])}
                   </p>
                 )}
@@ -1514,13 +1578,10 @@ export default function SystemDetail() {
   const handleCheck = () => {
     commandOutput.clear();
     checkUpdates.mutate(systemId, {
-      onSuccess: (d) =>
-        addToast(
-          d.status === "cancelled"
-            ? "Check cancelled"
-            : `Check complete: ${d.updateCount} update${d.updateCount !== 1 ? "s" : ""} found`,
-          d.status === "cancelled" ? "info" : d.updateCount === 0 ? "success" : "info"
-        ),
+      onSuccess: (d) => {
+        const toast = getCheckResultToast(d);
+        addToast(toast.message, toast.type);
+      },
       onError: (err) => addToast(err.message, "danger"),
     });
   };

@@ -1,0 +1,65 @@
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build a self-contained APT repo with one pending update so the restricted
+# account can exercise checks and upgrades without depending on upstream repos.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      openssh-server sudo dpkg-dev ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd /opt/localrepo/pool /opt/localrepo/dists/stable/main/binary-amd64 /tmp/pkgbuild
+
+RUN set -eux; \
+    build_pkg() { \
+      pkg_version="$1"; \
+      workdir="/tmp/pkgbuild/least-privilege-app_${pkg_version}"; \
+      mkdir -p "${workdir}/DEBIAN" "${workdir}/usr/share/doc/least-privilege-app"; \
+      printf 'Package: least-privilege-app\nVersion: %s\nSection: misc\nPriority: optional\nArchitecture: amd64\nMaintainer: Linux Update Dashboard <devnull@example.invalid>\nDescription: Test package for restricted sudoers behavior\n' "${pkg_version}" > "${workdir}/DEBIAN/control"; \
+      printf '%s\n' "${pkg_version}" > "${workdir}/usr/share/doc/least-privilege-app/version.txt"; \
+      dpkg-deb --build "${workdir}" "/opt/localrepo/pool/least-privilege-app_${pkg_version}_amd64.deb" >/dev/null; \
+      rm -rf "${workdir}"; \
+    }; \
+    build_pkg 1.0; \
+    build_pkg 2.0; \
+    dpkg -i /opt/localrepo/pool/least-privilege-app_1.0_amd64.deb; \
+    rm -f /opt/localrepo/pool/least-privilege-app_1.0_amd64.deb; \
+    cd /opt/localrepo; \
+    dpkg-scanpackages --arch amd64 pool > dists/stable/main/binary-amd64/Packages; \
+    gzip -kf dists/stable/main/binary-amd64/Packages; \
+    rm -f /etc/apt/sources.list; \
+    rm -f /etc/apt/sources.list.d/*; \
+    printf '%s\n' 'deb [trusted=yes] file:/opt/localrepo stable main' > /etc/apt/sources.list.d/local-least-privilege.list; \
+    apt-get update
+
+# Configure SSH password authentication for the local fixture.
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Keep sudo deliberately narrow: package maintenance is allowed, while an
+# unrelated root command such as `sudo -n true` remains denied.
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    printf '%s\n' \
+      'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 update -qq' \
+      'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 upgrade -y' \
+      'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 full-upgrade -y' \
+      'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 install --only-upgrade -y least-privilege-app' \
+      'testuser ALL=(root) NOPASSWD: /usr/bin/dpkg --audit' \
+      'testuser ALL=(root) NOPASSWD: /usr/bin/dpkg --configure -a' \
+      > /etc/sudoers.d/testuser && \
+    chmod 440 /etc/sudoers.d/testuser && \
+    visudo -cf /etc/sudoers.d/testuser
+
+# Fail the build if the allowlist is accidentally broadened or does not permit
+# the exact APT refresh command used by update checks.
+RUN su - testuser -c "sudo -n dpkg --audit" && \
+    su - testuser -c "sudo -n apt-get -o DPkg::Lock::Timeout=60 update -qq" && \
+    su - testuser -c "! sudo -n true"
+
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

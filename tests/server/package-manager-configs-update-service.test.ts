@@ -103,6 +103,9 @@ describe("update service package manager configs", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
@@ -121,15 +124,15 @@ describe("update service package manager configs", () => {
     await applyUpgradeAll(aptSystemId);
     await applyUpgradeAll(dnfSystemId);
 
-    expect(commands.some((command) => command.includes('upgrade_mode="full-upgrade"'))).toBe(true);
-    expect(commands.some((command) => command.includes('upgrade_command="distro-sync"'))).toBe(true);
+    expect(commands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"))).toBe(true);
+    expect(commands.some((command) => command.includes("dnf distro-sync -y"))).toBe(true);
 
     commands.length = 0;
     await applyUpgradeAll(aptSystemId, { defaultUpgradeModeOverride: "standard" });
     await applyUpgradeAll(dnfSystemId, { defaultUpgradeModeOverride: "standard" });
 
-    expect(commands.some((command) => command.includes('upgrade_mode="upgrade"'))).toBe(true);
-    expect(commands.some((command) => command.includes('upgrade_command="upgrade"'))).toBe(true);
+    expect(commands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 upgrade -y"))).toBe(true);
+    expect(commands.some((command) => command.includes("dnf upgrade -y"))).toBe(true);
   });
 
   test("threads DNF and YUM EULA config into upgrade commands", async () => {
@@ -207,6 +210,9 @@ describe("update service package manager configs", () => {
       if (command === SYSTEM_INFO_CMD) {
         return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
       }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
       if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
@@ -221,8 +227,7 @@ describe("update service package manager configs", () => {
 
     await applyFullUpgradeAll(systemId);
 
-    expect(commands.some((command) => command.includes('upgrade_mode="upgrade"'))).toBe(true);
-    expect(commands.some((command) => command.includes('then upgrade_mode="full-upgrade"; fi'))).toBe(true);
+    expect(commands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"))).toBe(true);
   });
 
   test("checkUpdates threads package-manager refresh config into commands", async () => {
@@ -306,15 +311,15 @@ describe("update service package manager configs", () => {
     };
 
     await checkUpdates(dnfSystemId);
-    expect(commands.some((command) => command.includes('if [ "true" = "true" ]; then check_args="$check_args --refresh"; fi'))).toBe(true);
+    expect(commands.some((command) => command.includes("dnf check-update --refresh --quiet"))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(dnfAutoAcceptSystemId);
-    expect(commands.some((command) => command.includes('if [ "true" = "true" ]; then check_args="$check_args -y"; fi'))).toBe(true);
+    expect(commands.some((command) => command.includes("sudo -S -p '' dnf -y check-update --quiet"))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(yumSystemId);
-    expect(commands.some((command) => command.includes('if [ "true" = "true" ]; then check_args="$check_args -y"; fi'))).toBe(true);
+    expect(commands.some((command) => command.includes("sudo -S -p '' yum -y check-update --quiet"))).toBe(true);
 
     commands.length = 0;
     await checkUpdates(pacmanSystemId);

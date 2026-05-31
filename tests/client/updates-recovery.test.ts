@@ -2,8 +2,29 @@ import { describe, expect, test, vi } from "vitest";
 import type { QueryClient } from "@tanstack/react-query";
 import {
   LOST_UPGRADE_JOB_RECOVERY_OUTPUT,
+  getCheckResultToast,
   recoverLostUpgradeJob,
 } from "../../client/lib/updates";
+
+describe("getCheckResultToast", () => {
+  test("reports failed checks as danger toasts", () => {
+    expect(getCheckResultToast({
+      updateCount: 0,
+      status: "failed",
+      error: "HostKeyVerificationError: SSH host key approval required",
+    })).toEqual({
+      message: "Check failed: HostKeyVerificationError: SSH host key approval required",
+      type: "danger",
+    });
+  });
+
+  test("keeps successful zero-update checks green", () => {
+    expect(getCheckResultToast({ updateCount: 0, status: "success" })).toEqual({
+      message: "Check complete: 0 updates found",
+      type: "success",
+    });
+  });
+});
 
 describe("recoverLostUpgradeJob", () => {
   test("invalidates operation queries and returns a warning result", async () => {
