@@ -728,6 +728,28 @@ Recommended sudoers posture:
 
 Treat the generated list as a command reference when writing `/etc/sudoers.d` rules: use each executable's absolute path and escape sudoers syntax characters in arguments. For example, the APT lock option is written as `DPkg\:\:Lock\:\:Timeout=60` in a sudoers file. The [`ludash-test-apt-least-privilege`](docker/test-systems/Dockerfile.apt-least-privilege) fixture contains a working APT example.
 
+Example `/etc/sudoers.d/updater-updater` file for an APT host using a dedicated `updater` SSH account:
+
+```sudoers
+Defaults:updater !requiretty
+
+updater ALL=(root:root) NOPASSWD: /usr/bin/dpkg --audit
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 update -qq
+updater ALL=(root:root) NOPASSWD: /usr/bin/dpkg --configure -a
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 upgrade -y
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 full-upgrade -y
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 install --only-upgrade -y *
+updater ALL=(root:root) NOPASSWD: /usr/bin/pvesh get /cluster/tasks --output-format json
+updater ALL=(root:root) NOPASSWD: /usr/sbin/reboot
+```
+
+The `pvesh` entry is only needed for Proxmox VE hosts. The trailing `*` entry enables selected-package upgrades; omit it if the dashboard should only run bulk upgrades. After creating the file, set its permissions and validate the syntax:
+
+```bash
+chmod 440 /etc/sudoers.d/updater-updater
+visudo -cf /etc/sudoers.d/updater-updater
+```
+
 Package-manager upgrade rights are still privileged maintenance rights: package post-install scripts run as root. The goal is to limit the dashboard account to package maintenance, not to make package maintenance unprivileged.
 
 ## Project Structure
