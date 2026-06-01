@@ -22,6 +22,7 @@ import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
 import type {
   CachedUpdate,
+  InstalledPackage,
   HiddenUpdate,
   HistoryEntry,
   ActiveOperation,
@@ -222,6 +223,110 @@ function HiddenUpdatesSection({
             ))}
           </tbody>
         </table>
+      </div>
+    </details>
+  );
+}
+
+export function filterInstalledPackages(
+  installedPackages: InstalledPackage[],
+  search: string,
+): InstalledPackage[] {
+  const query = search.trim().toLowerCase();
+  if (!query) return installedPackages;
+  return installedPackages.filter((pkg) =>
+    [
+      pkg.packageName,
+      pkg.currentVersion,
+      pkg.pkgManager,
+      pkg.architecture,
+    ].some((value) => value?.toLowerCase().includes(query))
+  );
+}
+
+export function InstalledPackagesSection({
+  installedPackages,
+  cacheTimestamp,
+  isStale,
+}: {
+  installedPackages: InstalledPackage[];
+  cacheTimestamp?: string | null;
+  isStale?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const filteredPackages = filterInstalledPackages(installedPackages, search);
+
+  return (
+    <details className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
+      <summary className="px-4 py-3 flex items-center justify-between cursor-pointer select-none">
+        <span className="text-sm font-semibold">
+          Installed Packages
+          <Badge variant="muted" small>{installedPackages.length}</Badge>
+        </span>
+        {cacheTimestamp && <AgoLabel timestamp={cacheTimestamp} stale={isStale} />}
+      </summary>
+      <div className="border-t border-border">
+        {installedPackages.length === 0 ? (
+          <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
+            No installed package snapshot collected. Run Refresh to collect one.
+          </div>
+        ) : (
+          <>
+            <div className="p-4 border-b border-border">
+              <div className="relative w-full max-w-md">
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search installed packages"
+                  aria-label="Search installed packages"
+                  className="w-full px-3 py-2 pr-9 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    aria-label="Clear installed package search"
+                    title="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+            {filteredPackages.length === 0 ? (
+              <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
+                No installed packages match your search.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
+                      <th className="px-2 sm:px-4 py-2">Package</th>
+                      <th className="px-2 sm:px-4 py-2">Installed Version</th>
+                      <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
+                      <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Architecture</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPackages.map((pkg) => (
+                      <tr key={pkg.id} className="border-b border-border last:border-0">
+                        <td className="px-2 sm:px-4 py-2 break-all">{pkg.packageName}</td>
+                        <td className="px-2 sm:px-4 py-2 font-mono text-xs break-all">{pkg.currentVersion}</td>
+                        <td className="px-2 sm:px-4 py-2 hidden md:table-cell text-slate-500">{pkg.pkgManager}</td>
+                        <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500">{pkg.architecture || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </details>
   );
@@ -1549,7 +1654,7 @@ export default function SystemDetail() {
     );
   }
 
-  const { system, updates, hiddenUpdates, packageIssues, history } = data;
+  const { system, updates, installedPackages, hiddenUpdates, packageIssues, history } = data;
   const visiblePackageIssues = getVisiblePackageIssuesForCurrentCheck(packageIssues, system.lastCheck);
   const selectionBusy = upgrading || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
@@ -2029,6 +2134,12 @@ export default function SystemDetail() {
           </div>
         ) : null}
       </div>
+
+      <InstalledPackagesSection
+        installedPackages={installedPackages}
+        cacheTimestamp={system.cacheTimestamp}
+        isStale={system.isStale}
+      />
 
       <HiddenUpdatesSection
         hiddenUpdates={hiddenUpdates}

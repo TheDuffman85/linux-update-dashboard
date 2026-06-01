@@ -17,6 +17,7 @@ export type PotentialCommandCategory =
   | "detection"
   | "system_info"
   | "check"
+  | "list_installed_packages"
   | "repair_issue"
   | "upgrade_all"
   | "full_upgrade_all"
@@ -304,6 +305,23 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         });
       }
 
+      const installedPackageSteps = resolveRuntimeSteps({
+        systemId,
+        operation: "list_installed_packages",
+        pkgManager: manager,
+        pkgManagerConfig: config,
+      });
+      for (const [index, step] of installedPackageSteps.entries()) {
+        exact.push({
+          id: `list-installed-packages:${manager}:${index}`,
+          category: "list_installed_packages",
+          label: step.label || `List installed ${managerLabel(manager)} packages`,
+          purpose: `Lists installed ${managerLabel(manager)} packages and their current versions`,
+          pkgManager: manager,
+          command: normalizeCommandTemplate(step.command),
+        });
+      }
+
       const upgradeAll = resolveRuntimeSteps({
         systemId,
         operation: "upgrade_all",
@@ -398,6 +416,18 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         purpose: `Runs the package manager issue repair action for ${managerLabel(manager)}`,
         pkgManager: manager,
         command: normalizeCommandTemplate(repairIssue.command),
+      });
+    }
+
+    const installedPackageSteps = getBuiltinSteps("list_installed_packages", manager, { config });
+    for (const [index, step] of installedPackageSteps.entries()) {
+      exact.push({
+        id: `list-installed-packages:${manager}:${index}`,
+        category: "list_installed_packages",
+        label: step.label || `List installed ${managerLabel(manager)} packages`,
+        purpose: `Lists installed ${managerLabel(manager)} packages and their current versions`,
+        pkgManager: manager,
+        command: normalizeCommandTemplate(step.command),
       });
     }
 

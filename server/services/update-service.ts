@@ -8,6 +8,7 @@ import { sudo, validatePackageName } from "../ssh/parsers/types";
 import { getDnfLikeEulaPromptMessage, hasDnfLikeEulaPrompt } from "../ssh/parsers/dnf";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
+import * as installedPackageService from "./installed-package-service";
 import * as packageIssueService from "./package-manager-issue-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
@@ -39,6 +40,7 @@ import {
   isCustomPackageManager,
   listPackageManagerDefinitions,
   parseUpdatesWithScript,
+  parseInstalledPackagesWithScript,
   resolveRuntimeSteps,
   resolveScript,
 } from "./script-service";
@@ -860,7 +862,10 @@ async function checkUpdatesUnlocked(
       pkgManagers = systemService.getActivePkgManagers(system);
     }
 
-    if (!pkgManagers.length) return [];
+    if (!pkgManagers.length) {
+      installedPackageService.pruneInstalledPackagesForInactiveManagers(systemId, []);
+      return [];
+    }
 
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
 
@@ -1001,6 +1006,110 @@ async function checkUpdatesUnlocked(
         });
         pub({ type: "error", message: errorText });
       }
+
+      throwIfActiveOperationCancelled(systemId);
+      const installedPackageScript = resolveScript(systemId, "list_installed_packages", pmName);
+      const installedPackageSteps = resolveRuntimeSteps({
+        systemId,
+        operation: "list_installed_packages",
+        pkgManager: pmName,
+        pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+      });
+      if (!installedPackageScript || installedPackageSteps.length === 0) continue;
+
+      let lastInventoryStepIndex: number | null = null;
+      try {
+        const commandResults: CheckCommandResult[] = [];
+        const activityStepIndexes: number[] = [];
+        for (const step of installedPackageSteps) {
+          throwIfActiveOperationCancelled(systemId);
+          const command = step.command;
+          const label = step.label || `Listing installed ${pmName} packages`;
+          const stepStartedAt = getCurrentTimestamp();
+          allCommands.push(command);
+          pub({ type: "started", command, pkgManager: pmName, startedAt: stepStartedAt });
+          pub({ type: "phase", phase: label });
+          const result = await sshManager.runCommand(
+            conn,
+            command,
+            undefined,
+            sudoPassword,
+            undefined,
+            signal,
+          );
+          const stepCompletedAt = getCurrentTimestamp();
+          if (isCancelledResult(result.exitCode)) {
+            allSteps.push(createActivityStep({
+              label,
+              pkgManager: pmName,
+              command,
+              output: null,
+              error: "Operation cancelled",
+              status: "cancelled",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }));
+            throw createCancelledError();
+          }
+          const errorMessage = result.exitCode === 0
+            ? null
+            : getCustomCheckErrorMessage(
+                installedPackageScript.parserConfig,
+                result.stdout,
+                result.stderr,
+                result.exitCode,
+              );
+          commandResults.push({
+            command,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          });
+          activityStepIndexes.push(allSteps.length);
+          lastInventoryStepIndex = allSteps.length;
+          allSteps.push(createActivityStep({
+            label,
+            pkgManager: pmName,
+            command,
+            output: null,
+            error: errorMessage,
+            status: errorMessage ? "failed" : "success",
+            startedAt: stepStartedAt,
+            completedAt: stepCompletedAt,
+          }));
+          if (errorMessage) throw new Error(errorMessage);
+        }
+
+        const installedPackages = parseInstalledPackagesWithScript(
+          pmName,
+          installedPackageScript,
+          commandResults,
+        );
+        installedPackageService.replaceInstalledPackagesForManager(
+          systemId,
+          pmName,
+          installedPackages,
+        );
+        const lastActivityStepIndex = activityStepIndexes.at(-1);
+        if (lastActivityStepIndex !== undefined) {
+          allSteps[lastActivityStepIndex].output =
+            `Collected ${installedPackages.length} installed package${installedPackages.length === 1 ? "" : "s"}`;
+        }
+      } catch (e) {
+        if (isOperationCancelledError(e)) throw e;
+        const errorText = e instanceof Error ? e.message : String(e);
+        if (lastInventoryStepIndex !== null && allSteps[lastInventoryStepIndex].status === "success") {
+          allSteps[lastInventoryStepIndex].status = "warning";
+          allSteps[lastInventoryStepIndex].error = errorText;
+        }
+        checkErrors.push(`[${pmName} installed packages] ${errorText}`);
+        logger.warn("Installed package collection failed", {
+          systemId,
+          pkgManager: pmName,
+          error: sanitizeOutput(errorText),
+        });
+        pub({ type: "warning", message: `Installed package inventory: ${errorText}` });
+      }
     }
   } catch (e) {
     if (isOperationCancelledError(e)) {
@@ -1032,6 +1141,8 @@ async function checkUpdatesUnlocked(
   } finally {
     if (conn) sshManager.disconnect(conn);
   }
+
+  installedPackageService.pruneInstalledPackagesForInactiveManagers(systemId, pkgManagers);
 
   // Store in cache
   cacheService.invalidateCache(systemId);

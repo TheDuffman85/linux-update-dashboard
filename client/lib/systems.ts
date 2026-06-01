@@ -104,6 +104,17 @@ export interface CachedUpdate {
   cachedAt: string;
 }
 
+export interface InstalledPackage {
+  id: number;
+  systemId: number;
+  pkgManager: string;
+  packageName: string;
+  currentVersion: string;
+  architecture: string | null;
+  repository: string | null;
+  cachedAt: string;
+}
+
 export interface HiddenUpdate {
   id: number;
   systemId: number;
@@ -173,7 +184,7 @@ export interface HistoryEntry {
 
 export interface PotentialCommandEntry {
   id: string;
-  category: "detection" | "system_info" | "check" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
+  category: "detection" | "system_info" | "check" | "list_installed_packages" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
   label: string;
   purpose: string;
   pkgManager: string | null;
@@ -203,6 +214,7 @@ export interface CommandReference {
 export interface SystemDetailResponse {
   system: System;
   updates: CachedUpdate[];
+  installedPackages: InstalledPackage[];
   hiddenUpdates: HiddenUpdate[];
   packageIssues: PackageManagerIssue[];
   history: HistoryEntry[];

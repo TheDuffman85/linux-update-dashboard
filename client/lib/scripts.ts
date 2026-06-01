@@ -6,6 +6,7 @@ export type ScriptType = "package_manager" | "system";
 export type ScriptOperation =
   | "detect"
   | "check_updates"
+  | "list_installed_packages"
   | "repair_issue"
   | "upgrade_all"
   | "full_upgrade_all"
@@ -21,6 +22,7 @@ export interface ScriptStep {
 export interface CustomParserConfig {
   parseStep?: number;
   updateRegex?: string;
+  installedPackageRegex?: string;
   securityRegex?: string;
   keptBackRegex?: string;
   successExitCodes?: number[];

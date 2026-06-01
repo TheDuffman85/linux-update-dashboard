@@ -36,6 +36,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Per-system package-manager behavior:** configure manager-specific upgrade/check behavior such as APT full-upgrade defaults, DNF distro-sync defaults, and refresh toggles for DNF, Pacman, APK, and Flatpak
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, add custom package managers, and assign per-system script overrides
 - **Granular updates:** upgrade everything at once, queue grouped Upgrade All batches, or pick individual packages per system
+- **Installed package inventory:** collect installed package versions during refreshes and browse the cached snapshot from each system detail page
 - **Cron-based scheduling:** create refresh, update, and notification schedules with per-schedule system scope and cache behavior
 - **APT kept-back auto-hide:** optionally move kept-back APT packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
@@ -691,10 +692,10 @@ Per-system package-manager config is available in the system edit dialog for sup
 
 ## Script Customization
 
-The **Scripts** page exposes the SSH command templates that power package-manager detection, update checks, issue repair actions, upgrades, selected-package upgrades, system information collection, and reboots.
+The **Scripts** page exposes the SSH command templates that power package-manager detection, update checks, installed-package inventory collection, issue repair actions, upgrades, selected-package upgrades, system information collection, and reboots.
 
 - **Built-in scripts are read-only:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot scripts are shipped as defaults and can be copied when you need a custom variant
-- **Custom scripts are editable:** define one or more shell steps, choose the operation they implement, and optionally attach parser settings for update checks or section mapping for system-info output
+- **Custom scripts are editable:** define one or more shell steps, choose the operation they implement, and optionally attach parser settings for update checks, installed-package inventory, or section mapping for system-info output
 - **Per-system overrides:** each system can keep the standard detected defaults or override individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/upgrade_all`, or `system/reboot`
 - **Usage tracking:** custom scripts show where they are assigned, and scripts still used by active systems cannot be deleted accidentally
 - **Custom package managers:** add package managers beyond the built-in list with a display label, parser regexes, and optional config entries that appear in each matching system's package-manager settings
@@ -712,6 +713,8 @@ Script commands support placeholders that are resolved immediately before SSH ex
 | `{{sudo:COMMAND}}`   | Wraps `COMMAND` with the dashboard sudo fallback helper                               |
 
 For custom update parsers, the update regex should use named capture groups. `packageName` and `newVersion` are required for an update to be recorded; optional groups include `currentVersion`, `architecture`, and `repository`. Separate security and kept-back regexes can mark matching lines. Custom success and update exit-code lists are available for package managers whose check command uses non-zero exit codes to mean "updates available".
+
+For custom installed-package inventory parsers, the installed-package regex should use named `packageName` and `currentVersion` capture groups. Optional groups include `architecture` and `repository`.
 
 Custom system-info scripts can either keep the built-in sectioned parser or map named output sections to fields such as OS name, kernel, uptime, architecture, CPU, memory, disk, boot ID, and installed kernels. A reboot-required regex can also be configured when your target distribution reports reboot state differently.
 

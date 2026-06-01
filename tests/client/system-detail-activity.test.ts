@@ -1,10 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 import {
   buildActivityDisplayRows,
   dedupePackageIssueUpdateNotice,
   getActivityTitle,
   getPackageSelectionState,
+  filterInstalledPackages,
+  InstalledPackagesSection,
   getVisiblePackageIssuesForCurrentCheck,
   isScrollNearBottom,
   matchesHistoryEntryToSession,
@@ -622,6 +625,59 @@ describe("PotentialCommandsPanel", () => {
     expect(html).toContain("package placeholder");
     expect(html).toContain("Review before allowing");
     expect(html).toContain("Runs a shell under sudo");
+  });
+});
+
+describe("InstalledPackagesSection", () => {
+  const packages = [
+    {
+      id: 1,
+      systemId: 1,
+      pkgManager: "apt",
+      packageName: "curl",
+      currentVersion: "8.0",
+      architecture: "amd64",
+      repository: null,
+      cachedAt: "2026-06-01 10:00:00",
+    },
+    {
+      id: 2,
+      systemId: 1,
+      pkgManager: "flatpak",
+      packageName: "org.example.App",
+      currentVersion: "1.2.3",
+      architecture: "x86_64",
+      repository: "flathub",
+      cachedAt: "2026-06-01 10:00:00",
+    },
+  ];
+
+  test("renders collapsed with count, search, and inventory columns", () => {
+    const html = renderToStaticMarkup(createElement(InstalledPackagesSection, {
+      installedPackages: packages,
+      cacheTimestamp: "2026-06-01 10:00:00",
+    }));
+
+    expect(html).toMatch(/<details class="[^"]*"><summary/);
+    expect(html).not.toMatch(/<details[^>]* open/);
+    expect(html).toContain("Installed Packages");
+    expect(html).toContain('title="');
+    expect(html).toContain("Search installed packages");
+    expect(html).toContain("Installed Version");
+    expect(html).toContain("Architecture");
+  });
+
+  test("filters by package, version, manager, and architecture", () => {
+    expect(filterInstalledPackages(packages, "curl")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "1.2.3")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "flatpak")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "amd64")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "missing")).toEqual([]);
+  });
+
+  test("renders a distinct empty snapshot message", () => {
+    const html = renderToStaticMarkup(createElement(InstalledPackagesSection, { installedPackages: [] }));
+    expect(html).toContain("No installed package snapshot collected. Run Refresh to collect one.");
   });
 });
 

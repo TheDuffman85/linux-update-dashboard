@@ -67,6 +67,7 @@ import type { ScriptOperation } from "../../client/lib/scripts";
 const customAptOperations: ScriptOperation[] = [
   "detect",
   "check_updates",
+  "list_installed_packages",
   "repair_issue",
   "upgrade_all",
   "full_upgrade_all",

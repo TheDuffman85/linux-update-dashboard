@@ -19,6 +19,7 @@ import {
   getSystemOverrides,
   listScriptUsages,
   listScripts,
+  parseCustomInstalledPackages,
   parseCustomUpdates,
   replaceSystemOverrides,
   renderCommandTemplate,
@@ -70,6 +71,7 @@ describe("script service", () => {
     const scripts = getBuiltinScripts();
 
     expect(scripts.some((script) => script.id === "builtin:apt:check_updates" && script.readonly)).toBe(true);
+    expect(scripts.some((script) => script.id === "builtin:apt:list_installed_packages" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:apt:repair_issue" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:dnf:repair_issue" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:snap:detect" && script.readonly)).toBe(true);
@@ -107,13 +109,14 @@ describe("script service", () => {
   test("resolves built-in runtime steps from the canonical script templates", () => {
     insertSystem(12);
     const cases: Array<{
-      operation: "detect" | "check_updates" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
+      operation: "detect" | "check_updates" | "list_installed_packages" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
       pkgManager: string | null;
       pkgManagerConfig?: Record<string, unknown>;
       packages?: string[];
     }> = [
       { operation: "detect", pkgManager: "apt" },
       { operation: "check_updates", pkgManager: "apt" },
+      { operation: "list_installed_packages", pkgManager: "apt" },
       { operation: "repair_issue", pkgManager: "apt" },
       { operation: "upgrade_all", pkgManager: "apt", pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" } },
       { operation: "full_upgrade_all", pkgManager: "dnf", pkgManagerConfig: { autoAcceptEulaOnUpgrade: true } },
@@ -780,6 +783,27 @@ describe("script service", () => {
         newVersion: "3.3",
         pkgManager: "brewlinux",
       }),
+    ]);
+  });
+
+  test("parses installed-package snapshots for user-defined package managers", () => {
+    const parserConfig = {
+      installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<architecture>\\S+)$",
+    };
+
+    expect(parseCustomInstalledPackages("brewlinux", parserConfig, [{
+      command: "brew list --versions",
+      stdout: "openssl 3.3 x86_64\nmalformed\n",
+      stderr: "",
+      exitCode: 0,
+    }])).toEqual([
+      {
+        packageName: "openssl",
+        currentVersion: "3.3",
+        architecture: "x86_64",
+        repository: null,
+        pkgManager: "brewlinux",
+      },
     ]);
   });
 

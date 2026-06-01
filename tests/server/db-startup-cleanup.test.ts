@@ -314,6 +314,21 @@ describe("database startup cleanup", () => {
     expect(tables[0].name).toBe("hidden_updates");
   });
 
+  test("creates the installed package cache table on startup", () => {
+    const sqlite = new Database(dbPath, { readonly: true });
+    const columns = sqlite
+      .prepare("PRAGMA table_info(installed_package_cache)")
+      .all() as Array<{ name?: string }>;
+    sqlite.close();
+
+    expect(columns.some((column) => column.name === "pkg_manager")).toBe(true);
+    expect(columns.some((column) => column.name === "package_name")).toBe(true);
+    expect(columns.some((column) => column.name === "current_version")).toBe(true);
+    expect(columns.some((column) => column.name === "architecture")).toBe(true);
+    expect(columns.some((column) => column.name === "repository")).toBe(true);
+    expect(columns.some((column) => column.name === "cached_at")).toBe(true);
+  });
+
   test("adds the pkg_manager_configs column for systems", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const columns = sqlite
