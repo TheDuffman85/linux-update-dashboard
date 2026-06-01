@@ -85,6 +85,10 @@ describe("mqtt notifications", () => {
   let envSnapshot: NodeJS.ProcessEnv;
   const originalFetch = globalThis.fetch;
 
+  test("classifies autoremove as a mutating operation", () => {
+    expect(mqttRuntimeTesting.isMutatingOperation("autoremove")).toBe(true);
+  });
+
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "ludash-mqtt-test-"));
     initDatabase(join(tempDir, "dashboard.db"));

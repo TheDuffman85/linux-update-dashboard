@@ -95,6 +95,17 @@ describe("deriveSystemUpdateState", () => {
       ),
     ).toBe("checking");
   });
+
+  test("returns maintaining while autoremove runs and checking while it rechecks", () => {
+    const operation: ActiveOperation = {
+      type: "autoremove",
+      startedAt: "2026-01-01 10:02:00",
+    };
+    expect(deriveSystemUpdateState(makeSystem({ activeOperation: operation }))).toBe("maintaining");
+    expect(deriveSystemUpdateState(makeSystem({
+      activeOperation: { ...operation, phase: "rechecking" },
+    }))).toBe("checking");
+  });
 });
 
 describe("shouldClearLocalUpgrade", () => {

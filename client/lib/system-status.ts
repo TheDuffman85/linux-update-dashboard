@@ -2,6 +2,7 @@ import type { ActiveOperation, LastCheckSummary } from "./systems";
 
 export type SystemUpdateState =
   | "upgrading"
+  | "maintaining"
   | "checking"
   | "unreachable"
   | "check_failed"
@@ -32,6 +33,10 @@ export function isPostUpgradeRecheck(activeOperation: ActiveOperation | null | u
   return activeOperation?.phase === "rechecking" && activeOperation.type.includes("upgrade");
 }
 
+export function isPostAutoremoveRecheck(activeOperation: ActiveOperation | null | undefined): boolean {
+  return activeOperation?.phase === "rechecking" && activeOperation.type === "autoremove";
+}
+
 export function shouldClearLocalUpgrade(activeOperation: ActiveOperation | null | undefined): boolean {
   return !activeOperation || isPostUpgradeRecheck(activeOperation);
 }
@@ -41,8 +46,9 @@ export function deriveSystemUpdateState(
   options?: DeriveOptions,
 ): SystemUpdateState {
   const activeType = system.activeOperation?.type;
-  if (options?.checking || activeType === "check" || isPostUpgradeRecheck(system.activeOperation)) return "checking";
+  if (options?.checking || activeType === "check" || isPostUpgradeRecheck(system.activeOperation) || isPostAutoremoveRecheck(system.activeOperation)) return "checking";
   if (options?.upgrading || activeType?.includes("upgrade")) return "upgrading";
+  if (activeType === "autoremove") return "maintaining";
   if (system.isReachable === -1) return "unreachable";
   if (system.lastCheck?.status === "failed") return "check_failed";
   if (system.lastCheck?.status === "warning") return "check_warning";

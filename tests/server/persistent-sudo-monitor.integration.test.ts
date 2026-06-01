@@ -20,6 +20,7 @@ describe("persistent sudo monitor integration", () => {
       username: "testuser",
       authType: "password",
       encryptedPassword: encryptor.encrypt("testpass"),
+      hostKeyVerificationEnabled: false,
     });
 
     try {

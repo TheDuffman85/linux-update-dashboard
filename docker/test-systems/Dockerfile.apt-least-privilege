@@ -46,6 +46,7 @@ RUN useradd -m -s /bin/bash testuser && \
       'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 update -qq' \
       'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 upgrade -y' \
       'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 full-upgrade -y' \
+      'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 autoremove -y' \
       'testuser ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 install --only-upgrade -y least-privilege-app' \
       'testuser ALL=(root) NOPASSWD: /usr/bin/dpkg --audit' \
       'testuser ALL=(root) NOPASSWD: /usr/bin/dpkg --configure -a' \

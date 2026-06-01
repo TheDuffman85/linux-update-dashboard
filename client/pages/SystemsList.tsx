@@ -20,7 +20,7 @@ import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
 import { PotentialCommandsPanel } from "../components/systems/PotentialCommandsPanel";
-import { deriveSystemUpdateState, isPostUpgradeRecheck } from "../lib/system-status";
+import { deriveSystemUpdateState, isPostAutoremoveRecheck, isPostUpgradeRecheck } from "../lib/system-status";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
@@ -198,8 +198,9 @@ export default function SystemsList() {
             <tbody ref={tbodyRef}>
               {orderedSystems.map((s) => {
                 const postUpgradeRechecking = isPostUpgradeRecheck(s.activeOperation);
+                const postAutoremoveRechecking = isPostAutoremoveRecheck(s.activeOperation);
                 const upgrading = !postUpgradeRechecking && (isUpgrading(s.id) || !!s.activeOperation?.type?.startsWith("upgrade"));
-                const checking = postUpgradeRechecking || s.activeOperation?.type === "check" || s.activeOperation?.type === "package_manager_repair";
+                const checking = postUpgradeRechecking || postAutoremoveRechecking || s.activeOperation?.type === "check" || s.activeOperation?.type === "package_manager_repair";
                 const updateState = deriveSystemUpdateState(s, { upgrading, checking });
 
                 return (
@@ -277,6 +278,13 @@ export default function SystemsList() {
                           Upgrading...
                         </span>
                       </Badge>
+                    ) : updateState === "maintaining" ? (
+                      <Badge variant="info" small>
+                        <span className="flex items-center gap-1">
+                          <span className="spinner spinner-sm !w-2.5 !h-2.5" />
+                          Maintaining...
+                        </span>
+                      </Badge>
                     ) : updateState === "checking" ? (
                       <Badge variant="info" small>
                         <span className="flex items-center gap-1">
@@ -326,7 +334,8 @@ export default function SystemsList() {
                     <div className="flex items-center justify-end gap-0.5 sm:gap-1">
                       <button
                         onClick={() => handleCheck(s.id)}
-                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        disabled={!!s.activeOperation}
+                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                         title="Check for updates"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

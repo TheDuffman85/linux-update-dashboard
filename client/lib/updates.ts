@@ -134,6 +134,26 @@ export function useUpgradeAll() {
   });
 }
 
+export function useAutoremove() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (systemId: number) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
+        `/systems/${systemId}/autoremove`,
+        { method: "POST" }
+      );
+      return pollJob<{ status: string; output: string }>(jobId, 3000, 300, {
+        recoverMissingJob: () => recoverLostUpgradeJob(qc, systemId),
+      });
+    },
+    onSettled: async (_data, _error, systemId) => {
+      if (systemId !== undefined) {
+        await invalidateSystemOperationQueries(qc, systemId);
+      }
+    },
+  });
+}
+
 export function useUpgradeAllBatch() {
   const qc = useQueryClient();
   return useMutation({

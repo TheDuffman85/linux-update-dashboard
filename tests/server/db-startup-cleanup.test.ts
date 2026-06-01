@@ -23,7 +23,7 @@ describe("database startup cleanup", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test("marks orphaned SSH-safe upgrade rows as warning after restart", () => {
+  test("marks orphaned SSH-safe maintenance rows as warning after restart", () => {
     const db = getDb();
     const inserted = db.insert(systems).values({
       name: "Debian",
@@ -33,28 +33,41 @@ describe("database startup cleanup", () => {
       username: "root",
     }).returning({ id: systems.id }).get();
 
-    const history = db.insert(updateHistory).values({
-      systemId: inserted.id,
-      action: "upgrade_all",
-      pkgManager: "apt",
-      status: "started",
-      command: "sudo apt-get upgrade -y",
-    }).returning({ id: updateHistory.id }).get();
+    const history = db.insert(updateHistory).values([
+      {
+        systemId: inserted.id,
+        action: "upgrade_all",
+        pkgManager: "apt",
+        status: "started",
+        command: "sudo apt-get upgrade -y",
+      },
+      {
+        systemId: inserted.id,
+        action: "autoremove",
+        pkgManager: "apt",
+        status: "started",
+        command: "sudo apt-get autoremove -y",
+      },
+    ]).returning({ id: updateHistory.id }).all();
 
     closeDatabase();
     initDatabase(dbPath);
 
     const restartedDb = getDb();
-    const row = restartedDb
+    const rows = restartedDb
       .select()
       .from(updateHistory)
-      .where(eq(updateHistory.id, history.id))
-      .get();
+      .where(eq(updateHistory.systemId, inserted.id))
+      .all();
 
-    expect(row?.status).toBe("warning");
-    expect(row?.output).toBe("Server restarted while operation was in progress");
-    expect(row?.error).toBeNull();
-    expect(row?.completedAt).not.toBeNull();
+    expect(history).toHaveLength(2);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.status).toBe("warning");
+      expect(row.output).toBe("Server restarted while operation was in progress");
+      expect(row.error).toBeNull();
+      expect(row.completedAt).not.toBeNull();
+    }
   });
 
   test("marks orphaned non-SSH-safe rows as failed after restart", () => {

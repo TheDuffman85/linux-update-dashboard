@@ -136,6 +136,7 @@ function isMutatingOperation(type: string | undefined): boolean {
     type === "upgrade_all" ||
     type === "full_upgrade_all" ||
     type === "upgrade_package" ||
+    type === "autoremove" ||
     type === "package_manager_repair"
   );
 }
@@ -779,6 +780,7 @@ export async function syncAppUpdateState(): Promise<void> {
 }
 
 export const __testing = {
+  isMutatingOperation,
   reset() {
     started = false;
     runtimeRecords.clear();

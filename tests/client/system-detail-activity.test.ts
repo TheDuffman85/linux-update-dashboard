@@ -5,6 +5,7 @@ import {
   buildActivityDisplayRows,
   dedupePackageIssueUpdateNotice,
   getActivityTitle,
+  getAutoremoveConfirmMessage,
   getPackageSelectionState,
   filterInstalledPackages,
   InstalledPackagesSection,
@@ -14,6 +15,7 @@ import {
   PackageManagerIssueBanner,
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
+  shouldShowAutoremoveAction,
 } from "../../client/pages/SystemDetail";
 import { PotentialCommandsPanel } from "../../client/components/systems/PotentialCommandsPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
@@ -33,6 +35,20 @@ function createHistoryEntry(overrides: Partial<HistoryEntry> & Pick<HistoryEntry
     ...overrides,
   };
 }
+
+describe("autoremove action", () => {
+  test("shows whenever a manager is supported and names skipped managers in the confirmation", () => {
+    const support = {
+      supportedManagers: ["apt", "flatpak"],
+      skippedManagers: ["snap"],
+    };
+
+    expect(shouldShowAutoremoveAction(support)).toBe(true);
+    expect(getAutoremoveConfirmMessage("Debian", support)).toContain("Will run for: apt, flatpak.");
+    expect(getAutoremoveConfirmMessage("Debian", support)).toContain("configured: snap.");
+    expect(shouldShowAutoremoveAction({ supportedManagers: [] })).toBe(false);
+  });
+});
 
 describe("buildActivityDisplayRows", () => {
   test("creates a refresh session immediately from a check action hint", () => {
@@ -664,14 +680,17 @@ describe("InstalledPackagesSection", () => {
     expect(html).toContain('title="');
     expect(html).toContain("Search installed packages");
     expect(html).toContain("Installed Version");
-    expect(html).toContain("Architecture");
+    expect(html).toContain('type="text"');
+    expect(html).toContain("Repository");
+    expect(html).not.toContain("Architecture");
   });
 
-  test("filters by package, version, manager, and architecture", () => {
+  test("filters by package, version, manager, architecture, and repository", () => {
     expect(filterInstalledPackages(packages, "curl")).toHaveLength(1);
     expect(filterInstalledPackages(packages, "1.2.3")).toHaveLength(1);
     expect(filterInstalledPackages(packages, "flatpak")).toHaveLength(1);
     expect(filterInstalledPackages(packages, "amd64")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "flathub")).toHaveLength(1);
     expect(filterInstalledPackages(packages, "missing")).toEqual([]);
   });
 

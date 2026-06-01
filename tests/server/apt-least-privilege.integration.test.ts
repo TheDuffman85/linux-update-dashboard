@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND, aptParser } from "../../server/ssh/parsers/apt";
+import { getBuiltinScripts } from "../../server/services/script-service";
 
 const runIntegration = process.env.LUDASH_RUN_DOCKER_INTEGRATION === "1";
 const integrationTest = runIntegration ? test : test.skip;
@@ -39,6 +40,13 @@ describe("APT least-privilege sudoers integration", () => {
         60,
       );
       expect(upgrade.exitCode).toBe(0);
+
+      const autoremoveCommand = getBuiltinScripts()
+        .find((script) => script.id === "builtin:apt:autoremove")
+        ?.steps[0]?.command;
+      expect(autoremoveCommand).toBeTruthy();
+      const autoremove = await sshManager.runPersistentCommand(conn, autoremoveCommand!, 60, "testpass");
+      expect(autoremove.exitCode).toBe(0);
     } finally {
       sshManager.disconnect(conn);
     }

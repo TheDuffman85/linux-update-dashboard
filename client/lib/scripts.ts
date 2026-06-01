@@ -8,6 +8,7 @@ export type ScriptOperation =
   | "check_updates"
   | "list_installed_packages"
   | "repair_issue"
+  | "autoremove"
   | "upgrade_all"
   | "full_upgrade_all"
   | "upgrade_selected"

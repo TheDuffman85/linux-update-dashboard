@@ -48,6 +48,7 @@ describe("buildCommandReference", () => {
     expect(reference.exact.some((entry) => entry.command.includes("apt list --upgradable"))).toBe(true);
     expect(reference.exact.some((entry) => entry.command.includes("apt-get -o DPkg::Lock::Timeout=60 upgrade -y"))).toBe(true);
     expect(reference.exact.some((entry) => entry.command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"))).toBe(true);
+    expect(reference.exact.some((entry) => entry.command.includes("apt-get -o DPkg::Lock::Timeout=60 autoremove -y"))).toBe(true);
     expect(reference.exact.some((entry) => entry.command.includes("install --only-upgrade -y <package>"))).toBe(true);
     expect(reference.exact.some((entry) => entry.command.includes("install --only-upgrade -y <package1> <package2>"))).toBe(true);
   });
@@ -151,6 +152,18 @@ describe("buildCommandReference", () => {
     expect(multiReference.exact.some((entry) => entry.pkgManager === "yum" && entry.category === "full_upgrade_all")).toBe(false);
   });
 
+  test("omits autoremove for managers without a standalone cleanup equivalent", () => {
+    for (const manager of ["apk", "snap"]) {
+      const reference = buildCommandReference(createSystem({
+        pkgManager: manager,
+        detectedPkgManagers: JSON.stringify([manager]),
+      }));
+      expect(reference.exact.some((entry) =>
+        entry.pkgManager === manager && entry.category === "autoremove"
+      )).toBe(false);
+    }
+  });
+
   test("derives sudoers commands from exact commands instead of hand-authored strings", () => {
     const reference = buildCommandReference(createSystem());
     const aptUpgrade = reference.exact.find((entry) => entry.category === "upgrade_all" && entry.pkgManager === "apt");
@@ -190,6 +203,7 @@ describe("buildCommandReference", () => {
           ["check", "dpkg --audit"],
           ["check", "apt-get -o DPkg::Lock::Timeout=60 update -qq"],
           ["repair_issue", "dpkg --configure -a"],
+          ["autoremove", "apt-get -o DPkg::Lock::Timeout=60 autoremove -y"],
           ["upgrade_all", "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"],
           ["full_upgrade_all", "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"],
           ["upgrade_selected", "apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y <package>"],
@@ -208,6 +222,7 @@ describe("buildCommandReference", () => {
         expected: [
           ["check", "dnf -y check-update --refresh --quiet"],
           ["repair_issue", "dnf -y check-update --quiet"],
+          ["autoremove", "dnf autoremove -y"],
           ["upgrade_all", "env ACCEPT_EULA=Y dnf distro-sync -y"],
           ["full_upgrade_all", "env ACCEPT_EULA=Y dnf distro-sync -y"],
           ["upgrade_selected", "env ACCEPT_EULA=Y dnf upgrade -y <package>"],
@@ -224,6 +239,7 @@ describe("buildCommandReference", () => {
         expected: [
           ["check", "yum -y check-update --quiet"],
           ["repair_issue", "yum -y check-update --quiet"],
+          ["autoremove", "yum autoremove -y"],
           ["upgrade_all", "env ACCEPT_EULA=Y yum update -y"],
           ["upgrade_selected", "env ACCEPT_EULA=Y yum update -y <package>"],
         ],
@@ -234,6 +250,7 @@ describe("buildCommandReference", () => {
         expected: [
           ["check", "pacman -Sy --noconfirm"],
           ["upgrade_all", "pacman -Syu --noconfirm"],
+          ["autoremove", "pacman -Rns --noconfirm -"],
           ["upgrade_selected", "pacman -S --noconfirm <package>"],
         ],
       },
@@ -252,6 +269,7 @@ describe("buildCommandReference", () => {
         expected: [
           ["check", "flatpak update --appstream"],
           ["upgrade_all", "flatpak update -y"],
+          ["autoremove", "flatpak uninstall --unused -y"],
           ["upgrade_selected", "flatpak update -y <package>"],
         ],
       },

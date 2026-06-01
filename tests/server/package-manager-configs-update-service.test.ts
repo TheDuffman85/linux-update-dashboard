@@ -3,11 +3,12 @@ import { randomBytes } from "crypto";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { systems, updateCache } from "../../server/db/schema";
+import { systems, updateCache, updateHistory } from "../../server/db/schema";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
-import { applyFullUpgradeAll, applyUpgradeAll, applyUpgradePackages, checkUpdates } from "../../server/services/update-service";
+import { applyAutoremove, applyFullUpgradeAll, applyUpgradeAll, applyUpgradePackages, checkUpdates, getAutoremoveSupport } from "../../server/services/update-service";
 import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
 
 const SYSTEM_INFO_OUTPUT = `===OS===
@@ -133,6 +134,74 @@ describe("update service package manager configs", () => {
 
     expect(commands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 upgrade -y"))).toBe(true);
     expect(commands.some((command) => command.includes("dnf upgrade -y"))).toBe(true);
+  });
+
+  test("applyAutoremove uses active managers even when no updates are cached", async () => {
+    const systemId = insertSystem({ pkgManager: "apt" });
+    expect(getAutoremoveSupport(systemId)).toEqual({
+      supportedManagers: ["apt"],
+      skippedManagers: [],
+    });
+
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    const persistentCommands: string[] = [];
+    const checkCommands: string[] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runPersistentCommand = async (_conn: unknown, command: string) => {
+      persistentCommands.push(command);
+      return { stdout: "removed", stderr: "", exitCode: 0 };
+    };
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      checkCommands.push(command);
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+
+    const result = await applyAutoremove(systemId);
+
+    expect(result.success).toBe(true);
+    expect(persistentCommands).toHaveLength(1);
+    expect(persistentCommands[0]).toContain("apt-get -o DPkg::Lock::Timeout=60 autoremove -y");
+    expect(checkCommands.some((command) => command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq"))).toBe(true);
+    expect(getDb().select().from(updateHistory).all().some((row) =>
+      row.systemId === systemId && row.action === "autoremove" && row.status === "success"
+    )).toBe(true);
+  });
+
+  test("applyAutoremove continues after one manager command fails", async () => {
+    const systemId = insertSystem({ pkgManager: "apt" });
+    getDb().update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["apt", "flatpak"]) })
+      .where(eq(systems.id, systemId))
+      .run();
+
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    const persistentCommands: string[] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runPersistentCommand = async (_conn: unknown, command: string) => {
+      persistentCommands.push(command);
+      if (command.includes("apt-get")) throw new Error("apt failed");
+      return { stdout: "removed", stderr: "", exitCode: 0 };
+    };
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+
+    const result = await applyAutoremove(systemId);
+    const autoremoveRows = getDb().select().from(updateHistory).all()
+      .filter((row) => row.systemId === systemId && row.action === "autoremove");
+
+    expect(result.success).toBe(false);
+    expect(persistentCommands.some((command) => command.includes("apt-get"))).toBe(true);
+    expect(persistentCommands.some((command) => command.includes("flatpak uninstall --unused -y"))).toBe(true);
+    expect(autoremoveRows.map((row) => row.status)).toEqual(["failed", "success"]);
   });
 
   test("threads DNF and YUM EULA config into upgrade commands", async () => {

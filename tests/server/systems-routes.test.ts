@@ -1793,7 +1793,7 @@ describe("systems reorder route", () => {
       credentialId,
       authType: "password",
       username: "root",
-      detectedPkgManagers: JSON.stringify(["apt"]),
+      detectedPkgManagers: JSON.stringify(["apt", "snap"]),
       disabledPkgManagers: JSON.stringify(["apt"]),
     }).returning({ id: systems.id }).get().id;
 
@@ -2105,7 +2105,7 @@ describe("systems reorder route", () => {
       authType: "password",
       username: "root",
       pkgManager: "apt",
-      detectedPkgManagers: JSON.stringify(["apt"]),
+      detectedPkgManagers: JSON.stringify(["apt", "snap"]),
       pkgManagerConfigs: JSON.stringify({
         apt: { defaultUpgradeMode: "full-upgrade" },
       }),
@@ -2130,6 +2130,10 @@ describe("systems reorder route", () => {
       entry.pkgManager === "apt" &&
       entry.command.includes("dpkg-query -W")
     )).toBe(true);
+    expect(body.system.autoremoveSupport).toEqual({
+      supportedManagers: ["apt"],
+      skippedManagers: ["snap"],
+    });
     expect(body.commandReference.sudoers.some((entry: { category: string; command: string }) =>
       entry.category === "upgrade_all" &&
       entry.command === "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"

@@ -4,7 +4,7 @@ import type { PackageManagerConfigs } from "./package-manager-configs";
 import type { HostKeyStatus } from "./host-key-status";
 
 export interface ActiveOperation {
-  type: "check" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair";
+  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair";
   startedAt: string;
   phase?: "queued" | "reconnecting" | "rechecking";
   packageName?: string;
@@ -73,6 +73,10 @@ export interface System {
   isStale?: boolean;
   activeOperation?: ActiveOperation | null;
   supportsFullUpgrade?: boolean;
+  autoremoveSupport?: {
+    supportedManagers: string[];
+    skippedManagers: string[];
+  };
   packageIssueCount?: number;
   scriptOverrides: Record<string, string>;
 }
@@ -184,7 +188,7 @@ export interface HistoryEntry {
 
 export interface PotentialCommandEntry {
   id: string;
-  category: "detection" | "system_info" | "check" | "list_installed_packages" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
+  category: "detection" | "system_info" | "check" | "list_installed_packages" | "repair_issue" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
   label: string;
   purpose: string;
   pkgManager: string | null;

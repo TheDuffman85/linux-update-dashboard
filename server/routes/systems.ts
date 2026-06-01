@@ -603,6 +603,7 @@ systems.get("/:id", (c) => {
       isStale: cacheService.isCacheStale(id),
       activeOperation: updateService.getActiveOperation(id) ?? upgradeBatchService.getQueuedOrRunningOperation(id),
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
+      autoremoveSupport: updateService.getAutoremoveSupport(id),
     },
     commandReference: buildCommandReference({
       id,

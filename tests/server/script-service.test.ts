@@ -109,7 +109,7 @@ describe("script service", () => {
   test("resolves built-in runtime steps from the canonical script templates", () => {
     insertSystem(12);
     const cases: Array<{
-      operation: "detect" | "check_updates" | "list_installed_packages" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
+      operation: "detect" | "check_updates" | "list_installed_packages" | "repair_issue" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
       pkgManager: string | null;
       pkgManagerConfig?: Record<string, unknown>;
       packages?: string[];
@@ -118,6 +118,7 @@ describe("script service", () => {
       { operation: "check_updates", pkgManager: "apt" },
       { operation: "list_installed_packages", pkgManager: "apt" },
       { operation: "repair_issue", pkgManager: "apt" },
+      { operation: "autoremove", pkgManager: "apt" },
       { operation: "upgrade_all", pkgManager: "apt", pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" } },
       { operation: "full_upgrade_all", pkgManager: "dnf", pkgManagerConfig: { autoAcceptEulaOnUpgrade: true } },
       { operation: "upgrade_selected", pkgManager: "apt", packages: ["curl", "openssl"] },
@@ -616,6 +617,27 @@ describe("script service", () => {
     expect(steps[0]?.command).toBe("echo custom");
   });
 
+
+  test("provides autoremove built-ins only for managers with cleanup semantics", () => {
+    const autoremoveScripts = getBuiltinScripts()
+      .filter((script) => script.operation === "autoremove");
+
+    expect(autoremoveScripts.map((script) => script.pkgManager)).toEqual([
+      "apt",
+      "dnf",
+      "yum",
+      "pacman",
+      "flatpak",
+    ]);
+    expect(autoremoveScripts.find((script) => script.pkgManager === "apt")?.steps[0]?.command)
+      .toContain("apt-get -o DPkg::Lock::Timeout=60 autoremove -y");
+    expect(autoremoveScripts.find((script) => script.pkgManager === "pacman")?.steps[0]?.command)
+      .toContain("pacman -Qtdq");
+    expect(autoremoveScripts.find((script) => script.pkgManager === "pacman")?.steps[0]?.command)
+      .toContain("pacman -Rns --noconfirm -");
+    expect(autoremoveScripts.find((script) => script.pkgManager === "pacman")?.steps[0]?.command)
+      .toContain(`{ cat; printf '%s\\n' "$orphans"; } | sudo -S -p '' pacman -Rns --noconfirm -`);
+  });
 
   test("renders package and sudo placeholders", () => {
     const command = renderCommandTemplate(

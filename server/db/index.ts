@@ -792,21 +792,21 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
 
-  // Cleanup: if the dashboard restarted mid-operation, SSH-safe upgrades are
+  // Cleanup: if the dashboard restarted mid-operation, SSH-safe maintenance is
   // expected to continue remotely and should show a warning instead of failure.
   _db.run(sql`UPDATE update_history
     SET status = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package') THEN 'warning'
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove') THEN 'warning'
       ELSE 'failed'
     END,
     completed_at = datetime('now'),
     output = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package')
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove')
         THEN 'Server restarted while operation was in progress'
       ELSE output
     END,
     error = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package')
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove')
         THEN NULL
       ELSE 'Server restarted while operation was in progress'
     END
