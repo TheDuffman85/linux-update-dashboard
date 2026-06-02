@@ -17,7 +17,7 @@ import {
   resolveCurrentActivitySession,
   shouldShowAutoremoveAction,
 } from "../../client/pages/SystemDetail";
-import { PotentialCommandsPanel } from "../../client/components/systems/PotentialCommandsPanel";
+import { SudoersSetupPanel } from "../../client/components/systems/SudoersSetupPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
 import type { WsMessage } from "../../client/hooks/useCommandOutput";
 
@@ -582,43 +582,16 @@ describe("PackageManagerIssueBanner", () => {
   });
 });
 
-describe("PotentialCommandsPanel", () => {
-  test("renders sudoers entries and unsafe-command warnings", () => {
-    const html = renderToStaticMarkup(PotentialCommandsPanel({
-      sudoersUser: "ludash",
-      commandReference: {
-        exact: [
-          {
-            id: "upgrade-all:apt",
-            category: "upgrade_all",
-            label: "Upgrade all APT packages",
-            purpose: "Installs all APT updates",
-            pkgManager: "apt",
-            command: "sudo -S -p '' apt-get upgrade -y",
-          },
-        ],
-        sudoers: [
-          {
-            id: "upgrade-all:apt:sudo:0",
-            category: "upgrade_all",
-            label: "Upgrade all APT packages",
-            purpose: "Installs all APT updates",
-            pkgManager: "apt",
-            command: "apt-get upgrade -y",
-            sudoersSafety: "exact",
-          },
-          {
-            id: "upgrade-selected:apt:sudo:0",
-            category: "upgrade_selected",
-            label: "Upgrade selected APT packages",
-            purpose: "Installs selected APT updates",
-            pkgManager: "apt",
-            command: "apt-get install --only-upgrade -y <package>",
-            sudoersSafety: "package_placeholder",
-            requiresWildcard: true,
-            warnings: ["Selected-package sudoers rules need package-specific entries or a carefully reviewed argument wildcard."],
-          },
-        ],
+describe("SudoersSetupPanel", () => {
+  test("renders a resolved file, commented wildcard guidance, install steps, and warnings", () => {
+    const html = renderToStaticMarkup(createElement(SudoersSetupPanel, {
+      preview: {
+        username: "ludash",
+        filePath: "/etc/sudoers.d/linux-update-dashboard-ludash",
+        required: true,
+        resolution: "resolved",
+        resolutionError: null,
+        content: 'Defaults:ludash !requiretty\n\nludash ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y\n\n# WARNING: Selected-package upgrades are disabled by default.\n# Uncomment only the rules you need. Each wildcard broadens the allowed command arguments.\n# ludash ALL=(root) NOPASSWD: /usr/bin/apt-get install --only-upgrade -y *',
         warnings: [
           {
             id: "custom:sudo:0",
@@ -632,15 +605,48 @@ describe("PotentialCommandsPanel", () => {
       },
     }));
 
-    expect(html).toContain("This list is generated from the same backend command builders used at runtime.");
-    expect(html).toContain("Sudoers-relevant commands");
-    expect(html).toMatch(/<details open=""><summary[^>]*>Sudoers-relevant commands<\/summary>/);
-    expect(html).toContain("Exact remote commands");
-    expect(html).toMatch(/<details><summary[^>]*>Exact remote commands<\/summary>/);
-    expect(html).toContain("ludash ALL=(root) NOPASSWD: apt-get upgrade -y");
-    expect(html).toContain("package placeholder");
-    expect(html).toContain("Review before allowing");
+    expect(html).toContain("paths resolved");
+    expect(html).toContain("/etc/sudoers.d/linux-update-dashboard-ludash");
+    expect(html).toContain("ludash ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y");
+    expect(html).toContain("WARNING: Selected-package upgrades are disabled by default.");
+    expect(html).toContain("# ludash ALL=(root) NOPASSWD: /usr/bin/apt-get install --only-upgrade -y *");
+    expect(html).not.toContain("Enable selected-package upgrades");
+    expect(html).toContain("sudo visudo -f");
+    expect(html).toContain("Commands omitted for manual review");
     expect(html).toContain("Runs a shell under sudo");
+  });
+
+  test("renders fallback and root-user guidance", () => {
+    const fallbackHtml = renderToStaticMarkup(createElement(SudoersSetupPanel, {
+      preview: {
+        username: "ludash",
+        filePath: "/etc/sudoers.d/linux-update-dashboard-ludash",
+        required: true,
+        resolution: "fallback",
+        resolutionError: "Host is offline",
+        content: "REPLACE_WITH_ABSOLUTE_PATH/apt-get",
+        warnings: [],
+      },
+    }));
+    expect(fallbackHtml).toContain("template only");
+    expect(fallbackHtml).toContain("REPLACE_WITH_ABSOLUTE_PATH/apt-get");
+    expect(fallbackHtml).not.toContain("This template is not paste-ready.");
+    expect(fallbackHtml).not.toContain("Host is offline");
+
+    const rootHtml = renderToStaticMarkup(createElement(SudoersSetupPanel, {
+      preview: {
+        username: "root",
+        filePath: "/etc/sudoers.d/linux-update-dashboard-root",
+        required: true,
+        resolution: "resolved",
+        resolutionError: null,
+        content: 'Defaults:root !requiretty\n\nroot ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y',
+        warnings: [],
+      },
+    }));
+    expect(rootHtml).toContain("Least-privilege user recommended");
+    expect(rootHtml).toContain("dedicated non-root SSH account");
+    expect(rootHtml).toContain("root ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y");
   });
 });
 

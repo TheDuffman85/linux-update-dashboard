@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 const {
   mockUseSystems,
-  mockUseSystem,
+  mockUseSudoersPreview,
   mockUseCreateSystem,
   mockUseUpdateSystem,
   mockUseDeleteSystem,
@@ -16,7 +16,7 @@ const {
   mockUseAuth,
 } = vi.hoisted(() => ({
   mockUseSystems: vi.fn(),
-  mockUseSystem: vi.fn(),
+  mockUseSudoersPreview: vi.fn(),
   mockUseCreateSystem: vi.fn(),
   mockUseUpdateSystem: vi.fn(),
   mockUseDeleteSystem: vi.fn(),
@@ -29,7 +29,7 @@ const {
 
 vi.mock("../../client/lib/systems", () => ({
   useSystems: mockUseSystems,
-  useSystem: mockUseSystem,
+  useSudoersPreview: mockUseSudoersPreview,
   useCreateSystem: mockUseCreateSystem,
   useUpdateSystem: mockUseUpdateSystem,
   useDeleteSystem: mockUseDeleteSystem,
@@ -122,7 +122,7 @@ describe("SystemsList", () => {
       isLoading: false,
       refetch: vi.fn(),
     });
-    mockUseSystem.mockReturnValue({
+    mockUseSudoersPreview.mockReturnValue({
       data: undefined,
       isLoading: false,
     });
@@ -136,15 +136,15 @@ describe("SystemsList", () => {
     mockUseAuth.mockReturnValue({ user: { username: "tester" } });
   });
 
-  test("renders a potential commands action and keeps its modal closed by default", () => {
+  test("renders a sudoers setup action and keeps its modal closed by default", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <SystemsList />
       </MemoryRouter>,
     );
 
-    expect(html).toContain('title="Potential commands"');
-    expect(html).toContain('aria-label="Potential commands for Alpha"');
-    expect(html).not.toContain("Potential Commands for Alpha");
+    expect(html).toContain('title="Sudoers setup"');
+    expect(html).toContain('aria-label="Sudoers setup for Alpha"');
+    expect(html).not.toContain("Sudoers Setup for Alpha");
   });
 });

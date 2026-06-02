@@ -6,7 +6,7 @@ testuser ALL=(root) NOPASSWD: SETENV: /usr/bin/dnf upgrade -y
 testuser ALL=(root) NOPASSWD: SETENV: /usr/bin/dnf distro-sync -y
 testuser ALL=(root) NOPASSWD: /usr/bin/dnf autoremove -y
 testuser ALL=(root) NOPASSWD: SETENV: /usr/bin/dnf upgrade -y *
-testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA=Y dnf upgrade -y
-testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA=Y dnf distro-sync -y
-testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA=Y dnf upgrade -y *
-testuser ALL=(root) NOPASSWD: /usr/sbin/reboot
+testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA\=Y dnf upgrade -y
+testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA\=Y dnf distro-sync -y
+testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA\=Y dnf upgrade -y *
+testuser ALL=(root) NOPASSWD: /usr/sbin/reboot ""

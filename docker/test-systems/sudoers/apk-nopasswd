@@ -3,4 +3,4 @@ Defaults:testuser !requiretty
 testuser ALL=(root) NOPASSWD: /sbin/apk update
 testuser ALL=(root) NOPASSWD: /sbin/apk upgrade
 testuser ALL=(root) NOPASSWD: /sbin/apk upgrade *
-testuser ALL=(root) NOPASSWD: /sbin/reboot
+testuser ALL=(root) NOPASSWD: /sbin/reboot ""

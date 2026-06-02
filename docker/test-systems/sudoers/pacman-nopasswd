@@ -4,4 +4,4 @@ testuser ALL=(root) NOPASSWD: /usr/bin/pacman -Sy --noconfirm
 testuser ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm
 testuser ALL=(root) NOPASSWD: /usr/bin/pacman -Rns --noconfirm -
 testuser ALL=(root) NOPASSWD: /usr/bin/pacman -S --noconfirm *
-testuser ALL=(root) NOPASSWD: /usr/bin/reboot
+testuser ALL=(root) NOPASSWD: /usr/bin/reboot ""

@@ -722,16 +722,16 @@ Custom system-info scripts can either keep the built-in sectioned parser or map 
 
 ### Least-privilege SSH users
 
-For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Potential commands** action for each system that opens the effective SSH commands and generated sudoers allowlist entries for that system.
+For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Sudoers setup** action for each system. It opens a generated `/etc/sudoers.d` file and installation instructions for that system. The dashboard resolves executable paths over read-only SSH when the host is available; offline hosts receive a clearly marked template whose placeholder paths must be replaced before use.
 
 Recommended sudoers posture:
 
 - grant `NOPASSWD` only for the generated root commands that system needs
 - prefer exact command rules for update checks, repairs, upgrades, and reboots
-- review selected-package upgrade entries carefully because they need package-specific rules or a controlled argument wildcard
+- leave the generated selected-package rules commented out unless you need them; uncommenting them adds a controlled argument wildcard
 - avoid `NOPASSWD: ALL`, `sudo sh <writable-script>`, and broad globs such as `apt-get *`
 
-Treat the generated list as a command reference when writing `/etc/sudoers.d` rules: use each executable's absolute path and escape sudoers syntax characters in arguments. For example, the APT lock option is written as `DPkg\:\:Lock\:\:Timeout=60` in a sudoers file. The shared [`apt-nopasswd`](docker/test-systems/sudoers/apt-nopasswd) allowlist contains a working APT example.
+Treat the generated file as a starting point for review: use each executable's absolute path, escape sudoers syntax characters in arguments, and write `""` after commands that must not receive arguments. For example, the APT lock option is written as `DPkg\:\:Lock\:\:Timeout\=60` in a sudoers file. The shared [`apt-nopasswd`](docker/test-systems/sudoers/apt-nopasswd) allowlist contains a working APT example.
 
 Example `/etc/sudoers.d/updater-updater` file for an APT host using a dedicated `updater` SSH account:
 
@@ -739,21 +739,23 @@ Example `/etc/sudoers.d/updater-updater` file for an APT host using a dedicated 
 Defaults:updater !requiretty
 
 updater ALL=(root:root) NOPASSWD: /usr/bin/dpkg --audit
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 update -qq
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 update -qq
 updater ALL=(root:root) NOPASSWD: /usr/bin/dpkg --configure -a
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 upgrade -y
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 full-upgrade -y
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 autoremove -y
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 install --only-upgrade -y *
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 upgrade -y
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 full-upgrade -y
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 autoremove -y
+# WARNING: Selected-package upgrades are disabled by default.
+# Uncomment only the rules you need. Each wildcard broadens the allowed command arguments.
+# updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 install --only-upgrade -y *
 updater ALL=(root:root) NOPASSWD: /usr/bin/pvesh get /cluster/tasks --output-format json
-updater ALL=(root:root) NOPASSWD: /usr/sbin/reboot
+updater ALL=(root:root) NOPASSWD: /usr/sbin/reboot ""
 ```
 
-The `pvesh` entry is only needed for Proxmox VE hosts. The trailing `*` entry enables selected-package upgrades; omit it if the dashboard should only run bulk upgrades. After creating the file, set its permissions and validate the syntax:
+The `pvesh` entry is only needed for Proxmox VE hosts. Uncomment the trailing `*` entry only when the dashboard should perform selected-package upgrades. After creating the file, set its permissions and validate the syntax:
 
 ```bash
-chmod 440 /etc/sudoers.d/updater-updater
-visudo -cf /etc/sudoers.d/updater-updater
+sudo chmod 440 /etc/sudoers.d/updater-updater
+sudo visudo -cf /etc/sudoers.d/updater-updater
 ```
 
 Package-manager upgrade rights are still privileged maintenance rights: package post-install scripts run as root. The goal is to limit the dashboard account to package maintenance, not to make package maintenance unprivileged.
