@@ -40,14 +40,21 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/
     mkdir -p /etc/ssh/sshd_config.d && \
     echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
 
-# Create test user with fish login shell and password-based sudo
+# Create a restricted package-maintenance user with fish and password-based sudo.
+COPY sudoers/apt-password /etc/sudoers.d/testuser
+COPY sudoers/persistent-monitor-password /etc/sudoers.d/testuser-persistent-monitor
+COPY ludash-persistent-sudo-test /usr/local/bin/ludash-persistent-sudo-test
 RUN useradd -m -s /usr/bin/fish testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    usermod -aG sudo testuser
+    chmod 440 /etc/sudoers.d/testuser /etc/sudoers.d/testuser-persistent-monitor && \
+    chmod 755 /usr/local/bin/ludash-persistent-sudo-test && \
+    visudo -cf /etc/sudoers.d/testuser && \
+    visudo -cf /etc/sudoers.d/testuser-persistent-monitor
 
-# Verify fish is the login shell and sudo requires password auth.
+# Verify fish is the login shell, required sudo works, and arbitrary sudo fails.
 RUN getent passwd testuser | grep -q '/usr/bin/fish$' && \
-    su - testuser -c "echo testpass | sudo -S -p '' true"
+    su - testuser -c "echo testpass | sudo -S -p '' dpkg --audit" && \
+    su - testuser -c "! sudo -n true"
 
 # Generate host keys
 RUN ssh-keygen -A

@@ -722,16 +722,16 @@ Custom system-info scripts can either keep the built-in sectioned parser or map 
 
 ### Least-privilege SSH users
 
-For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Potential commands** action for each system that opens the effective SSH commands and generated sudoers allowlist entries for that system.
+For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Sudoers setup** action for each system. It opens a generated `/etc/sudoers.d` file and installation instructions for that system. The dashboard resolves executable paths over read-only SSH when the host is available; offline hosts receive a clearly marked template whose placeholder paths must be replaced before use.
 
 Recommended sudoers posture:
 
 - grant `NOPASSWD` only for the generated root commands that system needs
 - prefer exact command rules for update checks, repairs, upgrades, and reboots
-- review selected-package upgrade entries carefully because they need package-specific rules or a controlled argument wildcard
+- leave the generated selected-package rules commented out unless you need them; uncommenting them adds a controlled argument wildcard
 - avoid `NOPASSWD: ALL`, `sudo sh <writable-script>`, and broad globs such as `apt-get *`
 
-Treat the generated list as a command reference when writing `/etc/sudoers.d` rules: use each executable's absolute path and escape sudoers syntax characters in arguments. For example, the APT lock option is written as `DPkg\:\:Lock\:\:Timeout=60` in a sudoers file. The [`ludash-test-apt-least-privilege`](docker/test-systems/Dockerfile.apt-least-privilege) fixture contains a working APT example.
+Treat the generated file as a starting point for review: use each executable's absolute path, escape sudoers syntax characters in arguments, and write `""` after commands that must not receive arguments. For example, the APT lock option is written as `DPkg\:\:Lock\:\:Timeout\=60` in a sudoers file. The shared [`apt-nopasswd`](docker/test-systems/sudoers/apt-nopasswd) allowlist contains a working APT example.
 
 Example `/etc/sudoers.d/updater-updater` file for an APT host using a dedicated `updater` SSH account:
 
@@ -739,21 +739,23 @@ Example `/etc/sudoers.d/updater-updater` file for an APT host using a dedicated 
 Defaults:updater !requiretty
 
 updater ALL=(root:root) NOPASSWD: /usr/bin/dpkg --audit
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 update -qq
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 update -qq
 updater ALL=(root:root) NOPASSWD: /usr/bin/dpkg --configure -a
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 upgrade -y
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 full-upgrade -y
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 autoremove -y
-updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 install --only-upgrade -y *
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 upgrade -y
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 full-upgrade -y
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 autoremove -y
+# WARNING: Selected-package upgrades are disabled by default.
+# Uncomment only the rules you need. Each wildcard broadens the allowed command arguments.
+# updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 install --only-upgrade -y *
 updater ALL=(root:root) NOPASSWD: /usr/bin/pvesh get /cluster/tasks --output-format json
-updater ALL=(root:root) NOPASSWD: /usr/sbin/reboot
+updater ALL=(root:root) NOPASSWD: /usr/sbin/reboot ""
 ```
 
-The `pvesh` entry is only needed for Proxmox VE hosts. The trailing `*` entry enables selected-package upgrades; omit it if the dashboard should only run bulk upgrades. After creating the file, set its permissions and validate the syntax:
+The `pvesh` entry is only needed for Proxmox VE hosts. Uncomment the trailing `*` entry only when the dashboard should perform selected-package upgrades. After creating the file, set its permissions and validate the syntax:
 
 ```bash
-chmod 440 /etc/sudoers.d/updater-updater
-visudo -cf /etc/sudoers.d/updater-updater
+sudo chmod 440 /etc/sudoers.d/updater-updater
+sudo visudo -cf /etc/sudoers.d/updater-updater
 ```
 
 Package-manager upgrade rights are still privileged maintenance rights: package post-install scripts run as root. The goal is to limit the dashboard account to package maintenance, not to make package maintenance unprivileged.
@@ -838,7 +840,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 This will:
 
 1. Stop any running dev/production services
-2. Build and start 16 Docker containers (including Alpine, fish-shell, sudo-password APT, least-privilege APT, and partial multi-manager fixtures)
+2. Build and start 15 Docker containers (including Alpine, fish-shell, sudo-password APT, and partial multi-manager fixtures)
 3. Build the frontend in production mode
 4. Start the production server on `:3001`
 
@@ -849,8 +851,8 @@ The server initializes or upgrades the SQLite schema automatically during startu
 - User: `testuser`
 - Password: `testpass`
 - `Sudo password`: `testpass` (required for `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`, optional for others)
-- Passwordless `sudo` is pre-configured on all test systems except `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`
-- `ludash-test-apt-least-privilege` has restricted `NOPASSWD` rules for exact APT maintenance commands instead of `NOPASSWD: ALL`; leave its dashboard `Sudo password` unset
+- Every `testuser` account is restricted to the package-manager maintenance commands needed by its fixture; arbitrary commands such as `sudo -n true` are denied
+- Passwordless `sudo` is pre-configured for the restricted allowlists except on `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`
 
 | Container                          | SSH Port | Package Manager                | Login Shell | Base Image   |
 | ---------------------------------- | -------- | ------------------------------ | ----------- | ------------ |
@@ -869,7 +871,6 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-dnf-gpg-prompt`       | 2013     | DNF (GPG key prompt fixture)   | `bash`      | Fedora 41    |
 | `ludash-test-dnf-eula-prompt`      | 2014     | DNF (EULA prompt fixture)      | `bash`      | Fedora 41    |
 | `ludash-test-apt-dpkg-interrupted` | 2015     | APT (interrupted dpkg fixture) | `bash`      | Debian 12    |
-| `ludash-test-apt-least-privilege`  | 2016     | APT (restricted sudoers)       | `bash`      | Debian 12    |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -909,13 +910,7 @@ That makes it useful for verifying the dashboard’s opt-in DNF/YUM EULA automat
 
 That makes it useful for verifying the package manager issue banner, including the **Solve** action that runs `dpkg --configure -a` and then rechecks updates.
 
-`ludash-test-apt-least-privilege` is a self-contained APT fixture for dedicated automation users. Its `testuser` account intentionally cannot run arbitrary root commands such as `sudo -n true`. It allows only exact APT refresh, upgrade, and autoremove commands, one fixed selected-package upgrade, `dpkg --audit`, and `dpkg --configure -a`. This makes it useful for verifying checks and SSH-safe detached maintenance with the dashboard `Sudo password` left unset.
-
-To run the opt-in Docker integration test for that restricted account:
-
-```bash
-LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/apt-least-privilege.integration.test.ts
-```
+All test systems use dedicated least-privilege `testuser` accounts. Their reusable package-manager allowlists live under [`docker/test-systems/sudoers/`](docker/test-systems/sudoers/). Selected-package operations use reviewed argument wildcards where a fixture needs to exercise arbitrary package choices. DNF/YUM fixtures allow only the exact `env ACCEPT_EULA=Y` upgrade forms used by their opt-in EULA setting.
 
 To verify that password-based sudo receives credentials for each atomic APT
 check step, run the fish-shell fixture integration test:

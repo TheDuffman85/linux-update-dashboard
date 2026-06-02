@@ -33,11 +33,16 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/
     mkdir -p /etc/ssh/sshd_config.d && \
     echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
 
-# Create test user with passwordless sudo.
+# Create a restricted package-maintenance user for the detected managers.
+COPY sudoers/apt-nopasswd /etc/sudoers.d/testuser-apt
+COPY sudoers/snap-nopasswd /etc/sudoers.d/testuser-snap
 RUN useradd -m -s /bin/bash testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
-    chmod 440 /etc/sudoers.d/testuser
+    chmod 440 /etc/sudoers.d/testuser-* && \
+    visudo -cf /etc/sudoers.d/testuser-apt && \
+    visudo -cf /etc/sudoers.d/testuser-snap
+
+RUN su - testuser -c "sudo -n dpkg --audit && sudo -n -l /usr/bin/snap refresh >/dev/null && ! sudo -n true"
 
 # Generate host keys.
 RUN ssh-keygen -A

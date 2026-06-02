@@ -5,23 +5,21 @@ import type { ReactNode } from "react";
 
 const {
   mockUseSystems,
-  mockUseSystem,
+  mockUseSudoersPreview,
   mockUseCreateSystem,
   mockUseUpdateSystem,
   mockUseDeleteSystem,
   mockUseReorderSystems,
-  mockUseCheckUpdates,
   mockUseToast,
   mockUseUpgrade,
   mockUseAuth,
 } = vi.hoisted(() => ({
   mockUseSystems: vi.fn(),
-  mockUseSystem: vi.fn(),
+  mockUseSudoersPreview: vi.fn(),
   mockUseCreateSystem: vi.fn(),
   mockUseUpdateSystem: vi.fn(),
   mockUseDeleteSystem: vi.fn(),
   mockUseReorderSystems: vi.fn(),
-  mockUseCheckUpdates: vi.fn(),
   mockUseToast: vi.fn(),
   mockUseUpgrade: vi.fn(),
   mockUseAuth: vi.fn(),
@@ -29,15 +27,11 @@ const {
 
 vi.mock("../../client/lib/systems", () => ({
   useSystems: mockUseSystems,
-  useSystem: mockUseSystem,
+  useSudoersPreview: mockUseSudoersPreview,
   useCreateSystem: mockUseCreateSystem,
   useUpdateSystem: mockUseUpdateSystem,
   useDeleteSystem: mockUseDeleteSystem,
   useReorderSystems: mockUseReorderSystems,
-}));
-
-vi.mock("../../client/lib/updates", () => ({
-  useCheckUpdates: mockUseCheckUpdates,
 }));
 
 vi.mock("../../client/context/ToastContext", () => ({
@@ -122,7 +116,7 @@ describe("SystemsList", () => {
       isLoading: false,
       refetch: vi.fn(),
     });
-    mockUseSystem.mockReturnValue({
+    mockUseSudoersPreview.mockReturnValue({
       data: undefined,
       isLoading: false,
     });
@@ -130,21 +124,20 @@ describe("SystemsList", () => {
     mockUseUpdateSystem.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseDeleteSystem.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseReorderSystems.mockReturnValue({ mutate: vi.fn(), isPending: false });
-    mockUseCheckUpdates.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseToast.mockReturnValue({ toasts: [], addToast: vi.fn(), removeToast: vi.fn() });
     mockUseUpgrade.mockReturnValue({ isUpgrading: () => false, upgradingCount: 0 });
     mockUseAuth.mockReturnValue({ user: { username: "tester" } });
   });
 
-  test("renders a potential commands action and keeps its modal closed by default", () => {
+  test("renders a sudoers setup action and keeps its modal closed by default", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <SystemsList />
       </MemoryRouter>,
     );
 
-    expect(html).toContain('title="Potential commands"');
-    expect(html).toContain('aria-label="Potential commands for Alpha"');
-    expect(html).not.toContain("Potential Commands for Alpha");
+    expect(html).toContain('title="Sudoers setup"');
+    expect(html).toContain('aria-label="Sudoers setup for Alpha"');
+    expect(html).not.toContain("Sudoers Setup for Alpha");
   });
 });

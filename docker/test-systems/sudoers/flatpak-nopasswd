@@ -1,0 +1,6 @@
+Defaults:testuser !requiretty
+
+testuser ALL=(root) NOPASSWD: /usr/bin/flatpak update --appstream
+testuser ALL=(root) NOPASSWD: /usr/bin/flatpak update -y
+testuser ALL=(root) NOPASSWD: /usr/bin/flatpak update -y *
+testuser ALL=(root) NOPASSWD: /usr/bin/flatpak uninstall --unused -y

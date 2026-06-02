@@ -1,0 +1,4 @@
+Defaults:testuser !requiretty
+
+testuser ALL=(root) NOPASSWD: /usr/bin/snap refresh
+testuser ALL=(root) NOPASSWD: /usr/bin/snap refresh *

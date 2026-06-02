@@ -13,11 +13,17 @@ RUN dnf install -y --disablerepo='updates' \
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-# Create test user with sudo
+# Create a restricted package-maintenance user.
+COPY sudoers/dnf-nopasswd /etc/sudoers.d/testuser
 RUN useradd -m -s /bin/bash testuser && \
     echo 'testpass' | passwd --stdin testuser && \
-    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
-    chmod 440 /etc/sudoers.d/testuser
+    chmod 440 /etc/sudoers.d/testuser && \
+    visudo -cf /etc/sudoers.d/testuser
+
+RUN su - testuser -c "sudo -n -l /usr/bin/dnf upgrade -y >/dev/null && \
+    sudo -n -l /usr/bin/env ACCEPT_EULA=Y dnf upgrade -y >/dev/null && \
+    ! sudo -n -l /usr/bin/env ACCEPT_EULA=N dnf upgrade -y >/dev/null && \
+    ! sudo -n true"
 
 # Generate host keys
 RUN ssh-keygen -A

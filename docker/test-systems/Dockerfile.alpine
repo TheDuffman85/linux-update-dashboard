@@ -13,14 +13,15 @@ RUN sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh
     sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
 
-# Create test user with sudo
+# Create a restricted package-maintenance user.
+COPY sudoers/apk-nopasswd /etc/sudoers.d/testuser
 RUN adduser -D -s /bin/bash testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
-    chmod 440 /etc/sudoers.d/testuser
+    chmod 440 /etc/sudoers.d/testuser && \
+    visudo -cf /etc/sudoers.d/testuser
 
-# Fail the build early if sudo is not usable for the test user.
-RUN su - testuser -c "sudo -n true"
+# Fail the build if required APK access is missing or sudo is broadened.
+RUN su - testuser -c "sudo -n -l /sbin/apk update >/dev/null && ! sudo -n true"
 
 # Generate host keys
 RUN ssh-keygen -A

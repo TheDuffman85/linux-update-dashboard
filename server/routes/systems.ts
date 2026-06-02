@@ -13,6 +13,7 @@ import { getSSHManager } from "../ssh/connection";
 import { validatePackageName } from "../ssh/parsers/types";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
+import { resolveSudoersPreview } from "../services/sudoers-preview";
 import { resolveSystemCredential } from "../services/credential-service";
 import { getActivityHistoryLimit } from "../services/settings-service";
 import {
@@ -618,6 +619,29 @@ systems.get("/:id", (c) => {
     packageIssues,
     history,
   });
+});
+
+systems.get("/:id/sudoers-preview", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const system = systemService.getSystem(id);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  const commandReference = buildCommandReference({
+    id,
+    pkgManager: system.pkgManager ?? null,
+    detectedPkgManagers: system.detectedPkgManagers ?? null,
+    disabledPkgManagers: system.disabledPkgManagers ?? null,
+    pkgManagerConfigs: system.pkgManagerConfigs ?? null,
+  });
+  const preview = await resolveSudoersPreview(
+    system.username,
+    commandReference,
+    getSSHManager(),
+    system as Record<string, unknown>,
+    { systemId: id },
+  );
+  return c.json(preview);
 });
 
 systems.post("/:id/hidden-updates", async (c) => {

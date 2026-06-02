@@ -8,18 +8,17 @@ import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   useSystems,
-  useSystem,
+  useSudoersPreview,
   useCreateSystem,
   useUpdateSystem,
   useDeleteSystem,
   useReorderSystems,
 } from "../lib/systems";
 import type { System } from "../lib/systems";
-import { getCheckResultToast, useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
-import { PotentialCommandsPanel } from "../components/systems/PotentialCommandsPanel";
+import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { deriveSystemUpdateState, isPostAutoremoveRecheck, isPostUpgradeRecheck } from "../lib/system-status";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 
@@ -38,21 +37,20 @@ export default function SystemsList() {
   const updateSystem = useUpdateSystem();
   const deleteSystem = useDeleteSystem();
   const reorderSystems = useReorderSystems();
-  const checkUpdates = useCheckUpdates();
   const { addToast } = useToast();
   const { isUpgrading } = useUpgrade();
   const [showForm, setShowForm] = useState(false);
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
   const [editSystem, setEditSystem] = useState<System | null>(null);
-  const [commandsSystem, setCommandsSystem] = useState<System | null>(null);
+  const [sudoersSystem, setSudoersSystem] = useState<System | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [orderedSystems, setOrderedSystems] = useState<System[]>(() => systems ?? []);
   const systemsRef = useRef<System[]>([]);
   const orderedSystemsRef = useRef<System[]>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
-  const commandsQuery = useSystem(commandsSystem?.id ?? 0, {
-    enabled: commandsSystem !== null,
+  const sudoersPreview = useSudoersPreview(sudoersSystem?.id ?? 0, {
+    enabled: sudoersSystem !== null,
   });
 
   useEffect(() => {
@@ -149,16 +147,6 @@ export default function SystemsList() {
         await refetch();
         setDeleteId(null);
         addToast("System deleted", "success");
-      },
-      onError: (err) => addToast(err.message, "danger"),
-    });
-  };
-
-  const handleCheck = (id: number) => {
-    checkUpdates.mutate(id, {
-      onSuccess: (data) => {
-        const toast = getCheckResultToast(data);
-        addToast(toast.message, toast.type);
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -333,20 +321,10 @@ export default function SystemsList() {
                   <td className="px-2 sm:px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-0.5 sm:gap-1">
                       <button
-                        onClick={() => handleCheck(s.id)}
-                        disabled={!!s.activeOperation}
-                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                        title="Check for updates"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => setCommandsSystem(s)}
+                        onClick={() => setSudoersSystem(s)}
                         className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Potential commands"
-                        aria-label={`Potential commands for ${s.name}`}
+                        title="Sudoers setup"
+                        aria-label={`Sudoers setup for ${s.name}`}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -472,22 +450,19 @@ export default function SystemsList() {
       </Modal>
 
       <Modal
-        open={commandsSystem !== null}
-        onClose={() => setCommandsSystem(null)}
-        title={commandsSystem ? `Potential Commands for ${commandsSystem.name}` : "Potential Commands"}
+        open={sudoersSystem !== null}
+        onClose={() => setSudoersSystem(null)}
+        title={sudoersSystem ? `Sudoers Setup for ${sudoersSystem.name}` : "Sudoers Setup"}
       >
-        {commandsSystem && commandsQuery.isLoading ? (
+        {sudoersSystem && sudoersPreview.isLoading ? (
           <div className="flex justify-center py-10">
             <span className="spinner !w-6 !h-6 text-blue-500" />
           </div>
-        ) : commandsSystem && commandsQuery.data ? (
-          <PotentialCommandsPanel
-            commandReference={commandsQuery.data.commandReference}
-            sudoersUser={commandsQuery.data.system.username}
-          />
+        ) : sudoersSystem && sudoersPreview.data ? (
+          <SudoersSetupPanel preview={sudoersPreview.data} />
         ) : (
           <div className="text-sm text-slate-500 dark:text-slate-400">
-            Unable to load potential commands for this system right now.
+            Unable to load sudoers setup for this system right now.
           </div>
         )}
       </Modal>

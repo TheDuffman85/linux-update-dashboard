@@ -215,6 +215,18 @@ export interface CommandReference {
   warnings: CommandReferenceWarning[];
 }
 
+export interface SudoersPreviewWarning extends CommandReferenceWarning {}
+
+export interface SudoersPreview {
+  username: string;
+  filePath: string;
+  required: boolean;
+  resolution: "resolved" | "fallback";
+  resolutionError: string | null;
+  content: string;
+  warnings: SudoersPreviewWarning[];
+}
+
 export interface SystemDetailResponse {
   system: System;
   updates: CachedUpdate[];
@@ -263,6 +275,14 @@ export function useSystem(id: number, options?: { enabled?: boolean }) {
     },
   });
   return query;
+}
+
+export function useSudoersPreview(id: number, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ["system", id, "sudoers-preview"],
+    enabled: options?.enabled ?? true,
+    queryFn: () => apiFetch<SudoersPreview>(`/systems/${id}/sudoers-preview`),
+  });
 }
 
 export function useCreateSystem() {
