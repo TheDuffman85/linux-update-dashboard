@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { apiTokens, credentials, hiddenUpdates, settings, systems, updateCache, updateHistory, upgradeGroups, users } from "../../server/db/schema";
+import { apiTokens, credentials, hiddenUpdates, installedPackageCache, settings, systems, updateCache, updateHistory, upgradeGroups, users } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { authMiddleware } from "../../server/middleware/auth";
 import { hashToken } from "../../server/auth/api-token";
@@ -1793,7 +1793,7 @@ describe("systems reorder route", () => {
       credentialId,
       authType: "password",
       username: "root",
-      detectedPkgManagers: JSON.stringify(["apt"]),
+      detectedPkgManagers: JSON.stringify(["apt", "snap"]),
       disabledPkgManagers: JSON.stringify(["apt"]),
     }).returning({ id: systems.id }).get().id;
 
@@ -1950,6 +1950,14 @@ describe("systems reorder route", () => {
       },
     ]).run();
 
+    db.insert(installedPackageCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "bash",
+      currentVersion: "5.1",
+      architecture: "amd64",
+    }).run();
+
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
 
@@ -1961,6 +1969,14 @@ describe("systems reorder route", () => {
     expect(body.system.securityCount).toBe(0);
     expect(body.system.keptBackCount).toBe(0);
     expect(body.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["bash"]);
+    expect(body.installedPackages).toMatchObject([
+      {
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        architecture: "amd64",
+      },
+    ]);
     expect(body.hiddenUpdates).toHaveLength(1);
     expect(body.hiddenUpdates[0].packageName).toBe("openssl");
   });
@@ -2089,7 +2105,7 @@ describe("systems reorder route", () => {
       authType: "password",
       username: "root",
       pkgManager: "apt",
-      detectedPkgManagers: JSON.stringify(["apt"]),
+      detectedPkgManagers: JSON.stringify(["apt", "snap"]),
       pkgManagerConfigs: JSON.stringify({
         apt: { defaultUpgradeMode: "full-upgrade" },
       }),
@@ -2109,6 +2125,15 @@ describe("systems reorder route", () => {
       entry.pkgManager === "apt" &&
       entry.command.includes("apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y")
     )).toBe(true);
+    expect(body.commandReference.exact.some((entry: { category: string; pkgManager: string | null; command: string }) =>
+      entry.category === "list_installed_packages" &&
+      entry.pkgManager === "apt" &&
+      entry.command.includes("dpkg-query -W")
+    )).toBe(true);
+    expect(body.system.autoremoveSupport).toEqual({
+      supportedManagers: ["apt"],
+      skippedManagers: ["snap"],
+    });
     expect(body.commandReference.sudoers.some((entry: { category: string; command: string }) =>
       entry.category === "upgrade_all" &&
       entry.command === "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y"

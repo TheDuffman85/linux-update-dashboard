@@ -1,16 +1,21 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 import {
   buildActivityDisplayRows,
   dedupePackageIssueUpdateNotice,
   getActivityTitle,
+  getAutoremoveConfirmMessage,
   getPackageSelectionState,
+  filterInstalledPackages,
+  InstalledPackagesSection,
   getVisiblePackageIssuesForCurrentCheck,
   isScrollNearBottom,
   matchesHistoryEntryToSession,
   PackageManagerIssueBanner,
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
+  shouldShowAutoremoveAction,
 } from "../../client/pages/SystemDetail";
 import { PotentialCommandsPanel } from "../../client/components/systems/PotentialCommandsPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
@@ -30,6 +35,20 @@ function createHistoryEntry(overrides: Partial<HistoryEntry> & Pick<HistoryEntry
     ...overrides,
   };
 }
+
+describe("autoremove action", () => {
+  test("shows whenever a manager is supported and names skipped managers in the confirmation", () => {
+    const support = {
+      supportedManagers: ["apt", "flatpak"],
+      skippedManagers: ["snap"],
+    };
+
+    expect(shouldShowAutoremoveAction(support)).toBe(true);
+    expect(getAutoremoveConfirmMessage("Debian", support)).toContain("Will run for: apt, flatpak.");
+    expect(getAutoremoveConfirmMessage("Debian", support)).toContain("configured: snap.");
+    expect(shouldShowAutoremoveAction({ supportedManagers: [] })).toBe(false);
+  });
+});
 
 describe("buildActivityDisplayRows", () => {
   test("creates a refresh session immediately from a check action hint", () => {
@@ -622,6 +641,62 @@ describe("PotentialCommandsPanel", () => {
     expect(html).toContain("package placeholder");
     expect(html).toContain("Review before allowing");
     expect(html).toContain("Runs a shell under sudo");
+  });
+});
+
+describe("InstalledPackagesSection", () => {
+  const packages = [
+    {
+      id: 1,
+      systemId: 1,
+      pkgManager: "apt",
+      packageName: "curl",
+      currentVersion: "8.0",
+      architecture: "amd64",
+      repository: null,
+      cachedAt: "2026-06-01 10:00:00",
+    },
+    {
+      id: 2,
+      systemId: 1,
+      pkgManager: "flatpak",
+      packageName: "org.example.App",
+      currentVersion: "1.2.3",
+      architecture: "x86_64",
+      repository: "flathub",
+      cachedAt: "2026-06-01 10:00:00",
+    },
+  ];
+
+  test("renders collapsed with count, search, and inventory columns", () => {
+    const html = renderToStaticMarkup(createElement(InstalledPackagesSection, {
+      installedPackages: packages,
+      cacheTimestamp: "2026-06-01 10:00:00",
+    }));
+
+    expect(html).toMatch(/<details class="[^"]*"><summary/);
+    expect(html).not.toMatch(/<details[^>]* open/);
+    expect(html).toContain("Installed Packages");
+    expect(html).toContain('title="');
+    expect(html).toContain("Search installed packages");
+    expect(html).toContain("Installed Version");
+    expect(html).toContain('type="text"');
+    expect(html).toContain("Architecture");
+    expect(html).not.toContain("Repository");
+  });
+
+  test("filters by package, version, manager, and architecture", () => {
+    expect(filterInstalledPackages(packages, "curl")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "1.2.3")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "flatpak")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "amd64")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "flathub")).toEqual([]);
+    expect(filterInstalledPackages(packages, "missing")).toEqual([]);
+  });
+
+  test("renders a distinct empty snapshot message", () => {
+    const html = renderToStaticMarkup(createElement(InstalledPackagesSection, { installedPackages: [] }));
+    expect(html).toContain("No installed package snapshot collected. Run Refresh to collect one.");
   });
 });
 

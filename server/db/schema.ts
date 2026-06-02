@@ -157,6 +157,32 @@ export const updateCache = sqliteTable(
   ]
 );
 
+export const installedPackageCache = sqliteTable(
+  "installed_package_cache",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    pkgManager: text("pkg_manager").notNull(),
+    packageName: text("package_name").notNull(),
+    currentVersion: text("current_version").notNull(),
+    architecture: text("architecture"),
+    repository: text("repository"),
+    cachedAt: text("cached_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    unique().on(
+      table.systemId,
+      table.pkgManager,
+      table.packageName,
+      table.architecture,
+    ),
+  ]
+);
+
 export const hiddenUpdates = sqliteTable(
   "hidden_updates",
   {

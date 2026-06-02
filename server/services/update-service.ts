@@ -8,6 +8,7 @@ import { sudo, validatePackageName } from "../ssh/parsers/types";
 import { getDnfLikeEulaPromptMessage, hasDnfLikeEulaPrompt } from "../ssh/parsers/dnf";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
+import * as installedPackageService from "./installed-package-service";
 import * as packageIssueService from "./package-manager-issue-service";
 import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
@@ -39,6 +40,7 @@ import {
   isCustomPackageManager,
   listPackageManagerDefinitions,
   parseUpdatesWithScript,
+  parseInstalledPackagesWithScript,
   resolveRuntimeSteps,
   resolveScript,
 } from "./script-service";
@@ -860,7 +862,10 @@ async function checkUpdatesUnlocked(
       pkgManagers = systemService.getActivePkgManagers(system);
     }
 
-    if (!pkgManagers.length) return [];
+    if (!pkgManagers.length) {
+      installedPackageService.pruneInstalledPackagesForInactiveManagers(systemId, []);
+      return [];
+    }
 
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
 
@@ -1001,6 +1006,110 @@ async function checkUpdatesUnlocked(
         });
         pub({ type: "error", message: errorText });
       }
+
+      throwIfActiveOperationCancelled(systemId);
+      const installedPackageScript = resolveScript(systemId, "list_installed_packages", pmName);
+      const installedPackageSteps = resolveRuntimeSteps({
+        systemId,
+        operation: "list_installed_packages",
+        pkgManager: pmName,
+        pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+      });
+      if (!installedPackageScript || installedPackageSteps.length === 0) continue;
+
+      let lastInventoryStepIndex: number | null = null;
+      try {
+        const commandResults: CheckCommandResult[] = [];
+        const activityStepIndexes: number[] = [];
+        for (const step of installedPackageSteps) {
+          throwIfActiveOperationCancelled(systemId);
+          const command = step.command;
+          const label = step.label || `Listing installed ${pmName} packages`;
+          const stepStartedAt = getCurrentTimestamp();
+          allCommands.push(command);
+          pub({ type: "started", command, pkgManager: pmName, startedAt: stepStartedAt });
+          pub({ type: "phase", phase: label });
+          const result = await sshManager.runCommand(
+            conn,
+            command,
+            undefined,
+            sudoPassword,
+            undefined,
+            signal,
+          );
+          const stepCompletedAt = getCurrentTimestamp();
+          if (isCancelledResult(result.exitCode)) {
+            allSteps.push(createActivityStep({
+              label,
+              pkgManager: pmName,
+              command,
+              output: null,
+              error: "Operation cancelled",
+              status: "cancelled",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }));
+            throw createCancelledError();
+          }
+          const errorMessage = result.exitCode === 0
+            ? null
+            : getCustomCheckErrorMessage(
+                installedPackageScript.parserConfig,
+                result.stdout,
+                result.stderr,
+                result.exitCode,
+              );
+          commandResults.push({
+            command,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          });
+          activityStepIndexes.push(allSteps.length);
+          lastInventoryStepIndex = allSteps.length;
+          allSteps.push(createActivityStep({
+            label,
+            pkgManager: pmName,
+            command,
+            output: null,
+            error: errorMessage,
+            status: errorMessage ? "failed" : "success",
+            startedAt: stepStartedAt,
+            completedAt: stepCompletedAt,
+          }));
+          if (errorMessage) throw new Error(errorMessage);
+        }
+
+        const installedPackages = parseInstalledPackagesWithScript(
+          pmName,
+          installedPackageScript,
+          commandResults,
+        );
+        installedPackageService.replaceInstalledPackagesForManager(
+          systemId,
+          pmName,
+          installedPackages,
+        );
+        const lastActivityStepIndex = activityStepIndexes.at(-1);
+        if (lastActivityStepIndex !== undefined) {
+          allSteps[lastActivityStepIndex].output =
+            `Collected ${installedPackages.length} installed package${installedPackages.length === 1 ? "" : "s"}`;
+        }
+      } catch (e) {
+        if (isOperationCancelledError(e)) throw e;
+        const errorText = e instanceof Error ? e.message : String(e);
+        if (lastInventoryStepIndex !== null && allSteps[lastInventoryStepIndex].status === "success") {
+          allSteps[lastInventoryStepIndex].status = "warning";
+          allSteps[lastInventoryStepIndex].error = errorText;
+        }
+        checkErrors.push(`[${pmName} installed packages] ${errorText}`);
+        logger.warn("Installed package collection failed", {
+          systemId,
+          pkgManager: pmName,
+          error: sanitizeOutput(errorText),
+        });
+        pub({ type: "warning", message: `Installed package inventory: ${errorText}` });
+      }
     }
   } catch (e) {
     if (isOperationCancelledError(e)) {
@@ -1032,6 +1141,8 @@ async function checkUpdatesUnlocked(
   } finally {
     if (conn) sshManager.disconnect(conn);
   }
+
+  installedPackageService.pruneInstalledPackagesForInactiveManagers(systemId, pkgManagers);
 
   // Store in cache
   cacheService.invalidateCache(systemId);
@@ -1556,6 +1667,213 @@ export function supportsFullUpgrade(systemId: number): boolean {
       pkgManager: pmName,
       pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
     }).length > 0;
+  });
+}
+
+export interface AutoremoveSupport {
+  supportedManagers: string[];
+  skippedManagers: string[];
+}
+
+export function getAutoremoveSupport(systemId: number): AutoremoveSupport {
+  const system = systemService.getSystem(systemId);
+  if (!system) return { supportedManagers: [], skippedManagers: [] };
+  const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
+  const supportedManagers: string[] = [];
+  const skippedManagers: string[] = [];
+
+  for (const pmName of systemService.getActivePkgManagers(system)) {
+    const steps = resolveRuntimeSteps({
+      systemId,
+      operation: "autoremove",
+      pkgManager: pmName,
+      pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+    });
+    (steps[0]?.command ? supportedManagers : skippedManagers).push(pmName);
+  }
+
+  return { supportedManagers, skippedManagers };
+}
+
+export async function applyAutoremove(systemId: number): Promise<OperationResult> {
+  return withLock(systemId, async () => {
+    const now = getCurrentTimestamp();
+    setActiveOperation(systemId, { type: "autoremove", startedAt: now });
+    await requestNotificationRuntimeSystemSync(systemId);
+    outputStream.resetStream(systemId);
+    try {
+      const system = systemService.getSystem(systemId);
+      if (!system) return { success: false, output: "System not found" };
+
+      const pkgManagerConfigs = getSystemPackageManagerConfigs(system);
+      const { supportedManagers } = getAutoremoveSupport(systemId);
+      if (!supportedManagers.length) {
+        return { success: false, output: "Autoremove is not supported for this system" };
+      }
+
+      const allCommands: string[] = [];
+      const allOutputs: string[] = [];
+      let overallSuccess = true;
+      let monitoringLost = false;
+      const sshManager = getSSHManager();
+      const signal = getCancellationSignal(systemId);
+      const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
+      let conn;
+
+      try {
+        throwIfActiveOperationCancelled(systemId);
+        publishSshConnectionStep(
+          (msg) => outputStream.publish(systemId, msg),
+          getStoredActiveOperation(systemId)?.startedAt ?? getCurrentTimestamp(),
+        );
+        conn = await sshManager.connect(system as Record<string, unknown>, { systemId });
+        throwIfActiveOperationCancelled(systemId);
+
+        for (const pmName of supportedManagers) {
+          throwIfActiveOperationCancelled(systemId);
+          const cmd = resolveRuntimeSteps({
+            systemId,
+            operation: "autoremove",
+            pkgManager: pmName,
+            pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
+          })[0]?.command;
+          if (!cmd) continue;
+
+          allCommands.push(cmd);
+          const stepStartedAt = getCurrentTimestamp();
+          const histId = insertStartedEntry(systemId, "autoremove", pmName, cmd, stepStartedAt);
+          outputStream.publish(systemId, { type: "started", command: cmd, pkgManager: pmName, startedAt: stepStartedAt });
+          let streamedOutput = "";
+          let result;
+          try {
+            result = await sshManager.runPersistentCommand(
+              conn,
+              cmd,
+              3600,
+              sudoPassword,
+              (chunk, stream) => {
+                streamedOutput += chunk;
+                outputStream.publish(systemId, { type: "output", data: chunk, stream });
+              },
+              {
+                signal,
+                onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
+              },
+            );
+          } catch (error) {
+            if (isOperationCancelledError(error)) throw error;
+            result = { stdout: "", stderr: String(error), exitCode: -1 };
+          }
+          const stepCompletedAt = getCurrentTimestamp();
+          const combinedOutput = streamedOutput || result.stdout || result.stderr;
+
+          if (isCancelledResult(result.exitCode)) {
+            finishEntry(histId, "cancelled", {
+              steps: createSingleStepHistory({
+                label: null,
+                pkgManager: pmName,
+                command: cmd,
+                output: combinedOutput,
+                error: "Operation cancelled",
+                status: "cancelled",
+                startedAt: stepStartedAt,
+                completedAt: stepCompletedAt,
+              }),
+              output: result.stdout.slice(0, STEP_OUTPUT_LIMIT),
+              error: "Operation cancelled",
+            });
+            outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
+            outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+            return { success: false, output: "Operation cancelled", cancelled: true };
+          }
+
+          if (result.exitCode === EXIT_MONITORING_LOST) {
+            monitoringLost = true;
+            overallSuccess = false;
+            const warning = "SSH connection lost while autoremove was running. The remote process may still be running.";
+            allOutputs.push(`[${pmName}] ${warning}`);
+            finishEntry(histId, "warning", {
+              steps: createSingleStepHistory({
+                label: null,
+                pkgManager: pmName,
+                command: cmd,
+                output: combinedOutput,
+                error: warning,
+                status: "warning",
+                startedAt: stepStartedAt,
+                completedAt: stepCompletedAt,
+              }),
+              output: result.stdout.slice(0, STEP_OUTPUT_LIMIT),
+              error: warning,
+            });
+            outputStream.publish(systemId, { type: "warning", message: warning });
+            break;
+          }
+
+          const success = result.exitCode === 0;
+          if (!success) overallSuccess = false;
+          const formattedError = success
+            ? null
+            : formatUpgradeFailureOutput(pmName, result.stdout, result.stderr, combinedOutput);
+          if (!success) {
+            recordPackageManagerIssueFromFailure(
+              systemId,
+              pmName,
+              `${result.stdout}\n${result.stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
+            );
+          }
+          allOutputs.push(`[${pmName}] ${success ? result.stdout : formattedError}`);
+          finishEntry(histId, success ? "success" : "failed", {
+            steps: createSingleStepHistory({
+              label: null,
+              pkgManager: pmName,
+              command: cmd,
+              output: combinedOutput,
+              error: formattedError,
+              status: success ? "success" : "failed",
+              startedAt: stepStartedAt,
+              completedAt: stepCompletedAt,
+            }),
+            output: result.stdout.slice(0, STEP_OUTPUT_LIMIT),
+            error: success ? undefined : formattedError?.slice(0, STEP_ERROR_LIMIT),
+          });
+        }
+
+        if (conn) {
+          sshManager.disconnect(conn);
+          conn = undefined;
+        }
+        if (!monitoringLost) {
+          setActiveOperationPhase(systemId, "rechecking");
+          await requestNotificationRuntimeSystemSync(systemId);
+          outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
+          await checkUpdatesUnlocked(systemId, true);
+          syncSystemNotificationHash(systemId);
+        }
+
+        const combinedOutput = allOutputs.join("\n\n");
+        outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
+        return { success: overallSuccess, output: combinedOutput, warning: monitoringLost };
+      } catch (error) {
+        if (isOperationCancelledError(error)) {
+          outputStream.publish(systemId, { type: "warning", message: error.message });
+          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+          return { success: false, output: error.message, cancelled: true };
+        }
+        logHistory(systemId, "autoremove", supportedManagers.join(","), "failed", {
+          command: allCommands.join(" && "),
+          error: String(error),
+        });
+        outputStream.publish(systemId, { type: "error", message: String(error) });
+        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+        return { success: false, output: String(error) };
+      } finally {
+        if (conn) sshManager.disconnect(conn);
+      }
+    } finally {
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
+    }
   });
 }
 

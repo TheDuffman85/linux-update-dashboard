@@ -10,6 +10,11 @@ import {
   type PackageManagerConfigValue,
 } from "../package-manager-configs";
 import { getPackageManagerDetectionCommands } from "../ssh/detector";
+import {
+  getBuiltinInstalledPackageCommand,
+  parseBuiltinInstalledPackages,
+  type InstalledPackage,
+} from "../ssh/installed-packages";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND } from "../ssh/parsers/apt";
 import type { CheckCommandResult } from "../ssh/parsers/types";
@@ -30,7 +35,9 @@ export type ScriptType = "package_manager" | "system";
 export type ScriptOperation =
   | "detect"
   | "check_updates"
+  | "list_installed_packages"
   | "repair_issue"
+  | "autoremove"
   | "upgrade_all"
   | "full_upgrade_all"
   | "upgrade_selected"
@@ -45,6 +52,7 @@ export interface ScriptStep {
 export interface CustomParserConfig {
   parseStep?: number;
   updateRegex?: string;
+  installedPackageRegex?: string;
   securityRegex?: string;
   keptBackRegex?: string;
   successExitCodes?: number[];
@@ -161,7 +169,9 @@ const SYSTEM_INFO_FIELDS = new Set<keyof SystemInfo>([
 const OPERATION_PROFILE_ORDER: ScriptOperation[] = [
   "detect",
   "check_updates",
+  "list_installed_packages",
   "repair_issue",
+  "autoremove",
   "upgrade_all",
   "full_upgrade_all",
   "upgrade_selected",
@@ -194,6 +204,18 @@ export const SCRIPT_OPERATION_PROFILES: Record<ScriptOperation, ScriptOperationP
     relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
     defaultStepBadge: "parser input",
   },
+  list_installed_packages: {
+    operation: "list_installed_packages",
+    label: "List installed packages",
+    allowedTypes: ["package_manager"],
+    purpose: "Lists installed packages and their current versions for the system-detail inventory.",
+    stepBehavior: "Steps run in order and stop at the first failed step.",
+    outputConsumer: "The parsed package snapshot is cached per manager; full listing output is not stored in activity history.",
+    parserBehavior: "Custom package managers need an installed-package regex with packageName and currentVersion groups.",
+    exitCodeBehavior: "A non-zero exit code keeps the previous snapshot and marks the refresh as a warning.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}"],
+    defaultStepBadge: "inventory parser input",
+  },
   repair_issue: {
     operation: "repair_issue",
     label: "Repair issue",
@@ -203,6 +225,18 @@ export const SCRIPT_OPERATION_PROFILES: Record<ScriptOperation, ScriptOperationP
     outputConsumer: "Output is streamed live and stored in activity history; it is not parsed into update rows.",
     parserBehavior: "No parser configuration is used.",
     exitCodeBehavior: "A non-zero exit code marks the repair operation as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  autoremove: {
+    operation: "autoremove",
+    label: "Autoremove",
+    allowedTypes: ["package_manager"],
+    purpose: "Removes packages or runtimes that are no longer needed.",
+    stepBehavior: "The autoremove command runs as the operation body for the selected manager.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while removing unused packages.",
+    exitCodeBehavior: "A non-zero exit code marks the autoremove operation as failed.",
     relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
     defaultStepBadge: "streamed only",
   },
@@ -319,7 +353,11 @@ function hasDangerousRegexConstruct(source: string): boolean {
 function validateRegexSource(
   value: unknown,
   field: string,
-  options: { required?: boolean; requireUpdateGroups?: boolean } = {},
+  options: {
+    required?: boolean;
+    requireUpdateGroups?: boolean;
+    requireInstalledPackageGroups?: boolean;
+  } = {},
 ): string | null {
   if (value === undefined || value === null || value === "") {
     return options.required ? `${field} is required` : null;
@@ -338,6 +376,11 @@ function validateRegexSource(
       return `${field} must include named capture groups packageName and newVersion`;
     }
   }
+  if (options.requireInstalledPackageGroups) {
+    if (!source.includes("(?<packageName>") || !source.includes("(?<currentVersion>")) {
+      return `${field} must include named capture groups packageName and currentVersion`;
+    }
+  }
   try {
     new RegExp(source);
   } catch (error) {
@@ -349,11 +392,15 @@ function validateRegexSource(
 function compileValidatedRegex(
   source: string,
   field: string,
-  options: { requireUpdateGroups?: boolean } = {},
+  options: {
+    requireUpdateGroups?: boolean;
+    requireInstalledPackageGroups?: boolean;
+  } = {},
 ): RegExp {
   const error = validateRegexSource(source, field, {
     required: true,
     requireUpdateGroups: options.requireUpdateGroups,
+    requireInstalledPackageGroups: options.requireInstalledPackageGroups,
   });
   if (error) throw new Error(error);
   return new RegExp(source.trim());
@@ -384,6 +431,7 @@ function validateParserConfig(config: unknown, field = "parserConfig"): string |
   }
   return (
     validateRegexSource(config.updateRegex, `${field}.updateRegex`, { requireUpdateGroups: config.updateRegex !== undefined }) ||
+    validateRegexSource(config.installedPackageRegex, `${field}.installedPackageRegex`, { requireInstalledPackageGroups: config.installedPackageRegex !== undefined }) ||
     validateRegexSource(config.securityRegex, `${field}.securityRegex`) ||
     validateRegexSource(config.keptBackRegex, `${field}.keptBackRegex`) ||
     validateExitCodes(config.successExitCodes, `${field}.successExitCodes`) ||
@@ -908,6 +956,42 @@ function builtinFullUpgradeCommand(manager: string): string | null {
   }
 }
 
+function builtinAutoremoveCommand(manager: string): string | null {
+  switch (manager) {
+    case "apt":
+      return commandLines(
+        "# Remove APT packages that are no longer needed.",
+        "export DEBIAN_FRONTEND=noninteractive",
+        sudoersRelevantCommand("apt-get -o DPkg::Lock::Timeout=60 autoremove -y") + " 2>&1",
+      );
+    case "dnf":
+      return commentedCommand("Remove DNF packages that are no longer needed.", sudoersRelevantCommand("dnf autoremove -y") + " 2>&1");
+    case "yum":
+      return commentedCommand("Remove YUM packages that are no longer needed.", sudoersRelevantCommand("yum autoremove -y") + " 2>&1");
+    case "pacman":
+      return commandLines(
+        "# Remove orphaned Pacman packages when any are present.",
+        'orphans="$(pacman -Qtdq)"',
+        'if [ -n "$orphans" ]; then',
+        '  if [ "$(id -u)" = "0" ]; then',
+        "    printf '%s\\n' \"$orphans\" | pacman -Rns --noconfirm - 2>&1",
+        "  elif command -v sudo >/dev/null 2>&1; then",
+        "    # Sudoers-relevant command: pacman -Rns --noconfirm -",
+        "    { cat; printf '%s\\n' \"$orphans\"; } | sudo -S -p '' pacman -Rns --noconfirm - 2>&1",
+        "  else",
+        "    printf '%s\\n' \"$orphans\" | pacman -Rns --noconfirm - 2>&1",
+        "  fi",
+        "else",
+        '  echo "No orphaned Pacman packages to remove."',
+        "fi",
+      );
+    case "flatpak":
+      return commentedCommand("Remove unused Flatpak runtimes.", sudoersRelevantCommand("flatpak uninstall --unused -y") + " 2>&1");
+    default:
+      return null;
+  }
+}
+
 function builtinUpgradeSelectedCommand(manager: string): string {
   switch (manager) {
     case "apt":
@@ -931,6 +1015,16 @@ function builtinUpgradeSelectedCommand(manager: string): string {
     default:
       return "";
   }
+}
+
+function builtinListInstalledPackagesCommand(manager: string): string {
+  const command = getBuiltinInstalledPackageCommand(manager);
+  return command
+    ? commentedCommand(
+        `List installed ${managerLabel(manager)} packages and their current versions for the dashboard inventory.`,
+        command,
+      )
+    : "";
 }
 
 function builtinScriptsForManager(manager: string): ScriptDefinition[] {
@@ -961,6 +1055,16 @@ function builtinScriptsForManager(manager: string): ScriptDefinition[] {
     `Refreshes and checks available ${managerLabel(manager)} updates.`,
     builtinCheckSteps(manager),
   ));
+  const listInstalledPackages = builtinListInstalledPackagesCommand(manager);
+  if (listInstalledPackages) {
+    scripts.push(builtinScript(
+      "list_installed_packages",
+      manager,
+      `List installed ${managerLabel(manager)} packages`,
+      `Lists installed ${managerLabel(manager)} packages and their current versions.`,
+      [{ label: `Listing installed ${managerLabel(manager)} packages`, command: listInstalledPackages }],
+    ));
+  }
   const repairIssue = builtinRepairIssueCommand(manager);
   if (repairIssue) {
     scripts.push(builtinScript(
@@ -969,6 +1073,16 @@ function builtinScriptsForManager(manager: string): ScriptDefinition[] {
       `Repair ${managerLabel(manager)} issue`,
       `Runs the built-in ${managerLabel(manager)} repair action used by package manager issue banners.`,
       [{ label: `Repair ${managerLabel(manager)} issue`, command: repairIssue }],
+    ));
+  }
+  const autoremove = builtinAutoremoveCommand(manager);
+  if (autoremove) {
+    scripts.push(builtinScript(
+      "autoremove",
+      manager,
+      `Autoremove unused ${managerLabel(manager)} packages`,
+      `Removes ${managerLabel(manager)} packages or runtimes that are no longer needed.`,
+      [{ label: `Autoremove unused ${managerLabel(manager)} packages`, command: autoremove }],
     ));
   }
   scripts.push(builtinScript(
@@ -1148,7 +1262,7 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type !== "package_manager" && input.type !== "system") {
     return "type must be package_manager or system";
   }
-  const operations: ScriptOperation[] = ["detect", "check_updates", "repair_issue", "upgrade_all", "full_upgrade_all", "upgrade_selected", "system_info", "reboot"];
+  const operations: ScriptOperation[] = ["detect", "check_updates", "list_installed_packages", "repair_issue", "autoremove", "upgrade_all", "full_upgrade_all", "upgrade_selected", "system_info", "reboot"];
   if (!input.operation || !operations.includes(input.operation)) {
     return "operation is not supported";
   }
@@ -1196,7 +1310,7 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   const parserConfigError = validateParserConfig(input.parserConfig);
   if (parserConfigError) return parserConfigError;
   if (
-    input.operation === "check_updates" &&
+    (input.operation === "check_updates" || input.operation === "list_installed_packages") &&
     input.parserConfig?.parseStep !== undefined &&
     input.parserConfig.parseStep >= input.steps.length
   ) {
@@ -1821,6 +1935,62 @@ export function parseUpdatesWithScript(
     }).map((update) => ({ ...update, pkgManager }));
   }
   return parseCustomUpdates(pkgManager, script?.parserConfig, commandResults);
+}
+
+export function parseCustomInstalledPackages(
+  pkgManager: string,
+  parserConfig: CustomParserConfig | null | undefined,
+  commandResults: CheckCommandResult[],
+): InstalledPackage[] {
+  const config = parserConfig ?? listCustomPackageManagers().find((manager) => manager.name === pkgManager)?.parserConfig;
+  if (!config?.installedPackageRegex) {
+    throw new Error("Installed-package parser requires installedPackageRegex");
+  }
+  const parseStep = Number.isInteger(config.parseStep)
+    ? Math.max(0, config.parseStep ?? 0)
+    : commandResults.length - 1;
+  const output = commandResults[parseStep]?.stdout ?? commandResults[commandResults.length - 1]?.stdout ?? "";
+  const configError = validateParserConfig(config);
+  if (configError) throw new Error(configError);
+  const installedPackageRegex = compileValidatedRegex(
+    config.installedPackageRegex,
+    "parserConfig.installedPackageRegex",
+    { requireInstalledPackageGroups: true },
+  );
+  const packages: InstalledPackage[] = [];
+  for (const raw of output.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const match = installedPackageRegex.exec(line);
+    if (!match?.groups?.packageName || !match.groups.currentVersion) continue;
+    packages.push({
+      pkgManager,
+      packageName: match.groups.packageName,
+      currentVersion: match.groups.currentVersion,
+      architecture: match.groups.architecture ?? null,
+      repository: match.groups.repository ?? null,
+    });
+  }
+  return packages;
+}
+
+export function parseInstalledPackagesWithScript(
+  pkgManager: string,
+  script: ScriptDefinition | null | undefined,
+  commandResults: CheckCommandResult[],
+): InstalledPackage[] {
+  const last = commandResults[commandResults.length - 1] ?? {
+    command: "",
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+  };
+  const runtimeBuiltin = script ? getRuntimeBuiltinScript(script) : null;
+  const builtinPackages = runtimeBuiltin?.pkgManager
+    ? parseBuiltinInstalledPackages(runtimeBuiltin.pkgManager, last.stdout)
+    : null;
+  if (builtinPackages) return builtinPackages;
+  return parseCustomInstalledPackages(pkgManager, script?.parserConfig, commandResults);
 }
 
 export function getCustomCheckErrorMessage(

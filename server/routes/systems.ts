@@ -3,6 +3,7 @@ import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import { buildCommandReference } from "../services/command-reference";
 import * as hiddenUpdateService from "../services/hidden-update-service";
+import * as installedPackageService from "../services/installed-package-service";
 import * as packageIssueService from "../services/package-manager-issue-service";
 import * as updateService from "../services/update-service";
 import * as upgradeBatchService from "../services/upgrade-batch-service";
@@ -580,6 +581,7 @@ systems.get("/:id", (c) => {
   if (!system) return c.json({ error: "System not found" }, 404);
 
   const updates = hiddenUpdateService.getVisibleCachedUpdates(id);
+  const installedPackages = installedPackageService.getInstalledPackages(id);
   const hiddenUpdates = hiddenUpdateService.listActiveHiddenUpdates(id);
   const packageIssues = packageIssueService.listVisiblePackageManagerIssues(id);
   const history = updateService.getHistory(id, getActivityHistoryLimit()).map((h) => ({
@@ -601,6 +603,7 @@ systems.get("/:id", (c) => {
       isStale: cacheService.isCacheStale(id),
       activeOperation: updateService.getActiveOperation(id) ?? upgradeBatchService.getQueuedOrRunningOperation(id),
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
+      autoremoveSupport: updateService.getAutoremoveSupport(id),
     },
     commandReference: buildCommandReference({
       id,
@@ -610,6 +613,7 @@ systems.get("/:id", (c) => {
       pkgManagerConfigs: (system.pkgManagerConfigs as string | null) ?? null,
     }),
     updates,
+    installedPackages,
     hiddenUpdates,
     packageIssues,
     history,

@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { credentials, hiddenUpdates, systems, updateCache, updateHistory } from "../../server/db/schema";
+import { credentials, hiddenUpdates, installedPackageCache, systems, updateCache, updateHistory } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import { checkUpdates } from "../../server/services/update-service";
@@ -617,5 +617,64 @@ describe("checkUpdates", () => {
     expect(hidden).toEqual([
       { packageName: "libcamera-ipa", isKeptBack: 1, active: 1 },
     ]);
+  });
+
+  test("stores installed packages and preserves the previous snapshot when inventory refresh fails", async () => {
+    const db = getDb();
+    const systemId = createAptSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    let inventoryFailure = false;
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt list --upgradable")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt-get -s -o Debug::NoLocking=1 upgrade")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dpkg-query -W")) {
+        return inventoryFailure
+          ? { stdout: "", stderr: "dpkg-query failed", exitCode: 1 }
+          : { stdout: "curl\t8.0\tamd64\nbash\t5.2\tamd64\n", stderr: "", exitCode: 0 };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await checkUpdates(systemId);
+    expect(db.select()
+      .from(installedPackageCache)
+      .where(eq(installedPackageCache.systemId, systemId))
+      .all()
+      .map((pkg) => pkg.packageName)
+      .sort()).toEqual(["bash", "curl"]);
+
+    inventoryFailure = true;
+    await checkUpdates(systemId);
+
+    expect(db.select()
+      .from(installedPackageCache)
+      .where(eq(installedPackageCache.systemId, systemId))
+      .all()
+      .map((pkg) => pkg.packageName)
+      .sort()).toEqual(["bash", "curl"]);
+
+    const history = db.select()
+      .from(updateHistory)
+      .where(eq(updateHistory.systemId, systemId))
+      .all()
+      .at(-1);
+    expect(history?.status).toBe("warning");
+    expect(history?.error).toContain("[apt installed packages] dpkg-query failed");
   });
 });

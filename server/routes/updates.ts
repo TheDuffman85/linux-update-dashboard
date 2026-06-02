@@ -174,6 +174,23 @@ updates.post("/systems/:id/upgrade", async (c) => {
   return c.json({ status: "started", jobId });
 });
 
+// Remove unused packages on a system (async)
+updates.post("/systems/:id/autoremove", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (updateService.getAutoremoveSupport(id).supportedManagers.length === 0) {
+    return c.json({ error: "Autoremove is not supported for this system" }, 400);
+  }
+  const jobId = startJob(async () => {
+    const result = await updateService.applyAutoremove(id);
+    return {
+      status: result.cancelled ? "cancelled" : result.warning ? "warning" : result.success ? "success" : "failed",
+      output: result.output,
+    };
+  });
+  return c.json({ status: "started", jobId });
+});
+
 // Full upgrade all packages on a system (async)
 updates.post("/systems/:id/full-upgrade", async (c) => {
   const id = parseId(c.req.param("id"));

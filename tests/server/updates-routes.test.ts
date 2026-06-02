@@ -75,6 +75,38 @@ describe("updates routes validation", () => {
     }
   });
 
+  test("starts autoremove without requiring cached updates and rejects unsupported managers", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "ludash-updates-routes-test-"));
+    initDatabase(join(tempDir, "dashboard.db"));
+
+    const app = new Hono();
+    app.route("/api", updatesRoutes);
+
+    try {
+      const aptId = seedSystemWithVisibleUpdate([]);
+      const snapId = getDb().insert(systems).values({
+        name: "Snap",
+        hostname: "snap.local",
+        port: 22,
+        authType: "password",
+        username: "root",
+        pkgManager: "snap",
+        detectedPkgManagers: JSON.stringify(["snap"]),
+      }).returning({ id: systems.id }).get().id;
+
+      const started = await app.request(`/api/systems/${aptId}/autoremove`, { method: "POST" });
+      expect(started.status).toBe(200);
+      expect(await started.json()).toMatchObject({ status: "started", jobId: expect.any(String) });
+
+      const unsupported = await app.request(`/api/systems/${snapId}/autoremove`, { method: "POST" });
+      expect(unsupported.status).toBe(400);
+      expect((await unsupported.json()).error).toContain("not supported");
+    } finally {
+      closeDatabase();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("starts selected-package upgrade jobs for valid visible packages", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "ludash-updates-routes-test-"));
     initDatabase(join(tempDir, "dashboard.db"));

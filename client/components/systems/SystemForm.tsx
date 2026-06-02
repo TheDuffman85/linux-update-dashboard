@@ -377,7 +377,9 @@ export function SystemForm({
   const packageScriptOperations: ScriptOperation[] = [
     "detect",
     "check_updates",
+    "list_installed_packages",
     "repair_issue",
+    "autoremove",
     "upgrade_all",
     "full_upgrade_all",
     "upgrade_selected",
@@ -386,7 +388,9 @@ export function SystemForm({
   const operationLabels: Record<ScriptOperation, string> = {
     detect: "Detection",
     check_updates: "Check updates",
+    list_installed_packages: "List installed packages",
     repair_issue: "Repair issue",
+    autoremove: "Autoremove",
     upgrade_all: "Upgrade all",
     full_upgrade_all: "Full upgrade",
     upgrade_selected: "Upgrade selected",

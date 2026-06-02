@@ -51,10 +51,10 @@ export function preparePersistentSudoCommand(command: string): string {
 export function buildPersistentSetupCommand(
   command: string,
   sudoPasswordProvided: boolean
-): { setupCmd: string; useSudoLaunch: boolean } {
+): { setupCmd: string; useSudoStdin: boolean } {
   const needsSudoStdin = command.includes("sudo -S");
-  const useSudoLaunch = needsSudoStdin && sudoPasswordProvided;
-  const persistentCommand = useSudoLaunch
+  const useSudoStdin = needsSudoStdin && sudoPasswordProvided;
+  const persistentCommand = useSudoStdin
     ? command
     : needsSudoStdin
       ? preparePersistentSudoCommand(command)
@@ -75,27 +75,33 @@ export function buildPersistentSetupCommand(
     'SCRIPT="${BASE}.sh"',
     'LOGFILE="${BASE}.log"',
     'EXITFILE="${BASE}.exit"',
+    ...(useSudoStdin ? [
+      'STDINFILE="${BASE}.stdin"',
+      'mkfifo "$STDINFILE"',
+      'chmod 600 "$STDINFILE"',
+    ] : []),
     'rm -f "$BASE"',
     `printf '%s' '${base64Cmd}' | base64 -d > "$SCRIPT"`,
     'chmod 700 "$SCRIPT"',
   ];
   const launchInnerCmd = [
     'if command -v setsid >/dev/null 2>&1; then',
-    '  nohup setsid sh "$1" "$2" > "$3" 2>&1 < /dev/null &',
+    `  nohup setsid sh "$1" "$2" > "$3" 2>&1${useSudoStdin ? ' < "$4"' : " < /dev/null"} &`,
     'else',
-    '  nohup sh "$1" "$2" > "$3" 2>&1 < /dev/null &',
+    `  nohup sh "$1" "$2" > "$3" 2>&1${useSudoStdin ? ' < "$4"' : " < /dev/null"} &`,
     'fi',
+    ...(useSudoStdin ? [
+      'cat > "$4"',
+      'rm -f "$4"',
+    ] : []),
     'echo "LUDASH_BG PID=$! LOG=$3 EXIT=$2 SCRIPT=$1"',
   ].join("\n");
   const launchCmd =
-    `sh -c ${shellSingleQuote(launchInnerCmd)} _ "$SCRIPT" "$EXITFILE" "$LOGFILE"`;
-  const rootLaunchCmd = useSudoLaunch
-    ? `if [ "$(id -u)" = "0" ]; then ${launchCmd}; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' ${launchCmd}; else ${launchCmd}; fi`
-    : launchCmd;
+    `sh -c ${shellSingleQuote(launchInnerCmd)} _ "$SCRIPT" "$EXITFILE" "$LOGFILE"${useSudoStdin ? ' "$STDINFILE"' : ""}`;
 
   return {
-    setupCmd: setupCmdParts.join(" && ") + ` && ${rootLaunchCmd}`,
-    useSudoLaunch,
+    setupCmd: setupCmdParts.join(" && ") + ` && ${launchCmd}`,
+    useSudoStdin,
   };
 }
 
@@ -809,7 +815,7 @@ export class SSHConnectionManager {
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const signal = options?.signal ?? null;
-    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+    const { setupCmd, useSudoStdin } = buildPersistentSetupCommand(
       command,
       !!sudoPassword
     );
@@ -818,7 +824,7 @@ export class SSHConnectionManager {
       conn,
       setupCmd,
       30,
-      useSudoLaunch ? sudoPassword : undefined,
+      useSudoStdin ? sudoPassword : undefined,
       undefined,
       signal
     );

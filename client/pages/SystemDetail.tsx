@@ -14,7 +14,7 @@ import {
   useSolvePackageIssue,
   useDismissPackageIssue,
 } from "../lib/systems";
-import { getCheckResultToast, useCancelOperation, useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
+import { getCheckResultToast, useAutoremove, useCancelOperation, useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
@@ -22,6 +22,7 @@ import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
 import type {
   CachedUpdate,
+  InstalledPackage,
   HiddenUpdate,
   HistoryEntry,
   ActiveOperation,
@@ -29,7 +30,7 @@ import type {
   LastCheckSummary,
   PackageManagerIssue,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState, isPostUpgradeRecheck, shouldClearLocalUpgrade, type UpdatesPanelState } from "../lib/system-status";
+import { deriveSystemUpdateState, getUpdatesPanelState, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade, type UpdatesPanelState } from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
@@ -222,6 +223,110 @@ function HiddenUpdatesSection({
             ))}
           </tbody>
         </table>
+      </div>
+    </details>
+  );
+}
+
+export function filterInstalledPackages(
+  installedPackages: InstalledPackage[],
+  search: string,
+): InstalledPackage[] {
+  const query = search.trim().toLowerCase();
+  if (!query) return installedPackages;
+  return installedPackages.filter((pkg) =>
+    [
+      pkg.packageName,
+      pkg.currentVersion,
+      pkg.pkgManager,
+      pkg.architecture,
+    ].some((value) => value?.toLowerCase().includes(query))
+  );
+}
+
+export function InstalledPackagesSection({
+  installedPackages,
+  cacheTimestamp,
+  isStale,
+}: {
+  installedPackages: InstalledPackage[];
+  cacheTimestamp?: string | null;
+  isStale?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const filteredPackages = filterInstalledPackages(installedPackages, search);
+
+  return (
+    <details className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
+      <summary className="px-4 py-3 flex items-center justify-between cursor-pointer select-none">
+        <span className="text-sm font-semibold">
+          Installed Packages
+          <Badge variant="muted" small>{installedPackages.length}</Badge>
+        </span>
+        {cacheTimestamp && <AgoLabel timestamp={cacheTimestamp} stale={isStale} />}
+      </summary>
+      <div className="border-t border-border">
+        {installedPackages.length === 0 ? (
+          <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
+            No installed package snapshot collected. Run Refresh to collect one.
+          </div>
+        ) : (
+          <>
+            <div className="p-4 border-b border-border">
+              <div className="relative w-full max-w-md">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search installed packages"
+                  aria-label="Search installed packages"
+                  className="w-full px-3 py-2 pr-9 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    aria-label="Clear installed package search"
+                    title="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+            {filteredPackages.length === 0 ? (
+              <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
+                No installed packages match your search.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
+                      <th className="px-2 sm:px-4 py-2">Package</th>
+                      <th className="px-2 sm:px-4 py-2">Installed Version</th>
+                      <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
+                      <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Architecture</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPackages.map((pkg) => (
+                      <tr key={pkg.id} className="border-b border-border last:border-0">
+                        <td className="px-2 sm:px-4 py-2 break-all">{pkg.packageName}</td>
+                        <td className="px-2 sm:px-4 py-2 font-mono text-xs break-all">{pkg.currentVersion}</td>
+                        <td className="px-2 sm:px-4 py-2 hidden md:table-cell text-slate-500">{pkg.pkgManager}</td>
+                        <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500">{pkg.architecture || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </details>
   );
@@ -441,6 +546,7 @@ export function getActivityTitle(
   packageName?: string,
 ): string {
   if (action === "check") return "Checked for updates";
+  if (action === "autoremove") return "Removed unused packages";
   if (action === "upgrade_all") return "Upgraded all packages";
   if (action === "full_upgrade_all") return "Full upgraded all packages";
   if (action === "reboot") return "Rebooted system";
@@ -456,6 +562,28 @@ function getActiveOperationPackageNames(activeOp: ActiveOperation | null | undef
 
 export function getSelectablePackageNames(updates: Array<Pick<CachedUpdate, "packageName">>): string[] {
   return Array.from(new Set(updates.map((update) => update.packageName)));
+}
+
+export function shouldShowAutoremoveAction(support: {
+  supportedManagers: string[];
+}): boolean {
+  return support.supportedManagers.length > 0;
+}
+
+export function getAutoremoveConfirmMessage(
+  systemName: string,
+  support: {
+    supportedManagers: string[];
+    skippedManagers: string[];
+  },
+): string {
+  return [
+    `Remove unused packages and runtimes on ${systemName}? This is a destructive maintenance action.`,
+    `Will run for: ${support.supportedManagers.join(", ")}.`,
+    ...(support.skippedManagers.length > 0
+      ? [`Skipped because no autoremove script or equivalent is configured: ${support.skippedManagers.join(", ")}.`]
+      : []),
+  ].join(" ");
 }
 
 export function normalizeSelectedPackageNames(
@@ -1440,6 +1568,7 @@ export default function SystemDetail() {
   const systemId = parseInt(id!, 10);
   const { data, isLoading, dataUpdatedAt } = useSystem(systemId);
   const checkUpdates = useCheckUpdates();
+  const autoremove = useAutoremove();
   const hideUpdate = useHideUpdate();
   const unhideUpdate = useUnhideUpdate();
   const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading, removeUpgrading, upgradingSystems } = useUpgrade();
@@ -1450,6 +1579,7 @@ export default function SystemDetail() {
   const solvePackageIssue = useSolvePackageIssue();
   const dismissPackageIssue = useDismissPackageIssue();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
+  const [showAutoremoveConfirm, setShowAutoremoveConfirm] = useState(false);
   const [showUpgradeSelectedConfirm, setShowUpgradeSelectedConfirm] = useState(false);
   const [showFullUpgradeConfirm, setShowFullUpgradeConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
@@ -1508,14 +1638,15 @@ export default function SystemDetail() {
 
   // Combine client-side mutation state with server-side active operation
   const activeOp = data?.system?.activeOperation;
-  const postUpgradeRechecking = isPostUpgradeRecheck(activeOp) || commandOutput.phase === "rechecking";
-  const checking = checkUpdates.isPending || activeOp?.type === "check" || postUpgradeRechecking;
-  const upgrading = !postUpgradeRechecking && (
+  const postOperationRechecking = isPostUpgradeRecheck(activeOp) || isPostAutoremoveRecheck(activeOp) || commandOutput.phase === "rechecking";
+  const checking = checkUpdates.isPending || activeOp?.type === "check" || postOperationRechecking;
+  const upgrading = !postOperationRechecking && (
     isUpgrading(systemId) ||
     activeOp?.type === "upgrade_all" ||
     activeOp?.type === "full_upgrade_all" ||
     activeOp?.type === "upgrade_package"
   );
+  const autoremoving = !postOperationRechecking && (autoremove.isPending || activeOp?.type === "autoremove");
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
   const repairingPackageIssue = solvePackageIssue.isPending || activeOp?.type === "package_manager_repair";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
@@ -1549,9 +1680,9 @@ export default function SystemDetail() {
     );
   }
 
-  const { system, updates, hiddenUpdates, packageIssues, history } = data;
+  const { system, updates, installedPackages, hiddenUpdates, packageIssues, history } = data;
   const visiblePackageIssues = getVisiblePackageIssuesForCurrentCheck(packageIssues, system.lastCheck);
-  const selectionBusy = upgrading || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
+  const selectionBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
@@ -1564,8 +1695,6 @@ export default function SystemDetail() {
       : updateState === "up_to_date"
         ? "bg-green-500"
         : "bg-slate-400";
-  const showUpgradeAllButton = system.updateCount > 0 || upgrading;
-  const showUpgradeActions = showUpgradeAllButton;
   const hasSelectedPackages = packageSelectionState.selectedCount > 0;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
     .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
@@ -1574,6 +1703,13 @@ export default function SystemDetail() {
     `Apply all ${system.updateCount} updates to ${system.name}?`,
     ...upgradeBehaviorNotes,
   ].join(" ");
+  const autoremoveSupport = system.autoremoveSupport ?? { supportedManagers: [], skippedManagers: [] };
+  const hasAutoremoveAction = shouldShowAutoremoveAction(autoremoveSupport);
+  const showUpgradeAllButton = system.updateCount > 0 || upgrading;
+  const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || autoremoving;
+  const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction;
+  const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
+  const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport);
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -1598,6 +1734,21 @@ export default function SystemDetail() {
           d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleAutoremove = () => {
+    setShowAutoremoveConfirm(false);
+    autoremove.mutate(systemId, {
+      onSuccess: (d) =>
+        addToast(
+          d.status === "success" ? "Autoremove complete"
+            : d.status === "warning" ? "Autoremove still running or completed with warnings"
+              : d.status === "cancelled" ? "Autoremove cancelled"
+                : "Autoremove failed",
+          d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success",
+        ),
+      onError: (err) => addToast(err.message, "danger"),
     });
   };
 
@@ -1768,8 +1919,8 @@ export default function SystemDetail() {
     <Layout
       title={
         <span className="flex items-center gap-2 min-w-0">
-          {upgrading || checking || repairingPackageIssue ? (
-            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || repairingPackageIssue ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+          {upgrading || autoremoving || checking || repairingPackageIssue ? (
+            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || autoremoving || repairingPackageIssue ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
           ) : (
             <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
           )}
@@ -1792,7 +1943,7 @@ export default function SystemDetail() {
           ) : (
             <button
               onClick={handleCheck}
-              disabled={checking || upgrading || repairingPackageIssue}
+              disabled={checking || upgrading || autoremoving || repairingPackageIssue}
               className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 min-w-24"
             >
               {checking ? (
@@ -1804,96 +1955,83 @@ export default function SystemDetail() {
             </button>
           )}
           {showUpgradeActions && (
-            activeOp && upgrading ? (
+            activeOp?.type === "autoremove" && autoremoving ? (
+              renderRunningCancelAction("Autoremoving...", upgradeCancelClass)
+            ) : activeOp && upgrading ? (
               renderRunningCancelAction("Upgrading...", upgradeCancelClass)
-            ) : hasSelectedPackages ? (
-              <button
-                onClick={() => setShowUpgradeSelectedConfirm(true)}
-                disabled={upgrading || checking || repairingPackageIssue}
-                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
-              >
-                {upgrading ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="spinner spinner-sm" />
-                    Upgrading...
-                  </span>
-                ) : (
-                  `Upgrade Selected (${packageSelectionState.selectedCount})`
-                )}
-              </button>
-            ) : system.supportsFullUpgrade ? (
-              showUpgradeAllButton ? (
-                <div className="relative" ref={dropdownRef}>
-                  <div className="flex">
-                    <button
-                      onClick={() => setShowUpgradeConfirm(true)}
-                      disabled={upgrading || checking || repairingPackageIssue}
-                      className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-32"
-                    >
-                      {upgrading ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className="spinner spinner-sm" />
-                          Upgrading...
-                        </span>
-                      ) : (
-                        `Upgrade All (${system.updateCount})`
-                      )}
-                    </button>
-                    <button
-                      onClick={() => setShowUpgradeDropdown((v) => !v)}
-                      disabled={upgrading || checking || repairingPackageIssue}
-                      className="px-1.5 py-1.5 text-sm rounded-r-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 border-l border-blue-500"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                  </div>
-                  {showUpgradeDropdown && (
-                    <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-border rounded-lg shadow-lg z-10">
+            ) : showUpgradeDropdownActions ? (
+              <div className="relative" ref={dropdownRef}>
+                <div className="flex">
+                  <button
+                    onClick={() => hasSelectedPackages
+                      ? setShowUpgradeSelectedConfirm(true)
+                      : setShowUpgradeConfirm(true)}
+                    disabled={upgradeActionsBusy || (!hasSelectedPackages && system.updateCount === 0)}
+                    className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-32"
+                  >
+                    {hasSelectedPackages
+                      ? `Upgrade Selected (${packageSelectionState.selectedCount})`
+                      : `Upgrade All (${system.updateCount})`}
+                  </button>
+                  <button
+                    onClick={() => setShowUpgradeDropdown((v) => !v)}
+                    disabled={upgradeActionsBusy}
+                    aria-label="Show maintenance actions"
+                    className="px-1.5 py-1.5 text-sm rounded-r-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 border-l border-blue-500"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </div>
+                {showUpgradeDropdown && (
+                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-border rounded-lg shadow-lg z-10 overflow-hidden">
+                    {system.supportsFullUpgrade && (
                       <button
                         onClick={() => {
                           setShowUpgradeDropdown(false);
                           setShowFullUpgradeConfirm(true);
                         }}
-                        className="w-full px-3 py-2 text-sm text-left text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                        disabled={system.updateCount === 0}
+                        className="w-full px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                       >
                         Full Upgrade
                       </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowFullUpgradeConfirm(true)}
-                  disabled={upgrading || checking || repairingPackageIssue}
-                  className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
-                >
-                  {upgrading ? (
-                    <span className="flex items-center gap-1.5">
-                      <span className="spinner spinner-sm" />
-                      Upgrading...
-                    </span>
-                  ) : (
-                    "Full Upgrade"
-                  )}
-                </button>
-              )
-            ) : (
+                    )}
+                    {hasAutoremoveAction && (
+                      <button
+                        onClick={() => {
+                          setShowUpgradeDropdown(false);
+                          setShowAutoremoveConfirm(true);
+                        }}
+                        className={`w-full px-3 py-2 text-sm text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors ${
+                          system.supportsFullUpgrade ? "border-t border-border" : ""
+                        }`}
+                      >
+                        Autoremove
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : hasSelectedPackages ? (
               <button
-                onClick={() => setShowUpgradeConfirm(true)}
-                disabled={upgrading || checking || repairingPackageIssue}
+                onClick={() => setShowUpgradeSelectedConfirm(true)}
+                disabled={upgradeActionsBusy}
                 className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
               >
-                {upgrading ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="spinner spinner-sm" />
-                    Upgrading...
-                  </span>
-                ) : (
-                  `Upgrade All (${system.updateCount})`
-                )}
+                {`Upgrade Selected (${packageSelectionState.selectedCount})`}
               </button>
+            ) : (
+              showUpgradeAllButton && (
+                <button
+                  onClick={() => setShowUpgradeConfirm(true)}
+                  disabled={upgradeActionsBusy}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
+                >
+                  {`Upgrade All (${system.updateCount})`}
+                </button>
+              )
             )
           )}
         </div>
@@ -1952,7 +2090,7 @@ export default function SystemDetail() {
 
       <PackageManagerIssueBanner
         issues={visiblePackageIssues}
-        busy={upgrading || checking || rebooting || repairingPackageIssue}
+        busy={upgrading || autoremoving || checking || rebooting || repairingPackageIssue}
         solvingIssueId={solvePackageIssue.isPending ? solvePackageIssue.variables?.issueId ?? null : null}
         dismissingIssueId={dismissPackageIssue.isPending ? dismissPackageIssue.variables?.issueId ?? null : null}
         onSolve={setPendingSolveIssue}
@@ -1969,7 +2107,7 @@ export default function SystemDetail() {
           <span className="text-amber-600 dark:text-amber-500 flex-1">A kernel update has been installed. Reboot this system to apply it.</span>
           <button
             onClick={() => setShowRebootConfirm(true)}
-            disabled={rebooting || upgrading || checking || repairingPackageIssue || dismissingNeedsReboot}
+            disabled={rebooting || upgrading || autoremoving || checking || repairingPackageIssue || dismissingNeedsReboot}
             className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {rebooting ? (
@@ -1981,7 +2119,7 @@ export default function SystemDetail() {
           </button>
           <button
             onClick={() => setShowDismissNeedsRebootConfirm(true)}
-            disabled={dismissingNeedsReboot || rebooting || upgrading || checking || repairingPackageIssue}
+            disabled={dismissingNeedsReboot || rebooting || upgrading || autoremoving || checking || repairingPackageIssue}
             className="px-3 py-1 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-900/30 text-amber-700 dark:text-amber-400 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {dismissingNeedsReboot ? (
@@ -2030,9 +2168,15 @@ export default function SystemDetail() {
         ) : null}
       </div>
 
+      <InstalledPackagesSection
+        installedPackages={installedPackages}
+        cacheTimestamp={system.cacheTimestamp}
+        isStale={system.isStale}
+      />
+
       <HiddenUpdatesSection
         hiddenUpdates={hiddenUpdates}
-        busy={unhideUpdate.isPending || hideUpdate.isPending || upgrading || checking || repairingPackageIssue}
+        busy={unhideUpdate.isPending || hideUpdate.isPending || upgrading || autoremoving || checking || repairingPackageIssue}
         onUnhide={handleUnhideUpdate}
       />
 
@@ -2046,12 +2190,22 @@ export default function SystemDetail() {
             history={history}
             commandOutput={commandOutput}
             activeOp={activeOp}
-            liveActionHint={checkUpdates.isPending ? "check" : null}
+            liveActionHint={checkUpdates.isPending ? "check" : autoremove.isPending ? "autoremove" : null}
           />
         </div>
       </div>
 
       {/* Confirm dialogs */}
+      <ConfirmDialog
+        open={showAutoremoveConfirm}
+        onClose={() => setShowAutoremoveConfirm(false)}
+        onConfirm={handleAutoremove}
+        title="Autoremove Unused Packages"
+        message={autoremoveConfirmMessage}
+        confirmLabel="Autoremove"
+        danger
+        loading={autoremoving}
+      />
       <ConfirmDialog
         open={showUpgradeConfirm}
         onClose={() => setShowUpgradeConfirm(false)}

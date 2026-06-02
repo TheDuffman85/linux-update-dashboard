@@ -7,6 +7,60 @@ import { apkParser } from "../../server/ssh/parsers/apk";
 import { flatpakParser } from "../../server/ssh/parsers/flatpak";
 import { snapParser } from "../../server/ssh/parsers/snap";
 import { validatePackageName } from "../../server/ssh/parsers/types";
+import {
+  getBuiltinInstalledPackageCommand,
+  parseBuiltinInstalledPackages,
+} from "../../server/ssh/installed-packages";
+
+describe("installed package parsers", () => {
+  test.each([
+    {
+      manager: "apt",
+      output: "curl\t8.0-1\tamd64\nmalformed\n",
+      expected: { packageName: "curl", currentVersion: "8.0-1", architecture: "amd64" },
+    },
+    {
+      manager: "dnf",
+      output: "curl\t8.0-1.el9\tx86_64\n",
+      expected: { packageName: "curl", currentVersion: "8.0-1.el9", architecture: "x86_64" },
+    },
+    {
+      manager: "yum",
+      output: "bash\t5.1-2.el7\tx86_64\n",
+      expected: { packageName: "bash", currentVersion: "5.1-2.el7", architecture: "x86_64" },
+    },
+    {
+      manager: "pacman",
+      output: "Name            : linux\nVersion         : 6.7.5.arch1-1\nArchitecture    : x86_64\n\nmalformed\n",
+      expected: { packageName: "linux", currentVersion: "6.7.5.arch1-1", architecture: "x86_64" },
+    },
+    {
+      manager: "apk",
+      output: "busybox-1.36.1-r7 x86_64 {busybox} (GPL-2.0-only) [installed]\nmalformed\n",
+      expected: { packageName: "busybox", currentVersion: "1.36.1-r7", architecture: "x86_64" },
+    },
+    {
+      manager: "flatpak",
+      output: "org.example.App\t1.2.3\tx86_64\tflathub\n",
+      expected: { packageName: "org.example.App", currentVersion: "1.2.3", architecture: "x86_64", repository: "flathub" },
+    },
+    {
+      manager: "snap",
+      output: "Name Version Rev Tracking Publisher Notes\nhello-world 6.4 29 latest/stable canonical** -\n",
+      expected: { packageName: "hello-world", currentVersion: "6.4", architecture: null, repository: "snap" },
+    },
+  ])("parses $manager inventory output", ({ manager, output, expected }) => {
+    expect(getBuiltinInstalledPackageCommand(manager)).toBeTruthy();
+    expect(parseBuiltinInstalledPackages(manager, output)).toMatchObject([{
+      pkgManager: manager,
+      ...expected,
+    }]);
+  });
+
+  test("returns null for unsupported built-in managers", () => {
+    expect(parseBuiltinInstalledPackages("custom", "pkg 1.0")).toBeNull();
+  });
+});
 
 describe("AptParser", () => {
   test("parse normal output", () => {

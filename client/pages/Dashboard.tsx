@@ -20,7 +20,7 @@ import {
 import type { System, UpgradeGroup } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
-import { deriveSystemUpdateState, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
+import { deriveSystemUpdateState, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 const UNGROUPED_KEY = "ungrouped";
 type UpgradeSystemPlacement = { groupId: number | null; upgradeOrder: number };
@@ -74,7 +74,7 @@ function compareSystemsInGroup(a: System, b: System): number {
 }
 
 function hasActiveUpgradeOperation(system: System): boolean {
-  return system.activeOperation?.type.includes("upgrade") ?? false;
+  return !!system.activeOperation;
 }
 
 function isUpgradeAllEligible(system: System, locallyUpgrading: boolean): boolean {
@@ -237,6 +237,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
 
 function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
+  const maintaining = updateState === "maintaining";
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
     : updateState === "check_warning" || updateState === "updates_available"
@@ -251,8 +252,8 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
       className="block bg-white dark:bg-slate-800 rounded-xl border border-border p-4 hover:bg-slate-100 hover:border-slate-300 dark:hover:bg-slate-700 dark:hover:border-slate-600 transition-colors"
     >
       <div className="flex items-center gap-2 mb-2 min-w-0">
-        {upgrading || checking ? (
-          <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+        {upgrading || maintaining || checking ? (
+          <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || maintaining ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
         ) : (
           <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
         )}
@@ -269,6 +270,8 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
         <div className="flex items-center gap-1.5 flex-wrap">
           {updateState === "upgrading" ? (
             <Badge variant="info" small>Upgrading...</Badge>
+          ) : updateState === "maintaining" ? (
+            <Badge variant="info" small>Maintaining...</Badge>
           ) : updateState === "checking" ? (
             <Badge variant="muted" small>Checking...</Badge>
           ) : updateState === "unreachable" ? (
@@ -1121,7 +1124,7 @@ export default function Dashboard() {
               key={s.id}
               system={s}
               upgrading={!isPostUpgradeRecheck(s.activeOperation) && (isUpgrading(s.id) || !!s.activeOperation?.type?.includes("upgrade"))}
-              checking={isPostUpgradeRecheck(s.activeOperation) || (!!s.activeOperation && !s.activeOperation.type.includes("upgrade"))}
+              checking={isPostUpgradeRecheck(s.activeOperation) || isPostAutoremoveRecheck(s.activeOperation) || s.activeOperation?.type === "check" || s.activeOperation?.type === "package_manager_repair"}
             />
           ))}
         </div>

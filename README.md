@@ -35,7 +35,8 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Auto-detection:** package managers and system info are detected automatically on first connection; you can disable individual managers per system
 - **Per-system package-manager behavior:** configure manager-specific upgrade/check behavior such as APT full-upgrade defaults, DNF distro-sync defaults, and refresh toggles for DNF, Pacman, APK, and Flatpak
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, add custom package managers, and assign per-system script overrides
-- **Granular updates:** upgrade everything at once, queue grouped Upgrade All batches, or pick individual packages per system
+- **Granular updates:** upgrade everything at once, queue grouped Upgrade All batches, pick individual packages, or autoremove unused packages per system
+- **Installed package inventory:** collect installed package versions during refreshes and browse the cached snapshot from each system detail page
 - **Cron-based scheduling:** create refresh, update, and notification schedules with per-schedule system scope and cache behavior
 - **APT kept-back auto-hide:** optionally move kept-back APT packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
@@ -44,7 +45,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Safer SSH workflows:** optional host-key verification with explicit trust approval, plus ProxyJump support for reaching internal hosts
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Four auth methods:** password, Passkeys (WebAuthn), SSO (OpenID Connect), and API tokens for external integrations
-- **SSH-safe upgrades:** upgrade commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
+- **SSH-safe maintenance:** upgrade and autoremove commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
 - **Full upgrade:** run `apt full-upgrade` or `dnf distro-sync` from the dashboard for dist-level upgrades
 - **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
 - **System duplication:** clone an existing system entry (including encrypted credentials) to quickly add similar servers
@@ -691,13 +692,15 @@ Per-system package-manager config is available in the system edit dialog for sup
 
 ## Script Customization
 
-The **Scripts** page exposes the SSH command templates that power package-manager detection, update checks, issue repair actions, upgrades, selected-package upgrades, system information collection, and reboots.
+The **Scripts** page exposes the SSH command templates that power package-manager detection, update checks, installed-package inventory collection, issue repair actions, autoremove actions, upgrades, selected-package upgrades, system information collection, and reboots.
 
 - **Built-in scripts are read-only:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot scripts are shipped as defaults and can be copied when you need a custom variant
-- **Custom scripts are editable:** define one or more shell steps, choose the operation they implement, and optionally attach parser settings for update checks or section mapping for system-info output
-- **Per-system overrides:** each system can keep the standard detected defaults or override individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/upgrade_all`, or `system/reboot`
+- **Custom scripts are editable:** define one or more shell steps, choose the operation they implement, and optionally attach parser settings for update checks, installed-package inventory, or section mapping for system-info output
+- **Per-system overrides:** each system can keep the standard detected defaults or override individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`
 - **Usage tracking:** custom scripts show where they are assigned, and scripts still used by active systems cannot be deleted accidentally
 - **Custom package managers:** add package managers beyond the built-in list with a display label, parser regexes, and optional config entries that appear in each matching system's package-manager settings
+
+The System Detail page exposes a confirmed **Autoremove** action for active managers with a configured cleanup script. Built-in cleanup is available for APT, DNF, YUM, Pacman orphan removal, and unused Flatpak runtimes. APK and Snap are skipped unless a custom autoremove script is configured.
 
 Script commands support placeholders that are resolved immediately before SSH execution:
 
@@ -712,6 +715,8 @@ Script commands support placeholders that are resolved immediately before SSH ex
 | `{{sudo:COMMAND}}`   | Wraps `COMMAND` with the dashboard sudo fallback helper                               |
 
 For custom update parsers, the update regex should use named capture groups. `packageName` and `newVersion` are required for an update to be recorded; optional groups include `currentVersion`, `architecture`, and `repository`. Separate security and kept-back regexes can mark matching lines. Custom success and update exit-code lists are available for package managers whose check command uses non-zero exit codes to mean "updates available".
+
+For custom installed-package inventory parsers, the installed-package regex should use named `packageName` and `currentVersion` capture groups. Optional groups include `architecture` and `repository`.
 
 Custom system-info scripts can either keep the built-in sectioned parser or map named output sections to fields such as OS name, kernel, uptime, architecture, CPU, memory, disk, boot ID, and installed kernels. A reboot-required regex can also be configured when your target distribution reports reboot state differently.
 
@@ -738,6 +743,7 @@ updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60
 updater ALL=(root:root) NOPASSWD: /usr/bin/dpkg --configure -a
 updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 upgrade -y
 updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 full-upgrade -y
+updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 autoremove -y
 updater ALL=(root:root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout=60 install --only-upgrade -y *
 updater ALL=(root:root) NOPASSWD: /usr/bin/pvesh get /cluster/tasks --output-format json
 updater ALL=(root:root) NOPASSWD: /usr/sbin/reboot
@@ -903,7 +909,7 @@ That makes it useful for verifying the dashboard’s opt-in DNF/YUM EULA automat
 
 That makes it useful for verifying the package manager issue banner, including the **Solve** action that runs `dpkg --configure -a` and then rechecks updates.
 
-`ludash-test-apt-least-privilege` is a self-contained APT fixture for dedicated automation users. Its `testuser` account intentionally cannot run arbitrary root commands such as `sudo -n true`. It allows only exact APT refresh and upgrade commands, one fixed selected-package upgrade, `dpkg --audit`, and `dpkg --configure -a`. This makes it useful for verifying checks and SSH-safe detached upgrades with the dashboard `Sudo password` left unset.
+`ludash-test-apt-least-privilege` is a self-contained APT fixture for dedicated automation users. Its `testuser` account intentionally cannot run arbitrary root commands such as `sudo -n true`. It allows only exact APT refresh, upgrade, and autoremove commands, one fixed selected-package upgrade, `dpkg --audit`, and `dpkg --configure -a`. This makes it useful for verifying checks and SSH-safe detached maintenance with the dashboard `Sudo password` left unset.
 
 To run the opt-in Docker integration test for that restricted account:
 
@@ -996,6 +1002,7 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST   | `/api/systems/upgrade-all`                       | Queue an Upgrade All batch for selected systems           |
 | POST   | `/api/systems/:id/upgrade`                       | Upgrade all packages on a system                          |
 | POST   | `/api/systems/:id/full-upgrade`                  | Full/dist upgrade on a system                             |
+| POST   | `/api/systems/:id/autoremove`                    | Remove unused packages or runtimes on a system            |
 | POST   | `/api/systems/:id/upgrade-packages`              | Upgrade one or more selected visible packages on a system |
 | POST   | `/api/systems/:id/upgrade/:packageName`          | Upgrade one selected package (compatibility alias)        |
 | POST   | `/api/cache/refresh`                             | Invalidate cache and re-check all systems                 |
@@ -1099,17 +1106,17 @@ All endpoints require authentication unless noted. Responses are JSON.
 - **Concurrent access control:** per-system mutex prevents conflicting SSH operations
 - **Connection pooling:** semaphore-based concurrency limiting to prevent SSH connection exhaustion
 
-## SSH-Safe Upgrades
+## SSH-Safe Maintenance
 
-All upgrade operations (upgrade all, full upgrade, selected packages) run via **nohup** on the remote system, so they survive SSH connection drops. If your network blips or the dashboard restarts mid-upgrade, the process keeps running on the server.
+Upgrade operations (upgrade all, full upgrade, selected packages) and per-system autoremove run via **nohup** on the remote system, so they survive SSH connection drops. If your network blips or the dashboard restarts mid-operation, the process keeps running on the server.
 
 ### How it works
 
-1. **Sudo handling** — if a sudo password is configured, it is sent only over the live SSH stdin stream to a one-time `sudo` launch of the background process. The password is never written to files or environment variables. For non-password sudo, detached commands use `sudo -n`.
-2. **Temp script** — the upgrade command is base64-encoded, written to a temporary script on the remote host, and launched with `nohup` in the background.
+1. **Sudo handling** — if a sudo password is configured, it is sent only over the live SSH stdin stream and consumed by the atomic privileged command inside the detached script. The password is never written to files or environment variables. For non-password sudo, detached commands use `sudo -n`.
+2. **Temp script** — the maintenance command is base64-encoded, written to a temporary script on the remote host, and launched with `nohup` in the background.
 3. **Live streaming** — output is streamed back to the dashboard in real time using `tail --pid`, which automatically stops when the process finishes.
 4. **Exit code capture** — the script writes its exit code to a companion file, which the dashboard reads after the process completes.
-5. **Fail-safe behavior** — if SSH-safe `nohup` setup fails (e.g. `mktemp` unavailable), the upgrade is marked failed instead of falling back to unsafe direct execution.
+5. **Fail-safe behavior** — if SSH-safe `nohup` setup fails (e.g. `mktemp` unavailable), the operation is marked failed instead of falling back to unsafe direct execution.
 
 ### Connection loss during upgrade
 
@@ -1119,6 +1126,8 @@ If the SSH connection drops while monitoring, the dashboard shows a warning:
 
 The upgrade itself continues on the remote host unaffected. Temporary files are cleaned up once the exit code is read.
 
+Autoremove uses the same detached runner. If its monitor is lost, the dashboard reports a warning without inferring success from update counts.
+
 ### What uses SSH-safe mode
 
 | Operation                   | SSH-safe                      |
@@ -1126,6 +1135,7 @@ The upgrade itself continues on the remote host unaffected. Temporary files are 
 | Upgrade all packages        | Yes                           |
 | Full upgrade (dist upgrade) | Yes                           |
 | Upgrade selected packages   | Yes                           |
+| Autoremove unused packages  | Yes                           |
 | Check for updates           | No (read-only, safe to retry) |
 | Reboot                      | No (fire-and-forget)          |
 

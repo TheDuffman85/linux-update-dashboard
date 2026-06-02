@@ -19,6 +19,7 @@ import {
   getSystemOverrides,
   listScriptUsages,
   listScripts,
+  parseCustomInstalledPackages,
   parseCustomUpdates,
   replaceSystemOverrides,
   renderCommandTemplate,
@@ -70,6 +71,7 @@ describe("script service", () => {
     const scripts = getBuiltinScripts();
 
     expect(scripts.some((script) => script.id === "builtin:apt:check_updates" && script.readonly)).toBe(true);
+    expect(scripts.some((script) => script.id === "builtin:apt:list_installed_packages" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:apt:repair_issue" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:dnf:repair_issue" && script.readonly)).toBe(true);
     expect(scripts.some((script) => script.id === "builtin:snap:detect" && script.readonly)).toBe(true);
@@ -107,14 +109,16 @@ describe("script service", () => {
   test("resolves built-in runtime steps from the canonical script templates", () => {
     insertSystem(12);
     const cases: Array<{
-      operation: "detect" | "check_updates" | "repair_issue" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
+      operation: "detect" | "check_updates" | "list_installed_packages" | "repair_issue" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "system_info" | "reboot";
       pkgManager: string | null;
       pkgManagerConfig?: Record<string, unknown>;
       packages?: string[];
     }> = [
       { operation: "detect", pkgManager: "apt" },
       { operation: "check_updates", pkgManager: "apt" },
+      { operation: "list_installed_packages", pkgManager: "apt" },
       { operation: "repair_issue", pkgManager: "apt" },
+      { operation: "autoremove", pkgManager: "apt" },
       { operation: "upgrade_all", pkgManager: "apt", pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" } },
       { operation: "full_upgrade_all", pkgManager: "dnf", pkgManagerConfig: { autoAcceptEulaOnUpgrade: true } },
       { operation: "upgrade_selected", pkgManager: "apt", packages: ["curl", "openssl"] },
@@ -614,6 +618,27 @@ describe("script service", () => {
   });
 
 
+  test("provides autoremove built-ins only for managers with cleanup semantics", () => {
+    const autoremoveScripts = getBuiltinScripts()
+      .filter((script) => script.operation === "autoremove");
+
+    expect(autoremoveScripts.map((script) => script.pkgManager)).toEqual([
+      "apt",
+      "dnf",
+      "yum",
+      "pacman",
+      "flatpak",
+    ]);
+    expect(autoremoveScripts.find((script) => script.pkgManager === "apt")?.steps[0]?.command)
+      .toContain("apt-get -o DPkg::Lock::Timeout=60 autoremove -y");
+    expect(autoremoveScripts.find((script) => script.pkgManager === "pacman")?.steps[0]?.command)
+      .toContain("pacman -Qtdq");
+    expect(autoremoveScripts.find((script) => script.pkgManager === "pacman")?.steps[0]?.command)
+      .toContain("pacman -Rns --noconfirm -");
+    expect(autoremoveScripts.find((script) => script.pkgManager === "pacman")?.steps[0]?.command)
+      .toContain(`{ cat; printf '%s\\n' "$orphans"; } | sudo -S -p '' pacman -Rns --noconfirm -`);
+  });
+
   test("renders package and sudo placeholders", () => {
     const command = renderCommandTemplate(
       "{{sudo:custom upgrade {{packages}}}} --manager {{manager}} --mode {{config.defaultUpgradeMode}}",
@@ -780,6 +805,27 @@ describe("script service", () => {
         newVersion: "3.3",
         pkgManager: "brewlinux",
       }),
+    ]);
+  });
+
+  test("parses installed-package snapshots for user-defined package managers", () => {
+    const parserConfig = {
+      installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<architecture>\\S+)$",
+    };
+
+    expect(parseCustomInstalledPackages("brewlinux", parserConfig, [{
+      command: "brew list --versions",
+      stdout: "openssl 3.3 x86_64\nmalformed\n",
+      stderr: "",
+      exitCode: 0,
+    }])).toEqual([
+      {
+        packageName: "openssl",
+        currentVersion: "3.3",
+        architecture: "x86_64",
+        repository: null,
+        pkgManager: "brewlinux",
+      },
     ]);
   });
 

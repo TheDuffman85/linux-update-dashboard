@@ -66,12 +66,12 @@ describe("preparePersistentSudoCommand", () => {
 
 describe("buildPersistentSetupCommand", () => {
   test("uses a portable mktemp basename instead of a suffixed template", () => {
-    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+    const { setupCmd, useSudoStdin } = buildPersistentSetupCommand(
       "apk upgrade 2>&1",
       false
     );
 
-    expect(useSudoLaunch).toBe(false);
+    expect(useSudoStdin).toBe(false);
     expect(setupCmd).toContain('BASE=$(mktemp /tmp/ludash_XXXXXX)');
     expect(setupCmd).toContain('SCRIPT="${BASE}.sh"');
     expect(setupCmd).toContain('LOGFILE="${BASE}.log"');
@@ -82,27 +82,37 @@ describe("buildPersistentSetupCommand", () => {
     expect(setupCmd).not.toContain('mktemp /tmp/ludash_XXXXXX.sh');
   });
 
-  test("keeps sudo-stdin launch path when a password is provided", () => {
+  test("keeps atomic sudo inside detached scripts when a password is provided", () => {
     const command =
       `if [ "$(id -u)" = "0" ]; then apk upgrade; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apk upgrade; else apk upgrade; fi 2>&1`;
-    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+    const { setupCmd, useSudoStdin } = buildPersistentSetupCommand(
       command,
       true
     );
 
-    expect(useSudoLaunch).toBe(true);
-    expect(setupCmd).toContain("sudo -S -p ''");
+    expect(useSudoStdin).toBe(true);
+    expect(setupCmd).not.toContain("sudo -S -p '' sh -c");
+    expect(setupCmd).not.toContain('2>&1 < /dev/null &');
+    expect(setupCmd).toContain('STDINFILE="${BASE}.stdin"');
+    expect(setupCmd).toContain('mkfifo "$STDINFILE"');
+    expect(setupCmd).toContain('chmod 600 "$STDINFILE"');
+    expect(setupCmd).toContain('cat > "$4"');
+    expect(setupCmd).toContain('rm -f "$4"');
+    const scriptBase64 = setupCmd.match(/printf '%s' '([^']+)' \| base64 -d/)?.[1];
+    expect(scriptBase64).toBeDefined();
+    const scriptBody = Buffer.from(scriptBase64 ?? "", "base64").toString("utf8");
+    expect(scriptBody).toContain("sudo -S -p '' apk upgrade");
   });
 
   test("uses non-interactive sudo inside detached scripts when no password is provided", () => {
     const command =
       `if [ "$(id -u)" = "0" ]; then apk upgrade; elif command -v sudo >/dev/null 2>&1; then sudo -S -p '' apk upgrade; else apk upgrade; fi 2>&1`;
-    const { setupCmd, useSudoLaunch } = buildPersistentSetupCommand(
+    const { setupCmd, useSudoStdin } = buildPersistentSetupCommand(
       command,
       false
     );
 
-    expect(useSudoLaunch).toBe(false);
+    expect(useSudoStdin).toBe(false);
     const scriptBase64 = setupCmd.match(/printf '%s' '([^']+)' \| base64 -d/)?.[1];
     expect(scriptBase64).toBeDefined();
     const scriptBody = Buffer.from(scriptBase64 ?? "", "base64").toString("utf8");

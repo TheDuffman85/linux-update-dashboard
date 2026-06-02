@@ -32,7 +32,9 @@ import type { CustomPackageManagerConfigEntry } from "../lib/package-manager-con
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
   check_updates: "Check updates",
+  list_installed_packages: "List installed packages",
   repair_issue: "Repair issue",
+  autoremove: "Autoremove",
   upgrade_all: "Upgrade all",
   full_upgrade_all: "Full upgrade",
   upgrade_selected: "Upgrade selected",
@@ -65,6 +67,18 @@ const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
     defaultStepBadge: "parser input",
   },
   {
+    operation: "list_installed_packages",
+    label: OPERATION_LABELS.list_installed_packages,
+    allowedTypes: ["package_manager"],
+    purpose: "Lists installed packages and their current versions for the system-detail inventory.",
+    stepBehavior: "Steps run in order and stop at the first failed step.",
+    outputConsumer: "The parsed package snapshot is cached per manager; full listing output is not stored in activity history.",
+    parserBehavior: "Custom package managers need an installed-package regex with packageName and currentVersion groups.",
+    exitCodeBehavior: "A non-zero exit code keeps the previous snapshot and marks the refresh as a warning.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}"],
+    defaultStepBadge: "inventory parser input",
+  },
+  {
     operation: "repair_issue",
     label: OPERATION_LABELS.repair_issue,
     allowedTypes: ["package_manager"],
@@ -73,6 +87,18 @@ const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
     outputConsumer: "Output is streamed live and stored in activity history; it is not parsed into update rows.",
     parserBehavior: "No parser configuration is used.",
     exitCodeBehavior: "A non-zero exit code marks the repair operation as failed.",
+    relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  {
+    operation: "autoremove",
+    label: OPERATION_LABELS.autoremove,
+    allowedTypes: ["package_manager"],
+    purpose: "Removes packages or runtimes that are no longer needed.",
+    stepBehavior: "The autoremove command runs as the operation body for the selected manager.",
+    outputConsumer: "Output is streamed live, stored in history, and followed by a recheck.",
+    parserBehavior: "No parser configuration is used while removing unused packages.",
+    exitCodeBehavior: "A non-zero exit code marks the autoremove operation as failed.",
     relevantPlaceholders: ["{{manager}}", "{{config.someKey}}", "{{sudo:COMMAND}}"],
     defaultStepBadge: "streamed only",
   },
@@ -140,7 +166,9 @@ const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
 const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
   "detect",
   "check_updates",
+  "list_installed_packages",
   "repair_issue",
+  "autoremove",
   "upgrade_all",
   "full_upgrade_all",
   "upgrade_selected",
@@ -721,6 +749,7 @@ function readPackageManagersPanelOpen(): boolean {
 function buildParserConfig(input: {
   parseStep: string;
   updateRegex: string;
+  installedPackageRegex: string;
   securityRegex: string;
   keptBackRegex: string;
   successExitCodes: string;
@@ -735,6 +764,7 @@ function buildParserConfig(input: {
     config.parseStep = parseStep;
   }
   if (input.updateRegex.trim()) config.updateRegex = input.updateRegex.trim();
+  if (input.installedPackageRegex.trim()) config.installedPackageRegex = input.installedPackageRegex.trim();
   if (input.securityRegex.trim()) config.securityRegex = input.securityRegex.trim();
   if (input.keptBackRegex.trim()) config.keptBackRegex = input.keptBackRegex.trim();
   const successExitCodes = parseExitCodes(input.successExitCodes);
@@ -784,6 +814,7 @@ export function ScriptEditor({
   const [parserConfig, setParserConfig] = useState({
     parseStep: script.parserConfig?.parseStep?.toString() ?? "",
     updateRegex: script.parserConfig?.updateRegex ?? "",
+    installedPackageRegex: script.parserConfig?.installedPackageRegex ?? "",
     securityRegex: script.parserConfig?.securityRegex ?? "",
     keptBackRegex: script.parserConfig?.keptBackRegex ?? "",
     successExitCodes: joinExitCodes(script.parserConfig?.successExitCodes),
@@ -838,7 +869,7 @@ export function ScriptEditor({
   const showPackageManagerControls = draft.type === "package_manager";
   const showParserConfig =
     draft.type === "package_manager" &&
-    draft.operation === "check_updates" &&
+    (draft.operation === "check_updates" || draft.operation === "list_installed_packages") &&
     !usesBuiltinParser;
   const showSystemInfoConfig = draft.type === "system" && draft.operation === "system_info";
   const singleStepOperation = draft.operation === "detect";
@@ -863,7 +894,7 @@ export function ScriptEditor({
 
   const stepBadge = (index: number): string => {
     if (draft.operation === "detect") return index === 0 ? "detection output" : "not used";
-    if (draft.operation === "check_updates") {
+    if (draft.operation === "check_updates" || draft.operation === "list_installed_packages") {
       if (showParserConfig) {
         if (parseStepOutOfRange) return "streamed only";
         return index === parsedStepIndex ? "parsed output" : "streamed only";
@@ -1175,7 +1206,9 @@ export function ScriptEditor({
           </summary>
           <div className="mt-4 space-y-4">
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Use named regex groups to turn the selected step output into update rows. Required groups are packageName and newVersion; other step output stays in activity history.
+              {draft.operation === "list_installed_packages"
+                ? "Use named regex groups to turn the selected step output into installed-package rows. Required groups are packageName and currentVersion."
+                : "Use named regex groups to turn the selected step output into update rows. Required groups are packageName and newVersion; other step output stays in activity history."}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -1216,42 +1249,56 @@ export function ScriptEditor({
                   placeholder="0"
                 />
               </div>
-              <div className="md:col-span-2">
-                <label className={labelClass}>Update Line Regex</label>
-                <textarea
-                  value={parserConfig.updateRegex}
-                  onChange={(e) => setParserConfig({ ...parserConfig, updateRegex: e.target.value })}
-                  className={`${inputClass} min-h-20 font-mono text-xs`}
-                  placeholder={"^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+->\\s+(?<newVersion>\\S+)$"}
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Security Marker Regex</label>
-                <input
-                  value={parserConfig.securityRegex}
-                  onChange={(e) => setParserConfig({ ...parserConfig, securityRegex: e.target.value })}
-                  className={inputClass}
-                  placeholder="security"
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Kept-Back Marker Regex</label>
-                <input
-                  value={parserConfig.keptBackRegex}
-                  onChange={(e) => setParserConfig({ ...parserConfig, keptBackRegex: e.target.value })}
-                  className={inputClass}
-                  placeholder="held|kept back"
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Updates-Available Exit Codes</label>
-                <input
-                  value={parserConfig.updatesExitCodes}
-                  onChange={(e) => setParserConfig({ ...parserConfig, updatesExitCodes: e.target.value })}
-                  className={inputClass}
-                  placeholder="100"
-                />
-              </div>
+              {draft.operation === "list_installed_packages" ? (
+                <div className="md:col-span-2">
+                  <label className={labelClass}>Installed Package Line Regex</label>
+                  <textarea
+                    value={parserConfig.installedPackageRegex}
+                    onChange={(e) => setParserConfig({ ...parserConfig, installedPackageRegex: e.target.value })}
+                    className={`${inputClass} min-h-20 font-mono text-xs`}
+                    placeholder={"^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$"}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="md:col-span-2">
+                    <label className={labelClass}>Update Line Regex</label>
+                    <textarea
+                      value={parserConfig.updateRegex}
+                      onChange={(e) => setParserConfig({ ...parserConfig, updateRegex: e.target.value })}
+                      className={`${inputClass} min-h-20 font-mono text-xs`}
+                      placeholder={"^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+->\\s+(?<newVersion>\\S+)$"}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Security Marker Regex</label>
+                    <input
+                      value={parserConfig.securityRegex}
+                      onChange={(e) => setParserConfig({ ...parserConfig, securityRegex: e.target.value })}
+                      className={inputClass}
+                      placeholder="security"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Kept-Back Marker Regex</label>
+                    <input
+                      value={parserConfig.keptBackRegex}
+                      onChange={(e) => setParserConfig({ ...parserConfig, keptBackRegex: e.target.value })}
+                      className={inputClass}
+                      placeholder="held|kept back"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Updates-Available Exit Codes</label>
+                    <input
+                      value={parserConfig.updatesExitCodes}
+                      onChange={(e) => setParserConfig({ ...parserConfig, updatesExitCodes: e.target.value })}
+                      className={inputClass}
+                      placeholder="100"
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </details>
