@@ -1,0 +1,4 @@
+#!/bin/sh
+printf 'begin\n'
+sleep 2
+printf 'end\n'

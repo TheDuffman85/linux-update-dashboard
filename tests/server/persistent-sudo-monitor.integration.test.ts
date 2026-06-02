@@ -26,7 +26,7 @@ describe("persistent sudo monitor integration", () => {
     try {
       const result = await sshManager.runPersistentCommand(
         conn,
-        sudo(`printf "begin\\n"; sleep 2; printf "end\\n"`) + " 2>&1",
+        sudo("/usr/local/bin/ludash-persistent-sudo-test") + " 2>&1",
         30,
         "testpass"
       );

@@ -8,6 +8,7 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { updateHistory } from "../../server/db/schema";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
+import { createCredential } from "../../server/services/credential-service";
 import { createSystem } from "../../server/services/system-service";
 import { applyUpgradeAll, checkUpdates } from "../../server/services/update-service";
 
@@ -32,13 +33,20 @@ describe("APK upgrade integration", () => {
   });
 
   integrationTest("runs upgrade-all successfully against the Alpine SSH test system", async () => {
+    const credentialId = createCredential({
+      name: "Alpine test user",
+      kind: "usernamePassword",
+      payload: {
+        username: "testuser",
+        password: "testpass",
+      },
+    });
     const systemId = createSystem({
       name: "Alpine",
       hostname: alpineHost,
       port: alpinePort,
-      authType: "password",
-      username: "testuser",
-      password: "testpass",
+      credentialId,
+      hostKeyVerificationEnabled: false,
     });
 
     await checkUpdates(systemId);

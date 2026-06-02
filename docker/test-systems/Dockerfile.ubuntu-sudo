@@ -29,13 +29,16 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/
     mkdir -p /etc/ssh/sshd_config.d && \
     echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
 
-# Create test user with password-based sudo (no NOPASSWD override)
+# Create a restricted package-maintenance user with password-based sudo.
+COPY sudoers/apt-password /etc/sudoers.d/testuser
 RUN useradd -m -s /bin/bash testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    usermod -aG sudo testuser
+    chmod 440 /etc/sudoers.d/testuser && \
+    visudo -cf /etc/sudoers.d/testuser
 
-# Verify sudo is present and requires password auth.
-RUN su - testuser -c "echo testpass | sudo -S -p '' true"
+# Verify the required APT command works with a password and arbitrary sudo fails.
+RUN su - testuser -c "echo testpass | sudo -S -p '' dpkg --audit" && \
+    su - testuser -c "! sudo -n true"
 
 # Generate host keys
 RUN ssh-keygen -A

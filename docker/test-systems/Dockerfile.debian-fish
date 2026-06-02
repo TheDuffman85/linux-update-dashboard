@@ -40,15 +40,16 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/
     mkdir -p /etc/ssh/sshd_config.d && \
     echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
 
-# Create test user with fish login shell and passwordless sudo
+# Create a restricted package-maintenance user with a fish login shell.
+COPY sudoers/apt-nopasswd /etc/sudoers.d/testuser
 RUN useradd -m -s /usr/bin/fish testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser && \
-    chmod 440 /etc/sudoers.d/testuser
+    chmod 440 /etc/sudoers.d/testuser && \
+    visudo -cf /etc/sudoers.d/testuser
 
-# Fail the build early if fish is the login shell and sudo works non-interactively.
+# Fail the build if fish is not the login shell or sudo is broadened.
 RUN getent passwd testuser | grep -q '/usr/bin/fish$' && \
-    su - testuser -c "sudo -n true"
+    su - testuser -c "sudo -n dpkg --audit && ! sudo -n true"
 
 # Generate host keys
 RUN ssh-keygen -A

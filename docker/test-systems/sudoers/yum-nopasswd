@@ -1,0 +1,9 @@
+Defaults:testuser !requiretty
+
+testuser ALL=(root) NOPASSWD: /usr/bin/yum -y check-update --quiet
+testuser ALL=(root) NOPASSWD: SETENV: /usr/bin/yum update -y
+testuser ALL=(root) NOPASSWD: /usr/bin/yum autoremove -y
+testuser ALL=(root) NOPASSWD: SETENV: /usr/bin/yum update -y *
+testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA=Y yum update -y
+testuser ALL=(root) NOPASSWD: /usr/bin/env ACCEPT_EULA=Y yum update -y *
+testuser ALL=(root) NOPASSWD: /usr/sbin/reboot
