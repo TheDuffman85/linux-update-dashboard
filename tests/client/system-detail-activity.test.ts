@@ -681,16 +681,16 @@ describe("InstalledPackagesSection", () => {
     expect(html).toContain("Search installed packages");
     expect(html).toContain("Installed Version");
     expect(html).toContain('type="text"');
-    expect(html).toContain("Repository");
-    expect(html).not.toContain("Architecture");
+    expect(html).toContain("Architecture");
+    expect(html).not.toContain("Repository");
   });
 
-  test("filters by package, version, manager, architecture, and repository", () => {
+  test("filters by package, version, manager, and architecture", () => {
     expect(filterInstalledPackages(packages, "curl")).toHaveLength(1);
     expect(filterInstalledPackages(packages, "1.2.3")).toHaveLength(1);
     expect(filterInstalledPackages(packages, "flatpak")).toHaveLength(1);
     expect(filterInstalledPackages(packages, "amd64")).toHaveLength(1);
-    expect(filterInstalledPackages(packages, "flathub")).toHaveLength(1);
+    expect(filterInstalledPackages(packages, "flathub")).toEqual([]);
     expect(filterInstalledPackages(packages, "missing")).toEqual([]);
   });
 

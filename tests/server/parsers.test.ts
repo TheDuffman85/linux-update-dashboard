@@ -31,13 +31,13 @@ describe("installed package parsers", () => {
     },
     {
       manager: "pacman",
-      output: "linux 6.7.5.arch1-1\nmalformed\n",
-      expected: { packageName: "linux", currentVersion: "6.7.5.arch1-1", architecture: null },
+      output: "Name            : linux\nVersion         : 6.7.5.arch1-1\nArchitecture    : x86_64\n\nmalformed\n",
+      expected: { packageName: "linux", currentVersion: "6.7.5.arch1-1", architecture: "x86_64" },
     },
     {
       manager: "apk",
-      output: "busybox-1.36.1-r7\nmalformed\n",
-      expected: { packageName: "busybox", currentVersion: "1.36.1-r7", architecture: null },
+      output: "busybox-1.36.1-r7 x86_64 {busybox} (GPL-2.0-only) [installed]\nmalformed\n",
+      expected: { packageName: "busybox", currentVersion: "1.36.1-r7", architecture: "x86_64" },
     },
     {
       manager: "flatpak",

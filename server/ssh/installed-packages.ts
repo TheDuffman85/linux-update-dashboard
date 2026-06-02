@@ -69,6 +69,60 @@ function parseSpaceSeparatedPackages(pkgManager: string, stdout: string): Instal
   return packages;
 }
 
+function parseApkPackages(stdout: string): InstalledPackage[] {
+  const packages: InstalledPackage[] = [];
+  for (const raw of stdout.split("\n")) {
+    const parts = raw.trim().split(/\s+/);
+    const entry = splitApkNameVersion(parts[0] ?? "");
+    if (!entry || !parts[1]) continue;
+    packages.push({
+      pkgManager: "apk",
+      packageName: entry.name,
+      currentVersion: entry.version,
+      architecture: parts[1],
+      repository: null,
+    });
+  }
+  return packages;
+}
+
+function parsePacmanPackages(stdout: string): InstalledPackage[] {
+  const packages: InstalledPackage[] = [];
+  let packageName = "";
+  let currentVersion = "";
+  let architecture = "";
+
+  function addPackage() {
+    if (!packageName || !currentVersion) return;
+    packages.push({
+      pkgManager: "pacman",
+      packageName,
+      currentVersion,
+      architecture: architecture || null,
+      repository: null,
+    });
+  }
+
+  for (const raw of `${stdout}\n`.split("\n")) {
+    const line = raw.trim();
+    if (!line) {
+      addPackage();
+      packageName = "";
+      currentVersion = "";
+      architecture = "";
+      continue;
+    }
+    const separator = line.indexOf(":");
+    if (separator === -1) continue;
+    const key = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (key === "Name") packageName = value;
+    if (key === "Version") currentVersion = value;
+    if (key === "Architecture") architecture = value;
+  }
+  return packages;
+}
+
 const BUILTIN_INSTALLED_PACKAGE_DEFINITIONS: Record<string, BuiltinInstalledPackageDefinition> = {
   apt: {
     command: "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n' 2>/dev/null",
@@ -83,22 +137,12 @@ const BUILTIN_INSTALLED_PACKAGE_DEFINITIONS: Record<string, BuiltinInstalledPack
     parse: (stdout) => parseTabularPackages("yum", stdout),
   },
   pacman: {
-    command: "pacman -Q 2>/dev/null",
-    parse: (stdout) => parseSpaceSeparatedPackages("pacman", stdout),
+    command: "LC_ALL=C pacman -Qi 2>/dev/null",
+    parse: parsePacmanPackages,
   },
   apk: {
-    command: "apk info -v 2>/dev/null",
-    parse: (stdout) => stdout
-      .split("\n")
-      .map((line) => splitApkNameVersion(line.trim()))
-      .filter((entry): entry is { name: string; version: string } => !!entry?.name && !!entry.version)
-      .map((entry) => ({
-        pkgManager: "apk",
-        packageName: entry.name,
-        currentVersion: entry.version,
-        architecture: null,
-        repository: null,
-      })),
+    command: "apk list --installed 2>/dev/null",
+    parse: parseApkPackages,
   },
   flatpak: {
     command: "flatpak list --columns=application,version,arch,origin 2>/dev/null",

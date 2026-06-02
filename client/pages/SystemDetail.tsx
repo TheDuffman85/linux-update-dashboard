@@ -240,7 +240,6 @@ export function filterInstalledPackages(
       pkg.currentVersion,
       pkg.pkgManager,
       pkg.architecture,
-      pkg.repository,
     ].some((value) => value?.toLowerCase().includes(query))
   );
 }
@@ -310,7 +309,7 @@ export function InstalledPackagesSection({
                       <th className="px-2 sm:px-4 py-2">Package</th>
                       <th className="px-2 sm:px-4 py-2">Installed Version</th>
                       <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
-                      <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
+                      <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Architecture</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -319,7 +318,7 @@ export function InstalledPackagesSection({
                         <td className="px-2 sm:px-4 py-2 break-all">{pkg.packageName}</td>
                         <td className="px-2 sm:px-4 py-2 font-mono text-xs break-all">{pkg.currentVersion}</td>
                         <td className="px-2 sm:px-4 py-2 hidden md:table-cell text-slate-500">{pkg.pkgManager}</td>
-                        <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500">{pkg.repository || "-"}</td>
+                        <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500">{pkg.architecture || "-"}</td>
                       </tr>
                     ))}
                   </tbody>
