@@ -10,7 +10,6 @@ const {
   mockUseUpdateSystem,
   mockUseDeleteSystem,
   mockUseReorderSystems,
-  mockUseCheckUpdates,
   mockUseToast,
   mockUseUpgrade,
   mockUseAuth,
@@ -21,7 +20,6 @@ const {
   mockUseUpdateSystem: vi.fn(),
   mockUseDeleteSystem: vi.fn(),
   mockUseReorderSystems: vi.fn(),
-  mockUseCheckUpdates: vi.fn(),
   mockUseToast: vi.fn(),
   mockUseUpgrade: vi.fn(),
   mockUseAuth: vi.fn(),
@@ -34,10 +32,6 @@ vi.mock("../../client/lib/systems", () => ({
   useUpdateSystem: mockUseUpdateSystem,
   useDeleteSystem: mockUseDeleteSystem,
   useReorderSystems: mockUseReorderSystems,
-}));
-
-vi.mock("../../client/lib/updates", () => ({
-  useCheckUpdates: mockUseCheckUpdates,
 }));
 
 vi.mock("../../client/context/ToastContext", () => ({
@@ -130,7 +124,6 @@ describe("SystemsList", () => {
     mockUseUpdateSystem.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseDeleteSystem.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseReorderSystems.mockReturnValue({ mutate: vi.fn(), isPending: false });
-    mockUseCheckUpdates.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseToast.mockReturnValue({ toasts: [], addToast: vi.fn(), removeToast: vi.fn() });
     mockUseUpgrade.mockReturnValue({ isUpgrading: () => false, upgradingCount: 0 });
     mockUseAuth.mockReturnValue({ user: { username: "tester" } });

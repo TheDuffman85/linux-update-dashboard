@@ -15,7 +15,6 @@ import {
   useReorderSystems,
 } from "../lib/systems";
 import type { System } from "../lib/systems";
-import { getCheckResultToast, useCheckUpdates } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
@@ -38,7 +37,6 @@ export default function SystemsList() {
   const updateSystem = useUpdateSystem();
   const deleteSystem = useDeleteSystem();
   const reorderSystems = useReorderSystems();
-  const checkUpdates = useCheckUpdates();
   const { addToast } = useToast();
   const { isUpgrading } = useUpgrade();
   const [showForm, setShowForm] = useState(false);
@@ -149,16 +147,6 @@ export default function SystemsList() {
         await refetch();
         setDeleteId(null);
         addToast("System deleted", "success");
-      },
-      onError: (err) => addToast(err.message, "danger"),
-    });
-  };
-
-  const handleCheck = (id: number) => {
-    checkUpdates.mutate(id, {
-      onSuccess: (data) => {
-        const toast = getCheckResultToast(data);
-        addToast(toast.message, toast.type);
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -332,16 +320,6 @@ export default function SystemsList() {
                   </td>
                   <td className="px-2 sm:px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-0.5 sm:gap-1">
-                      <button
-                        onClick={() => handleCheck(s.id)}
-                        disabled={!!s.activeOperation}
-                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                        title="Check for updates"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                      </button>
                       <button
                         onClick={() => setSudoersSystem(s)}
                         className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
