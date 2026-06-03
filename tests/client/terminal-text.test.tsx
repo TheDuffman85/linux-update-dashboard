@@ -34,6 +34,7 @@ describe("CopyableCodeBlock", () => {
     );
 
     expect(html).toContain("min-height:2.75rem");
+    expect(html).toContain("z-[1]");
   });
 });
 
