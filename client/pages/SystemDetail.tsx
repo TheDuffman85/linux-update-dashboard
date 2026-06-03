@@ -34,7 +34,16 @@ import type {
   LastCheckSummary,
   PackageManagerIssue,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade, type UpdatesPanelState } from "../lib/system-status";
+import {
+  deriveSystemUpdateState,
+  getUpdatesPanelState,
+  hasHostKeyVerificationError,
+  isPostAutoremoveRecheck,
+  isPostUpgradeRecheck,
+  omitHostKeyVerificationErrorFromUpdatesPanelState,
+  shouldClearLocalUpgrade,
+  type UpdatesPanelState,
+} from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
@@ -530,6 +539,35 @@ export function RootUserInfoBanner({
           ) : "Dismiss"}
         </button>
       </div>
+    </div>
+  );
+}
+
+export function HostKeyVerificationBanner({
+  systemName,
+  onOpenConfiguration,
+}: {
+  systemName: string;
+  onOpenConfiguration: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-sm sm:flex-row sm:items-center">
+      <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c.943 0 1.809.325 2.493.869M17 8.5V7a5 5 0 00-10 0v1.5M5 11h14v9H5v-9z" />
+      </svg>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">SSH host-key approval required</p>
+        <p className="mt-1 text-red-600 dark:text-red-400">
+          {systemName} needs its SSH host key reviewed before update checks can run.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onOpenConfiguration}
+        className="px-3 py-1 text-xs font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors whitespace-nowrap shrink-0"
+      >
+        Open Configuration
+      </button>
     </div>
   );
 }
@@ -1756,6 +1794,8 @@ export default function SystemDetail() {
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
   const dedupedUpdatesPanelState = dedupePackageIssueUpdateNotice(updatesPanelState, visiblePackageIssues);
+  const displayedUpdatesPanelState = omitHostKeyVerificationErrorFromUpdatesPanelState(dedupedUpdatesPanelState);
+  const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
@@ -2174,6 +2214,13 @@ export default function SystemDetail() {
         />
       )}
 
+      {showHostKeyVerificationBanner && (
+        <HostKeyVerificationBanner
+          systemName={system.name}
+          onOpenConfiguration={() => navigate("/systems", { state: { editSystemId: system.id } })}
+        />
+      )}
+
       <PackageManagerIssueBanner
         issues={visiblePackageIssues}
         busy={upgrading || autoremoving || checking || rebooting || repairingPackageIssue}
@@ -2237,7 +2284,7 @@ export default function SystemDetail() {
             <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
           )}
         </div>
-        <UpdateCheckNotice state={dedupedUpdatesPanelState} />
+        <UpdateCheckNotice state={displayedUpdatesPanelState} />
         {updates.length > 0 ? (
           <UpdatesTable
             updates={updates}

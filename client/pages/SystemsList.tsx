@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
@@ -31,8 +31,17 @@ function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   return nextItems;
 }
 
+export function getEditSystemIdFromRouteState(state: unknown): number | null {
+  if (!state || typeof state !== "object") return null;
+  const editSystemId = (state as { editSystemId?: unknown }).editSystemId;
+  return typeof editSystemId === "number" && Number.isFinite(editSystemId) ? editSystemId : null;
+}
+
 export default function SystemsList() {
   const { data: systems, isLoading, refetch } = useSystems();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeEditSystemId = getEditSystemIdFromRouteState(location.state);
   const createSystem = useCreateSystem();
   const updateSystem = useUpdateSystem();
   const deleteSystem = useDeleteSystem();
@@ -41,7 +50,9 @@ export default function SystemsList() {
   const { isUpgrading } = useUpgrade();
   const [showForm, setShowForm] = useState(false);
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
-  const [editSystem, setEditSystem] = useState<System | null>(null);
+  const [editSystem, setEditSystem] = useState<System | null>(
+    () => systems?.find((system) => system.id === routeEditSystemId) ?? null,
+  );
   const [sudoersSystem, setSudoersSystem] = useState<System | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [orderedSystems, setOrderedSystems] = useState<System[]>(() => systems ?? []);
@@ -57,6 +68,16 @@ export default function SystemsList() {
     systemsRef.current = systems ?? [];
     setOrderedSystems(systems ?? []);
   }, [systems]);
+
+  useEffect(() => {
+    if (routeEditSystemId === null || !systems) return;
+
+    const targetSystem = systems.find((system) => system.id === routeEditSystemId) ?? null;
+    if (targetSystem) {
+      setEditSystem(targetSystem);
+    }
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, navigate, routeEditSystemId, systems]);
 
   useEffect(() => {
     orderedSystemsRef.current = orderedSystems;

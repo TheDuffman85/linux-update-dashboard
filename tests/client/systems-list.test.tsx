@@ -56,7 +56,7 @@ vi.mock("../../client/components/Layout", () => ({
   ),
 }));
 
-import SystemsList from "../../client/pages/SystemsList";
+import SystemsList, { getEditSystemIdFromRouteState } from "../../client/pages/SystemsList";
 
 describe("SystemsList", () => {
   beforeEach(() => {
@@ -139,5 +139,11 @@ describe("SystemsList", () => {
     expect(html).toContain('title="Sudoers setup"');
     expect(html).toContain('aria-label="Sudoers setup for Alpha"');
     expect(html).not.toContain("Sudoers Setup for Alpha");
+  });
+
+  test("parses the system configuration route state", () => {
+    expect(getEditSystemIdFromRouteState({ editSystemId: 42 })).toBe(42);
+    expect(getEditSystemIdFromRouteState({ editSystemId: "42" })).toBeNull();
+    expect(getEditSystemIdFromRouteState(null)).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import {
   filterInstalledPackages,
   InstalledPackagesSection,
   getVisiblePackageIssuesForCurrentCheck,
+  HostKeyVerificationBanner,
   isScrollNearBottom,
   matchesHistoryEntryToSession,
   PackageManagerIssueBanner,
@@ -134,6 +135,20 @@ describe("RootUserInfoBanner", () => {
       rootUserBannerDismissedHostKeyFingerprintSha256: null,
       trustedHostKeyFingerprintSha256: null,
     })).toBe(true);
+  });
+});
+
+describe("HostKeyVerificationBanner", () => {
+  test("renders host-key approval guidance with a configuration action", () => {
+    const html = renderToStaticMarkup(createElement(HostKeyVerificationBanner, {
+      systemName: "Debian",
+      onOpenConfiguration: () => {},
+    }));
+
+    expect(html).toContain("SSH host-key approval required");
+    expect(html).toContain("Debian needs its SSH host key reviewed");
+    expect(html).toContain("Open Configuration");
+    expect(html).toContain("bg-red-50");
   });
 });
 

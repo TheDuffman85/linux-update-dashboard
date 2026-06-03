@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { deriveSystemUpdateState, getUpdatesPanelState, shouldClearLocalUpgrade } from "../../client/lib/system-status";
+import {
+  deriveSystemUpdateState,
+  getUpdatesPanelState,
+  hasHostKeyVerificationError,
+  isHostKeyVerificationErrorMessage,
+  omitHostKeyVerificationErrorFromUpdatesPanelState,
+  shouldClearLocalUpgrade,
+} from "../../client/lib/system-status";
 import type { ActiveOperation, LastCheckSummary } from "../../client/lib/systems";
 
 function makeLastCheck(status: LastCheckSummary["status"], error: string | null = null): LastCheckSummary {
@@ -160,5 +167,46 @@ describe("getUpdatesPanelState", () => {
     expect(
       getUpdatesPanelState({ lastCheck: makeLastCheck("success") }, 0),
     ).toEqual({ kind: "up_to_date" });
+  });
+});
+
+describe("host-key update notice handling", () => {
+  test("recognizes host-key verification errors including the misspelled variant", () => {
+    expect(isHostKeyVerificationErrorMessage("HostKeyVerificationError")).toBe(true);
+    expect(isHostKeyVerificationErrorMessage("HostKeyVarificationError")).toBe(true);
+    expect(isHostKeyVerificationErrorMessage("SSH host key approval required")).toBe(true);
+    expect(isHostKeyVerificationErrorMessage("sudo password required")).toBe(false);
+  });
+
+  test("detects host-key failures from the latest check summary", () => {
+    expect(
+      hasHostKeyVerificationError(makeLastCheck("failed", "SSH host key verification failed")),
+    ).toBe(true);
+    expect(hasHostKeyVerificationError(makeLastCheck("failed", "network unreachable"))).toBe(false);
+  });
+
+  test("removes host-key errors from the inline updates panel", () => {
+    expect(
+      omitHostKeyVerificationErrorFromUpdatesPanelState({
+        kind: "check_failed",
+        title: "Update check failed",
+        message: "The latest update check did not complete, so the package list may be unavailable.",
+        error: "HostKeyVerificationError: SSH host key approval required",
+      }),
+    ).toBeNull();
+
+    expect(
+      omitHostKeyVerificationErrorFromUpdatesPanelState({
+        kind: "check_warning",
+        title: "Update check completed with warnings",
+        message: "One or more package manager checks failed, so this result may be incomplete.",
+        error: "[apt] mirror failed\n\nHostKeyVerificationError: SSH host key approval required",
+      }),
+    ).toEqual({
+      kind: "check_warning",
+      title: "Update check completed with warnings",
+      message: "One or more package manager checks failed, so this result may be incomplete.",
+      error: "[apt] mirror failed",
+    });
   });
 });

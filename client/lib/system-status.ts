@@ -29,6 +29,9 @@ export type UpdatesPanelState =
   | { kind: "updates_available" }
   | { kind: "up_to_date" };
 
+const HOST_KEY_VERIFICATION_ERROR_RE =
+  /HostKeyV(?:erification|arification)Error|SSH host key approval required|SSH host key verification failed/i;
+
 export function isPostUpgradeRecheck(activeOperation: ActiveOperation | null | undefined): boolean {
   return activeOperation?.phase === "rechecking" && activeOperation.type.includes("upgrade");
 }
@@ -39,6 +42,29 @@ export function isPostAutoremoveRecheck(activeOperation: ActiveOperation | null 
 
 export function shouldClearLocalUpgrade(activeOperation: ActiveOperation | null | undefined): boolean {
   return !activeOperation || isPostUpgradeRecheck(activeOperation);
+}
+
+export function isHostKeyVerificationErrorMessage(message: string | null | undefined): boolean {
+  return HOST_KEY_VERIFICATION_ERROR_RE.test(message ?? "");
+}
+
+export function hasHostKeyVerificationError(lastCheck: LastCheckSummary | null | undefined): boolean {
+  return isHostKeyVerificationErrorMessage(lastCheck?.error);
+}
+
+export function omitHostKeyVerificationErrorFromUpdatesPanelState(
+  state: UpdatesPanelState | null,
+): UpdatesPanelState | null {
+  if (!state || (state.kind !== "check_failed" && state.kind !== "check_warning")) return state;
+  if (!isHostKeyVerificationErrorMessage(state.error)) return state;
+
+  const remainingErrors = (state.error ?? "")
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter((block) => !isHostKeyVerificationErrorMessage(block));
+
+  if (remainingErrors.length === 0) return null;
+  return { ...state, error: remainingErrors.join("\n\n") };
 }
 
 export function deriveSystemUpdateState(
