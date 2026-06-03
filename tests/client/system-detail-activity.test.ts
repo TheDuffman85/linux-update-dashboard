@@ -19,6 +19,8 @@ import {
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
   shouldShowAutoremoveAction,
+  getOperationNoticeState,
+  OperationNoticeBanner,
 } from "../../client/pages/SystemDetail";
 import { SudoersSetupPanel } from "../../client/components/systems/SudoersSetupPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
@@ -149,6 +151,59 @@ describe("HostKeyVerificationBanner", () => {
     expect(html).toContain("Debian needs its SSH host key reviewed");
     expect(html).toContain("Open Configuration");
     expect(html).toContain("bg-red-50");
+  });
+});
+
+describe("OperationNoticeBanner", () => {
+  test("renders generic update-check failures as a page-level banner", () => {
+    const html = renderToStaticMarkup(createElement(OperationNoticeBanner, {
+      state: {
+        kind: "check_failed",
+        title: "Update check failed",
+        message: "The latest update check did not complete, so the package list may be unavailable.",
+        error: "Error: All configured authentication methods failed",
+      },
+    }));
+
+    expect(html).toContain("Update check failed");
+    expect(html).toContain("All configured authentication methods failed");
+    expect(html).toContain("mb-6");
+    expect(html).toContain("bg-red-50");
+    expect(html).not.toContain("mx-4");
+  });
+
+  test("renders failed upgrade activity as the same page-level banner", () => {
+    const state = getOperationNoticeState(createHistoryEntry({
+      id: 3,
+      action: "upgrade_all",
+      pkgManager: "apt",
+      status: "failed",
+      error: "E: Could not get lock /var/lib/dpkg/lock-frontend",
+      startedAt: "2026-05-18 10:00:00",
+      completedAt: "2026-05-18 10:00:02",
+    }), 0);
+    const html = renderToStaticMarkup(createElement(OperationNoticeBanner, { state }));
+
+    expect(state).toMatchObject({
+      kind: "operation_failed",
+      title: "Upgrade failed",
+      error: "E: Could not get lock /var/lib/dpkg/lock-frontend",
+    });
+    expect(html).toContain("Upgrade failed");
+    expect(html).toContain("Could not get lock");
+    expect(html).toContain("mb-6");
+  });
+
+  test("does not produce a banner state for a latest successful operation", () => {
+    expect(getOperationNoticeState(createHistoryEntry({
+      id: 4,
+      action: "reboot",
+      pkgManager: "system",
+      status: "success",
+      error: "older checks may have failed, but this row is current",
+      startedAt: "2026-05-18 11:00:00",
+      completedAt: "2026-05-18 11:00:10",
+    }), 0)).toBeNull();
   });
 });
 

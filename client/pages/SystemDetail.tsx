@@ -389,43 +389,214 @@ export function getVisiblePackageIssuesForCurrentCheck(
   return isSudoCredentialFailure(lastCheck) ? [] : packageIssues;
 }
 
-function UpdateCheckNotice({
+type CheckOperationNoticeState = Extract<UpdatesPanelState, { kind: "check_failed" | "check_warning" }>;
+
+type OperationNoticeState = CheckOperationNoticeState | {
+  kind: "operation_failed" | "operation_warning";
+  action: string;
+  title: string;
+  message: string;
+  error: string | null;
+};
+
+function isCheckOperationNoticeState(state: OperationNoticeState): state is CheckOperationNoticeState {
+  return state.kind === "check_failed" || state.kind === "check_warning";
+}
+
+function getCheckOperationNoticeState(state: UpdatesPanelState | null): CheckOperationNoticeState | null {
+  if (!state) return null;
+  return state.kind === "check_failed" || state.kind === "check_warning" ? state : null;
+}
+
+function getHistoryEntryError(entry: HistoryEntry): string | null {
+  if (entry.error?.trim()) return entry.error;
+
+  const stepErrors = Array.from(new Set(
+    (entry.steps ?? [])
+      .map((step) => step.error?.trim())
+      .filter((error): error is string => !!error)
+  ));
+
+  return stepErrors.length > 0 ? stepErrors.join("\n\n") : null;
+}
+
+function getOperationNoticeCopy(
+  action: string,
+  status: "failed" | "warning",
+): Pick<OperationNoticeState, "title" | "message"> {
+  if (action === "check") {
+    return status === "failed"
+      ? {
+          title: "Update check failed",
+          message: "The latest update check did not complete, so the package list may be unavailable.",
+        }
+      : {
+          title: "Update check completed with warnings",
+          message: "One or more package manager checks failed, so this result may be incomplete.",
+        };
+  }
+
+  const copies: Record<string, Record<"failed" | "warning", Pick<OperationNoticeState, "title" | "message">>> = {
+    autoremove: {
+      failed: {
+        title: "Autoremove failed",
+        message: "The latest autoremove operation did not complete.",
+      },
+      warning: {
+        title: "Autoremove completed with warnings",
+        message: "The latest autoremove operation completed with warnings.",
+      },
+    },
+    upgrade_all: {
+      failed: {
+        title: "Upgrade failed",
+        message: "The latest upgrade operation did not complete.",
+      },
+      warning: {
+        title: "Upgrade completed with warnings",
+        message: "The latest upgrade operation completed with warnings.",
+      },
+    },
+    full_upgrade_all: {
+      failed: {
+        title: "Full upgrade failed",
+        message: "The latest full upgrade operation did not complete.",
+      },
+      warning: {
+        title: "Full upgrade completed with warnings",
+        message: "The latest full upgrade operation completed with warnings.",
+      },
+    },
+    upgrade_package: {
+      failed: {
+        title: "Selected upgrade failed",
+        message: "The selected package upgrade did not complete.",
+      },
+      warning: {
+        title: "Selected upgrade completed with warnings",
+        message: "The selected package upgrade completed with warnings.",
+      },
+    },
+    reboot: {
+      failed: {
+        title: "Reboot failed",
+        message: "The reboot operation did not complete.",
+      },
+      warning: {
+        title: "Reboot completed with warnings",
+        message: "The reboot operation completed with warnings.",
+      },
+    },
+    package_manager_repair: {
+      failed: {
+        title: "Package manager repair failed",
+        message: "The package manager repair operation did not complete.",
+      },
+      warning: {
+        title: "Package manager repair completed with warnings",
+        message: "The package manager repair operation completed with warnings.",
+      },
+    },
+  };
+
+  return copies[action]?.[status] ?? (
+    status === "failed"
+      ? {
+          title: "Operation failed",
+          message: "The latest operation did not complete.",
+        }
+      : {
+          title: "Operation completed with warnings",
+          message: "The latest operation completed with warnings.",
+        }
+  );
+}
+
+export function getOperationNoticeState(
+  latestHistoryEntry: HistoryEntry | null | undefined,
+  updatesCount: number,
+): OperationNoticeState | null {
+  if (!latestHistoryEntry) return null;
+  if (latestHistoryEntry.status !== "failed" && latestHistoryEntry.status !== "warning") return null;
+
+  const error = getHistoryEntryError(latestHistoryEntry);
+  if (!error) return null;
+
+  if (latestHistoryEntry.action === "check") {
+    if (latestHistoryEntry.status === "failed") {
+      return {
+        kind: "check_failed",
+        title: "Update check failed",
+        message: "The latest update check did not complete, so the package list may be unavailable.",
+        error,
+      };
+    }
+
+    const checkedUpdatesCount = latestHistoryEntry.packageCount ?? updatesCount;
+    return {
+      kind: "check_warning",
+      title: "Update check completed with warnings",
+      message: checkedUpdatesCount > 0
+        ? "Showing the updates that were found before one or more package manager checks failed."
+        : "One or more package manager checks failed, so this result may be incomplete.",
+      error,
+    };
+  }
+
+  return {
+    kind: latestHistoryEntry.status === "failed" ? "operation_failed" : "operation_warning",
+    action: latestHistoryEntry.action,
+    ...getOperationNoticeCopy(latestHistoryEntry.action, latestHistoryEntry.status),
+    error,
+  };
+}
+
+export function OperationNoticeBanner({
   state,
 }: {
-  state: UpdatesPanelState | null;
+  state: OperationNoticeState | null;
 }) {
   if (!state) return null;
-  if (state.kind !== "check_failed" && state.kind !== "check_warning") return null;
 
-  const tone = state.kind === "check_failed"
+  const isFailed = state.kind === "check_failed" || state.kind === "operation_failed";
+  const tone = isFailed
     ? {
         wrapper: "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20",
         title: "text-red-700 dark:text-red-300",
         body: "text-red-600 dark:text-red-400",
         code: "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300",
+        icon: "text-red-500 dark:text-red-300",
       }
     : {
         wrapper: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20",
         title: "text-amber-700 dark:text-amber-300",
         body: "text-amber-700 dark:text-amber-400",
         code: "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
+        icon: "text-amber-500 dark:text-amber-300",
       };
 
   return (
-    <div className={`mx-4 mt-4 mb-4 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
-      <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
-      <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
-      {state.error && (
-        <div className="mt-3">
-          <CopyableCodeBlock
-            text={state.error}
-            className={`overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}
-            successMessage="Copied check output"
-          >
-            {state.error}
-          </CopyableCodeBlock>
+    <div className={`mb-6 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
+      <div className="flex items-start gap-3">
+        <svg className={`mt-0.5 h-5 w-5 shrink-0 ${tone.icon}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        </svg>
+        <div className="min-w-0 flex-1">
+          <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
+          <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
+          {state.error && (
+            <div className="mt-3">
+              <CopyableCodeBlock
+                text={state.error}
+                className={`overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}
+                successMessage="Copied check output"
+              >
+                {state.error}
+              </CopyableCodeBlock>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1798,8 +1969,17 @@ export default function SystemDetail() {
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
-  const dedupedUpdatesPanelState = dedupePackageIssueUpdateNotice(updatesPanelState, visiblePackageIssues);
-  const displayedUpdatesPanelState = omitHostKeyVerificationErrorFromUpdatesPanelState(dedupedUpdatesPanelState);
+  const latestOperationNoticeState: OperationNoticeState | null = history.length > 0
+    ? getOperationNoticeState(history[0], updates.length)
+    : getCheckOperationNoticeState(updatesPanelState);
+  const dedupedOperationNoticeState: OperationNoticeState | null =
+    latestOperationNoticeState && isCheckOperationNoticeState(latestOperationNoticeState)
+      ? getCheckOperationNoticeState(dedupePackageIssueUpdateNotice(latestOperationNoticeState, visiblePackageIssues))
+      : latestOperationNoticeState;
+  const displayedOperationNoticeState: OperationNoticeState | null =
+    dedupedOperationNoticeState && isCheckOperationNoticeState(dedupedOperationNoticeState)
+      ? getCheckOperationNoticeState(omitHostKeyVerificationErrorFromUpdatesPanelState(dedupedOperationNoticeState))
+      : dedupedOperationNoticeState;
   const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
@@ -2248,6 +2428,8 @@ export default function SystemDetail() {
         onDismiss={setPendingDismissIssue}
       />
 
+      <OperationNoticeBanner state={displayedOperationNoticeState} />
+
       {/* Reboot required warning */}
       {system.needsReboot === 1 && (
         <div className="flex items-center gap-2 px-4 py-3 mb-6 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm">
@@ -2302,21 +2484,14 @@ export default function SystemDetail() {
             <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
           )}
         </div>
-        <UpdateCheckNotice state={displayedUpdatesPanelState} />
-        {updates.length > 0 ? (
-          <UpdatesTable
-            updates={updates}
-            onTogglePackage={handleTogglePackageSelection}
-            selectedPackageNames={selectedVisiblePackageNames}
-            selectionDisabled={packageSelectionState.selectionDisabled}
-            hideBusy={hideUpdate.isPending}
-            onHide={setPendingHideUpdate}
-          />
-        ) : updatesPanelState.kind === "up_to_date" ? (
-          <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
-            No updates available
-          </div>
-        ) : null}
+        <UpdatesTable
+          updates={updates}
+          onTogglePackage={handleTogglePackageSelection}
+          selectedPackageNames={selectedVisiblePackageNames}
+          selectionDisabled={packageSelectionState.selectionDisabled}
+          hideBusy={hideUpdate.isPending}
+          onHide={setPendingHideUpdate}
+        />
       </div>
 
       <InstalledPackagesSection
