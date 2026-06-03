@@ -74,7 +74,7 @@ function compareSystemsInGroup(a: System, b: System): number {
 }
 
 function hasActiveUpgradeOperation(system: System): boolean {
-  return !!system.activeOperation;
+  return !!system.activeOperation?.type.includes("upgrade") && !isPostUpgradeRecheck(system.activeOperation);
 }
 
 function isUpgradeAllEligible(system: System, locallyUpgrading: boolean): boolean {
@@ -93,6 +93,10 @@ export function canToggleUpgradePreset(
   upgradeEditMode: boolean,
 ): boolean {
   return upgradeEditMode || system.updateCount > 0;
+}
+
+export function isUpgradeAllSubmitDisabled(selectedSystemsCount: number, busy: boolean): boolean {
+  return selectedSystemsCount === 0 || busy;
 }
 
 function parseManagerList(value: unknown): string[] {
@@ -384,6 +388,11 @@ export default function Dashboard() {
   const hasUpgradeInProgress =
     upgradingCount > 0 ||
     (systems?.some((s) => isUpgrading(s.id) || hasActiveUpgradeOperation(s)) ?? false);
+  const hasRefreshInProgress =
+    refreshCache.isPending ||
+    (systems?.some((s) => s.activeOperation?.type === "check") ?? false);
+  const disableRefreshAll = refreshCache.isPending || hasActiveOps;
+  const disableUpgradeSubmit = refreshCache.isPending || hasActiveOps;
   const systemsWithUpdates = useMemo(
     () => systems?.filter((s) => isUpgradeAllEligible(s, isUpgrading(s.id))) ?? [],
     [systems, isUpgrading]
@@ -1079,14 +1088,20 @@ export default function Dashboard() {
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
             onClick={handleRefresh}
-            disabled={refreshCache.isPending || hasUpgradeInProgress}
+            disabled={disableRefreshAll}
             className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 whitespace-nowrap"
           >
-            {refreshCache.isPending ? <span className="spinner spinner-sm" /> : "Refresh All"}
+            {hasRefreshInProgress ? (
+              <span className="flex items-center gap-1.5">
+                <span className="spinner spinner-sm" />
+                Refreshing...
+              </span>
+            ) : (
+              "Refresh All"
+            )}
           </button>
           <button
             onClick={openUpgradeConfirm}
-            disabled={hasUpgradeInProgress}
             className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
           >
             {hasUpgradeInProgress ? (
@@ -1351,7 +1366,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={handleUpgradeAll}
-            disabled={selectedSystems.length === 0 || hasUpgradeInProgress}
+            disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, disableUpgradeSubmit)}
             className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 sm:w-auto"
           >
             Upgrade All

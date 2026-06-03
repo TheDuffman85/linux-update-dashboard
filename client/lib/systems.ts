@@ -55,6 +55,8 @@ export interface System {
   rebootDismissedBootId: string | null;
   rebootDismissedUptimeSeconds: number | null;
   rebootDismissedAt: string | null;
+  rootUserBannerDismissed: number;
+  rootUserBannerDismissedHostKeyFingerprintSha256: string | null;
   excludeFromUpgradeAll: number;
   upgradeGroupId: number | null;
   upgradeOrder: number;
@@ -225,6 +227,28 @@ export interface SudoersPreview {
   resolutionError: string | null;
   content: string;
   warnings: SudoersPreviewWarning[];
+}
+
+export interface ApprovedHostKeyApproval {
+  systemId?: number;
+  role: "jump" | "target";
+  host: string;
+  port: number;
+  algorithm: string;
+  fingerprintSha256: string;
+  rawKey: string;
+}
+
+export function getApprovedHostKeyInvalidationSystemIds(
+  approvedHostKeys: ApprovedHostKeyApproval[] | undefined,
+): number[] {
+  const systemIds = new Set<number>();
+  for (const approvedHostKey of approvedHostKeys ?? []) {
+    if (typeof approvedHostKey.systemId === "number") {
+      systemIds.add(approvedHostKey.systemId);
+    }
+  }
+  return [...systemIds];
 }
 
 export interface SystemDetailResponse {
@@ -525,6 +549,18 @@ export function useDismissNeedsReboot() {
   });
 }
 
+export function useDismissRootUserBanner() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ status: string }>(`/systems/${id}/dismiss-root-user-banner`, { method: "POST" }),
+    onSuccess: async (_data, id) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+    },
+  });
+}
+
 export function useSolvePackageIssue() {
   const qc = useQueryClient();
   return useMutation({
@@ -561,6 +597,7 @@ export function useDismissPackageIssue() {
 }
 
 export function useTestConnection() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: {
       hostname: string;
@@ -569,15 +606,7 @@ export function useTestConnection() {
       proxyJumpSystemId?: number | null;
       hostKeyVerificationEnabled?: boolean;
       trustChallengeToken?: string;
-      approvedHostKeys?: Array<{
-        systemId?: number;
-        role: "jump" | "target";
-        host: string;
-        port: number;
-        algorithm: string;
-        fingerprintSha256: string;
-        rawKey: string;
-      }>;
+      approvedHostKeys?: ApprovedHostKeyApproval[];
       systemId?: number;
       sourceSystemId?: number;
     }) =>
@@ -601,6 +630,15 @@ export function useTestConnection() {
         "/systems/test-connection",
         { method: "POST", body: JSON.stringify(data) }
       ),
+    onSuccess: async (_data, vars) => {
+      const systemIds = getApprovedHostKeyInvalidationSystemIds(vars.approvedHostKeys);
+      if (!systemIds.length) return;
+
+      await Promise.all(systemIds.map((id) =>
+        qc.invalidateQueries({ queryKey: ["system", id] })
+      ));
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+    },
   });
 }
 

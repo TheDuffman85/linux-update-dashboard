@@ -1,16 +1,22 @@
-import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, type ComponentProps } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { CopyableCodeBlock } from "../components/CopyableCodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Modal } from "../components/Modal";
 import { TerminalText } from "../components/TerminalText";
+import { SystemForm } from "../components/systems/SystemForm";
+import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useSystem,
+  useSudoersPreview,
+  useUpdateSystem,
   useRebootSystem,
   useDismissNeedsReboot,
+  useDismissRootUserBanner,
   useSolvePackageIssue,
   useDismissPackageIssue,
 } from "../lib/systems";
@@ -30,7 +36,16 @@ import type {
   LastCheckSummary,
   PackageManagerIssue,
 } from "../lib/systems";
-import { deriveSystemUpdateState, getUpdatesPanelState, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade, type UpdatesPanelState } from "../lib/system-status";
+import {
+  deriveSystemUpdateState,
+  getUpdatesPanelState,
+  hasHostKeyVerificationError,
+  isPostAutoremoveRecheck,
+  isPostUpgradeRecheck,
+  omitHostKeyVerificationErrorFromUpdatesPanelState,
+  shouldClearLocalUpgrade,
+  type UpdatesPanelState,
+} from "../lib/system-status";
 import { getUpgradeBehaviorNotes } from "../lib/package-manager-configs";
 import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
@@ -38,6 +53,7 @@ import { highlightShell } from "../lib/shell-highlight";
 import { formatScriptCommand } from "../lib/scripts";
 
 const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+type SystemFormSubmitData = Parameters<ComponentProps<typeof SystemForm>["onSubmit"]>[0];
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -373,43 +389,214 @@ export function getVisiblePackageIssuesForCurrentCheck(
   return isSudoCredentialFailure(lastCheck) ? [] : packageIssues;
 }
 
-function UpdateCheckNotice({
+type CheckOperationNoticeState = Extract<UpdatesPanelState, { kind: "check_failed" | "check_warning" }>;
+
+type OperationNoticeState = CheckOperationNoticeState | {
+  kind: "operation_failed" | "operation_warning";
+  action: string;
+  title: string;
+  message: string;
+  error: string | null;
+};
+
+function isCheckOperationNoticeState(state: OperationNoticeState): state is CheckOperationNoticeState {
+  return state.kind === "check_failed" || state.kind === "check_warning";
+}
+
+function getCheckOperationNoticeState(state: UpdatesPanelState | null): CheckOperationNoticeState | null {
+  if (!state) return null;
+  return state.kind === "check_failed" || state.kind === "check_warning" ? state : null;
+}
+
+function getHistoryEntryError(entry: HistoryEntry): string | null {
+  if (entry.error?.trim()) return entry.error;
+
+  const stepErrors = Array.from(new Set(
+    (entry.steps ?? [])
+      .map((step) => step.error?.trim())
+      .filter((error): error is string => !!error)
+  ));
+
+  return stepErrors.length > 0 ? stepErrors.join("\n\n") : null;
+}
+
+function getOperationNoticeCopy(
+  action: string,
+  status: "failed" | "warning",
+): Pick<OperationNoticeState, "title" | "message"> {
+  if (action === "check") {
+    return status === "failed"
+      ? {
+          title: "Update check failed",
+          message: "The latest update check did not complete, so the package list may be unavailable.",
+        }
+      : {
+          title: "Update check completed with warnings",
+          message: "One or more package manager checks failed, so this result may be incomplete.",
+        };
+  }
+
+  const copies: Record<string, Record<"failed" | "warning", Pick<OperationNoticeState, "title" | "message">>> = {
+    autoremove: {
+      failed: {
+        title: "Autoremove failed",
+        message: "The latest autoremove operation did not complete.",
+      },
+      warning: {
+        title: "Autoremove completed with warnings",
+        message: "The latest autoremove operation completed with warnings.",
+      },
+    },
+    upgrade_all: {
+      failed: {
+        title: "Upgrade failed",
+        message: "The latest upgrade operation did not complete.",
+      },
+      warning: {
+        title: "Upgrade completed with warnings",
+        message: "The latest upgrade operation completed with warnings.",
+      },
+    },
+    full_upgrade_all: {
+      failed: {
+        title: "Full upgrade failed",
+        message: "The latest full upgrade operation did not complete.",
+      },
+      warning: {
+        title: "Full upgrade completed with warnings",
+        message: "The latest full upgrade operation completed with warnings.",
+      },
+    },
+    upgrade_package: {
+      failed: {
+        title: "Selected upgrade failed",
+        message: "The selected package upgrade did not complete.",
+      },
+      warning: {
+        title: "Selected upgrade completed with warnings",
+        message: "The selected package upgrade completed with warnings.",
+      },
+    },
+    reboot: {
+      failed: {
+        title: "Reboot failed",
+        message: "The reboot operation did not complete.",
+      },
+      warning: {
+        title: "Reboot completed with warnings",
+        message: "The reboot operation completed with warnings.",
+      },
+    },
+    package_manager_repair: {
+      failed: {
+        title: "Package manager repair failed",
+        message: "The package manager repair operation did not complete.",
+      },
+      warning: {
+        title: "Package manager repair completed with warnings",
+        message: "The package manager repair operation completed with warnings.",
+      },
+    },
+  };
+
+  return copies[action]?.[status] ?? (
+    status === "failed"
+      ? {
+          title: "Operation failed",
+          message: "The latest operation did not complete.",
+        }
+      : {
+          title: "Operation completed with warnings",
+          message: "The latest operation completed with warnings.",
+        }
+  );
+}
+
+export function getOperationNoticeState(
+  latestHistoryEntry: HistoryEntry | null | undefined,
+  updatesCount: number,
+): OperationNoticeState | null {
+  if (!latestHistoryEntry) return null;
+  if (latestHistoryEntry.status !== "failed" && latestHistoryEntry.status !== "warning") return null;
+
+  const error = getHistoryEntryError(latestHistoryEntry);
+  if (!error) return null;
+
+  if (latestHistoryEntry.action === "check") {
+    if (latestHistoryEntry.status === "failed") {
+      return {
+        kind: "check_failed",
+        title: "Update check failed",
+        message: "The latest update check did not complete, so the package list may be unavailable.",
+        error,
+      };
+    }
+
+    const checkedUpdatesCount = latestHistoryEntry.packageCount ?? updatesCount;
+    return {
+      kind: "check_warning",
+      title: "Update check completed with warnings",
+      message: checkedUpdatesCount > 0
+        ? "Showing the updates that were found before one or more package manager checks failed."
+        : "One or more package manager checks failed, so this result may be incomplete.",
+      error,
+    };
+  }
+
+  return {
+    kind: latestHistoryEntry.status === "failed" ? "operation_failed" : "operation_warning",
+    action: latestHistoryEntry.action,
+    ...getOperationNoticeCopy(latestHistoryEntry.action, latestHistoryEntry.status),
+    error,
+  };
+}
+
+export function OperationNoticeBanner({
   state,
 }: {
-  state: UpdatesPanelState | null;
+  state: OperationNoticeState | null;
 }) {
   if (!state) return null;
-  if (state.kind !== "check_failed" && state.kind !== "check_warning") return null;
 
-  const tone = state.kind === "check_failed"
+  const isFailed = state.kind === "check_failed" || state.kind === "operation_failed";
+  const tone = isFailed
     ? {
         wrapper: "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20",
         title: "text-red-700 dark:text-red-300",
         body: "text-red-600 dark:text-red-400",
         code: "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300",
+        icon: "text-red-500 dark:text-red-300",
       }
     : {
         wrapper: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20",
         title: "text-amber-700 dark:text-amber-300",
         body: "text-amber-700 dark:text-amber-400",
         code: "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300",
+        icon: "text-amber-500 dark:text-amber-300",
       };
 
   return (
-    <div className={`mx-4 mt-4 mb-4 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
-      <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
-      <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
-      {state.error && (
-        <div className="mt-3">
-          <CopyableCodeBlock
-            text={state.error}
-            className={`overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}
-            successMessage="Copied check output"
-          >
-            {state.error}
-          </CopyableCodeBlock>
+    <div className={`mb-6 rounded-xl border px-4 py-3 ${tone.wrapper}`}>
+      <div className="flex items-start gap-3">
+        <svg className={`mt-0.5 h-5 w-5 shrink-0 ${tone.icon}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        </svg>
+        <div className="min-w-0 flex-1">
+          <p className={`text-sm font-medium ${tone.title}`}>{state.title}</p>
+          <p className={`mt-1 text-sm ${tone.body}`}>{state.message}</p>
+          {state.error && (
+            <div className="mt-3">
+              <CopyableCodeBlock
+                text={state.error}
+                className={`overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}
+                successMessage="Copied check output"
+              >
+                {state.error}
+              </CopyableCodeBlock>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -439,7 +626,7 @@ export function PackageManagerIssueBanner({
         return (
           <div
             key={issue.id}
-            className="flex items-center gap-2 px-4 py-3 rounded-xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-sm"
+            className="flex items-center gap-2 px-4 py-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm"
           >
             <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
@@ -447,14 +634,14 @@ export function PackageManagerIssueBanner({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium">{issue.title}</span>
-                <Badge variant="danger" small>{issue.pkgManager}</Badge>
+                <Badge variant="warning" small>{issue.pkgManager}</Badge>
               </div>
-              <p className="text-red-600 dark:text-red-400">{issue.message}</p>
+              <p className="text-amber-700 dark:text-amber-400">{issue.message}</p>
             </div>
             <button
               onClick={() => onSolve(issue)}
               disabled={busy || solving || dismissing}
-              className="px-3 py-1 text-xs font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+              className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               {solving ? (
                 <span className="flex items-center gap-1.5">
@@ -466,7 +653,7 @@ export function PackageManagerIssueBanner({
             <button
               onClick={() => onDismiss(issue)}
               disabled={busy || solving || dismissing}
-              className="px-3 py-1 text-xs font-medium rounded-lg border border-red-300 dark:border-red-800 bg-white/70 dark:bg-slate-900/30 text-red-700 dark:text-red-300 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+              className="px-3 py-1 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-900/30 text-amber-700 dark:text-amber-400 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               {dismissing ? (
                 <span className="flex items-center gap-1.5">
@@ -479,6 +666,96 @@ export function PackageManagerIssueBanner({
         );
       })}
     </div>
+  );
+}
+
+export function RootUserInfoBanner({
+  systemName,
+  busy,
+  onOpenSudoers,
+  onDismiss,
+}: {
+  systemName: string;
+  busy?: boolean;
+  onOpenSudoers: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 text-sm sm:flex-row sm:items-center">
+      <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">Least-privilege user recommended</p>
+        <p className="mt-1 text-blue-700 dark:text-blue-300">
+          {systemName} connects as <code className="font-mono">root</code>. A dedicated non-root SSH user with limited sudoers rules is recommended for routine update work.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+        <button
+          type="button"
+          onClick={onOpenSudoers}
+          className="px-3 py-1 text-xs font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap"
+        >
+          Sudoers Setup
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={busy}
+          className="px-3 py-1 text-xs font-medium rounded-lg border border-blue-300 dark:border-blue-700 bg-white/70 dark:bg-slate-900/30 text-blue-700 dark:text-blue-300 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap"
+        >
+          {busy ? (
+            <span className="flex items-center gap-1.5">
+              <span className="spinner spinner-sm" />
+              Dismissing...
+            </span>
+          ) : "Dismiss"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function HostKeyVerificationBanner({
+  systemName,
+  onOpenConfiguration,
+}: {
+  systemName: string;
+  onOpenConfiguration: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm sm:flex-row sm:items-center">
+      <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c.943 0 1.809.325 2.493.869M17 8.5V7a5 5 0 00-10 0v1.5M5 11h14v9H5v-9z" />
+      </svg>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">SSH host-key approval required</p>
+        <p className="mt-1 text-amber-700 dark:text-amber-400">
+          {systemName} needs its SSH host key reviewed before update checks can run.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onOpenConfiguration}
+        className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors whitespace-nowrap shrink-0"
+      >
+        Open Configuration
+      </button>
+    </div>
+  );
+}
+
+export function shouldShowRootUserInfoBanner(system: Pick<
+  import("../lib/systems").System,
+  "username" | "hostKeyVerificationEnabled" | "rootUserBannerDismissed" | "rootUserBannerDismissedHostKeyFingerprintSha256" | "trustedHostKeyFingerprintSha256"
+>): boolean {
+  if (system.username !== "root") return false;
+  if (system.hostKeyVerificationEnabled !== 0 && !system.trustedHostKeyFingerprintSha256) return false;
+  if (system.rootUserBannerDismissed !== 1) return true;
+  return (
+    (system.rootUserBannerDismissedHostKeyFingerprintSha256 ?? null) !==
+    (system.trustedHostKeyFingerprintSha256 ?? null)
   );
 }
 
@@ -1576,8 +1853,10 @@ export default function SystemDetail() {
   const cancelOperation = useCancelOperation();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
+  const dismissRootUserBanner = useDismissRootUserBanner();
   const solvePackageIssue = useSolvePackageIssue();
   const dismissPackageIssue = useDismissPackageIssue();
+  const updateSystem = useUpdateSystem();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showAutoremoveConfirm, setShowAutoremoveConfirm] = useState(false);
   const [showUpgradeSelectedConfirm, setShowUpgradeSelectedConfirm] = useState(false);
@@ -1585,6 +1864,8 @@ export default function SystemDetail() {
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDismissNeedsRebootConfirm, setShowDismissNeedsRebootConfirm] = useState(false);
+  const [showConfigurationModal, setShowConfigurationModal] = useState(false);
+  const [showSudoersModal, setShowSudoersModal] = useState(false);
   const [pendingSolveIssue, setPendingSolveIssue] = useState<PackageManagerIssue | null>(null);
   const [pendingDismissIssue, setPendingDismissIssue] = useState<PackageManagerIssue | null>(null);
   const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
@@ -1593,6 +1874,7 @@ export default function SystemDetail() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const updatesSignatureRef = useRef<string | null>(null);
   const commandOutput = useCommandOutput(systemId);
+  const sudoersPreview = useSudoersPreview(systemId, { enabled: showSudoersModal });
   const qc = useQueryClient();
   const wasCommandActiveRef = useRef(false);
 
@@ -1650,6 +1932,7 @@ export default function SystemDetail() {
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
   const repairingPackageIssue = solvePackageIssue.isPending || activeOp?.type === "package_manager_repair";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
+  const dismissingRootUserBanner = dismissRootUserBanner.isPending;
   const dismissingPackageIssue = dismissPackageIssue.isPending;
   const operationCancellable = !!activeOp && !activeOp.cancelRequested && !cancelOperation.isPending;
   const updatesSignature = data?.updates
@@ -1686,7 +1969,18 @@ export default function SystemDetail() {
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
   const updatesPanelState = getUpdatesPanelState(system, updates.length);
-  const dedupedUpdatesPanelState = dedupePackageIssueUpdateNotice(updatesPanelState, visiblePackageIssues);
+  const latestOperationNoticeState: OperationNoticeState | null = history.length > 0
+    ? getOperationNoticeState(history[0], updates.length)
+    : getCheckOperationNoticeState(updatesPanelState);
+  const dedupedOperationNoticeState: OperationNoticeState | null =
+    latestOperationNoticeState && isCheckOperationNoticeState(latestOperationNoticeState)
+      ? getCheckOperationNoticeState(dedupePackageIssueUpdateNotice(latestOperationNoticeState, visiblePackageIssues))
+      : latestOperationNoticeState;
+  const displayedOperationNoticeState: OperationNoticeState | null =
+    dedupedOperationNoticeState && isCheckOperationNoticeState(dedupedOperationNoticeState)
+      ? getCheckOperationNoticeState(omitHostKeyVerificationErrorFromUpdatesPanelState(dedupedOperationNoticeState))
+      : dedupedOperationNoticeState;
+  const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
   const dotColor = updateState === "check_failed" || updateState === "unreachable"
     ? "bg-red-500"
@@ -1710,6 +2004,20 @@ export default function SystemDetail() {
   const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction;
   const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport);
+  const showRootUserBanner = shouldShowRootUserInfoBanner(system);
+
+  const handleUpdateConfiguration = (formData: SystemFormSubmitData) => {
+    updateSystem.mutate(
+      { id: system.id, ...formData },
+      {
+        onSuccess: () => {
+          setShowConfigurationModal(false);
+          addToast("System updated successfully", "success");
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -1805,6 +2113,13 @@ export default function SystemDetail() {
     setShowDismissNeedsRebootConfirm(false);
     dismissNeedsReboot.mutate(systemId, {
       onSuccess: () => addToast("Reboot warning dismissed", "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleDismissRootUserBanner = () => {
+    dismissRootUserBanner.mutate(systemId, {
+      onSuccess: () => addToast("Root user notice dismissed", "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -2088,6 +2403,22 @@ export default function SystemDetail() {
         />
       </div>
 
+      {showRootUserBanner && (
+        <RootUserInfoBanner
+          systemName={system.name}
+          busy={dismissingRootUserBanner}
+          onOpenSudoers={() => setShowSudoersModal(true)}
+          onDismiss={handleDismissRootUserBanner}
+        />
+      )}
+
+      {showHostKeyVerificationBanner && (
+        <HostKeyVerificationBanner
+          systemName={system.name}
+          onOpenConfiguration={() => setShowConfigurationModal(true)}
+        />
+      )}
+
       <PackageManagerIssueBanner
         issues={visiblePackageIssues}
         busy={upgrading || autoremoving || checking || rebooting || repairingPackageIssue}
@@ -2096,6 +2427,8 @@ export default function SystemDetail() {
         onSolve={setPendingSolveIssue}
         onDismiss={setPendingDismissIssue}
       />
+
+      <OperationNoticeBanner state={displayedOperationNoticeState} />
 
       {/* Reboot required warning */}
       {system.needsReboot === 1 && (
@@ -2151,21 +2484,14 @@ export default function SystemDetail() {
             <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
           )}
         </div>
-        <UpdateCheckNotice state={dedupedUpdatesPanelState} />
-        {updates.length > 0 ? (
-          <UpdatesTable
-            updates={updates}
-            onTogglePackage={handleTogglePackageSelection}
-            selectedPackageNames={selectedVisiblePackageNames}
-            selectionDisabled={packageSelectionState.selectionDisabled}
-            hideBusy={hideUpdate.isPending}
-            onHide={setPendingHideUpdate}
-          />
-        ) : updatesPanelState.kind === "up_to_date" ? (
-          <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
-            No updates available
-          </div>
-        ) : null}
+        <UpdatesTable
+          updates={updates}
+          onTogglePackage={handleTogglePackageSelection}
+          selectedPackageNames={selectedVisiblePackageNames}
+          selectionDisabled={packageSelectionState.selectionDisabled}
+          hideBusy={hideUpdate.isPending}
+          onHide={setPendingHideUpdate}
+        />
       </div>
 
       <InstalledPackagesSection
@@ -2306,6 +2632,57 @@ export default function SystemDetail() {
         confirmLabel="Hide Update"
         loading={hideUpdate.isPending}
       />
+
+      <Modal
+        open={showConfigurationModal}
+        onClose={() => setShowConfigurationModal(false)}
+        title="Edit System"
+        dismissible={!updateSystem.isPending}
+      >
+        <SystemForm
+          initial={{
+            name: system.name,
+            hostname: system.hostname,
+            port: system.port,
+            credentialId: system.credentialId ?? undefined,
+            proxyJumpSystemId: system.proxyJumpSystemId,
+            hostKeyVerificationEnabled:
+              system.hostKeyVerificationEnabled !== 0,
+            approvedHostKey: system.approvedHostKey,
+            trustedHostKeyFingerprintSha256:
+              system.trustedHostKeyFingerprintSha256,
+            detectedPkgManagers: system.detectedPkgManagers ?? undefined,
+            disabledPkgManagers: system.disabledPkgManagers ?? undefined,
+            pkgManagerConfigs: system.pkgManagerConfigs ?? undefined,
+            autoHideKeptBackUpdates: system.autoHideKeptBackUpdates,
+            hidden: system.hidden === 1,
+            hostKeyStatus: system.hostKeyStatus,
+            scriptOverrides: system.scriptOverrides,
+          }}
+          systemId={system.id}
+          onSubmit={handleUpdateConfiguration}
+          onCancel={() => setShowConfigurationModal(false)}
+          loading={updateSystem.isPending}
+        />
+      </Modal>
+
+      <Modal
+        open={showSudoersModal}
+        onClose={() => setShowSudoersModal(false)}
+        title={`Sudoers Setup for ${system.name}`}
+      >
+        {sudoersPreview.isLoading ? (
+          <div className="flex justify-center py-10">
+            <span className="spinner !w-6 !h-6 text-blue-500" />
+          </div>
+        ) : sudoersPreview.data ? (
+          <SudoersSetupPanel preview={sudoersPreview.data} />
+        ) : (
+          <div className="text-sm text-slate-500 dark:text-slate-400">
+            Unable to load sudoers setup for this system right now.
+          </div>
+        )}
+      </Modal>
 
     </Layout>
   );

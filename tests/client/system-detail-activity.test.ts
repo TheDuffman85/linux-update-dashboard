@@ -10,12 +10,17 @@ import {
   filterInstalledPackages,
   InstalledPackagesSection,
   getVisiblePackageIssuesForCurrentCheck,
+  HostKeyVerificationBanner,
   isScrollNearBottom,
   matchesHistoryEntryToSession,
   PackageManagerIssueBanner,
+  RootUserInfoBanner,
+  shouldShowRootUserInfoBanner,
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
   shouldShowAutoremoveAction,
+  getOperationNoticeState,
+  OperationNoticeBanner,
 } from "../../client/pages/SystemDetail";
 import { SudoersSetupPanel } from "../../client/components/systems/SudoersSetupPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
@@ -47,6 +52,158 @@ describe("autoremove action", () => {
     expect(getAutoremoveConfirmMessage("Debian", support)).toContain("Will run for: apt, flatpak.");
     expect(getAutoremoveConfirmMessage("Debian", support)).toContain("configured: snap.");
     expect(shouldShowAutoremoveAction({ supportedManagers: [] })).toBe(false);
+  });
+});
+
+describe("RootUserInfoBanner", () => {
+  test("renders as an informational notice with sudoers and dismiss actions", () => {
+    const html = renderToStaticMarkup(createElement(RootUserInfoBanner, {
+      systemName: "Debian",
+      onOpenSudoers: () => {},
+      onDismiss: () => {},
+    }));
+
+    expect(html).toContain("Least-privilege user recommended");
+    expect(html).toContain("connects as");
+    expect(html).toContain("root");
+    expect(html).toContain("Sudoers Setup");
+    expect(html).toContain("Dismiss");
+    expect(html).toContain("bg-blue-50");
+    expect(html).not.toContain("bg-amber-50");
+    expect(html).not.toContain("bg-red-50");
+  });
+
+  test("reappears after a host key fingerprint change", () => {
+    expect(shouldShowRootUserInfoBanner({
+      username: "testuser",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 0,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: "SHA256:current",
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 0,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: "SHA256:current",
+    })).toBe(true);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:current",
+      trustedHostKeyFingerprintSha256: "SHA256:current",
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:old",
+      trustedHostKeyFingerprintSha256: "SHA256:new",
+    })).toBe(true);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:old",
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:old",
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 0,
+      rootUserBannerDismissed: 0,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(true);
+  });
+});
+
+describe("HostKeyVerificationBanner", () => {
+  test("renders host-key approval guidance with a configuration action", () => {
+    const html = renderToStaticMarkup(createElement(HostKeyVerificationBanner, {
+      systemName: "Debian",
+      onOpenConfiguration: () => {},
+    }));
+
+    expect(html).toContain("SSH host-key approval required");
+    expect(html).toContain("Debian needs its SSH host key reviewed");
+    expect(html).toContain("Open Configuration");
+    expect(html).toContain("bg-red-50");
+  });
+});
+
+describe("OperationNoticeBanner", () => {
+  test("renders generic update-check failures as a page-level banner", () => {
+    const html = renderToStaticMarkup(createElement(OperationNoticeBanner, {
+      state: {
+        kind: "check_failed",
+        title: "Update check failed",
+        message: "The latest update check did not complete, so the package list may be unavailable.",
+        error: "Error: All configured authentication methods failed",
+      },
+    }));
+
+    expect(html).toContain("Update check failed");
+    expect(html).toContain("All configured authentication methods failed");
+    expect(html).toContain("mb-6");
+    expect(html).toContain("bg-red-50");
+    expect(html).not.toContain("mx-4");
+  });
+
+  test("renders failed upgrade activity as the same page-level banner", () => {
+    const state = getOperationNoticeState(createHistoryEntry({
+      id: 3,
+      action: "upgrade_all",
+      pkgManager: "apt",
+      status: "failed",
+      error: "E: Could not get lock /var/lib/dpkg/lock-frontend",
+      startedAt: "2026-05-18 10:00:00",
+      completedAt: "2026-05-18 10:00:02",
+    }), 0);
+    const html = renderToStaticMarkup(createElement(OperationNoticeBanner, { state }));
+
+    expect(state).toMatchObject({
+      kind: "operation_failed",
+      title: "Upgrade failed",
+      error: "E: Could not get lock /var/lib/dpkg/lock-frontend",
+    });
+    expect(html).toContain("Upgrade failed");
+    expect(html).toContain("Could not get lock");
+    expect(html).toContain("mb-6");
+  });
+
+  test("does not produce a banner state for a latest successful operation", () => {
+    expect(getOperationNoticeState(createHistoryEntry({
+      id: 4,
+      action: "reboot",
+      pkgManager: "system",
+      status: "success",
+      error: "older checks may have failed, but this row is current",
+      startedAt: "2026-05-18 11:00:00",
+      completedAt: "2026-05-18 11:00:10",
+    }), 0)).toBeNull();
   });
 });
 

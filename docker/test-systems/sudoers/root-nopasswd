@@ -1,0 +1,3 @@
+Defaults:testuser !requiretty
+
+testuser ALL=(ALL) NOPASSWD: ALL

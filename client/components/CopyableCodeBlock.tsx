@@ -203,7 +203,7 @@ export const CopyableCodeBlock = forwardRef<
 
   return (
     <div className="relative">
-      <div className="absolute right-2 top-2 z-10 flex gap-1">
+      <div className="absolute right-2 top-2 z-[1] flex gap-1">
         {expandable && canExpand && (
           <ContentExpansionButton expanded={expanded} onToggle={toggleExpanded} />
         )}
