@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, type ComponentProps } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
 import { AgoLabel } from "../components/AgoLabel";
@@ -7,11 +7,13 @@ import { CopyableCodeBlock } from "../components/CopyableCodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { TerminalText } from "../components/TerminalText";
+import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useSystem,
   useSudoersPreview,
+  useUpdateSystem,
   useRebootSystem,
   useDismissNeedsReboot,
   useDismissRootUserBanner,
@@ -51,6 +53,7 @@ import { highlightShell } from "../lib/shell-highlight";
 import { formatScriptCommand } from "../lib/scripts";
 
 const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+type SystemFormSubmitData = Parameters<ComponentProps<typeof SystemForm>["onSubmit"]>[0];
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -1682,6 +1685,7 @@ export default function SystemDetail() {
   const dismissRootUserBanner = useDismissRootUserBanner();
   const solvePackageIssue = useSolvePackageIssue();
   const dismissPackageIssue = useDismissPackageIssue();
+  const updateSystem = useUpdateSystem();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [showAutoremoveConfirm, setShowAutoremoveConfirm] = useState(false);
   const [showUpgradeSelectedConfirm, setShowUpgradeSelectedConfirm] = useState(false);
@@ -1689,6 +1693,7 @@ export default function SystemDetail() {
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDismissNeedsRebootConfirm, setShowDismissNeedsRebootConfirm] = useState(false);
+  const [showConfigurationModal, setShowConfigurationModal] = useState(false);
   const [showSudoersModal, setShowSudoersModal] = useState(false);
   const [pendingSolveIssue, setPendingSolveIssue] = useState<PackageManagerIssue | null>(null);
   const [pendingDismissIssue, setPendingDismissIssue] = useState<PackageManagerIssue | null>(null);
@@ -1820,6 +1825,19 @@ export default function SystemDetail() {
   const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport);
   const showRootUserBanner = shouldShowRootUserInfoBanner(system);
+
+  const handleUpdateConfiguration = (formData: SystemFormSubmitData) => {
+    updateSystem.mutate(
+      { id: system.id, ...formData },
+      {
+        onSuccess: () => {
+          setShowConfigurationModal(false);
+          addToast("System updated successfully", "success");
+        },
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
+  };
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -2217,7 +2235,7 @@ export default function SystemDetail() {
       {showHostKeyVerificationBanner && (
         <HostKeyVerificationBanner
           systemName={system.name}
-          onOpenConfiguration={() => navigate("/systems", { state: { editSystemId: system.id } })}
+          onOpenConfiguration={() => setShowConfigurationModal(true)}
         />
       )}
 
@@ -2439,6 +2457,39 @@ export default function SystemDetail() {
         confirmLabel="Hide Update"
         loading={hideUpdate.isPending}
       />
+
+      <Modal
+        open={showConfigurationModal}
+        onClose={() => setShowConfigurationModal(false)}
+        title="Edit System"
+        dismissible={!updateSystem.isPending}
+      >
+        <SystemForm
+          initial={{
+            name: system.name,
+            hostname: system.hostname,
+            port: system.port,
+            credentialId: system.credentialId ?? undefined,
+            proxyJumpSystemId: system.proxyJumpSystemId,
+            hostKeyVerificationEnabled:
+              system.hostKeyVerificationEnabled !== 0,
+            approvedHostKey: system.approvedHostKey,
+            trustedHostKeyFingerprintSha256:
+              system.trustedHostKeyFingerprintSha256,
+            detectedPkgManagers: system.detectedPkgManagers ?? undefined,
+            disabledPkgManagers: system.disabledPkgManagers ?? undefined,
+            pkgManagerConfigs: system.pkgManagerConfigs ?? undefined,
+            autoHideKeptBackUpdates: system.autoHideKeptBackUpdates,
+            hidden: system.hidden === 1,
+            hostKeyStatus: system.hostKeyStatus,
+            scriptOverrides: system.scriptOverrides,
+          }}
+          systemId={system.id}
+          onSubmit={handleUpdateConfiguration}
+          onCancel={() => setShowConfigurationModal(false)}
+          loading={updateSystem.isPending}
+        />
+      </Modal>
 
       <Modal
         open={showSudoersModal}
