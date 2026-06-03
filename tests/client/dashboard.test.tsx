@@ -81,8 +81,23 @@ import Dashboard, {
   applyUpgradeSystemPlacements,
   canToggleUpgradePreset,
   getDashboardUpgradeToast,
+  isUpgradeAllSubmitDisabled,
   isUpgradePresetSelected,
 } from "../../client/pages/Dashboard";
+
+function getOpeningButtonTag(html: string, text: string): string {
+  const textIndex = html.indexOf(text);
+  expect(textIndex).toBeGreaterThan(-1);
+  const buttonIndex = html.lastIndexOf("<button", textIndex);
+  expect(buttonIndex).toBeGreaterThan(-1);
+  const buttonEnd = html.indexOf(">", buttonIndex);
+  expect(buttonEnd).toBeGreaterThan(-1);
+  return html.slice(buttonIndex, buttonEnd + 1);
+}
+
+function hasDisabledAttribute(tag: string): boolean {
+  return /\sdisabled(?:=|\s|>)/.test(tag);
+}
 
 describe("Dashboard", () => {
   beforeEach(() => {
@@ -157,7 +172,7 @@ describe("Dashboard", () => {
     expect(html).not.toContain("Upgrade All (7)");
   });
 
-  test("disables dashboard refresh and upgrade actions while the server reports an active upgrade", () => {
+  test("shows active upgrades without disabling the dashboard upgrade modal launcher", () => {
     mockUseDashboardSystems.mockReturnValue({
       data: [
         {
@@ -197,8 +212,75 @@ describe("Dashboard", () => {
     );
 
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Refresh All<\/button>/);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Upgrading\.\.\..*<\/button>/s);
+    expect(html).toContain("Upgrading...");
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrading..."))).toBe(false);
     expect(html).not.toContain(">Upgrade All</button>");
+  });
+
+  test("does not show the dashboard upgrade action as upgrading during refresh", () => {
+    mockUseRefreshCache.mockReturnValue({ mutate: vi.fn(), isPending: true });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Refreshing...");
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing..."))).toBe(true);
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(false);
+    expect(html).not.toContain("Upgrading...");
+  });
+
+  test("does not show the dashboard upgrade action as upgrading during active system checks", () => {
+    mockUseDashboardSystems.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          name: "Alpha",
+          hostname: "alpha.local",
+          port: 22,
+          osName: "Debian",
+          isReachable: 1,
+          updateCount: 7,
+          securityCount: 2,
+          keptBackCount: 0,
+          cacheAge: null,
+          cacheTimestamp: null,
+          isStale: false,
+          lastCheck: null,
+          activeOperation: {
+            type: "check",
+            startedAt: "2026-05-18 10:00:00",
+          },
+          excludeFromUpgradeAll: 0,
+          upgradeOrder: 1,
+          pkgManager: "apt",
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: null,
+          supportsFullUpgrade: true,
+        },
+      ],
+      dataUpdatedAt: Date.now(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Refreshing...");
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing..."))).toBe(true);
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(false);
+    expect(html).not.toContain("Upgrading...");
+  });
+
+  test("disables the modal Upgrade All submit while dashboard work is running", () => {
+    expect(isUpgradeAllSubmitDisabled(1, true)).toBe(true);
+    expect(isUpgradeAllSubmitDisabled(1, false)).toBe(false);
+    expect(isUpgradeAllSubmitDisabled(0, false)).toBe(true);
   });
 
   test("treats recovered upgrade warnings as informational dashboard toasts", () => {
