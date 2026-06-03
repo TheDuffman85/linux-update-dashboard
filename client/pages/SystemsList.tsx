@@ -16,10 +16,8 @@ import {
 } from "../lib/systems";
 import type { System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
-import { useUpgrade } from "../context/UpgradeContext";
 import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
-import { deriveSystemUpdateState, isPostAutoremoveRecheck, isPostUpgradeRecheck } from "../lib/system-status";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
@@ -47,7 +45,6 @@ export default function SystemsList() {
   const deleteSystem = useDeleteSystem();
   const reorderSystems = useReorderSystems();
   const { addToast } = useToast();
-  const { isUpgrading } = useUpgrade();
   const [showForm, setShowForm] = useState(false);
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
   const [editSystem, setEditSystem] = useState<System | null>(
@@ -199,24 +196,16 @@ export default function SystemsList() {
                 <th className="px-2 sm:px-4 py-3 hidden sm:table-cell">Host</th>
                 <th className="px-2 sm:px-4 py-3 hidden md:table-cell">OS</th>
                 <th className="px-2 sm:px-4 py-3">Status</th>
-                <th className="px-2 sm:px-4 py-3">Updates</th>
                 <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">Last Checked</th>
                 <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedSystems.map((s) => {
-                const postUpgradeRechecking = isPostUpgradeRecheck(s.activeOperation);
-                const postAutoremoveRechecking = isPostAutoremoveRecheck(s.activeOperation);
-                const upgrading = !postUpgradeRechecking && (isUpgrading(s.id) || !!s.activeOperation?.type?.startsWith("upgrade"));
-                const checking = postUpgradeRechecking || postAutoremoveRechecking || s.activeOperation?.type === "check" || s.activeOperation?.type === "package_manager_repair";
-                const updateState = deriveSystemUpdateState(s, { upgrading, checking });
-
-                return (
-                  <tr
-                    key={s.id}
-                    className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
-                  >
+              {orderedSystems.map((s) => (
+                <tr
+                  key={s.id}
+                  className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                >
                   <td className="px-2 sm:px-4 py-3">
                     <div className="flex items-center gap-2 min-w-0">
                       <span
@@ -279,59 +268,6 @@ export default function SystemsList() {
                       )}
                     </div>
                   </td>
-                  <td className="px-2 sm:px-4 py-3">
-                    {updateState === "upgrading" ? (
-                      <Badge variant="info" small>
-                        <span className="flex items-center gap-1">
-                          <span className="spinner spinner-sm !w-2.5 !h-2.5" />
-                          Upgrading...
-                        </span>
-                      </Badge>
-                    ) : updateState === "maintaining" ? (
-                      <Badge variant="info" small>
-                        <span className="flex items-center gap-1">
-                          <span className="spinner spinner-sm !w-2.5 !h-2.5" />
-                          Maintaining...
-                        </span>
-                      </Badge>
-                    ) : updateState === "checking" ? (
-                      <Badge variant="info" small>
-                        <span className="flex items-center gap-1">
-                          <span className="spinner spinner-sm !w-2.5 !h-2.5" />
-                          Checking...
-                        </span>
-                      </Badge>
-                    ) : updateState === "check_failed" ? (
-                      <Badge variant="danger" small>Check failed</Badge>
-                    ) : updateState === "check_warning" ? (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Badge variant="warning" small>Check warning</Badge>
-                        {s.updateCount > 0 && (
-                          <Badge variant="warning" small>{s.updateCount}</Badge>
-                        )}
-                        {s.securityCount > 0 && (
-                          <Badge variant="danger" small>{s.securityCount} security</Badge>
-                        )}
-                        {s.keptBackCount > 0 && (
-                          <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
-                        )}
-                      </div>
-                    ) : updateState === "updates_available" ? (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Badge variant="warning" small>{s.updateCount}</Badge>
-                        {s.securityCount > 0 && (
-                          <Badge variant="danger" small>{s.securityCount} security</Badge>
-                        )}
-                        {s.keptBackCount > 0 && (
-                          <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
-                        )}
-                      </div>
-                    ) : updateState === "up_to_date" ? (
-                      <span className="text-green-600 text-xs">0</span>
-                    ) : (
-                      <span className="text-slate-400 text-xs">-</span>
-                    )}
-                  </td>
                   <td className="px-2 sm:px-4 py-3 hidden lg:table-cell">
                     {s.cacheTimestamp ? (
                       <AgoLabel timestamp={s.cacheTimestamp} stale={s.isStale} />
@@ -380,9 +316,8 @@ export default function SystemsList() {
                       </button>
                     </div>
                   </td>
-                  </tr>
-                );
-              })}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
