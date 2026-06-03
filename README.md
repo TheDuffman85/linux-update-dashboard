@@ -75,7 +75,7 @@ Detailed system view with connection data, OS and resource information, availabl
 
 ### Systems List
 
-Table view of all configured systems with OS, status, update counts, last check time, and quick actions.
+Table view of all configured systems with OS, status badges, last check time, and quick actions.
 
 ![Systems List](screenshots/3.png)
 
@@ -935,7 +935,7 @@ To reset the `dev` branch to match `main` (force push):
 
 ## API Overview
 
-All endpoints require authentication unless noted. Responses are JSON.
+All HTTP endpoints require authentication unless noted. Responses are JSON.
 
 ### Health
 
@@ -981,9 +981,11 @@ All endpoints require authentication unless noted. Responses are JSON.
 | POST   | `/api/systems/test-connection`                     | Test SSH connectivity                                           |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system                                                 |
 | POST   | `/api/systems/:id/dismiss-needs-reboot`            | Dismiss a stale reboot-needed indicator                         |
+| POST   | `/api/systems/:id/dismiss-root-user-banner`        | Dismiss the root-user info banner for a system                  |
 | POST   | `/api/systems/:id/revoke-host-key`                 | Clear the stored trusted host key                               |
 | PUT    | `/api/systems/:id/script-overrides`                | Update per-system script overrides                              |
 | DELETE | `/api/systems/:id`                                 | Remove a system                                                 |
+| GET    | `/api/systems/:id/sudoers-preview`                 | Generate least-privilege sudoers setup instructions             |
 | GET    | `/api/systems/:id/updates`                         | Cached updates for a system                                     |
 | GET    | `/api/systems/:id/history`                         | Upgrade history for a system                                    |
 | POST   | `/api/systems/:id/hidden-updates`                  | Hide one visible update from counts and dashboards              |
@@ -1085,6 +1087,12 @@ All endpoints require authentication unless noted. Responses are JSON.
 | GET    | `/api/dashboard/systems` | All systems with status metadata |
 | GET    | `/api/settings`          | Current settings                 |
 | PUT    | `/api/settings`          | Update settings                  |
+
+### WebSocket
+
+| Endpoint                         | Description                                |
+| -------------------------------- | ------------------------------------------ |
+| `/api/ws/systems/:id/output`     | Live command output stream for one system  |
 
 ## Security
 
