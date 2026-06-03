@@ -64,6 +64,11 @@ export class RebootDismissalSnapshotRequiredError extends Error {
   }
 }
 
+function clearRootUserBannerDismissal(values: Record<string, unknown>): void {
+  values.rootUserBannerDismissed = 0;
+  values.rootUserBannerDismissedHostKeyFingerprintSha256 = null;
+}
+
 function normalizeStringList(value: string[] | string | null | undefined): string[] {
   const raw = Array.isArray(value)
     ? value
@@ -566,12 +571,14 @@ export function updateSystem(
     values.trustedHostKeyAlgorithm = null;
     values.trustedHostKeyFingerprintSha256 = null;
     values.hostKeyTrustedAt = null;
+    clearRootUserBannerDismissal(values);
   }
   if (data.hostKeyVerificationEnabled === false) {
     values.trustedHostKey = null;
     values.trustedHostKeyAlgorithm = null;
     values.trustedHostKeyFingerprintSha256 = null;
     values.hostKeyTrustedAt = null;
+    clearRootUserBannerDismissal(values);
   } else if (data.trustedHostKeyData) {
     values.trustedHostKey = data.trustedHostKeyData.rawKey;
     values.trustedHostKeyAlgorithm = data.trustedHostKeyData.algorithm;
@@ -623,6 +630,22 @@ export function dismissNeedsReboot(systemId: number): void {
       rebootDismissedUptimeSeconds: uptimeSeconds,
       rebootDismissedAt: now,
       updatedAt: now,
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
+export function dismissRootUserBanner(systemId: number): void {
+  const db = getDb();
+  const existing = getSystem(systemId);
+  if (!existing) throw new Error("System not found");
+
+  db.update(systems)
+    .set({
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256:
+        existing.trustedHostKeyFingerprintSha256 ?? null,
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
     })
     .where(eq(systems.id, systemId))
     .run();
@@ -1079,6 +1102,8 @@ export function clearTrustedHostKey(systemId: number): void {
       trustedHostKeyAlgorithm: null,
       trustedHostKeyFingerprintSha256: null,
       hostKeyTrustedAt: null,
+      rootUserBannerDismissed: 0,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
     })
     .where(eq(systems.id, systemId))
     .run();

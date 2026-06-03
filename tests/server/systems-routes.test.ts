@@ -1726,6 +1726,8 @@ describe("systems reorder route", () => {
       trustedHostKeyAlgorithm: "ssh-ed25519",
       trustedHostKeyFingerprintSha256: "SHA256:abc",
       hostKeyTrustedAt: "2026-03-09 10:00:00",
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:abc",
     }).returning({ id: systems.id }).get().id;
 
     const app = new Hono();
@@ -1741,6 +1743,8 @@ describe("systems reorder route", () => {
     expect(updated?.trustedHostKeyAlgorithm).toBeNull();
     expect(updated?.trustedHostKeyFingerprintSha256).toBeNull();
     expect(updated?.hostKeyTrustedAt).toBeNull();
+    expect(updated?.rootUserBannerDismissed).toBe(0);
+    expect(updated?.rootUserBannerDismissedHostKeyFingerprintSha256).toBeNull();
   });
 
   test("clears stored host key when saving a system with verification disabled", async () => {
@@ -1758,6 +1762,8 @@ describe("systems reorder route", () => {
       trustedHostKeyAlgorithm: "ssh-ed25519",
       trustedHostKeyFingerprintSha256: "SHA256:abc",
       hostKeyTrustedAt: "2026-03-09 10:00:00",
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:abc",
     }).returning({ id: systems.id }).get().id;
 
     const app = new Hono();
@@ -1781,6 +1787,8 @@ describe("systems reorder route", () => {
     expect(updated?.trustedHostKey).toBeNull();
     expect(updated?.trustedHostKeyAlgorithm).toBeNull();
     expect(updated?.trustedHostKeyFingerprintSha256).toBeNull();
+    expect(updated?.rootUserBannerDismissed).toBe(0);
+    expect(updated?.rootUserBannerDismissedHostKeyFingerprintSha256).toBeNull();
   });
 
   test("allows clearing all disabled package managers on update", async () => {

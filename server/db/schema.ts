@@ -98,6 +98,10 @@ export const systems = sqliteTable(
     rebootDismissedBootId: text("reboot_dismissed_boot_id"),
     rebootDismissedUptimeSeconds: real("reboot_dismissed_uptime_seconds"),
     rebootDismissedAt: text("reboot_dismissed_at"),
+    rootUserBannerDismissed: integer("root_user_banner_dismissed")
+      .notNull()
+      .default(0),
+    rootUserBannerDismissedHostKeyFingerprintSha256: text("root_user_banner_dismissed_host_key_fingerprint_sha256"),
     excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
       .notNull()
       .default(0),

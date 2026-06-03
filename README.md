@@ -840,7 +840,7 @@ The project includes Docker-based test systems that simulate real Linux servers 
 This will:
 
 1. Stop any running dev/production services
-2. Build and start 15 Docker containers (including Alpine, fish-shell, sudo-password APT, and partial multi-manager fixtures)
+2. Build and start 16 Docker containers (including Alpine, fish-shell, sudo-password APT, root-login APT, full-sudo APT, and partial multi-manager fixtures)
 3. Build the frontend in production mode
 4. Start the production server on `:3001`
 
@@ -850,9 +850,10 @@ The server initializes or upgrades the SQLite schema automatically during startu
 
 - User: `testuser`
 - Password: `testpass`
+- `ludash-test-ubuntu-root` also accepts `root` / `testpass`; use that login to exercise the root-user info banner
 - `Sudo password`: `testpass` (required for `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`, optional for others)
-- Every `testuser` account is restricted to the package-manager maintenance commands needed by its fixture; arbitrary commands such as `sudo -n true` are denied
-- Passwordless `sudo` is pre-configured for the restricted allowlists except on `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo`
+- Every `testuser` account is restricted to the package-manager maintenance commands needed by its fixture except `ludash-test-ubuntu-root`, which intentionally grants unrestricted sudo for root-permission testing
+- Passwordless `sudo` is pre-configured for the restricted allowlists and for `ludash-test-ubuntu-root`; `ludash-test-ubuntu-sudo` and `ludash-test-debian-fish-sudo` require the sudo password
 
 | Container                          | SSH Port | Package Manager                | Login Shell | Base Image   |
 | ---------------------------------- | -------- | ------------------------------ | ----------- | ------------ |
@@ -871,6 +872,7 @@ The server initializes or upgrades the SQLite schema automatically during startu
 | `ludash-test-dnf-gpg-prompt`       | 2013     | DNF (GPG key prompt fixture)   | `bash`      | Fedora 41    |
 | `ludash-test-dnf-eula-prompt`      | 2014     | DNF (EULA prompt fixture)      | `bash`      | Fedora 41    |
 | `ludash-test-apt-dpkg-interrupted` | 2015     | APT (interrupted dpkg fixture) | `bash`      | Debian 12    |
+| `ludash-test-ubuntu-root`          | 2016     | APT (root login/full sudo)     | `bash`      | Ubuntu 24.04 |
 
 To add a test system in the dashboard, use `host.docker.internal` (or `172.17.0.1` on Linux) as the hostname with the corresponding SSH port.
 
@@ -910,7 +912,9 @@ That makes it useful for verifying the dashboard’s opt-in DNF/YUM EULA automat
 
 That makes it useful for verifying the package manager issue banner, including the **Solve** action that runs `dpkg --configure -a` and then rechecks updates.
 
-All test systems use dedicated least-privilege `testuser` accounts. Their reusable package-manager allowlists live under [`docker/test-systems/sudoers/`](docker/test-systems/sudoers/). Selected-package operations use reviewed argument wildcards where a fixture needs to exercise arbitrary package choices. DNF/YUM fixtures allow only the exact `env ACCEPT_EULA=Y` upgrade forms used by their opt-in EULA setting.
+`ludash-test-ubuntu-root` is a special APT fixture where `root` can log in over SSH with password `testpass`, and `testuser` has unrestricted passwordless sudo through [`root-nopasswd`](docker/test-systems/sudoers/root-nopasswd). Add it to the dashboard as `root` to verify the root-user info banner, or as `testuser` to verify broad sudo behavior without triggering that banner.
+
+All other test systems use dedicated least-privilege `testuser` accounts. Their reusable package-manager allowlists live under [`docker/test-systems/sudoers/`](docker/test-systems/sudoers/). Selected-package operations use reviewed argument wildcards where a fixture needs to exercise arbitrary package choices. DNF/YUM fixtures allow only the exact `env ACCEPT_EULA=Y` upgrade forms used by their opt-in EULA setting.
 
 To verify that password-based sudo receives credentials for each atomic APT
 check step, run the fish-shell fixture integration test:

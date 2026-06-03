@@ -13,6 +13,8 @@ import {
   isScrollNearBottom,
   matchesHistoryEntryToSession,
   PackageManagerIssueBanner,
+  RootUserInfoBanner,
+  shouldShowRootUserInfoBanner,
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
   shouldShowAutoremoveAction,
@@ -47,6 +49,91 @@ describe("autoremove action", () => {
     expect(getAutoremoveConfirmMessage("Debian", support)).toContain("Will run for: apt, flatpak.");
     expect(getAutoremoveConfirmMessage("Debian", support)).toContain("configured: snap.");
     expect(shouldShowAutoremoveAction({ supportedManagers: [] })).toBe(false);
+  });
+});
+
+describe("RootUserInfoBanner", () => {
+  test("renders as an informational notice with sudoers and dismiss actions", () => {
+    const html = renderToStaticMarkup(createElement(RootUserInfoBanner, {
+      systemName: "Debian",
+      onOpenSudoers: () => {},
+      onDismiss: () => {},
+    }));
+
+    expect(html).toContain("Least-privilege user recommended");
+    expect(html).toContain("connects as");
+    expect(html).toContain("root");
+    expect(html).toContain("Sudoers Setup");
+    expect(html).toContain("Dismiss");
+    expect(html).toContain("bg-blue-50");
+    expect(html).not.toContain("bg-amber-50");
+    expect(html).not.toContain("bg-red-50");
+  });
+
+  test("reappears after a host key fingerprint change", () => {
+    expect(shouldShowRootUserInfoBanner({
+      username: "testuser",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 0,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: "SHA256:current",
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 0,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: "SHA256:current",
+    })).toBe(true);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:current",
+      trustedHostKeyFingerprintSha256: "SHA256:current",
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:old",
+      trustedHostKeyFingerprintSha256: "SHA256:new",
+    })).toBe(true);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:old",
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 1,
+      rootUserBannerDismissed: 1,
+      rootUserBannerDismissedHostKeyFingerprintSha256: "SHA256:old",
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(false);
+
+    expect(shouldShowRootUserInfoBanner({
+      username: "root",
+      hostKeyVerificationEnabled: 0,
+      rootUserBannerDismissed: 0,
+      rootUserBannerDismissedHostKeyFingerprintSha256: null,
+      trustedHostKeyFingerprintSha256: null,
+    })).toBe(true);
   });
 });
 

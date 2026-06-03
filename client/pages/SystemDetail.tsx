@@ -5,12 +5,16 @@ import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { CopyableCodeBlock } from "../components/CopyableCodeBlock";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Modal } from "../components/Modal";
 import { TerminalText } from "../components/TerminalText";
+import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useSystem,
+  useSudoersPreview,
   useRebootSystem,
   useDismissNeedsReboot,
+  useDismissRootUserBanner,
   useSolvePackageIssue,
   useDismissPackageIssue,
 } from "../lib/systems";
@@ -479,6 +483,67 @@ export function PackageManagerIssueBanner({
         );
       })}
     </div>
+  );
+}
+
+export function RootUserInfoBanner({
+  systemName,
+  busy,
+  onOpenSudoers,
+  onDismiss,
+}: {
+  systemName: string;
+  busy?: boolean;
+  onOpenSudoers: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 text-sm sm:flex-row sm:items-center">
+      <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">Least-privilege user recommended</p>
+        <p className="mt-1 text-blue-700 dark:text-blue-300">
+          {systemName} connects as <code className="font-mono">root</code>. A dedicated non-root SSH user with limited sudoers rules is recommended for routine update work.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+        <button
+          type="button"
+          onClick={onOpenSudoers}
+          className="px-3 py-1 text-xs font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap"
+        >
+          Sudoers Setup
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={busy}
+          className="px-3 py-1 text-xs font-medium rounded-lg border border-blue-300 dark:border-blue-700 bg-white/70 dark:bg-slate-900/30 text-blue-700 dark:text-blue-300 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap"
+        >
+          {busy ? (
+            <span className="flex items-center gap-1.5">
+              <span className="spinner spinner-sm" />
+              Dismissing...
+            </span>
+          ) : "Dismiss"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function shouldShowRootUserInfoBanner(system: Pick<
+  import("../lib/systems").System,
+  "username" | "hostKeyVerificationEnabled" | "rootUserBannerDismissed" | "rootUserBannerDismissedHostKeyFingerprintSha256" | "trustedHostKeyFingerprintSha256"
+>): boolean {
+  if (system.username !== "root") return false;
+  if (system.hostKeyVerificationEnabled !== 0 && !system.trustedHostKeyFingerprintSha256) return false;
+  if (system.rootUserBannerDismissed !== 1) return true;
+  return (
+    (system.rootUserBannerDismissedHostKeyFingerprintSha256 ?? null) !==
+    (system.trustedHostKeyFingerprintSha256 ?? null)
   );
 }
 
@@ -1576,6 +1641,7 @@ export default function SystemDetail() {
   const cancelOperation = useCancelOperation();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
+  const dismissRootUserBanner = useDismissRootUserBanner();
   const solvePackageIssue = useSolvePackageIssue();
   const dismissPackageIssue = useDismissPackageIssue();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
@@ -1585,6 +1651,7 @@ export default function SystemDetail() {
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDismissNeedsRebootConfirm, setShowDismissNeedsRebootConfirm] = useState(false);
+  const [showSudoersModal, setShowSudoersModal] = useState(false);
   const [pendingSolveIssue, setPendingSolveIssue] = useState<PackageManagerIssue | null>(null);
   const [pendingDismissIssue, setPendingDismissIssue] = useState<PackageManagerIssue | null>(null);
   const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
@@ -1593,6 +1660,7 @@ export default function SystemDetail() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const updatesSignatureRef = useRef<string | null>(null);
   const commandOutput = useCommandOutput(systemId);
+  const sudoersPreview = useSudoersPreview(systemId, { enabled: showSudoersModal });
   const qc = useQueryClient();
   const wasCommandActiveRef = useRef(false);
 
@@ -1650,6 +1718,7 @@ export default function SystemDetail() {
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
   const repairingPackageIssue = solvePackageIssue.isPending || activeOp?.type === "package_manager_repair";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
+  const dismissingRootUserBanner = dismissRootUserBanner.isPending;
   const dismissingPackageIssue = dismissPackageIssue.isPending;
   const operationCancellable = !!activeOp && !activeOp.cancelRequested && !cancelOperation.isPending;
   const updatesSignature = data?.updates
@@ -1710,6 +1779,7 @@ export default function SystemDetail() {
   const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction;
   const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport);
+  const showRootUserBanner = shouldShowRootUserInfoBanner(system);
 
   const handleCheck = () => {
     commandOutput.clear();
@@ -1805,6 +1875,13 @@ export default function SystemDetail() {
     setShowDismissNeedsRebootConfirm(false);
     dismissNeedsReboot.mutate(systemId, {
       onSuccess: () => addToast("Reboot warning dismissed", "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleDismissRootUserBanner = () => {
+    dismissRootUserBanner.mutate(systemId, {
+      onSuccess: () => addToast("Root user notice dismissed", "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -2088,6 +2165,15 @@ export default function SystemDetail() {
         />
       </div>
 
+      {showRootUserBanner && (
+        <RootUserInfoBanner
+          systemName={system.name}
+          busy={dismissingRootUserBanner}
+          onOpenSudoers={() => setShowSudoersModal(true)}
+          onDismiss={handleDismissRootUserBanner}
+        />
+      )}
+
       <PackageManagerIssueBanner
         issues={visiblePackageIssues}
         busy={upgrading || autoremoving || checking || rebooting || repairingPackageIssue}
@@ -2306,6 +2392,24 @@ export default function SystemDetail() {
         confirmLabel="Hide Update"
         loading={hideUpdate.isPending}
       />
+
+      <Modal
+        open={showSudoersModal}
+        onClose={() => setShowSudoersModal(false)}
+        title={`Sudoers Setup for ${system.name}`}
+      >
+        {sudoersPreview.isLoading ? (
+          <div className="flex justify-center py-10">
+            <span className="spinner !w-6 !h-6 text-blue-500" />
+          </div>
+        ) : sudoersPreview.data ? (
+          <SudoersSetupPanel preview={sudoersPreview.data} />
+        ) : (
+          <div className="text-sm text-slate-500 dark:text-slate-400">
+            Unable to load sudoers setup for this system right now.
+          </div>
+        )}
+      </Modal>
 
     </Layout>
   );

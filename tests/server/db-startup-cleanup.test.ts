@@ -365,6 +365,17 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
   });
 
+  test("adds the root user banner dismissal columns for systems", () => {
+    const sqlite = new Database(dbPath, { readonly: true });
+    const columns = sqlite
+      .prepare("PRAGMA table_info(systems)")
+      .all() as Array<{ name?: string }>;
+    sqlite.close();
+
+    expect(columns.some((column) => column.name === "root_user_banner_dismissed")).toBe(true);
+    expect(columns.some((column) => column.name === "root_user_banner_dismissed_host_key_fingerprint_sha256")).toBe(true);
+  });
+
   test("creates package manager issue tracking table", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const columns = sqlite

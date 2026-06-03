@@ -165,6 +165,8 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     reboot_dismissed_boot_id TEXT,
     reboot_dismissed_uptime_seconds REAL,
     reboot_dismissed_at TEXT,
+    root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0,
+    root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT,
     system_info_updated_at TEXT,
     is_reachable INTEGER NOT NULL DEFAULT 0,
     last_seen_at TEXT,
@@ -588,7 +590,16 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   } catch {
     // Column already exists
   }
-
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT`);
+  } catch {
+    // Column already exists
+  }
   // Migration: add notification schedule columns
   try {
     _db.run(sql`ALTER TABLE notifications ADD COLUMN schedule TEXT`);
@@ -1158,6 +1169,8 @@ function rebuildSystemsTable(
       reboot_dismissed_boot_id TEXT,
       reboot_dismissed_uptime_seconds REAL,
       reboot_dismissed_at TEXT,
+      root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0,
+      root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT,
       system_info_updated_at TEXT,
       is_reachable INTEGER NOT NULL DEFAULT 0,
       last_seen_at TEXT,
@@ -1209,6 +1222,8 @@ function rebuildSystemsTable(
     "reboot_dismissed_boot_id",
     "reboot_dismissed_uptime_seconds",
     "reboot_dismissed_at",
+    "root_user_banner_dismissed",
+    "root_user_banner_dismissed_host_key_fingerprint_sha256",
     "system_info_updated_at",
     "is_reachable",
     "last_seen_at",
@@ -1263,6 +1278,8 @@ function rebuildSystemsTable(
     "reboot_dismissed_boot_id",
     "reboot_dismissed_uptime_seconds",
     "reboot_dismissed_at",
+    "root_user_banner_dismissed",
+    "root_user_banner_dismissed_host_key_fingerprint_sha256",
     "system_info_updated_at",
     "is_reachable",
     "last_seen_at",

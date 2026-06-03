@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Hono } from "hono";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems } from "../../server/db/schema";
@@ -24,7 +25,7 @@ describe("sudoers preview route", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  function createSystem(username = "updater") {
+  function createSystem(username = "updater", trustedHostKeyFingerprintSha256: string | null = null) {
     return getDb().insert(systems).values({
       name: "Preview host",
       hostname: "preview.local",
@@ -33,6 +34,7 @@ describe("sudoers preview route", () => {
       username,
       pkgManager: "apt",
       detectedPkgManagers: JSON.stringify(["apt"]),
+      trustedHostKeyFingerprintSha256,
     }).returning({ id: systems.id }).get().id;
   }
 
@@ -108,7 +110,7 @@ describe("sudoers preview route", () => {
   });
 
   test("generates a resolved preview for root users", async () => {
-    const systemId = createSystem("root");
+    const systemId = createSystem("root", "SHA256:current");
     const sshManager = initSSHManager(1, 1, 1, getEncryptor());
     (sshManager as any).connect = vi.fn(async () => ({}));
     (sshManager as any).disconnect = vi.fn();
@@ -132,5 +134,28 @@ describe("sudoers preview route", () => {
     expect(body.required).toBe(true);
     expect(body.content).toContain("Defaults:root !requiretty");
     expect((sshManager as any).connect).toHaveBeenCalledTimes(1);
+  });
+
+  test("dismisses the root user banner for a system", async () => {
+    const systemId = createSystem("root", "SHA256:current");
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const response = await app.request(`/api/systems/${systemId}/dismiss-root-user-banner`, {
+      method: "POST",
+    });
+    const row = getDb()
+      .select({
+        rootUserBannerDismissed: systems.rootUserBannerDismissed,
+        rootUserBannerDismissedHostKeyFingerprintSha256:
+          systems.rootUserBannerDismissedHostKeyFingerprintSha256,
+      })
+      .from(systems)
+      .where(eq(systems.id, systemId))
+      .get();
+
+    expect(response.status).toBe(200);
+    expect(row?.rootUserBannerDismissed).toBe(1);
+    expect(row?.rootUserBannerDismissedHostKeyFingerprintSha256).toBe("SHA256:current");
   });
 });

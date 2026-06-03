@@ -1063,6 +1063,16 @@ systems.post("/:id/dismiss-needs-reboot", async (c) => {
   return c.json({ status: "ok" });
 });
 
+systems.post("/:id/dismiss-root-user-banner", (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const system = systemService.getSystem(id);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  systemService.dismissRootUserBanner(id);
+  return c.json({ status: "ok" });
+});
+
 systems.post("/:id/revoke-host-key", (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
