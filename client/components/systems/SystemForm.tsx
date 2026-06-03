@@ -695,11 +695,11 @@ export function SystemForm({
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2 sm:shrink-0">
                 {storedHostKeyNeedsAttention ? (
-                  <Badge variant="danger" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
+                  <Badge variant="warning" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
                 ) : approvedHostKey ? (
                   <Badge variant="success" small>{getHostKeyStatusBadgeLabel("verified")}</Badge>
                 ) : (
-                  <Badge variant="info" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
+                  <Badge variant="warning" small>{getHostKeyStatusBadgeLabel("needs_approval")}</Badge>
                 )}
               {hasPendingHostKeyReview && pendingReviewShowsMultipleHosts && (
                 <Badge variant="muted" small>{`${pendingChallengeCount}\u00A0keys`}</Badge>
@@ -742,7 +742,7 @@ export function SystemForm({
               </div>
             </div>
             {storedHostKeyNeedsAttention && !hasPendingHostKeyReview && (
-              <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                 The stored SSH host key no longer matches what this host presented during the latest check.
                 Review and re-approve the current host key before running SSH actions again.
               </div>
@@ -757,7 +757,7 @@ export function SystemForm({
                     : "Review the fetched host key below and approve it only if these details match what you expect for this host."}
                 </div>
                 {fetchedHostKeyDiffersFromApproved && (
-                  <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                     <div className="font-medium">The approved host key does not match the current host key.</div>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <div>

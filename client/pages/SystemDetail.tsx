@@ -626,7 +626,7 @@ export function PackageManagerIssueBanner({
         return (
           <div
             key={issue.id}
-            className="flex items-center gap-2 px-4 py-3 rounded-xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-sm"
+            className="flex items-center gap-2 px-4 py-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm"
           >
             <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
@@ -634,14 +634,14 @@ export function PackageManagerIssueBanner({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium">{issue.title}</span>
-                <Badge variant="danger" small>{issue.pkgManager}</Badge>
+                <Badge variant="warning" small>{issue.pkgManager}</Badge>
               </div>
-              <p className="text-red-600 dark:text-red-400">{issue.message}</p>
+              <p className="text-amber-700 dark:text-amber-400">{issue.message}</p>
             </div>
             <button
               onClick={() => onSolve(issue)}
               disabled={busy || solving || dismissing}
-              className="px-3 py-1 text-xs font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+              className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               {solving ? (
                 <span className="flex items-center gap-1.5">
@@ -653,7 +653,7 @@ export function PackageManagerIssueBanner({
             <button
               onClick={() => onDismiss(issue)}
               disabled={busy || solving || dismissing}
-              className="px-3 py-1 text-xs font-medium rounded-lg border border-red-300 dark:border-red-800 bg-white/70 dark:bg-slate-900/30 text-red-700 dark:text-red-300 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+              className="px-3 py-1 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-900/30 text-amber-700 dark:text-amber-400 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               {dismissing ? (
                 <span className="flex items-center gap-1.5">
@@ -725,20 +725,20 @@ export function HostKeyVerificationBanner({
   onOpenConfiguration: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-sm sm:flex-row sm:items-center">
+    <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm sm:flex-row sm:items-center">
       <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c.943 0 1.809.325 2.493.869M17 8.5V7a5 5 0 00-10 0v1.5M5 11h14v9H5v-9z" />
       </svg>
       <div className="min-w-0 flex-1">
         <p className="font-medium">SSH host-key approval required</p>
-        <p className="mt-1 text-red-600 dark:text-red-400">
+        <p className="mt-1 text-amber-700 dark:text-amber-400">
           {systemName} needs its SSH host key reviewed before update checks can run.
         </p>
       </div>
       <button
         type="button"
         onClick={onOpenConfiguration}
-        className="px-3 py-1 text-xs font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors whitespace-nowrap shrink-0"
+        className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors whitespace-nowrap shrink-0"
       >
         Open Configuration
       </button>
