@@ -67,11 +67,23 @@ Overview of all systems with summary cards, update totals, and color-coded statu
 
 ![Dashboard](screenshots/1.png)
 
+### Upgrade All Systems
+
+Queue grouped upgrade batches, choose which systems participate, and run ordered maintenance windows from one dialog.
+
+![Upgrade All Systems](screenshots/12.png)
+
 ### System Detail
 
 Detailed system view with connection data, OS and resource information, available updates, and expandable activity output.
 
 ![System Detail](screenshots/2.png)
+
+### Sudoers Setup
+
+Generate a least-privilege sudoers allowlist from the commands configured for a system.
+
+![Sudoers Setup](screenshots/13.png)
 
 ### Systems List
 
@@ -97,6 +109,12 @@ Create a new SSH key or password credential for reuse across systems.
 
 ![Add Credential](screenshots/6.png)
 
+### Schedules
+
+Create cron-based refresh, update, and notification schedules with per-schedule system scope and run history.
+
+![Schedules](screenshots/10.png)
+
 ### Notifications
 
 Manage notification channels with delivery status, enabled state, supported events, and per-channel actions.
@@ -108,6 +126,12 @@ Manage notification channels with delivery status, enabled state, supported even
 Configure a new notification channel with event filters, system scope, schedule, and provider-specific fields.
 
 ![Add Notification](screenshots/8.png)
+
+### Scripts
+
+Inspect built-in command scripts, manage custom package managers, and assign reusable custom script overrides.
+
+![Scripts](screenshots/11.png)
 
 ### Settings
 

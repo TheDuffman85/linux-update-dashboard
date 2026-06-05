@@ -12,6 +12,7 @@
     "dev:client": "vite",
     "build": "vite build && tsup",
     "start": "node dist/server/index.js",
+    "screenshots": "screenshots/create-screenshots.sh",
     "test": "vitest run",
     "check": "tsc --noEmit"
   },
