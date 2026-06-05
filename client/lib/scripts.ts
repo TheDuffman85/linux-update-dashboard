@@ -26,6 +26,9 @@ export interface CustomParserConfig {
   installedPackageRegex?: string;
   securityRegex?: string;
   keptBackRegex?: string;
+  issueRegex?: string;
+  issueTitle?: string;
+  issueMessage?: string;
   successExitCodes?: number[];
   updatesExitCodes?: number[];
 }
@@ -96,6 +99,36 @@ export interface ScriptsResponse {
   packageManagers: CustomPackageManagerDefinition[];
   placeholders: PlaceholderHelpEntry[];
   operationProfiles?: ScriptOperationProfile[];
+}
+
+export interface CustomPackageManagerBundle {
+  format: "ludash.custom-package-manager.v1";
+  exportedAt: string;
+  packageManager: {
+    name: string;
+    label: string;
+    parserConfig: CustomParserConfig | null;
+    configEntries: CustomPackageManagerConfigEntry[];
+  };
+  scripts: Array<{
+    name: string;
+    description: string | null;
+    type: "package_manager";
+    operation: Exclude<ScriptOperation, "system_info" | "reboot">;
+    pkgManager: string;
+    isDefault: boolean;
+    steps: ScriptStep[];
+    parserConfig: CustomParserConfig | null;
+    systemInfoConfig: null;
+    sourceScriptId: string | null;
+  }>;
+}
+
+export interface CustomPackageManagerImportResult {
+  manager: CustomPackageManagerDefinition;
+  scripts: ScriptDefinition[];
+  createdScripts: number;
+  updatedScripts: number;
 }
 
 export function buildOperationKey(operation: ScriptOperation, pkgManager?: string | null): string {
@@ -185,12 +218,34 @@ export function useUpdatePackageManager() {
 export function useDeletePackageManager() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) =>
-      apiFetch(`/scripts/package-managers/${encodeURIComponent(name)}`, {
+    mutationFn: (input: string | { name: string; deleteScripts?: boolean }) => {
+      const name = typeof input === "string" ? input : input.name;
+      const deleteScripts = typeof input === "string" ? false : input.deleteScripts === true;
+      return apiFetch(`/scripts/package-managers/${encodeURIComponent(name)}`, {
         method: "DELETE",
+        body: JSON.stringify({ deleteScripts }),
+      });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
+  });
+}
+
+export function useImportPackageManagerBundle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (bundle: CustomPackageManagerBundle | unknown) =>
+      apiFetch<CustomPackageManagerImportResult>("/scripts/package-managers/import", {
+        method: "POST",
+        body: JSON.stringify(bundle),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
   });
+}
+
+export function exportPackageManagerBundle(name: string): Promise<CustomPackageManagerBundle> {
+  return apiFetch<CustomPackageManagerBundle>(
+    `/scripts/package-managers/${encodeURIComponent(name)}/export`,
+  );
 }
 
 export async function formatScriptCommand(command: string): Promise<string> {

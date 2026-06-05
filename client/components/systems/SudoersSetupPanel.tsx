@@ -1,5 +1,6 @@
 import { Badge } from "../Badge";
 import { CopyableCodeBlock } from "../CopyableCodeBlock";
+import { highlightSudoers } from "../../lib/sudoers-highlight";
 import type { SudoersPreview, SudoersPreviewWarning } from "../../lib/systems";
 
 function SudoersBlock({ content }: { content: string }) {
@@ -9,7 +10,7 @@ function SudoersBlock({ content }: { content: string }) {
       className="script-code mt-3 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100 whitespace-pre-wrap break-all"
       successMessage="Copied sudoers file"
     >
-      <code>{content}</code>
+      <code>{highlightSudoers(content)}</code>
     </CopyableCodeBlock>
   );
 }
@@ -43,7 +44,13 @@ function WarningList({ warnings }: { warnings: SudoersPreviewWarning[] }) {
   );
 }
 
-export function SudoersSetupPanel({ preview }: { preview: SudoersPreview }) {
+export function SudoersSetupPanel({
+  preview,
+  showRootUserGuidance = true,
+}: {
+  preview: SudoersPreview;
+  showRootUserGuidance?: boolean;
+}) {
   return (
     <div className="space-y-6">
       <div>
@@ -52,7 +59,7 @@ export function SudoersSetupPanel({ preview }: { preview: SudoersPreview }) {
         </p>
       </div>
 
-      {preview.username === "root" ? (
+      {showRootUserGuidance && preview.username === "root" ? (
         <div className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200">
           <p className="font-semibold">Least-privilege user recommended</p>
           <p className="mt-1">

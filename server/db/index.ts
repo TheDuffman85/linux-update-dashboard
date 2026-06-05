@@ -8,8 +8,10 @@ import { getEncryptor } from "../security";
 import * as schema from "./schema";
 import {
   mergeLegacyAutoHideKeptBackUpdates,
+  normalizeCustomPackageManagerConfigEntriesForManager,
   parsePackageManagerConfigs,
   serializePackageManagerConfigs,
+  type CustomPackageManagerConfigDefinition,
 } from "../package-manager-configs";
 
 type SqliteClient = BetterSqlite3.Database;
@@ -48,6 +50,11 @@ const DEFAULT_SETTINGS = [
     key: "cmd_timeout_seconds",
     value: "120",
     description: "SSH command execution timeout (seconds)",
+  },
+  {
+    key: "enable_root_user_check",
+    value: "true",
+    description: "Show least-privilege guidance when a system connects over SSH as root",
   },
   {
     key: "oidc_issuer",
@@ -832,6 +839,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   // Cleanup: remove obsolete settings
   _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap', 'auto_hide_kept_back_updates')`);
 
+  migrateCustomPackageManagerConfigKeys();
   migrateLegacyAptAutoHideIntoPackageManagerConfigs();
 
   // Migration: migrate old settings-based notifications to notifications table
@@ -1090,6 +1098,63 @@ function migrateLegacyAptAutoHideIntoPackageManagerConfigs(): void {
       .where(eq(schema.systems.id, row.id))
       .run();
   }
+}
+
+function parseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    const parsed = JSON.parse(value) as T;
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function migrateCustomPackageManagerConfigKeys(): void {
+  if (!_db) return;
+
+  const managerRows = _db
+    .select({
+      id: schema.customPackageManagers.id,
+      name: schema.customPackageManagers.name,
+      configEntries: schema.customPackageManagers.configEntries,
+    })
+    .from(schema.customPackageManagers)
+    .all();
+
+  const definitions: CustomPackageManagerConfigDefinition[] = [];
+  for (const row of managerRows) {
+    const configEntries = normalizeCustomPackageManagerConfigEntriesForManager(
+      row.name,
+      parseJson<unknown>(row.configEntries, []),
+    );
+    definitions.push({ name: row.name, configEntries });
+    const serialized = configEntries.length ? JSON.stringify(configEntries) : null;
+    if (serialized === row.configEntries) continue;
+    _db.update(schema.customPackageManagers)
+      .set({ configEntries: serialized })
+      .where(eq(schema.customPackageManagers.id, row.id))
+      .run();
+  }
+
+  const systemsRows = _db
+    .select({
+      id: schema.systems.id,
+      pkgManagerConfigs: schema.systems.pkgManagerConfigs,
+    })
+    .from(schema.systems)
+    .all();
+
+  for (const row of systemsRows) {
+    const normalized = parsePackageManagerConfigs(row.pkgManagerConfigs, definitions);
+    const serialized = serializePackageManagerConfigs(normalized, definitions);
+    if (serialized === row.pkgManagerConfigs) continue;
+    _db.update(schema.systems)
+      .set({ pkgManagerConfigs: serialized })
+      .where(eq(schema.systems.id, row.id))
+      .run();
+  }
+
 }
 
 function migrateSystemsTableShape(

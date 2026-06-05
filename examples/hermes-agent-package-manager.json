@@ -1,0 +1,168 @@
+{
+  "format": "ludash.custom-package-manager.v1",
+  "exportedAt": "2026-06-05T21:37:22.174Z",
+  "packageManager": {
+    "name": "hermes-agent",
+    "label": "Hermes Agent",
+    "parserConfig": null,
+    "configEntries": [
+      {
+        "key": "branch",
+        "description": "Git branch passed to hermes update --branch. Leave as main for the standard channel.",
+        "defaultValue": "main"
+      },
+      {
+        "key": "installPath",
+        "description": "Hermes source checkout used for git fallback checks when hermes update --check is unavailable.",
+        "defaultValue": "~/.hermes/hermes-agent"
+      },
+      {
+        "key": "backup",
+        "description": "Set to true to pass --backup during standard update operations.",
+        "defaultValue": "false"
+      },
+      {
+        "key": "includeGatewayStatus",
+        "description": "Set to true to run hermes gateway status after update and doctor steps.",
+        "defaultValue": "true"
+      }
+    ]
+  },
+  "scripts": [
+    {
+      "name": "Check Hermes Agent Updates",
+      "description": "Runs hermes update --check and emits a stable dashboard parser line when an update appears available.",
+      "type": "package_manager",
+      "operation": "check_updates",
+      "pkgManager": "hermes-agent",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Check Hermes Agent updates",
+          "command": "branch=\"{{config.branch}}\"\ninstall_path=\"{{config.installPath}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\ncase \"$install_path\" in\n  ~/*) install_path=\"$HOME/${install_path#~/}\" ;;\nesac\ncurrent=\"$(hermes version 2>/dev/null || hermes --version 2>/dev/null || printf unknown)\"\ncurrent=\"$(printf '%s\\n' \"$current\" | awk 'NF { print $NF; exit }' | sed 's/^[(]//; s/[)]$//')\"\n[ -n \"$current\" ] || current=unknown\nahead_count=\"\"\nif [ -d \"$install_path/.git\" ] && command -v git >/dev/null 2>&1; then\n  if git -C \"$install_path\" fetch origin \"$branch\" --quiet; then\n    ahead_count=\"$(git -C \"$install_path\" rev-list --count HEAD..\"origin/$branch\" 2>/dev/null || true)\"\n  fi\nfi\noutput=\"$(hermes update --check --branch \"$branch\" 2>&1)\"\nstatus=$?\nprintf '%s\\n' \"$output\"\noutput_count=\"$(printf '%s\\n' \"$output\" | sed -nE 's/.*[^0-9]([0-9]+)[[:space:]]+commits?[[:space:]]+behind.*/\\1/p; s/.*[^0-9]([0-9]+)[[:space:]]+commits?[[:space:]]+ahead.*/\\1/p' | head -1)\"\nif [ \"$status\" -eq 0 ]; then\n  if printf '%s\\n' \"$output\" | grep -Eiq 'available|behind|newer|update.*(available|found)|would update|can update'; then\n    next=\"$(printf '%s\\n' \"$output\" | sed -nE 's/.*(v?[0-9]{4}\\.[0-9]{1,2}\\.[0-9]{1,2}[^[:space:]]*|v?[0-9]+(\\.[0-9]+){1,3}[^[:space:]]*).*/\\1/p' | tail -1 | sed 's/^[(]//; s/[)]$//')\"\n    commit_count=\"$output_count\"\n    [ -n \"$commit_count\" ] || commit_count=\"$ahead_count\"\n    if [ -n \"$commit_count\" ] && [ \"$commit_count\" -gt 0 ] 2>/dev/null; then\n      if [ \"$commit_count\" = \"1\" ]; then\n        next=\"1-commit-ahead\"\n      else\n        next=\"${commit_count}-commits-ahead\"\n      fi\n    fi\n    [ -n \"$next\" ] || next=unknown\n    printf 'LUDASH_UPDATE hermes-agent %s %s\\n' \"$current\" \"$next\"\n  fi\n  exit 0\nfi\necho \"hermes update --check failed; falling back to git comparison when available.\"\nif [ -d \"$install_path/.git\" ] && command -v git >/dev/null 2>&1; then\n  local_sha=\"$(git -C \"$install_path\" rev-parse --short HEAD 2>/dev/null || true)\"\n  remote_sha=\"$(git -C \"$install_path\" rev-parse --short \"origin/$branch\" 2>/dev/null || true)\"\n  if [ -n \"$local_sha\" ] && [ -n \"$remote_sha\" ] && [ \"$local_sha\" != \"$remote_sha\" ]; then\n    next=\"$remote_sha\"\n    commit_count=\"$output_count\"\n    [ -n \"$commit_count\" ] || commit_count=\"$ahead_count\"\n    if [ -n \"$commit_count\" ] && [ \"$commit_count\" -gt 0 ] 2>/dev/null; then\n      if [ \"$commit_count\" = \"1\" ]; then\n        next=\"1-commit-ahead\"\n      else\n        next=\"${commit_count}-commits-ahead\"\n      fi\n    fi\n    printf 'LUDASH_UPDATE hermes-agent %s %s\\n' \"$local_sha\" \"$next\"\n  fi\n  exit 0\nfi\nexit \"$status\""
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "updateRegex": "LUDASH_UPDATE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<newVersion>\\S+)"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Detect Hermes Agent",
+      "description": "Checks whether the hermes CLI is available on the remote system.",
+      "type": "package_manager",
+      "operation": "detect",
+      "pkgManager": "hermes-agent",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Detect Hermes Agent",
+          "command": "command -v hermes >/dev/null 2>&1 && echo found"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Backup Update Hermes Agent",
+      "description": "Runs hermes update --backup for high-value Hermes profiles, then validates the install.",
+      "type": "package_manager",
+      "operation": "full_upgrade_all",
+      "pkgManager": "hermes-agent",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Backup update Hermes Agent",
+          "command": "branch=\"{{config.branch}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update --backup\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Fq 'Local changes were restored on top of the updated codebase'; then\n    echo \"Hermes update returned exit code $update_status after restoring local changes; continuing validation.\"\n  else\n    exit \"$update_status\"\n  fi\nfi\nhermes doctor 2>&1\nhermes version 2>&1\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "List Installed Hermes Agent",
+      "description": "Reports the installed Hermes Agent version for package inventory.",
+      "type": "package_manager",
+      "operation": "list_installed_packages",
+      "pkgManager": "hermes-agent",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "List installed Hermes Agent",
+          "command": "version=\"$(hermes version 2>/dev/null || hermes --version 2>/dev/null || true)\"\nversion=\"$(printf '%s\\n' \"$version\" | awk 'NF { print $NF; exit }' | sed 's/^[(]//; s/[)]$//')\"\n[ -n \"$version\" ] || version=unknown\nprintf 'hermes-agent %s\\n' \"$version\""
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "installedPackageRegex": "^(?<packageName>hermes-agent)\\s+(?<currentVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Run Hermes Doctor",
+      "description": "Runs post-update validation with hermes doctor, hermes version, and optional gateway status.",
+      "type": "package_manager",
+      "operation": "repair_issue",
+      "pkgManager": "hermes-agent",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Run Hermes doctor",
+          "command": "hermes doctor 2>&1\nhermes version 2>&1\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi"
+        }
+      ],
+      "parserConfig": {
+        "issueRegex": "needs repair|database is locked|database locked|permission denied|failed to fetch|failed to restore|working tree.*dirty|local changes.*could not|doctor.*failed|gateway.*(failed|unhealthy)",
+        "issueTitle": "Hermes Agent needs repair",
+        "issueMessage": "Run Hermes doctor, then refresh updates."
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update Hermes Agent",
+      "description": "Runs hermes update using the configured branch and optional pre-update backup, then validates the install.",
+      "type": "package_manager",
+      "operation": "upgrade_all",
+      "pkgManager": "hermes-agent",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update Hermes Agent",
+          "command": "branch=\"{{config.branch}}\"\nbackup=\"{{config.backup}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\ncase \"$backup\" in\n  true|TRUE|yes|YES|1) set -- \"$@\" --backup ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Fq 'Local changes were restored on top of the updated codebase'; then\n    echo \"Hermes update returned exit code $update_status after restoring local changes; continuing validation.\"\n  else\n    exit \"$update_status\"\n  fi\nfi\nhermes doctor 2>&1\nhermes version 2>&1\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update Selected Hermes Agent Package",
+      "description": "Updates Hermes Agent when hermes-agent is selected from the update list.",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "hermes-agent",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update selected Hermes Agent package",
+          "command": "case \"{{package}}\" in\n  hermes-agent) ;;\n  *)\n    echo \"Unsupported Hermes package selection: {{package}}\" >&2\n    exit 2\n    ;;\nesac\nbranch=\"{{config.branch}}\"\nbackup=\"{{config.backup}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\ncase \"$backup\" in\n  true|TRUE|yes|YES|1) set -- \"$@\" --backup ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Fq 'Local changes were restored on top of the updated codebase'; then\n    echo \"Hermes update returned exit code $update_status after restoring local changes; continuing validation.\"\n  else\n    exit \"$update_status\"\n  fi\nfi\nhermes doctor 2>&1\nhermes version 2>&1"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    }
+  ]
+}

@@ -51,6 +51,7 @@ import { getHostKeyStatusText } from "../lib/host-key-status";
 import { formatDurationBetween } from "../lib/time";
 import { highlightShell } from "../lib/shell-highlight";
 import { formatScriptCommand } from "../lib/scripts";
+import { useSettings } from "../lib/settings";
 
 const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 type SystemFormSubmitData = Parameters<ComponentProps<typeof SystemForm>["onSubmit"]>[0];
@@ -1844,6 +1845,7 @@ export default function SystemDetail() {
   const navigate = useNavigate();
   const systemId = parseInt(id!, 10);
   const { data, isLoading, dataUpdatedAt } = useSystem(systemId);
+  const { data: settings } = useSettings();
   const checkUpdates = useCheckUpdates();
   const autoremove = useAutoremove();
   const hideUpdate = useHideUpdate();
@@ -2004,7 +2006,8 @@ export default function SystemDetail() {
   const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction;
   const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport);
-  const showRootUserBanner = shouldShowRootUserInfoBanner(system);
+  const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
+  const showRootUserBanner = rootUserCheckEnabled && shouldShowRootUserInfoBanner(system);
 
   const handleUpdateConfiguration = (formData: SystemFormSubmitData) => {
     updateSystem.mutate(
@@ -2676,7 +2679,10 @@ export default function SystemDetail() {
             <span className="spinner !w-6 !h-6 text-blue-500" />
           </div>
         ) : sudoersPreview.data ? (
-          <SudoersSetupPanel preview={sudoersPreview.data} />
+          <SudoersSetupPanel
+            preview={sudoersPreview.data}
+            showRootUserGuidance={rootUserCheckEnabled}
+          />
         ) : (
           <div className="text-sm text-slate-500 dark:text-slate-400">
             Unable to load sudoers setup for this system right now.

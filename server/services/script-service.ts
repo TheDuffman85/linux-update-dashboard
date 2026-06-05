@@ -2,8 +2,9 @@ import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import { getDb } from "../db";
 import { customPackageManagers, customScripts, systemScriptOverrides, systems } from "../db/schema";
 import {
+  getLegacyCustomConfigKey,
   getManagerConfig,
-  normalizeCustomPackageManagerConfigEntries,
+  normalizeCustomPackageManagerConfigEntriesForManager,
   parsePackageManagerConfigs,
   validateCustomPackageManagerConfigEntries,
   type CustomPackageManagerConfigEntry,
@@ -55,6 +56,9 @@ export interface CustomParserConfig {
   installedPackageRegex?: string;
   securityRegex?: string;
   keptBackRegex?: string;
+  issueRegex?: string;
+  issueTitle?: string;
+  issueMessage?: string;
   successExitCodes?: number[];
   updatesExitCodes?: number[];
 }
@@ -121,6 +125,36 @@ export interface ScriptListResponse {
   operationProfiles: ScriptOperationProfile[];
 }
 
+export interface CustomPackageManagerBundle {
+  format: "ludash.custom-package-manager.v1";
+  exportedAt: string;
+  packageManager: {
+    name: string;
+    label: string;
+    parserConfig: CustomParserConfig | null;
+    configEntries: CustomPackageManagerConfigEntry[];
+  };
+  scripts: Array<{
+    name: string;
+    description: string | null;
+    type: "package_manager";
+    operation: Exclude<ScriptOperation, "system_info" | "reboot">;
+    pkgManager: string;
+    isDefault: boolean;
+    steps: ScriptStep[];
+    parserConfig: CustomParserConfig | null;
+    systemInfoConfig: null;
+    sourceScriptId: string | null;
+  }>;
+}
+
+export interface CustomPackageManagerImportResult {
+  manager: CustomPackageManagerDefinition;
+  scripts: ScriptDefinition[];
+  createdScripts: number;
+  updatedScripts: number;
+}
+
 export interface PlaceholderHelpEntry {
   name: string;
   description: string;
@@ -145,6 +179,8 @@ const MAX_STEP_LABEL_LENGTH = 120;
 const MAX_STEP_COMMAND_LENGTH = 8000;
 const MAX_SCRIPT_CONFIG_JSON_LENGTH = 5000;
 const MAX_REGEX_LENGTH = 500;
+const MAX_ISSUE_TITLE_LENGTH = 160;
+const MAX_ISSUE_MESSAGE_LENGTH = 1000;
 const MAX_EXIT_CODE_COUNT = 16;
 const MAX_PARSE_STEP = 20;
 const PACKAGE_MANAGER_NAME_PATTERN = /^[a-z][a-z0-9_-]{1,31}$/;
@@ -418,6 +454,15 @@ function validateExitCodes(value: unknown, field: string): string | null {
   return null;
 }
 
+function validateOptionalStringLength(value: unknown, field: string, maxLength: number): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") return `${field} must be a string`;
+  if (value.trim().length > maxLength) {
+    return `${field} must be ${maxLength} characters or less`;
+  }
+  return null;
+}
+
 function validateParserConfig(config: unknown, field = "parserConfig"): string | null {
   if (config === undefined || config === null) return null;
   if (!isRecord(config)) return `${field} must be an object`;
@@ -434,9 +479,49 @@ function validateParserConfig(config: unknown, field = "parserConfig"): string |
     validateRegexSource(config.installedPackageRegex, `${field}.installedPackageRegex`, { requireInstalledPackageGroups: config.installedPackageRegex !== undefined }) ||
     validateRegexSource(config.securityRegex, `${field}.securityRegex`) ||
     validateRegexSource(config.keptBackRegex, `${field}.keptBackRegex`) ||
+    validateRegexSource(config.issueRegex, `${field}.issueRegex`) ||
+    validateOptionalStringLength(config.issueTitle, `${field}.issueTitle`, MAX_ISSUE_TITLE_LENGTH) ||
+    validateOptionalStringLength(config.issueMessage, `${field}.issueMessage`, MAX_ISSUE_MESSAGE_LENGTH) ||
     validateExitCodes(config.successExitCodes, `${field}.successExitCodes`) ||
     validateExitCodes(config.updatesExitCodes, `${field}.updatesExitCodes`)
   );
+}
+
+function normalizeParserConfigForOperation(
+  config: CustomParserConfig | null | undefined,
+  operation: ScriptOperation,
+): CustomParserConfig | null {
+  if (!config || (
+    operation !== "check_updates" &&
+    operation !== "list_installed_packages" &&
+    operation !== "repair_issue"
+  )) {
+    return null;
+  }
+  const next: CustomParserConfig = {};
+  if (operation === "check_updates" || operation === "list_installed_packages") {
+    if (config.parseStep !== undefined) next.parseStep = config.parseStep;
+    if (config.successExitCodes !== undefined) next.successExitCodes = config.successExitCodes;
+  }
+
+  if (operation === "check_updates") {
+    if (config.updateRegex !== undefined) next.updateRegex = config.updateRegex;
+    if (config.securityRegex !== undefined) next.securityRegex = config.securityRegex;
+    if (config.keptBackRegex !== undefined) next.keptBackRegex = config.keptBackRegex;
+    if (config.updatesExitCodes !== undefined) next.updatesExitCodes = config.updatesExitCodes;
+  }
+
+  if (operation === "list_installed_packages") {
+    if (config.installedPackageRegex !== undefined) next.installedPackageRegex = config.installedPackageRegex;
+  }
+
+  if (operation === "repair_issue") {
+    if (config.issueRegex !== undefined) next.issueRegex = config.issueRegex;
+    if (config.issueTitle !== undefined) next.issueTitle = config.issueTitle;
+    if (config.issueMessage !== undefined) next.issueMessage = config.issueMessage;
+  }
+
+  return Object.keys(next).length > 0 ? next : null;
 }
 
 function validateSystemInfoConfig(config: unknown): string | null {
@@ -495,6 +580,21 @@ export function parseScriptId(id: string): { kind: "builtin"; key: string } | { 
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function normalizeConfigPlaceholder(command: string): string {
+  return command;
+}
+
+function normalizeScriptConfigPlaceholders(script: Partial<ScriptDefinition>): Partial<ScriptDefinition> {
+  if (!script.pkgManager || !Array.isArray(script.steps)) return script;
+  return {
+    ...script,
+    steps: script.steps.map((step) => ({
+      ...step,
+      command: normalizeConfigPlaceholder(step.command),
+    })),
+  };
 }
 
 function resolveConfigValue(config: PackageManagerConfigValue | undefined, path: string): string {
@@ -1137,17 +1237,24 @@ export function getBuiltinScripts(): ScriptDefinition[] {
 }
 
 function serializeCustomScript(row: typeof customScripts.$inferSelect): ScriptDefinition {
+  const operation = row.operation as ScriptOperation;
   return {
     id: `custom:${row.id}`,
     readonly: false,
     name: row.name,
     description: row.description,
     type: row.type as ScriptType,
-    operation: row.operation as ScriptOperation,
+    operation,
     pkgManager: row.pkgManager,
     isDefault: row.isDefault,
-    steps: parseJson<ScriptStep[]>(row.steps, []),
-    parserConfig: parseJson<CustomParserConfig | null>(row.parserConfig, null),
+    steps: parseJson<ScriptStep[]>(row.steps, []).map((step) => ({
+      ...step,
+      command: normalizeConfigPlaceholder(step.command),
+    })),
+    parserConfig: normalizeParserConfigForOperation(
+      parseJson<CustomParserConfig | null>(row.parserConfig, null),
+      operation,
+    ),
     systemInfoConfig: parseJson<CustomSystemInfoConfig | null>(row.systemInfoConfig, null),
     sourceScriptId: row.sourceScriptId,
     createdAt: row.createdAt,
@@ -1163,7 +1270,7 @@ function serializeCustomPackageManager(row: typeof customPackageManagers.$inferS
     name: row.name,
     label: builtin ? MANAGER_LABELS[row.name] ?? row.name : row.label,
     parserConfig: builtin ? null : parseJson<CustomParserConfig | null>(row.parserConfig, null),
-    configEntries: normalizeCustomPackageManagerConfigEntries(parseJson<unknown>(row.configEntries, [])),
+    configEntries: normalizeCustomPackageManagerConfigEntriesForManager(row.name, parseJson<unknown>(row.configEntries, [])),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -1307,12 +1414,13 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
       return `each step needs a label and command (command max ${MAX_STEP_COMMAND_LENGTH} chars)`;
     }
   }
-  const parserConfigError = validateParserConfig(input.parserConfig);
+  const parserConfig = normalizeParserConfigForOperation(input.parserConfig, input.operation);
+  const parserConfigError = validateParserConfig(parserConfig);
   if (parserConfigError) return parserConfigError;
   if (
     (input.operation === "check_updates" || input.operation === "list_installed_packages") &&
-    input.parserConfig?.parseStep !== undefined &&
-    input.parserConfig.parseStep >= input.steps.length
+    parserConfig?.parseStep !== undefined &&
+    parserConfig.parseStep >= input.steps.length
   ) {
     return "parserConfig.parseStep must reference an existing step";
   }
@@ -1348,23 +1456,25 @@ function clearOtherDefaults(input: Pick<ScriptDefinition, "type" | "operation" |
 }
 
 export function createScript(input: Partial<ScriptDefinition>): ScriptDefinition {
-  const error = validateScriptInput(input);
+  const normalizedInput = normalizeScriptConfigPlaceholders(input);
+  const error = validateScriptInput(normalizedInput);
   if (error) throw new Error(error);
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-  if (input.isDefault) clearOtherDefaults(input as ScriptDefinition);
+  if (normalizedInput.isDefault) clearOtherDefaults(normalizedInput as ScriptDefinition);
+  const parserConfig = normalizeParserConfigForOperation(normalizedInput.parserConfig, normalizedInput.operation!);
   const row = getDb()
     .insert(customScripts)
     .values({
-      name: input.name!.trim(),
-      description: input.description?.trim() || null,
-      type: input.type!,
-      operation: input.operation!,
-      pkgManager: input.pkgManager ?? null,
-      isDefault: input.isDefault ?? false,
-      steps: JSON.stringify(input.steps),
-      parserConfig: input.parserConfig ? JSON.stringify(input.parserConfig) : null,
-      systemInfoConfig: input.systemInfoConfig ? JSON.stringify(input.systemInfoConfig) : null,
-      sourceScriptId: input.sourceScriptId ?? null,
+      name: normalizedInput.name!.trim(),
+      description: normalizedInput.description?.trim() || null,
+      type: normalizedInput.type!,
+      operation: normalizedInput.operation!,
+      pkgManager: normalizedInput.pkgManager ?? null,
+      isDefault: normalizedInput.isDefault ?? false,
+      steps: JSON.stringify(normalizedInput.steps),
+      parserConfig: parserConfig ? JSON.stringify(parserConfig) : null,
+      systemInfoConfig: normalizedInput.systemInfoConfig ? JSON.stringify(normalizedInput.systemInfoConfig) : null,
+      sourceScriptId: normalizedInput.sourceScriptId ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -1378,7 +1488,7 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
   if (!parsed || parsed.kind !== "custom") throw new Error("Built-in scripts are read-only");
   const existing = getScriptById(scriptId);
   if (!existing) throw new Error("Script not found");
-  const next = { ...existing, ...input, readonly: false, id: scriptId };
+  const next = normalizeScriptConfigPlaceholders({ ...existing, ...input, readonly: false, id: scriptId }) as ScriptDefinition;
   const error = validateScriptInput(next);
   if (error) throw new Error(error);
   const scopeChanged =
@@ -1390,6 +1500,7 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
   }
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   if (next.isDefault) clearOtherDefaults(next, parsed.id);
+  const parserConfig = normalizeParserConfigForOperation(next.parserConfig, next.operation);
   const row = getDb()
     .update(customScripts)
     .set({
@@ -1400,8 +1511,9 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
       pkgManager: next.pkgManager ?? null,
       isDefault: next.isDefault,
       steps: JSON.stringify(next.steps),
-      parserConfig: next.parserConfig ? JSON.stringify(next.parserConfig) : null,
+      parserConfig: parserConfig ? JSON.stringify(parserConfig) : null,
       systemInfoConfig: next.systemInfoConfig ? JSON.stringify(next.systemInfoConfig) : null,
+      sourceScriptId: next.sourceScriptId ?? null,
       updatedAt: now,
     })
     .where(eq(customScripts.id, parsed.id))
@@ -1421,6 +1533,93 @@ function isManagerActiveForSystem(system: {
   if (detected.length > 0) return detected.includes(manager);
   if (system.pkgManager) return system.pkgManager === manager;
   return BUILTIN_MANAGER_ORDER.includes(manager);
+}
+
+function listSystemsUsingPackageManager(manager: string): ScriptUsage[] {
+  return getDb()
+    .select({
+      systemId: systems.id,
+      systemName: systems.name,
+      pkgManager: systems.pkgManager,
+      detectedPkgManagers: systems.detectedPkgManagers,
+      disabledPkgManagers: systems.disabledPkgManagers,
+    })
+    .from(systems)
+    .orderBy(asc(systems.name), asc(systems.id))
+    .all()
+    .filter((system) => isManagerActiveForSystem(system, manager))
+    .map((system) => ({
+      systemId: system.systemId,
+      systemName: system.systemName,
+      operationKey: buildOperationKey("detect", manager),
+    }));
+}
+
+function withoutManager(value: string | null, manager: string): string | null {
+  const raw = parseJson<unknown>(value, []);
+  const next = Array.from(new Set(
+    Array.isArray(raw)
+      ? raw.filter((entry): entry is string => typeof entry === "string" && entry !== manager)
+      : [],
+  ));
+  return next.length > 0 ? JSON.stringify(next) : null;
+}
+
+function removePackageManagerFromSystemConfigs(manager: string): void {
+  const systemRows = getDb()
+    .select({
+      id: systems.id,
+      pkgManager: systems.pkgManager,
+      detectedPkgManagers: systems.detectedPkgManagers,
+      disabledPkgManagers: systems.disabledPkgManagers,
+      pkgManagerConfigs: systems.pkgManagerConfigs,
+    })
+    .from(systems)
+    .all();
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+  for (const system of systemRows) {
+    const rawConfigs = parseJson<unknown>(system.pkgManagerConfigs, {});
+    const configs = isRecord(rawConfigs) ? { ...rawConfigs } : {};
+    delete configs[manager];
+    const nextConfigs = Object.keys(configs).length > 0 ? JSON.stringify(configs) : null;
+    const nextPkgManager = system.pkgManager === manager ? null : system.pkgManager;
+    const nextDetected = withoutManager(system.detectedPkgManagers, manager);
+    const nextDisabled = withoutManager(system.disabledPkgManagers, manager);
+
+    if (
+      nextPkgManager === system.pkgManager &&
+      nextDetected === system.detectedPkgManagers &&
+      nextDisabled === system.disabledPkgManagers &&
+      nextConfigs === system.pkgManagerConfigs
+    ) {
+      continue;
+    }
+
+    getDb()
+      .update(systems)
+      .set({
+        pkgManager: nextPkgManager,
+        detectedPkgManagers: nextDetected,
+        disabledPkgManagers: nextDisabled,
+        pkgManagerConfigs: nextConfigs,
+        updatedAt: now,
+      })
+      .where(eq(systems.id, system.id))
+      .run();
+  }
+
+  const overrideRows = getDb()
+    .select({ id: systemScriptOverrides.id, operationKey: systemScriptOverrides.operationKey })
+    .from(systemScriptOverrides)
+    .all()
+    .filter((override) => override.operationKey.startsWith(`${manager}/`));
+  for (const override of overrideRows) {
+    getDb()
+      .delete(systemScriptOverrides)
+      .where(eq(systemScriptOverrides.id, override.id))
+      .run();
+  }
 }
 
 function getExplicitDefaultScriptId(script: Pick<ScriptDefinition, "type" | "operation" | "pkgManager">): string | null {
@@ -1566,7 +1765,7 @@ export function createCustomPackageManager(input: {
     name,
   );
   if (configEntryError) throw new Error(configEntryError);
-  const configEntries = normalizeCustomPackageManagerConfigEntries(input.configEntries);
+  const configEntries = normalizeCustomPackageManagerConfigEntriesForManager(name, input.configEntries);
   const row = getDb()
     .insert(customPackageManagers)
     .values({
@@ -1609,7 +1808,7 @@ export function updateCustomPackageManager(name: string, input: {
     normalizedName,
   );
   if (configEntryError) throw new Error(configEntryError);
-  const configEntries = normalizeCustomPackageManagerConfigEntries(rawConfigEntries);
+  const configEntries = normalizeCustomPackageManagerConfigEntriesForManager(normalizedName, rawConfigEntries);
 
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const values = {
@@ -1637,7 +1836,7 @@ export function updateCustomPackageManager(name: string, input: {
   return serializeCustomPackageManager(row);
 }
 
-export function deleteCustomPackageManager(name: string): void {
+export function deleteCustomPackageManager(name: string, options: { deleteScripts?: boolean } = {}): void {
   const normalizedName = name.trim().toLowerCase();
   if (BUILTIN_MANAGER_ORDER.includes(normalizedName)) {
     throw new Error("Built-in package managers are read-only");
@@ -1653,12 +1852,204 @@ export function deleteCustomPackageManager(name: string): void {
     .from(customScripts)
     .where(eq(customScripts.pkgManager, normalizedName))
     .get();
-  if (script) throw new Error("Package manager is used by one or more scripts");
+  if (script && !options.deleteScripts) {
+    throw new Error("Package manager is used by one or more scripts");
+  }
+
+  if (options.deleteScripts) {
+    const scriptRows = getDb()
+      .select({ id: customScripts.id })
+      .from(customScripts)
+      .where(eq(customScripts.pkgManager, normalizedName))
+      .all();
+    for (const row of scriptRows) {
+      const usages = listScriptUsages(`custom:${row.id}`);
+      if (usages.length > 0) {
+        throw new Error("Package manager has scripts assigned to one or more systems");
+      }
+    }
+  }
+
+  const activeSystems = listSystemsUsingPackageManager(normalizedName);
+  if (activeSystems.length > 0) {
+    const names = activeSystems.map((system) => system.systemName).join(", ");
+    throw new Error(`Package manager is enabled or detected on ${activeSystems.length} ${activeSystems.length === 1 ? "system" : "systems"}: ${names}`);
+  }
+
+  if (options.deleteScripts) {
+    const scriptRows = getDb()
+      .select({ id: customScripts.id })
+      .from(customScripts)
+      .where(eq(customScripts.pkgManager, normalizedName))
+      .all();
+    for (const row of scriptRows) {
+      getDb()
+        .delete(systemScriptOverrides)
+        .where(eq(systemScriptOverrides.scriptId, `custom:${row.id}`))
+        .run();
+    }
+    getDb()
+      .delete(customScripts)
+      .where(eq(customScripts.pkgManager, normalizedName))
+      .run();
+  }
+
+  removePackageManagerFromSystemConfigs(normalizedName);
 
   getDb()
     .delete(customPackageManagers)
     .where(eq(customPackageManagers.name, normalizedName))
     .run();
+}
+
+function findCustomPackageManager(name: string): CustomPackageManagerDefinition | null {
+  const row = getDb()
+    .select()
+    .from(customPackageManagers)
+    .where(eq(customPackageManagers.name, name))
+    .get();
+  return row ? serializeCustomPackageManager(row) : null;
+}
+
+function scriptBundleEntry(script: ScriptDefinition): CustomPackageManagerBundle["scripts"][number] {
+  if (!script.pkgManager || script.type !== "package_manager") {
+    throw new Error("Only package manager scripts can be exported with a package manager");
+  }
+  if (script.operation === "system_info" || script.operation === "reboot") {
+    throw new Error("System scripts cannot be exported with a package manager");
+  }
+  return {
+    name: script.name,
+    description: script.description,
+    type: "package_manager",
+    operation: script.operation,
+    pkgManager: script.pkgManager,
+    isDefault: script.isDefault,
+    steps: script.steps.map((step) => ({ ...step })),
+    parserConfig: script.parserConfig ? { ...script.parserConfig } : null,
+    systemInfoConfig: null,
+    sourceScriptId: script.sourceScriptId,
+  };
+}
+
+export function exportCustomPackageManagerBundle(name: string): CustomPackageManagerBundle {
+  const normalizedName = name.trim().toLowerCase();
+  if (BUILTIN_MANAGER_ORDER.includes(normalizedName)) {
+    throw new Error("Built-in package managers cannot be exported as custom bundles");
+  }
+  const manager = findCustomPackageManager(normalizedName);
+  if (!manager) throw new Error("Package manager not found");
+  const scripts = getDb()
+    .select()
+    .from(customScripts)
+    .where(eq(customScripts.pkgManager, normalizedName))
+    .orderBy(asc(customScripts.operation), asc(customScripts.name), asc(customScripts.id))
+    .all()
+    .map(serializeCustomScript)
+    .map(scriptBundleEntry);
+
+  return {
+    format: "ludash.custom-package-manager.v1",
+    exportedAt: new Date().toISOString(),
+    packageManager: {
+      name: manager.name,
+      label: manager.label,
+      parserConfig: manager.parserConfig,
+      configEntries: manager.configEntries.map((entry) => ({ ...entry })),
+    },
+    scripts,
+  };
+}
+
+function normalizeBundle(value: unknown): CustomPackageManagerBundle {
+  if (!isRecord(value)) throw new Error("Import file must contain a JSON object");
+  if (value.format !== "ludash.custom-package-manager.v1") {
+    throw new Error("Unsupported package manager export format");
+  }
+  if (!isRecord(value.packageManager)) {
+    throw new Error("Import file is missing packageManager");
+  }
+  if (!Array.isArray(value.scripts)) {
+    throw new Error("Import file scripts must be an array");
+  }
+
+  const packageManager = value.packageManager;
+  const managerName = typeof packageManager.name === "string" ? packageManager.name.trim().toLowerCase() : "";
+  const configEntryError = validateCustomPackageManagerConfigEntries(packageManager.configEntries);
+  if (configEntryError) throw new Error(configEntryError);
+  const bundle: CustomPackageManagerBundle = {
+    format: "ludash.custom-package-manager.v1",
+    exportedAt: typeof value.exportedAt === "string" ? value.exportedAt : new Date().toISOString(),
+    packageManager: {
+      name: managerName,
+      label: typeof packageManager.label === "string" ? packageManager.label : "",
+      parserConfig: isRecord(packageManager.parserConfig) ? packageManager.parserConfig as CustomParserConfig : null,
+      configEntries: normalizeCustomPackageManagerConfigEntriesForManager(managerName, packageManager.configEntries),
+    },
+    scripts: [],
+  };
+
+  for (const [index, rawScript] of value.scripts.entries()) {
+    if (!isRecord(rawScript)) throw new Error(`scripts.${index} must be an object`);
+    const script = {
+      name: typeof rawScript.name === "string" ? rawScript.name : "",
+      description: typeof rawScript.description === "string" ? rawScript.description : null,
+      type: "package_manager" as const,
+      operation: rawScript.operation as ScriptOperation,
+      pkgManager: managerName,
+      isDefault: rawScript.isDefault === true,
+      steps: Array.isArray(rawScript.steps) ? rawScript.steps as ScriptStep[] : [],
+      parserConfig: isRecord(rawScript.parserConfig) ? rawScript.parserConfig as CustomParserConfig : null,
+      systemInfoConfig: null,
+      sourceScriptId: typeof rawScript.sourceScriptId === "string" ? rawScript.sourceScriptId : null,
+    };
+    if (script.operation === "system_info" || script.operation === "reboot") {
+      throw new Error(`scripts.${index}.operation must be a package manager operation`);
+    }
+    script.parserConfig = normalizeParserConfigForOperation(script.parserConfig, script.operation);
+    bundle.scripts.push(script as CustomPackageManagerBundle["scripts"][number]);
+  }
+
+  return bundle;
+}
+
+function findImportScriptMatch(script: Pick<ScriptDefinition, "name" | "operation" | "pkgManager">): ScriptDefinition | null {
+  const row = getDb()
+    .select()
+    .from(customScripts)
+    .where(and(
+      eq(customScripts.type, "package_manager"),
+      eq(customScripts.pkgManager, script.pkgManager ?? ""),
+      eq(customScripts.operation, script.operation),
+      eq(customScripts.name, script.name.trim()),
+    ))
+    .orderBy(asc(customScripts.id))
+    .get();
+  return row ? serializeCustomScript(row) : null;
+}
+
+export function importCustomPackageManagerBundle(input: unknown): CustomPackageManagerImportResult {
+  const bundle = normalizeBundle(input);
+  const existingManager = findCustomPackageManager(bundle.packageManager.name);
+  const manager = existingManager
+    ? updateCustomPackageManager(bundle.packageManager.name, bundle.packageManager)
+    : createCustomPackageManager(bundle.packageManager);
+
+  const scripts: ScriptDefinition[] = [];
+  let createdScripts = 0;
+  let updatedScripts = 0;
+  for (const script of bundle.scripts) {
+    const match = findImportScriptMatch(script);
+    if (match) {
+      scripts.push(updateScript(match.id, script));
+      updatedScripts += 1;
+    } else {
+      scripts.push(createScript(script));
+      createdScripts += 1;
+    }
+  }
+
+  return { manager, scripts, createdScripts, updatedScripts };
 }
 
 export function getSystemOverrides(systemId: number): Record<string, string> {
@@ -1821,12 +2212,12 @@ function withConfigDefaults(
   };
   const definition = listPackageManagerDefinitions().find((entry) => entry.name === manager);
   if (!definition?.configEntries.length) return withBuiltinDefaults;
-  const defaults = Object.fromEntries(
-    definition.configEntries.map((entry) => [
-      entry.key,
-      withBuiltinDefaults[entry.key] ?? entry.defaultValue,
-    ]),
-  );
+  const defaults: Record<string, unknown> = {};
+  for (const entry of definition.configEntries) {
+    const legacyKey = getLegacyCustomConfigKey(manager, entry.key);
+    const value = withBuiltinDefaults[legacyKey] ?? entry.defaultValue;
+    defaults[legacyKey] = value;
+  }
   return {
     ...defaults,
     ...withBuiltinDefaults,

@@ -13,6 +13,7 @@ import { SSH_CREDENTIAL_KINDS } from "../../lib/credential-form";
 import { validateSystemForm } from "../../lib/system-form-validation";
 import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/systems";
 import {
+  getLegacyCustomConfigKey,
   normalizePackageManagerConfigs,
   SUPPORTED_PACKAGE_MANAGER_CONFIGS,
   type CustomPackageManagerConfig,
@@ -216,13 +217,19 @@ export function SystemForm({
   }, [hostKeyVerificationEnabled, approvedHostKey]);
 
   const customPackageManagers = scriptsData?.packageManagers ?? [];
+  const supportedPackageManagerNames = new Set([
+    ...PACKAGE_MANAGER_ORDER,
+    ...customPackageManagers.map((manager) => manager.name),
+  ]);
   const customPackageManagerNames = new Set(
     customPackageManagers
       .filter((manager) => !manager.builtin)
       .map((manager) => manager.name),
   );
-  const shouldShowManager = (manager: string) =>
-    !customPackageManagerNames.has(manager) || detectedManagers.includes(manager);
+  const shouldShowManager = (manager: string) => {
+    if (!supportedPackageManagerNames.has(manager)) return false;
+    return !customPackageManagerNames.has(manager) || detectedManagers.includes(manager);
+  };
   const isManagerEnabled = (manager: string) => {
     if (customPackageManagerNames.has(manager) && !detectedManagers.includes(manager)) {
       return false;
@@ -298,7 +305,7 @@ export function SystemForm({
       next[manager.name] = Object.fromEntries(
         manager.configEntries.map((entry) => [
           entry.key,
-          current[entry.key] ?? entry.defaultValue,
+          current[entry.key] ?? current[getLegacyCustomConfigKey(manager.name, entry.key)] ?? entry.defaultValue,
         ]),
       );
     }
@@ -321,7 +328,10 @@ export function SystemForm({
     const activeScriptOverrides = Object.fromEntries(
       Object.entries(scriptOverrides).filter(([key]) => {
         const [manager] = key.split("/");
-        return manager === "system" || !disabledManagers.has(manager);
+        return manager === "system" || (
+          supportedPackageManagerNames.has(manager) &&
+          !disabledManagers.has(manager)
+        );
       }),
     );
 
@@ -339,6 +349,7 @@ export function SystemForm({
       pkgManagerConfigs: normalizePackageManagerConfigs(
         packageManagerConfigsWithCustomDefaults(),
         customPackageManagers,
+        false,
       ) ?? {},
       hidden,
       scriptOverrides: activeScriptOverrides,
@@ -1152,7 +1163,7 @@ export function SystemForm({
                           <div key={entry.key}>
                             <label className={labelClass}>{entry.key}</label>
                             <input
-                              value={config[entry.key] ?? entry.defaultValue}
+                              value={config[entry.key] ?? config[getLegacyCustomConfigKey(manager, entry.key)] ?? entry.defaultValue}
                               onChange={(e) => setCustomManagerConfigValue(manager, entry.key, e.target.value)}
                               className={inputClass}
                             />

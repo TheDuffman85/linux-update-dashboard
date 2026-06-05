@@ -764,7 +764,16 @@ describe("SudoersSetupPanel", () => {
 
     expect(html).toContain("paths resolved");
     expect(html).toContain("/etc/sudoers.d/linux-update-dashboard-ludash");
-    expect(html).toContain("ludash ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y");
+    expect(html).toContain("ludash");
+    expect(html).toContain("ALL=(root)");
+    expect(html).toContain("NOPASSWD:");
+    expect(html).toContain("/usr/bin/apt-get");
+    expect(html).toContain("upgrade -y");
+    expect(html).toContain('class="sudoers-directive"');
+    expect(html).toContain('class="sudoers-keyword"');
+    expect(html).toContain('class="sudoers-runas"');
+    expect(html).toContain('class="sudoers-tag"');
+    expect(html).toContain('class="sudoers-path"');
     expect(html).toContain("WARNING: Selected-package upgrades are disabled by default.");
     expect(html).toContain("# ludash ALL=(root) NOPASSWD: /usr/bin/apt-get install --only-upgrade -y *");
     expect(html).not.toContain("Enable selected-package upgrades");
@@ -787,6 +796,7 @@ describe("SudoersSetupPanel", () => {
     }));
     expect(fallbackHtml).toContain("template only");
     expect(fallbackHtml).toContain("REPLACE_WITH_ABSOLUTE_PATH/apt-get");
+    expect(fallbackHtml).toContain('class="sudoers-placeholder"');
     expect(fallbackHtml).not.toContain("This template is not paste-ready.");
     expect(fallbackHtml).not.toContain("Host is offline");
 
@@ -803,7 +813,11 @@ describe("SudoersSetupPanel", () => {
     }));
     expect(rootHtml).toContain("Least-privilege user recommended");
     expect(rootHtml).toContain("dedicated non-root SSH account");
-    expect(rootHtml).toContain("root ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y");
+    expect(rootHtml).toContain("root");
+    expect(rootHtml).toContain("ALL");
+    expect(rootHtml).toContain("=(root)");
+    expect(rootHtml).toContain("NOPASSWD:");
+    expect(rootHtml).toContain("/usr/bin/apt-get");
   });
 });
 

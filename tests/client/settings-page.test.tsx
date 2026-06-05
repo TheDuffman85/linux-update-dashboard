@@ -85,6 +85,7 @@ describe("Settings page", () => {
         ssh_timeout_seconds: "30",
         cmd_timeout_seconds: "120",
         concurrent_connections: "5",
+        enable_root_user_check: "true",
         oidc_issuer: "",
         oidc_client_id: "",
         oidc_client_secret: "",
@@ -113,6 +114,7 @@ describe("Settings page", () => {
     const html = renderToStaticMarkup(<Settings />);
 
     expect(html).toContain("Activity History");
+    expect(html).toContain("Least-privilege root user check");
     expect(html).not.toContain("Update Schedule");
     expect(html).not.toContain("Scheduler Interval");
     expect(html).not.toContain("Cache Duration");
