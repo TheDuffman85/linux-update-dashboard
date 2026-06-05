@@ -1526,6 +1526,73 @@ function listSystemsUsingPackageManager(manager: string): ScriptUsage[] {
     }));
 }
 
+function withoutManager(value: string | null, manager: string): string | null {
+  const raw = parseJson<unknown>(value, []);
+  const next = Array.from(new Set(
+    Array.isArray(raw)
+      ? raw.filter((entry): entry is string => typeof entry === "string" && entry !== manager)
+      : [],
+  ));
+  return next.length > 0 ? JSON.stringify(next) : null;
+}
+
+function removePackageManagerFromSystemConfigs(manager: string): void {
+  const systemRows = getDb()
+    .select({
+      id: systems.id,
+      pkgManager: systems.pkgManager,
+      detectedPkgManagers: systems.detectedPkgManagers,
+      disabledPkgManagers: systems.disabledPkgManagers,
+      pkgManagerConfigs: systems.pkgManagerConfigs,
+    })
+    .from(systems)
+    .all();
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+  for (const system of systemRows) {
+    const rawConfigs = parseJson<unknown>(system.pkgManagerConfigs, {});
+    const configs = isRecord(rawConfigs) ? { ...rawConfigs } : {};
+    delete configs[manager];
+    const nextConfigs = Object.keys(configs).length > 0 ? JSON.stringify(configs) : null;
+    const nextPkgManager = system.pkgManager === manager ? null : system.pkgManager;
+    const nextDetected = withoutManager(system.detectedPkgManagers, manager);
+    const nextDisabled = withoutManager(system.disabledPkgManagers, manager);
+
+    if (
+      nextPkgManager === system.pkgManager &&
+      nextDetected === system.detectedPkgManagers &&
+      nextDisabled === system.disabledPkgManagers &&
+      nextConfigs === system.pkgManagerConfigs
+    ) {
+      continue;
+    }
+
+    getDb()
+      .update(systems)
+      .set({
+        pkgManager: nextPkgManager,
+        detectedPkgManagers: nextDetected,
+        disabledPkgManagers: nextDisabled,
+        pkgManagerConfigs: nextConfigs,
+        updatedAt: now,
+      })
+      .where(eq(systems.id, system.id))
+      .run();
+  }
+
+  const overrideRows = getDb()
+    .select({ id: systemScriptOverrides.id, operationKey: systemScriptOverrides.operationKey })
+    .from(systemScriptOverrides)
+    .all()
+    .filter((override) => override.operationKey.startsWith(`${manager}/`));
+  for (const override of overrideRows) {
+    getDb()
+      .delete(systemScriptOverrides)
+      .where(eq(systemScriptOverrides.id, override.id))
+      .run();
+  }
+}
+
 function getExplicitDefaultScriptId(script: Pick<ScriptDefinition, "type" | "operation" | "pkgManager">): string | null {
   const row = getDb()
     .select({ id: customScripts.id })
@@ -1797,6 +1864,8 @@ export function deleteCustomPackageManager(name: string, options: { deleteScript
       .where(eq(customScripts.pkgManager, normalizedName))
       .run();
   }
+
+  removePackageManagerFromSystemConfigs(normalizedName);
 
   getDb()
     .delete(customPackageManagers)

@@ -60,6 +60,7 @@ export const SUPPORTED_PACKAGE_MANAGER_CONFIGS = [
 
 export interface CustomPackageManagerConfigDefinition {
   name: string;
+  builtin?: boolean;
   configEntries?: CustomPackageManagerConfigEntry[] | null;
 }
 
@@ -109,6 +110,7 @@ function mergeCustomConfig(
 export function normalizePackageManagerConfigs(
   value: PackageManagerConfigs | null | undefined,
   customManagers: CustomPackageManagerConfigDefinition[] = [],
+  allowUnknownCustomManagers = true,
 ): PackageManagerConfigs | null {
   if (!value) return null;
 
@@ -186,6 +188,8 @@ export function normalizePackageManagerConfigs(
 
   for (const [manager, rawConfig] of Object.entries(value)) {
     if ((SUPPORTED_PACKAGE_MANAGER_CONFIGS as readonly string[]).includes(manager)) continue;
+    const customManager = customManagerMap.get(manager);
+    if (!allowUnknownCustomManagers && (!customManager || customManager.builtin)) continue;
     if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) continue;
     mergeCustomConfig(next, manager, rawConfig as Record<string, unknown>, customManagerMap, true);
   }

@@ -34,4 +34,25 @@ describe("client package-manager configs", () => {
       brewlinux: { channel: "edge" },
     });
   });
+
+  test("can drop configs for deleted custom package managers before save", () => {
+    expect(normalizePackageManagerConfigs({
+      apt: { autoHideKeptBackUpdates: true },
+      brewlinux: { channel: "edge" },
+    }, [], false)).toEqual({
+      apt: { autoHideKeptBackUpdates: true },
+    });
+  });
+
+  test("does not treat unsupported built-in managers as custom config targets before save", () => {
+    expect(normalizePackageManagerConfigs({
+      snap: { channel: "edge" },
+    }, [
+      {
+        name: "snap",
+        builtin: true,
+        configEntries: [],
+      },
+    ], false)).toBeNull();
+  });
 });

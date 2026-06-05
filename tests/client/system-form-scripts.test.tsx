@@ -214,4 +214,30 @@ describe("SystemForm script operations", () => {
     expect(html).toContain("Release channel");
     expect(html).toContain("edge");
   });
+
+  test("hides configs for deleted custom package managers", () => {
+    const html = renderToStaticMarkup(
+      <SystemForm
+        initial={{
+          name: "Debian",
+          hostname: "debian.local",
+          port: 22,
+          credentialId: 1,
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: {
+            apt: { autoHideKeptBackUpdates: true },
+            hermes: { branch: "main" },
+          },
+          scriptOverrides: {},
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("APT");
+    expect(html).not.toContain("hermes");
+    expect(html).not.toContain("branch");
+  });
 });

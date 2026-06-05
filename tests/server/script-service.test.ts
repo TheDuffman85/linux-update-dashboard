@@ -1204,15 +1204,49 @@ describe("script service", () => {
     getDb()
       .update(systems)
       .set({
+        pkgManager: "brewlinux",
         detectedPkgManagers: JSON.stringify(["brewlinux"]),
         disabledPkgManagers: JSON.stringify(["brewlinux"]),
+        pkgManagerConfigs: JSON.stringify({
+          apt: { autoHideKeptBackUpdates: true },
+          brewlinux: { channel: "edge" },
+        }),
       })
       .where(eq(systems.id, 19))
+      .run();
+    getDb()
+      .insert(systemScriptOverrides)
+      .values({
+        systemId: 19,
+        operationKey: "brewlinux/check_updates",
+        scriptId: "custom:999",
+      })
       .run();
 
     deleteCustomPackageManager("brewlinux");
 
     expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(false);
+    const system = getDb()
+      .select({
+        pkgManager: systems.pkgManager,
+        detectedPkgManagers: systems.detectedPkgManagers,
+        disabledPkgManagers: systems.disabledPkgManagers,
+        pkgManagerConfigs: systems.pkgManagerConfigs,
+      })
+      .from(systems)
+      .where(eq(systems.id, 19))
+      .get();
+    expect(system).toEqual({
+      pkgManager: null,
+      detectedPkgManagers: null,
+      disabledPkgManagers: null,
+      pkgManagerConfigs: JSON.stringify({ apt: { autoHideKeptBackUpdates: true } }),
+    });
+    expect(getDb()
+      .select()
+      .from(systemScriptOverrides)
+      .where(eq(systemScriptOverrides.systemId, 19))
+      .all()).toHaveLength(0);
   });
 
   test("deletes unused custom package managers", () => {
