@@ -138,3 +138,29 @@ body {
 .script-editor-highlight .hljs-attr {
   color: #93c5fd;
 }
+
+.script-code .sudoers-directive,
+.script-code .sudoers-tag,
+.script-code .sudoers-keyword {
+  color: #f9a8d4;
+  font-weight: 600;
+}
+
+.script-code .sudoers-user,
+.script-code .sudoers-runas {
+  color: #93c5fd;
+}
+
+.script-code .sudoers-path {
+  color: #86efac;
+}
+
+.script-code .sudoers-placeholder {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.script-code .sudoers-escaped,
+.script-code .sudoers-literal {
+  color: #c4b5fd;
+}

@@ -1,5 +1,6 @@
 import { Badge } from "../Badge";
 import { CopyableCodeBlock } from "../CopyableCodeBlock";
+import { highlightSudoers } from "../../lib/sudoers-highlight";
 import type { SudoersPreview, SudoersPreviewWarning } from "../../lib/systems";
 
 function SudoersBlock({ content }: { content: string }) {
@@ -9,7 +10,7 @@ function SudoersBlock({ content }: { content: string }) {
       className="script-code mt-3 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100 whitespace-pre-wrap break-all"
       successMessage="Copied sudoers file"
     >
-      <code>{content}</code>
+      <code>{highlightSudoers(content)}</code>
     </CopyableCodeBlock>
   );
 }
