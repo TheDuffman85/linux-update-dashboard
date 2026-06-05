@@ -50,6 +50,11 @@ const DEFAULT_SETTINGS = [
     description: "SSH command execution timeout (seconds)",
   },
   {
+    key: "enable_root_user_check",
+    value: "true",
+    description: "Show least-privilege guidance when a system connects over SSH as root",
+  },
+  {
     key: "oidc_issuer",
     value: "",
     description: "OIDC provider issuer URL",

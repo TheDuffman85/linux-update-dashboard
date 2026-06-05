@@ -19,6 +19,7 @@ import { useToast } from "../context/ToastContext";
 import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
+import { useSettings } from "../lib/settings";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -37,6 +38,7 @@ export function getEditSystemIdFromRouteState(state: unknown): number | null {
 
 export default function SystemsList() {
   const { data: systems, isLoading, refetch } = useSystems();
+  const { data: settings } = useSettings();
   const location = useLocation();
   const navigate = useNavigate();
   const routeEditSystemId = getEditSystemIdFromRouteState(location.state);
@@ -60,6 +62,7 @@ export default function SystemsList() {
   const sudoersPreview = useSudoersPreview(sudoersSystem?.id ?? 0, {
     enabled: sudoersSystem !== null,
   });
+  const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
 
   useEffect(() => {
     systemsRef.current = systems ?? [];
@@ -415,7 +418,10 @@ export default function SystemsList() {
             <span className="spinner !w-6 !h-6 text-blue-500" />
           </div>
         ) : sudoersSystem && sudoersPreview.data ? (
-          <SudoersSetupPanel preview={sudoersPreview.data} />
+          <SudoersSetupPanel
+            preview={sudoersPreview.data}
+            showRootUserGuidance={rootUserCheckEnabled}
+          />
         ) : (
           <div className="text-sm text-slate-500 dark:text-slate-400">
             Unable to load sudoers setup for this system right now.

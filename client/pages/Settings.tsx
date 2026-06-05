@@ -223,12 +223,34 @@ export default function Settings() {
             />
           </div>
         </div>
+        <div className="mt-4 pt-4 border-t border-border">
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.enable_root_user_check !== "false"}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  enable_root_user_check: e.target.checked ? "true" : "false",
+                })
+              }
+              className="mt-0.5 rounded border-border"
+            />
+            <span>
+              <span className="block text-sm">Least-privilege root user check</span>
+              <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Show a notice when a system connects as root instead of a dedicated non-root SSH user.
+              </span>
+            </span>
+          </label>
+        </div>
         <button
           onClick={() =>
             handleSave([
               "ssh_timeout_seconds",
               "cmd_timeout_seconds",
               "concurrent_connections",
+              "enable_root_user_check",
             ])
           }
           disabled={updateSettings.isPending}

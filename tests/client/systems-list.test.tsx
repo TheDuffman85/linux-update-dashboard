@@ -10,6 +10,7 @@ const {
   mockUseUpdateSystem,
   mockUseDeleteSystem,
   mockUseReorderSystems,
+  mockUseSettings,
   mockUseToast,
   mockUseUpgrade,
   mockUseAuth,
@@ -20,6 +21,7 @@ const {
   mockUseUpdateSystem: vi.fn(),
   mockUseDeleteSystem: vi.fn(),
   mockUseReorderSystems: vi.fn(),
+  mockUseSettings: vi.fn(),
   mockUseToast: vi.fn(),
   mockUseUpgrade: vi.fn(),
   mockUseAuth: vi.fn(),
@@ -32,6 +34,10 @@ vi.mock("../../client/lib/systems", () => ({
   useUpdateSystem: mockUseUpdateSystem,
   useDeleteSystem: mockUseDeleteSystem,
   useReorderSystems: mockUseReorderSystems,
+}));
+
+vi.mock("../../client/lib/settings", () => ({
+  useSettings: mockUseSettings,
 }));
 
 vi.mock("../../client/context/ToastContext", () => ({
@@ -118,6 +124,10 @@ describe("SystemsList", () => {
     });
     mockUseSudoersPreview.mockReturnValue({
       data: undefined,
+      isLoading: false,
+    });
+    mockUseSettings.mockReturnValue({
+      data: { enable_root_user_check: "true" },
       isLoading: false,
     });
     mockUseCreateSystem.mockReturnValue({ mutate: vi.fn(), isPending: false });
