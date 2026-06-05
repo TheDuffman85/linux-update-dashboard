@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { eq, sql } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { systems, updateHistory } from "../../server/db/schema";
+import { customPackageManagers, customScripts, systems, updateHistory } from "../../server/db/schema";
 import { listSystems } from "../../server/services/system-service";
 
 describe("database startup cleanup", () => {
@@ -314,6 +314,70 @@ describe("database startup cleanup", () => {
     expect(restarted[0].rebootDismissedUptimeSeconds).toBeNull();
     expect(restarted[0].rebootDismissedAt).toBeNull();
     expect(restarted[0].isReachable).toBe(1);
+  });
+
+  test("keeps custom package manager config keys manager-local during startup migration", () => {
+    const db = getDb();
+    db.insert(customPackageManagers).values({
+      name: "hermes",
+      label: "Hermes Agent",
+      configEntries: JSON.stringify([
+        { key: "agentPath", defaultValue: "/opt/hermes/bin/hermes", description: "Agent path" },
+      ]),
+    }).run();
+    const system = db.insert(systems).values({
+      name: "Hermes host",
+      hostname: "hermes.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      pkgManagerConfigs: JSON.stringify({
+        hermes: {
+          agentPath: "/srv/hermes/bin/hermes",
+        },
+      }),
+    }).returning({ id: systems.id }).get();
+    const script = db.insert(customScripts).values({
+      name: "Detect Hermes Agent",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "hermes",
+      steps: JSON.stringify([
+        { label: "Detect", command: "test -x {{config.agentPath}}" },
+      ]),
+    }).returning({ id: customScripts.id }).get();
+
+    closeDatabase();
+    initDatabase(dbPath);
+
+    const restartedDb = getDb();
+    const manager = restartedDb
+      .select()
+      .from(customPackageManagers)
+      .where(eq(customPackageManagers.name, "hermes"))
+      .get();
+    const restartedSystem = restartedDb
+      .select()
+      .from(systems)
+      .where(eq(systems.id, system.id))
+      .get();
+    const restartedScript = restartedDb
+      .select()
+      .from(customScripts)
+      .where(eq(customScripts.id, script.id))
+      .get();
+
+    expect(JSON.parse(manager?.configEntries ?? "[]")).toEqual([
+      { key: "agentPath", defaultValue: "/opt/hermes/bin/hermes", description: "Agent path" },
+    ]);
+    expect(JSON.parse(restartedSystem?.pkgManagerConfigs ?? "{}")).toEqual({
+      hermes: {
+        agentPath: "/srv/hermes/bin/hermes",
+      },
+    });
+    expect(JSON.parse(restartedScript?.steps ?? "[]")).toEqual([
+      { label: "Detect", command: "test -x {{config.agentPath}}" },
+    ]);
   });
 
   test("creates the hidden_updates table on startup", () => {

@@ -119,17 +119,22 @@ describe("package-manager configs", () => {
     ], managers, "apt")).toBe("Custom config key defaultUpgradeMode collides with a built-in apt config key");
   });
 
-  test("rejects duplicate and colliding custom config entry keys", () => {
+  test("rejects duplicate custom config entry keys within one manager", () => {
     expect(validateCustomPackageManagerConfigEntries([
       { key: "channel", defaultValue: "stable" },
       { key: "channel", defaultValue: "edge" },
-    ])).toBe("Duplicate custom config key: channel");
+    ], [], "brewlinux")).toBe("Duplicate custom config key: channel");
 
     expect(validateCustomPackageManagerConfigEntries([
       { key: "channel", defaultValue: "stable" },
     ], [
       { name: "otherpm", configEntries: [{ key: "channel", defaultValue: "edge" }] },
-    ])).toBe("Custom config key channel is already used by otherpm");
+    ], "brewlinux")).toBeNull();
+    expect(validateCustomPackageManagerConfigEntries([
+      { key: "mirror", defaultValue: "internal" },
+    ], [
+      { name: "dnf", configEntries: [{ key: "mirror", defaultValue: "public" }] },
+    ], "apt")).toBeNull();
 
     expect(validateCustomPackageManagerConfigEntries([
       { key: "autoAcceptEulaOnUpgradePrefix", defaultValue: "unsafe" },

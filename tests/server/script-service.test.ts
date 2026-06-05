@@ -14,9 +14,11 @@ import {
   createScript,
   deleteCustomPackageManager,
   deleteScript,
+  exportCustomPackageManagerBundle,
   formatShellCommand,
   getBuiltinScripts,
   getSystemOverrides,
+  importCustomPackageManagerBundle,
   listScriptUsages,
   listScripts,
   parseCustomInstalledPackages,
@@ -808,6 +810,165 @@ describe("script service", () => {
     ]);
   });
 
+  test("exports and imports custom package managers with their custom scripts", () => {
+    createCustomPackageManager({
+      name: "brewlinux",
+      label: "Linuxbrew",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
+    });
+    createScript({
+      name: "Detect Linuxbrew",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "brewlinux",
+      isDefault: true,
+      steps: [{ label: "Detect", command: "command -v brew >/dev/null && echo found" }],
+    });
+    createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+    });
+
+    const bundle = exportCustomPackageManagerBundle("brewlinux");
+    expect(bundle.packageManager).toMatchObject({
+      name: "brewlinux",
+      label: "Linuxbrew",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
+    });
+    expect(bundle.scripts.map((script) => script.name)).toEqual([
+      "Check Linuxbrew",
+      "Detect Linuxbrew",
+    ]);
+
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-scripts-import-"));
+    initDatabase(join(tempDir, "dashboard.db"));
+
+    const firstImport = importCustomPackageManagerBundle(bundle);
+    expect(firstImport.createdScripts).toBe(2);
+    expect(firstImport.updatedScripts).toBe(0);
+    expect(listScripts().packageManagers.find((manager) => manager.name === "brewlinux")).toMatchObject({
+      label: "Linuxbrew",
+      configEntries: [
+        { key: "channel", description: "Release channel", defaultValue: "stable" },
+      ],
+    });
+    expect(listScripts().scripts.filter((script) => script.pkgManager === "brewlinux" && !script.readonly)).toHaveLength(2);
+
+    const updatedBundle = {
+      ...bundle,
+      scripts: bundle.scripts.map((script) =>
+        script.name === "Check Linuxbrew"
+          ? { ...script, steps: [{ label: "Check", command: "brew outdated --json" }] }
+          : script
+      ),
+    };
+    const secondImport = importCustomPackageManagerBundle(updatedBundle);
+    expect(secondImport.createdScripts).toBe(0);
+    expect(secondImport.updatedScripts).toBe(2);
+    expect(listScripts().scripts.filter((script) => script.pkgManager === "brewlinux" && !script.readonly)).toHaveLength(2);
+    expect(listScripts().scripts.find((script) => script.name === "Check Linuxbrew")?.steps[0]?.command)
+      .toBe("brew outdated --json");
+  });
+
+  test("normalizes custom parser config fields to the script operation", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    const checkScript = createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+        installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
+        successExitCodes: [0],
+        updatesExitCodes: [100],
+      },
+    });
+    const listScript = createScript({
+      name: "List Linuxbrew",
+      type: "package_manager",
+      operation: "list_installed_packages",
+      pkgManager: "brewlinux",
+      steps: [{ label: "List", command: "brew list --versions" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+        installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
+        successExitCodes: [0],
+        updatesExitCodes: [100],
+      },
+    });
+
+    expect(checkScript.parserConfig).toEqual({
+      updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      successExitCodes: [0],
+      updatesExitCodes: [100],
+    });
+    expect(listScript.parserConfig).toEqual({
+      installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
+      successExitCodes: [0],
+    });
+
+    const bundle = exportCustomPackageManagerBundle("brewlinux");
+    expect(bundle.scripts.find((script) => script.name === "Check Linuxbrew")?.parserConfig).toEqual({
+      updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+      successExitCodes: [0],
+      updatesExitCodes: [100],
+    });
+    expect(bundle.scripts.find((script) => script.name === "List Linuxbrew")?.parserConfig).toEqual({
+      installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
+      successExitCodes: [0],
+    });
+  });
+
+  test("imports custom package manager bundles with an overridden key and label", () => {
+    const result = importCustomPackageManagerBundle({
+      format: "ludash.custom-package-manager.v1",
+      exportedAt: "2026-06-05T00:00:00.000Z",
+      packageManager: {
+        name: "brewlinux-dev",
+        label: "Linuxbrew Dev",
+        parserConfig: null,
+        configEntries: [],
+      },
+      scripts: [
+        {
+          name: "Detect Linuxbrew",
+          description: null,
+          type: "package_manager",
+          operation: "detect",
+          pkgManager: "brewlinux",
+          isDefault: true,
+          steps: [{ label: "Detect", command: "command -v brew && echo found" }],
+          parserConfig: null,
+          systemInfoConfig: null,
+          sourceScriptId: null,
+        },
+      ],
+    });
+
+    expect(result.manager).toMatchObject({
+      name: "brewlinux-dev",
+      label: "Linuxbrew Dev",
+    });
+    expect(result.scripts[0]).toMatchObject({
+      pkgManager: "brewlinux-dev",
+      name: "Detect Linuxbrew",
+    });
+  });
+
   test("parses installed-package snapshots for user-defined package managers", () => {
     const parserConfig = {
       installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<architecture>\\S+)$",
@@ -901,6 +1062,8 @@ describe("script service", () => {
     expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
       name: "{{config.channel}}",
     }));
+    expect(listScripts().scripts.find((entry) => entry.id === script.id)?.steps[0]?.command)
+      .toBe("brew update --{{config.channel}}");
     expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
       name: "{{config.someKey}}",
     }));
@@ -921,6 +1084,12 @@ describe("script service", () => {
       pkgManager: "brewlinux",
       pkgManagerConfig: { channel: "edge" },
     })[0]?.command).toBe("brew update --edge");
+    expect(resolveRuntimeSteps({
+      systemId: 10,
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      pkgManagerConfig: { channel: "beta" },
+    })[0]?.command).toBe("brew update --beta");
     expect(script.pkgManager).toBe("brewlinux");
   });
 
@@ -948,6 +1117,8 @@ describe("script service", () => {
       pkgManager: "apt",
       pkgManagerConfig: { defaultUpgradeMode: "full-upgrade" },
     })[0]?.command).toBe("echo full-upgrade internal");
+    expect(listScripts().scripts.find((entry) => entry.id === script.id)?.steps[0]?.command)
+      .toBe("echo {{config.defaultUpgradeMode}} {{config.mirror}}");
     expect(listScripts().placeholders).not.toContainEqual(expect.objectContaining({
       name: "{{config.mirror}}",
     }));
@@ -964,6 +1135,84 @@ describe("script service", () => {
     });
 
     expect(() => deleteCustomPackageManager("brewlinux")).toThrow(/used by one or more scripts/);
+  });
+
+  test("deletes custom package managers with scripts when explicitly requested", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    const script = createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+    });
+    insertSystem(16);
+    setSystemOverrides(16, {
+      [buildOperationKey("check_updates", "brewlinux")]: script.id,
+    });
+
+    deleteCustomPackageManager("brewlinux", { deleteScripts: true });
+
+    expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(false);
+    expect(listScripts().scripts.some((entry) => entry.id === script.id)).toBe(false);
+    expect(getDb().select().from(systemScriptOverrides).where(eq(systemScriptOverrides.scriptId, script.id)).all()).toEqual([]);
+  });
+
+  test("does not delete package manager scripts that are still assigned to active systems", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    const script = createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+    });
+    insertSystem(17);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["brewlinux"]) })
+      .where(eq(systems.id, 17))
+      .run();
+    setSystemOverrides(17, {
+      [buildOperationKey("check_updates", "brewlinux")]: script.id,
+    });
+
+    expect(() => deleteCustomPackageManager("brewlinux", { deleteScripts: true }))
+      .toThrow(/scripts assigned to one or more systems/);
+    expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(true);
+    expect(listScripts().scripts.some((entry) => entry.id === script.id)).toBe(true);
+    expect(getDb().select().from(systemScriptOverrides).where(eq(systemScriptOverrides.scriptId, script.id)).all()).toHaveLength(1);
+  });
+
+  test("does not delete custom package managers that are still active on systems", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    insertSystem(18);
+    getDb()
+      .update(systems)
+      .set({ detectedPkgManagers: JSON.stringify(["brewlinux"]) })
+      .where(eq(systems.id, 18))
+      .run();
+
+    expect(() => deleteCustomPackageManager("brewlinux"))
+      .toThrow(/enabled or detected on 1 system: system-18/);
+    expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(true);
+  });
+
+  test("deletes custom package managers that are detected but disabled on systems", () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    insertSystem(19);
+    getDb()
+      .update(systems)
+      .set({
+        detectedPkgManagers: JSON.stringify(["brewlinux"]),
+        disabledPkgManagers: JSON.stringify(["brewlinux"]),
+      })
+      .where(eq(systems.id, 19))
+      .run();
+
+    deleteCustomPackageManager("brewlinux");
+
+    expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(false);
   });
 
   test("deletes unused custom package managers", () => {

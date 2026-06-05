@@ -7,6 +7,7 @@ const {
   mockUseCreateScript,
   mockUseDeletePackageManager,
   mockUseDeleteScript,
+  mockUseImportPackageManagerBundle,
   mockUseScripts,
   mockUseToast,
   mockUseUpdatePackageManager,
@@ -16,6 +17,7 @@ const {
   mockUseCreateScript: vi.fn(),
   mockUseDeletePackageManager: vi.fn(),
   mockUseDeleteScript: vi.fn(),
+  mockUseImportPackageManagerBundle: vi.fn(),
   mockUseScripts: vi.fn(),
   mockUseToast: vi.fn(),
   mockUseUpdatePackageManager: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock("../../client/lib/scripts", async () => {
     useCreateScript: mockUseCreateScript,
     useDeletePackageManager: mockUseDeletePackageManager,
     useDeleteScript: mockUseDeleteScript,
+    useImportPackageManagerBundle: mockUseImportPackageManagerBundle,
     useScripts: mockUseScripts,
     useUpdatePackageManager: mockUseUpdatePackageManager,
     useUpdateScript: mockUseUpdateScript,
@@ -86,6 +89,7 @@ describe("Scripts page", () => {
     mockUseCreateScript.mockReturnValue(mutation);
     mockUseDeletePackageManager.mockReturnValue(mutation);
     mockUseDeleteScript.mockReturnValue(mutation);
+    mockUseImportPackageManagerBundle.mockReturnValue(mutation);
     mockUseUpdatePackageManager.mockReturnValue(mutation);
     mockUseUpdateScript.mockReturnValue(mutation);
     mockUseToast.mockReturnValue({ addToast: vi.fn() });

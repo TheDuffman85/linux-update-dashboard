@@ -97,6 +97,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+export function getLegacyCustomConfigKey(manager: string, key: string): string {
+  const trimmed = key.trim();
+  const pathPrefix = `${manager}.`;
+  if (trimmed.startsWith(pathPrefix)) return trimmed.slice(pathPrefix.length);
+  return trimmed;
+}
+
 function customConfigForManager(
   manager: string,
   rawConfig: Record<string, unknown>,
@@ -105,16 +112,21 @@ function customConfigForManager(
 ): CustomPackageManagerConfig | null {
   const definition = customManagerMap.get(manager);
   if (!definition?.configEntries?.length && !allowUnknownKeys) return null;
-  const allowedKeys = definition?.configEntries?.length
-    ? new Set(definition.configEntries.map((entry) => entry.key))
-    : null;
+  const keyMap = new Map<string, string>();
+  if (definition?.configEntries?.length) {
+    for (const entry of definition.configEntries) {
+      const targetKey = getLegacyCustomConfigKey(manager, entry.key);
+      keyMap.set(targetKey, targetKey);
+    }
+  }
   const customConfig: CustomPackageManagerConfig = {};
   for (const [key, rawValue] of Object.entries(rawConfig)) {
-    if (allowedKeys && !allowedKeys.has(key)) continue;
+    const targetKey = keyMap.size > 0 ? keyMap.get(key) : key;
+    if (!targetKey) continue;
     if (typeof rawValue === "string") {
-      customConfig[key] = rawValue;
+      customConfig[targetKey] = rawValue;
     } else if (typeof rawValue === "number" || typeof rawValue === "boolean") {
-      customConfig[key] = String(rawValue);
+      customConfig[targetKey] = String(rawValue);
     }
   }
   return Object.keys(customConfig).length > 0 ? customConfig : null;
@@ -248,7 +260,7 @@ export function normalizePackageManagerConfigs(
 
 export function validateCustomPackageManagerConfigEntries(
   entries: unknown,
-  existingManagers: CustomPackageManagerConfigDefinition[] = [],
+  _existingManagers: CustomPackageManagerConfigDefinition[] = [],
   currentManagerName?: string,
 ): string | null {
   if (entries === undefined || entries === null) return null;
@@ -258,29 +270,19 @@ export function validateCustomPackageManagerConfigEntries(
 
   const seen = new Set<string>();
   const currentBuiltinKeys = currentManagerName ? BUILTIN_CONFIG_KEYS[currentManagerName] ?? [] : [];
-  const otherKeys = new Map<string, string>();
-  for (const manager of existingManagers) {
-    if (currentManagerName && manager.name === currentManagerName) continue;
-    for (const entry of manager.configEntries ?? []) {
-      otherKeys.set(entry.key, manager.name);
-    }
-  }
-
   for (const [index, entry] of entries.entries()) {
     if (!isRecord(entry)) return `configEntries.${index} must be an object`;
     if (typeof entry.key !== "string" || !CUSTOM_CONFIG_KEY_PATTERN.test(entry.key.trim())) {
       return `configEntries.${index}.key must start with a letter and contain only letters, numbers, underscores, or dashes`;
     }
-    const key = entry.key.trim();
+    const key = currentManagerName
+      ? getLegacyCustomConfigKey(currentManagerName, entry.key)
+      : entry.key.trim();
     if (currentBuiltinKeys.includes(key)) {
       return `Custom config key ${key} collides with a built-in ${currentManagerName} config key`;
     }
     if (seen.has(key)) return `Duplicate custom config key: ${key}`;
     seen.add(key);
-    const collidingManager = otherKeys.get(key);
-    if (collidingManager) {
-      return `Custom config key ${key} is already used by ${collidingManager}`;
-    }
     if (entry.description !== undefined && typeof entry.description !== "string") {
       return `configEntries.${index}.description must be a string`;
     }
@@ -302,6 +304,16 @@ export function normalizeCustomPackageManagerConfigEntries(entries: unknown): Cu
       defaultValue: typeof entry.defaultValue === "string" ? entry.defaultValue : "",
     }))
     .filter((entry) => CUSTOM_CONFIG_KEY_PATTERN.test(entry.key));
+}
+
+export function normalizeCustomPackageManagerConfigEntriesForManager(
+  manager: string,
+  entries: unknown,
+): CustomPackageManagerConfigEntry[] {
+  return normalizeCustomPackageManagerConfigEntries(entries).map((entry) => ({
+    ...entry,
+    key: getLegacyCustomConfigKey(manager, entry.key),
+  }));
 }
 
 export function validatePackageManagerConfigsInput(
@@ -328,7 +340,9 @@ export function validatePackageManagerConfigsInput(
     }
 
     const keys = Object.keys(rawConfig);
-    const customConfigKeys = new Set((customManager?.configEntries ?? []).map((entry) => entry.key));
+    const customConfigKeys = new Set((customManager?.configEntries ?? []).map((entry) =>
+      getLegacyCustomConfigKey(manager, entry.key),
+    ));
     if (!isBuiltinManager && customManager) {
       for (const key of keys) {
         if (!customConfigKeys.has(key)) {
@@ -343,7 +357,11 @@ export function validatePackageManagerConfigsInput(
 
     if (manager === "apt") {
       for (const key of keys) {
-        if (key !== "defaultUpgradeMode" && key !== "autoHideKeptBackUpdates" && !customConfigKeys.has(key)) {
+        if (
+          key !== "defaultUpgradeMode" &&
+          key !== "autoHideKeptBackUpdates" &&
+          !customConfigKeys.has(key)
+        ) {
           return `pkgManagerConfigs.apt.${key} is not supported`;
         }
       }
@@ -415,7 +433,11 @@ export function validatePackageManagerConfigsInput(
 
     if (manager === "yum") {
       for (const key of keys) {
-        if (key !== "autoAcceptNewSigningKeysOnCheck" && key !== "autoAcceptEulaOnUpgrade" && !customConfigKeys.has(key)) {
+        if (
+          key !== "autoAcceptNewSigningKeysOnCheck" &&
+          key !== "autoAcceptEulaOnUpgrade" &&
+          !customConfigKeys.has(key)
+        ) {
           return `pkgManagerConfigs.yum.${key} is not supported`;
         }
       }

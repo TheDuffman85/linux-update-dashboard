@@ -41,6 +41,27 @@ scripts.post("/package-managers", async (c) => {
   }
 });
 
+scripts.get("/package-managers/:name/export", (c) => {
+  try {
+    const bundle = scriptService.exportCustomPackageManagerBundle(c.req.param("name"));
+    c.header("Content-Disposition", `attachment; filename="${bundle.packageManager.name}-package-manager.json"`);
+    return c.json(bundle);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Failed to export package manager" }, 400);
+  }
+});
+
+scripts.post("/package-managers/import", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ error: "Invalid request body" }, 400);
+  try {
+    const result = scriptService.importCustomPackageManagerBundle(body);
+    return c.json(result);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Failed to import package manager" }, 400);
+  }
+});
+
 scripts.put("/package-managers/:name", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) return c.json({ error: "Invalid request body" }, 400);
@@ -56,9 +77,12 @@ scripts.put("/package-managers/:name", async (c) => {
   }
 });
 
-scripts.delete("/package-managers/:name", (c) => {
+scripts.delete("/package-managers/:name", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
   try {
-    scriptService.deleteCustomPackageManager(c.req.param("name"));
+    scriptService.deleteCustomPackageManager(c.req.param("name"), {
+      deleteScripts: body?.deleteScripts === true,
+    });
     return c.json({ status: "ok" });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Failed to delete package manager" }, 400);

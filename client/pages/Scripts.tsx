@@ -12,10 +12,13 @@ import {
   useCreateScript,
   useDeletePackageManager,
   useDeleteScript,
+  exportPackageManagerBundle,
   formatScriptCommand,
+  useImportPackageManagerBundle,
   useScripts,
   useUpdatePackageManager,
   useUpdateScript,
+  type CustomPackageManagerBundle,
   type CustomPackageManagerDefinition,
   type PlaceholderHelpEntry,
   type ScriptDefinition,
@@ -27,7 +30,10 @@ import {
   type CustomSystemInfoConfig,
   type ScriptUsage,
 } from "../lib/scripts";
-import type { CustomPackageManagerConfigEntry } from "../lib/package-manager-configs";
+import {
+  getLegacyCustomConfigKey,
+  type CustomPackageManagerConfigEntry,
+} from "../lib/package-manager-configs";
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -286,20 +292,24 @@ function normalizeConfigEntries(entries: CustomPackageManagerConfigEntry[]): Cus
     .filter((entry) => entry.key || entry.description || entry.defaultValue);
 }
 
+function normalizeConfigEntriesForManager(
+  manager: string,
+  entries: CustomPackageManagerConfigEntry[],
+): CustomPackageManagerConfigEntry[] {
+  const trimmedManager = manager.trim().toLowerCase();
+  if (!trimmedManager) return entries;
+  return entries.map((entry) => ({
+    ...entry,
+    key: getLegacyCustomConfigKey(trimmedManager, entry.key),
+  }));
+}
+
 function validateConfigEntries(
   entries: CustomPackageManagerConfigEntry[],
-  managers: CustomPackageManagerDefinition[],
   currentManagerName: string | null,
 ): string | null {
   const seen = new Set<string>();
   const keyPattern = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
-  const otherKeys = new Map<string, string>();
-  for (const manager of managers) {
-    if (currentManagerName && manager.name === currentManagerName) continue;
-    for (const entry of manager.configEntries ?? []) {
-      otherKeys.set(entry.key, manager.label);
-    }
-  }
   for (const entry of entries) {
     if (!keyPattern.test(entry.key)) {
       return "Custom config keys must start with a letter and use only letters, numbers, underscores, or dashes.";
@@ -309,8 +319,6 @@ function validateConfigEntries(
     }
     if (seen.has(entry.key)) return `Duplicate custom config key: ${entry.key}`;
     seen.add(entry.key);
-    const collidingManager = otherKeys.get(entry.key);
-    if (collidingManager) return `${entry.key} is already used by ${collidingManager}.`;
   }
   return null;
 }
@@ -746,6 +754,50 @@ function readPackageManagersPanelOpen(): boolean {
   return window.localStorage.getItem(PACKAGE_MANAGERS_PANEL_STORAGE_KEY) === "1";
 }
 
+function downloadJsonFile(filename: string, value: unknown): void {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseImportBundle(value: unknown): CustomPackageManagerBundle {
+  if (!isRecord(value) || value.format !== "ludash.custom-package-manager.v1") {
+    throw new Error("Unsupported package manager export format");
+  }
+  if (!isRecord(value.packageManager)) {
+    throw new Error("Import file is missing package manager details");
+  }
+  if (!Array.isArray(value.scripts)) {
+    throw new Error("Import file is missing scripts");
+  }
+  return {
+    ...(value as unknown as CustomPackageManagerBundle),
+    packageManager: {
+      name: typeof value.packageManager.name === "string" ? value.packageManager.name : "",
+      label: typeof value.packageManager.label === "string" ? value.packageManager.label : "",
+      parserConfig: isRecord(value.packageManager.parserConfig)
+        ? value.packageManager.parserConfig as CustomParserConfig
+        : null,
+      configEntries: Array.isArray(value.packageManager.configEntries)
+        ? value.packageManager.configEntries as CustomPackageManagerConfigEntry[]
+        : [],
+    },
+    scripts: value.scripts as CustomPackageManagerBundle["scripts"],
+  };
+}
+
 function buildParserConfig(input: {
   parseStep: string;
   updateRegex: string;
@@ -841,24 +893,22 @@ export function ScriptEditor({
   const operationProfile = profiles.get(draft.operation) ?? FALLBACK_OPERATION_PROFILES[0];
   const selectedPackageManager = draft.pkgManager ?? "";
   const usesBuiltinParser = selectedPackageManager ? BUILTIN_PACKAGE_MANAGERS.includes(selectedPackageManager) : false;
+  const builtinConfigKeys = selectedPackageManager
+    ? (PACKAGE_MANAGER_CONFIG_KEYS[selectedPackageManager] ?? []).map((entry) => ({
+        id: `config.${entry.key}`,
+        token: `{{config.${entry.key}}}`,
+        description: entry.description,
+      }))
+    : [];
   const customConfigKeys = packageManagers
     .find((manager) => manager.name === selectedPackageManager)
     ?.configEntries?.map((entry) => ({
-      key: entry.key,
+      id: `config.${entry.key}`,
+      token: `{{config.${entry.key}}}`,
       description: entry.description?.trim()
         || (entry.defaultValue ? `Default: ${entry.defaultValue}` : "Custom config value"),
     })) ?? [];
-  const configKeys = selectedPackageManager
-    ? [
-        ...(PACKAGE_MANAGER_CONFIG_KEYS[selectedPackageManager] ?? []),
-        ...customConfigKeys,
-      ]
-    : [];
-  const configReferenceEntries = configKeys.map((entry) => ({
-    id: `config.${entry.key}`,
-    token: `{{config.${entry.key}}}`,
-    description: entry.description,
-  }));
+  const configReferenceEntries = [...builtinConfigKeys, ...customConfigKeys];
   const placeholderReferenceEntries = placeholders
     .filter((placeholder) => !isGeneratedConfigPlaceholder(placeholder))
     .map((placeholder) => ({
@@ -1378,16 +1428,30 @@ function PackageManagerEditor({
   setDraft,
   onSave,
   onCancel,
+  onImport,
+  importBundle,
+  importFileName,
+  saveLabel = "Save",
   busy,
+  importing,
   editing,
 }: {
   draft: PackageManagerDraft;
   setDraft: (draft: PackageManagerDraft) => void;
   onSave: () => void;
   onCancel: () => void;
+  onImport?: () => void;
+  importBundle?: CustomPackageManagerBundle | null;
+  importFileName?: string | null;
+  saveLabel?: string;
   busy?: boolean;
+  importing?: boolean;
   editing?: boolean;
 }) {
+  const importOperations = importBundle
+    ? Array.from(new Set(importBundle.scripts.map((script) => script.operation)))
+        .sort((a, b) => PACKAGE_MANAGER_OPERATIONS.indexOf(a) - PACKAGE_MANAGER_OPERATIONS.indexOf(b))
+    : [];
   const updateConfigEntry = (index: number, patch: Partial<CustomPackageManagerConfigEntry>) => {
     setDraft({
       ...draft,
@@ -1441,6 +1505,44 @@ function PackageManagerEditor({
           />
         </div>
       </div>
+      {importBundle && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+              Import Preview
+            </div>
+            {importFileName && (
+              <span className="truncate text-xs text-blue-700/80 dark:text-blue-200/80">
+                {importFileName}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Scripts
+              </div>
+              <div className="mt-1">{importBundle.scripts.length}</div>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Operations
+              </div>
+              <div className="mt-1">
+                {importOperations.length
+                  ? importOperations.map((operation) => OPERATION_LABELS[operation] ?? operation).join(", ")
+                  : "None"}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Config Entries
+              </div>
+              <div className="mt-1">{importBundle.packageManager.configEntries.length}</div>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="rounded-lg border border-border bg-slate-50/60 p-3 dark:bg-slate-900/30">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
@@ -1509,13 +1611,27 @@ function PackageManagerEditor({
           </p>
         )}
       </div>
-      <div className="flex justify-end gap-3">
-        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
-          Cancel
-        </button>
-        <button type="button" disabled={busy} onClick={onSave} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-          {busy ? <span className="spinner spinner-sm" /> : "Save"}
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {!editing && onImport ? (
+          <button
+            type="button"
+            onClick={onImport}
+            disabled={importing}
+            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+          >
+            {importBundle ? "Replace Import File" : "Load Import File"}
+          </button>
+        ) : (
+          <span />
+        )}
+        <div className="flex justify-end gap-3">
+          <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
+            Cancel
+          </button>
+          <button type="button" disabled={busy} onClick={onSave} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+            {busy ? <span className="spinner spinner-sm" /> : saveLabel}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1526,12 +1642,14 @@ function PackageManagersPanel({
   open,
   onOpenChange,
   onEditManager,
+  onExportManager,
   onDeleteManager,
 }: {
   managers: ManagedPackageManager[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onEditManager: (manager: ManagedPackageManager) => void;
+  onExportManager: (manager: ManagedPackageManager) => void;
   onDeleteManager: (manager: ManagedPackageManager) => void;
 }) {
   const customCount = managers.filter((manager) => !manager.builtin).length;
@@ -1613,17 +1731,30 @@ function PackageManagersPanel({
                         </svg>
                       </button>
                       {!manager.builtin && (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteManager(manager)}
-                          className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                          title="Delete package manager"
-                          aria-label={`Delete ${manager.label}`}
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onExportManager(manager)}
+                            className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                            title="Export package manager"
+                            aria-label={`Export ${manager.label}`}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v10m0 0l-4-4m4 4l4-4M5 20h14" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteManager(manager)}
+                            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
+                            title="Delete package manager"
+                            aria-label={`Delete ${manager.label}`}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </>
                       )}
                     </div>
                   )}
@@ -1664,18 +1795,23 @@ export default function Scripts() {
   const createPackageManager = useCreatePackageManager();
   const updatePackageManager = useUpdatePackageManager();
   const deletePackageManager = useDeletePackageManager();
+  const importPackageManagerBundle = useImportPackageManagerBundle();
   const { addToast } = useToast();
   const [typeFilter, setTypeFilter] = useState<"all" | ScriptType>("all");
   const [sourceFilter, setSourceFilter] = useState<"all" | "builtin" | "custom">("all");
   const [managerFilter, setManagerFilter] = useState("all");
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [packageManagersOpen, setPackageManagersOpen] = useState(readPackageManagersPanelOpen);
   const [editing, setEditing] = useState<ScriptDefinition | null>(null);
   const [showPackageManager, setShowPackageManager] = useState(false);
   const [editingPackageManager, setEditingPackageManager] = useState<CustomPackageManagerDefinition | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScriptDefinition | null>(null);
   const [deleteManagerTarget, setDeleteManagerTarget] = useState<ManagedPackageManager | null>(null);
+  const [deleteManagerScripts, setDeleteManagerScripts] = useState(false);
   const [usageTarget, setUsageTarget] = useState<ScriptDefinition | null>(null);
   const [packageManagerDraft, setPackageManagerDraft] = useState(emptyPackageManager());
+  const [packageManagerImportBundle, setPackageManagerImportBundle] = useState<CustomPackageManagerBundle | null>(null);
+  const [packageManagerImportFileName, setPackageManagerImportFileName] = useState<string | null>(null);
   const [copyingScriptId, setCopyingScriptId] = useState<string | null>(null);
   const [defaultingScriptId, setDefaultingScriptId] = useState<string | null>(null);
 
@@ -1798,11 +1934,14 @@ export default function Scripts() {
   };
 
   const handleSavePackageManager = () => {
-    const configEntries = normalizeConfigEntries(packageManagerDraft.configEntries);
+    const managerName = packageManagerDraft.name.trim().toLowerCase();
+    const configEntries = normalizeConfigEntriesForManager(
+      managerName,
+      normalizeConfigEntries(packageManagerDraft.configEntries),
+    );
     const configEntryError = validateConfigEntries(
       configEntries,
-      data?.packageManagers ?? [],
-      editingPackageManager?.name ?? null,
+      editingPackageManager?.name ?? (packageManagerImportBundle ? managerName : null),
     );
     if (configEntryError) {
       addToast(configEntryError, "danger");
@@ -1810,13 +1949,48 @@ export default function Scripts() {
     }
     const payload = {
       ...packageManagerDraft,
+      name: managerName,
       configEntries,
     };
+    if (packageManagerImportBundle && !editingPackageManager) {
+      const bundle: CustomPackageManagerBundle = {
+        ...packageManagerImportBundle,
+        packageManager: {
+          ...packageManagerImportBundle.packageManager,
+          name: payload.name,
+          label: payload.label,
+          configEntries,
+        },
+        scripts: packageManagerImportBundle.scripts.map((script) => ({
+          ...script,
+          pkgManager: payload.name,
+        })),
+      };
+      importPackageManagerBundle.mutate(bundle, {
+        onSuccess: (result) => {
+          setShowPackageManager(false);
+          setEditingPackageManager(null);
+          setPackageManagerDraft(emptyPackageManager());
+          setPackageManagerImportBundle(null);
+          setPackageManagerImportFileName(null);
+          setPackageManagersOpen(true);
+          setManagerFilter(result.manager.name);
+          addToast(
+            `Package manager imported: ${result.createdScripts} scripts created, ${result.updatedScripts} updated`,
+            "success",
+          );
+        },
+        onError: (err: Error) => addToast(err.message, "danger"),
+      });
+      return;
+    }
     const callbacks = {
       onSuccess: () => {
         setShowPackageManager(false);
         setEditingPackageManager(null);
         setPackageManagerDraft(emptyPackageManager());
+        setPackageManagerImportBundle(null);
+        setPackageManagerImportFileName(null);
         addToast("Package manager saved", "success");
       },
       onError: (err: Error) => addToast(err.message, "danger"),
@@ -1831,6 +2005,8 @@ export default function Scripts() {
   const openPackageManagerModal = () => {
     setEditingPackageManager(null);
     setPackageManagerDraft(emptyPackageManager());
+    setPackageManagerImportBundle(null);
+    setPackageManagerImportFileName(null);
     setShowPackageManager(true);
   };
 
@@ -1838,6 +2014,8 @@ export default function Scripts() {
     const existing = data?.packageManagers.find((entry) => entry.name === manager.name);
     if (!existing) return;
     setEditingPackageManager(existing);
+    setPackageManagerImportBundle(null);
+    setPackageManagerImportFileName(null);
     setPackageManagerDraft({
       name: existing.name,
       label: existing.label,
@@ -1845,6 +2023,42 @@ export default function Scripts() {
       builtin: existing.builtin,
     });
     setShowPackageManager(true);
+  };
+
+  const handleExportPackageManager = async (manager: ManagedPackageManager) => {
+    try {
+      const bundle = await exportPackageManagerBundle(manager.name);
+      downloadJsonFile(`${bundle.packageManager.name}-package-manager.json`, bundle);
+      addToast("Package manager exported", "success");
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : "Failed to export package manager", "danger");
+    }
+  };
+
+  const handleImportPackageManager = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const bundle = parseImportBundle(JSON.parse(await file.text()));
+      const importedManagerName = bundle.packageManager.name.trim().toLowerCase();
+      setEditingPackageManager(null);
+      setPackageManagerDraft({
+        name: bundle.packageManager.name,
+        label: bundle.packageManager.label,
+        configEntries: (bundle.packageManager.configEntries ?? []).map((entry) => ({
+          ...entry,
+          key: getLegacyCustomConfigKey(importedManagerName, entry.key),
+        })),
+        builtin: false,
+      });
+      setPackageManagerImportBundle(bundle);
+      setPackageManagerImportFileName(file.name);
+      setShowPackageManager(true);
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : "Invalid package manager export file", "danger");
+    }
   };
 
   const createScriptForManager = (manager: ManagedPackageManager) => {
@@ -1885,6 +2099,13 @@ export default function Scripts() {
       title="Scripts"
       actions={
         <>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImportPackageManager}
+          />
           <button onClick={openPackageManagerModal} className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
             New Package Manager
           </button>
@@ -1903,7 +2124,11 @@ export default function Scripts() {
             open={packageManagersOpen}
             onOpenChange={setPackageManagersOpen}
             onEditManager={openEditPackageManager}
-            onDeleteManager={setDeleteManagerTarget}
+            onExportManager={handleExportPackageManager}
+            onDeleteManager={(manager) => {
+              setDeleteManagerScripts(false);
+              setDeleteManagerTarget(manager);
+            }}
           />
 
           <div className="flex flex-wrap gap-2">
@@ -2090,19 +2315,28 @@ export default function Scripts() {
         onClose={() => {
           setShowPackageManager(false);
           setEditingPackageManager(null);
+          setPackageManagerImportBundle(null);
+          setPackageManagerImportFileName(null);
         }}
         title={editingPackageManager ? "Edit Package Manager" : "New Package Manager"}
-        dismissible={!createPackageManager.isPending && !updatePackageManager.isPending}
+        dismissible={!createPackageManager.isPending && !updatePackageManager.isPending && !importPackageManagerBundle.isPending}
       >
         <PackageManagerEditor
           draft={packageManagerDraft}
           setDraft={setPackageManagerDraft}
           onSave={handleSavePackageManager}
+          onImport={() => importInputRef.current?.click()}
+          importBundle={packageManagerImportBundle}
+          importFileName={packageManagerImportFileName}
           onCancel={() => {
             setShowPackageManager(false);
             setEditingPackageManager(null);
+            setPackageManagerImportBundle(null);
+            setPackageManagerImportFileName(null);
           }}
-          busy={createPackageManager.isPending || updatePackageManager.isPending}
+          busy={createPackageManager.isPending || updatePackageManager.isPending || importPackageManagerBundle.isPending}
+          importing={importPackageManagerBundle.isPending}
+          saveLabel={packageManagerImportBundle ? "Import" : "Save"}
           editing={editingPackageManager !== null}
         />
       </Modal>
@@ -2132,23 +2366,56 @@ export default function Scripts() {
 
       <ConfirmDialog
         open={deleteManagerTarget !== null}
-        onClose={() => setDeleteManagerTarget(null)}
+        onClose={() => {
+          setDeleteManagerTarget(null);
+          setDeleteManagerScripts(false);
+        }}
         onConfirm={() => {
           if (!deleteManagerTarget) return;
-          deletePackageManager.mutate(deleteManagerTarget.name, {
+          deletePackageManager.mutate({
+            name: deleteManagerTarget.name,
+            deleteScripts: deleteManagerScripts,
+          }, {
             onSuccess: () => {
               if (managerFilter === deleteManagerTarget.name) setManagerFilter("all");
               setDeleteManagerTarget(null);
+              setDeleteManagerScripts(false);
               addToast("Package manager deleted", "success");
             },
             onError: (err) => addToast(err.message, "danger"),
           });
         }}
         title="Delete Package Manager"
-        message={`Delete ${deleteManagerTarget?.label ?? "this package manager"}? Managers with scripts must be cleared before they can be deleted.`}
+        message={`Delete ${deleteManagerTarget?.label ?? "this package manager"}?`}
         confirmLabel="Delete"
         danger
-      />
+      >
+        <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">
+          This package manager can only be deleted when it is disabled or no longer detected on every system.
+        </p>
+        {deleteManagerTarget?.scriptCount ? (
+          <label className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50/70 p-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-100">
+            <input
+              type="checkbox"
+              checked={deleteManagerScripts}
+              onChange={(event) => setDeleteManagerScripts(event.target.checked)}
+              className="mt-0.5 rounded border-red-300 text-red-600 focus:ring-red-500"
+            />
+            <span>
+              <span className="block font-medium">
+                Also delete {deleteManagerTarget.scriptCount} {deleteManagerTarget.scriptCount === 1 ? "script" : "scripts"}
+              </span>
+              <span className="mt-1 block text-xs text-red-700 dark:text-red-200">
+                Deletion will be blocked if any of these scripts are assigned to active systems.
+              </span>
+            </span>
+          </label>
+        ) : (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            This package manager has no scripts.
+          </p>
+        )}
+      </ConfirmDialog>
     </Layout>
   );
 }

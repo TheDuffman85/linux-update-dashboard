@@ -13,6 +13,7 @@ import { SSH_CREDENTIAL_KINDS } from "../../lib/credential-form";
 import { validateSystemForm } from "../../lib/system-form-validation";
 import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/systems";
 import {
+  getLegacyCustomConfigKey,
   normalizePackageManagerConfigs,
   SUPPORTED_PACKAGE_MANAGER_CONFIGS,
   type CustomPackageManagerConfig,
@@ -298,7 +299,7 @@ export function SystemForm({
       next[manager.name] = Object.fromEntries(
         manager.configEntries.map((entry) => [
           entry.key,
-          current[entry.key] ?? entry.defaultValue,
+          current[entry.key] ?? current[getLegacyCustomConfigKey(manager.name, entry.key)] ?? entry.defaultValue,
         ]),
       );
     }
@@ -1152,7 +1153,7 @@ export function SystemForm({
                           <div key={entry.key}>
                             <label className={labelClass}>{entry.key}</label>
                             <input
-                              value={config[entry.key] ?? entry.defaultValue}
+                              value={config[entry.key] ?? config[getLegacyCustomConfigKey(manager, entry.key)] ?? entry.defaultValue}
                               onChange={(e) => setCustomManagerConfigValue(manager, entry.key, e.target.value)}
                               className={inputClass}
                             />

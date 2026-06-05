@@ -63,6 +63,13 @@ export interface CustomPackageManagerConfigDefinition {
   configEntries?: CustomPackageManagerConfigEntry[] | null;
 }
 
+export function getLegacyCustomConfigKey(manager: string, key: string): string {
+  const trimmed = key.trim();
+  const pathPrefix = `${manager}.`;
+  if (trimmed.startsWith(pathPrefix)) return trimmed.slice(pathPrefix.length);
+  return trimmed;
+}
+
 function mergeCustomConfig(
   next: PackageManagerConfigs,
   manager: string,
@@ -72,16 +79,21 @@ function mergeCustomConfig(
 ): void {
   const definition = customManagerMap.get(manager);
   if (!definition?.configEntries?.length && !allowUnknownKeys) return;
-  const allowedKeys = definition?.configEntries?.length
-    ? new Set(definition.configEntries.map((entry) => entry.key))
-    : null;
+  const keyMap = new Map<string, string>();
+  if (definition?.configEntries?.length) {
+    for (const entry of definition.configEntries) {
+      const targetKey = getLegacyCustomConfigKey(manager, entry.key);
+      keyMap.set(targetKey, targetKey);
+    }
+  }
   const config: CustomPackageManagerConfig = {};
   for (const [key, raw] of Object.entries(rawConfig)) {
-    if (allowedKeys && !allowedKeys.has(key)) continue;
+    const targetKey = keyMap.size > 0 ? keyMap.get(key) : key;
+    if (!targetKey) continue;
     if (typeof raw === "string") {
-      config[key] = raw;
+      config[targetKey] = raw;
     } else if (typeof raw === "number" || typeof raw === "boolean") {
-      config[key] = String(raw);
+      config[targetKey] = String(raw);
     }
   }
   if (Object.keys(config).length === 0) return;

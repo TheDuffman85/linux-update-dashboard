@@ -1,4 +1,5 @@
 import { Modal } from "./Modal";
+import type { ReactNode } from "react";
 
 export function ConfirmDialog({
   open,
@@ -6,6 +7,7 @@ export function ConfirmDialog({
   onConfirm,
   title,
   message,
+  children,
   confirmLabel = "Confirm",
   danger = false,
   loading = false,
@@ -15,6 +17,7 @@ export function ConfirmDialog({
   onConfirm: () => void;
   title: string;
   message: string;
+  children?: ReactNode;
   confirmLabel?: string;
   danger?: boolean;
   loading?: boolean;
@@ -24,6 +27,7 @@ export function ConfirmDialog({
       <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">
         {message}
       </p>
+      {children ? <div className="mb-6">{children}</div> : null}
       <div className="flex justify-end gap-3">
         <button
           onClick={onClose}

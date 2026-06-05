@@ -21,4 +21,17 @@ describe("client package-manager configs", () => {
       },
     });
   });
+
+  test("normalizes custom config values to visible config keys", () => {
+    expect(normalizePackageManagerConfigs({
+      brewlinux: { channel: "edge" },
+    }, [
+      {
+        name: "brewlinux",
+        configEntries: [{ key: "channel", defaultValue: "stable" }],
+      },
+    ])).toEqual({
+      brewlinux: { channel: "edge" },
+    });
+  });
 });
