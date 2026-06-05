@@ -56,6 +56,9 @@ export interface CustomParserConfig {
   installedPackageRegex?: string;
   securityRegex?: string;
   keptBackRegex?: string;
+  issueRegex?: string;
+  issueTitle?: string;
+  issueMessage?: string;
   successExitCodes?: number[];
   updatesExitCodes?: number[];
 }
@@ -176,6 +179,8 @@ const MAX_STEP_LABEL_LENGTH = 120;
 const MAX_STEP_COMMAND_LENGTH = 8000;
 const MAX_SCRIPT_CONFIG_JSON_LENGTH = 5000;
 const MAX_REGEX_LENGTH = 500;
+const MAX_ISSUE_TITLE_LENGTH = 160;
+const MAX_ISSUE_MESSAGE_LENGTH = 1000;
 const MAX_EXIT_CODE_COUNT = 16;
 const MAX_PARSE_STEP = 20;
 const PACKAGE_MANAGER_NAME_PATTERN = /^[a-z][a-z0-9_-]{1,31}$/;
@@ -449,6 +454,15 @@ function validateExitCodes(value: unknown, field: string): string | null {
   return null;
 }
 
+function validateOptionalStringLength(value: unknown, field: string, maxLength: number): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") return `${field} must be a string`;
+  if (value.trim().length > maxLength) {
+    return `${field} must be ${maxLength} characters or less`;
+  }
+  return null;
+}
+
 function validateParserConfig(config: unknown, field = "parserConfig"): string | null {
   if (config === undefined || config === null) return null;
   if (!isRecord(config)) return `${field} must be an object`;
@@ -465,6 +479,9 @@ function validateParserConfig(config: unknown, field = "parserConfig"): string |
     validateRegexSource(config.installedPackageRegex, `${field}.installedPackageRegex`, { requireInstalledPackageGroups: config.installedPackageRegex !== undefined }) ||
     validateRegexSource(config.securityRegex, `${field}.securityRegex`) ||
     validateRegexSource(config.keptBackRegex, `${field}.keptBackRegex`) ||
+    validateRegexSource(config.issueRegex, `${field}.issueRegex`) ||
+    validateOptionalStringLength(config.issueTitle, `${field}.issueTitle`, MAX_ISSUE_TITLE_LENGTH) ||
+    validateOptionalStringLength(config.issueMessage, `${field}.issueMessage`, MAX_ISSUE_MESSAGE_LENGTH) ||
     validateExitCodes(config.successExitCodes, `${field}.successExitCodes`) ||
     validateExitCodes(config.updatesExitCodes, `${field}.updatesExitCodes`)
   );
@@ -474,12 +491,18 @@ function normalizeParserConfigForOperation(
   config: CustomParserConfig | null | undefined,
   operation: ScriptOperation,
 ): CustomParserConfig | null {
-  if (!config || (operation !== "check_updates" && operation !== "list_installed_packages")) {
+  if (!config || (
+    operation !== "check_updates" &&
+    operation !== "list_installed_packages" &&
+    operation !== "repair_issue"
+  )) {
     return null;
   }
   const next: CustomParserConfig = {};
-  if (config.parseStep !== undefined) next.parseStep = config.parseStep;
-  if (config.successExitCodes !== undefined) next.successExitCodes = config.successExitCodes;
+  if (operation === "check_updates" || operation === "list_installed_packages") {
+    if (config.parseStep !== undefined) next.parseStep = config.parseStep;
+    if (config.successExitCodes !== undefined) next.successExitCodes = config.successExitCodes;
+  }
 
   if (operation === "check_updates") {
     if (config.updateRegex !== undefined) next.updateRegex = config.updateRegex;
@@ -490,6 +513,12 @@ function normalizeParserConfigForOperation(
 
   if (operation === "list_installed_packages") {
     if (config.installedPackageRegex !== undefined) next.installedPackageRegex = config.installedPackageRegex;
+  }
+
+  if (operation === "repair_issue") {
+    if (config.issueRegex !== undefined) next.issueRegex = config.issueRegex;
+    if (config.issueTitle !== undefined) next.issueTitle = config.issueTitle;
+    if (config.issueMessage !== undefined) next.issueMessage = config.issueMessage;
   }
 
   return Object.keys(next).length > 0 ? next : null;

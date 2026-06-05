@@ -321,6 +321,31 @@ describe("Scripts page", () => {
     expect(html).toContain("streamed only");
   });
 
+  test("shows issue detection rules on custom repair scripts", () => {
+    const html = renderEditor({
+      id: "custom:15",
+      readonly: false,
+      name: "Repair Linuxbrew",
+      description: null,
+      type: "package_manager",
+      operation: "repair_issue",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Repair", command: "brew repair" }],
+      parserConfig: {
+        issueRegex: "database needs repair",
+        issueTitle: "Linuxbrew needs repair",
+        issueMessage: "Run repair.",
+      },
+      systemInfoConfig: null,
+      sourceScriptId: null,
+    });
+
+    expect(html).toContain("Issue Detection");
+    expect(html).toContain("Issue Regex");
+    expect(html).toContain("database needs repair");
+    expect(html).not.toContain("Advanced parser rules");
+  });
+
   test("warns when a saved parser output step no longer exists", () => {
     const html = renderEditor({
       id: "custom:12",

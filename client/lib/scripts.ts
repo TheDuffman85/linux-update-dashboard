@@ -26,6 +26,9 @@ export interface CustomParserConfig {
   installedPackageRegex?: string;
   securityRegex?: string;
   keptBackRegex?: string;
+  issueRegex?: string;
+  issueTitle?: string;
+  issueMessage?: string;
   successExitCodes?: number[];
   updatesExitCodes?: number[];
 }

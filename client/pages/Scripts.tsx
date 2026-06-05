@@ -244,6 +244,7 @@ const PACKAGE_MANAGERS_PANEL_STORAGE_KEY = "scripts.packageManagersPanelOpen";
 type PackageManagerDraft = {
   name: string;
   label: string;
+  parserConfig: CustomParserConfig | null;
   configEntries: CustomPackageManagerConfigEntry[];
   builtin?: boolean;
 };
@@ -277,6 +278,7 @@ function emptyPackageManager(): PackageManagerDraft {
   return {
     name: "",
     label: "",
+    parserConfig: null,
     configEntries: [],
     builtin: false,
   };
@@ -826,6 +828,34 @@ function buildParserConfig(input: {
   return Object.keys(config).length ? config : null;
 }
 
+function updateParserConfigField(
+  parserConfig: CustomParserConfig | null | undefined,
+  field: keyof Pick<CustomParserConfig, "issueRegex" | "issueTitle" | "issueMessage">,
+  value: string,
+): CustomParserConfig | null {
+  const next: CustomParserConfig = { ...(parserConfig ?? {}) };
+  const trimmed = value.trim();
+  if (trimmed) next[field] = trimmed;
+  else delete next[field];
+  return Object.keys(next).length ? next : null;
+}
+
+function buildIssueDetectionConfig(input: {
+  issueRegex: string;
+  issueTitle: string;
+  issueMessage: string;
+}): CustomParserConfig | null {
+  return updateParserConfigField(
+    updateParserConfigField(
+      updateParserConfigField(null, "issueRegex", input.issueRegex),
+      "issueTitle",
+      input.issueTitle,
+    ),
+    "issueMessage",
+    input.issueMessage,
+  );
+}
+
 function buildSystemInfoConfig(
   mode: "builtin" | "sectioned",
   fieldSections: Record<string, string>,
@@ -869,6 +899,9 @@ export function ScriptEditor({
     installedPackageRegex: script.parserConfig?.installedPackageRegex ?? "",
     securityRegex: script.parserConfig?.securityRegex ?? "",
     keptBackRegex: script.parserConfig?.keptBackRegex ?? "",
+    issueRegex: script.parserConfig?.issueRegex ?? "",
+    issueTitle: script.parserConfig?.issueTitle ?? "",
+    issueMessage: script.parserConfig?.issueMessage ?? "",
     successExitCodes: joinExitCodes(script.parserConfig?.successExitCodes),
     updatesExitCodes: joinExitCodes(script.parserConfig?.updatesExitCodes),
   });
@@ -920,6 +953,10 @@ export function ScriptEditor({
   const showParserConfig =
     draft.type === "package_manager" &&
     (draft.operation === "check_updates" || draft.operation === "list_installed_packages") &&
+    !usesBuiltinParser;
+  const showIssueDetectionConfig =
+    draft.type === "package_manager" &&
+    draft.operation === "repair_issue" &&
     !usesBuiltinParser;
   const showSystemInfoConfig = draft.type === "system" && draft.operation === "system_info";
   const singleStepOperation = draft.operation === "detect";
@@ -1060,7 +1097,11 @@ export function ScriptEditor({
         pkgManager,
         isDefault: draft.isDefault ?? false,
         steps: normalizedSteps,
-        parserConfig: showParserConfig ? buildParserConfig(parserConfig) : null,
+        parserConfig: showParserConfig
+          ? buildParserConfig(parserConfig)
+          : showIssueDetectionConfig
+            ? buildIssueDetectionConfig(parserConfig)
+            : null,
         systemInfoConfig: showSystemInfoConfig
           ? buildSystemInfoConfig(systemInfoMode, systemInfoSections, rebootRequiredRegex)
           : null,
@@ -1411,6 +1452,48 @@ export function ScriptEditor({
         </details>
       )}
 
+      {showIssueDetectionConfig && (
+        <details className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-200">
+            Issue Detection
+          </summary>
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Match check output that should show a package-manager warning and enable this repair action.
+            </p>
+            <div>
+              <label className={labelClass}>Issue Regex</label>
+              <textarea
+                value={parserConfig.issueRegex}
+                onChange={(e) => setParserConfig({ ...parserConfig, issueRegex: e.target.value })}
+                className={`${inputClass} min-h-20 font-mono text-xs`}
+                placeholder="needs repair|database is locked"
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label className={labelClass}>Issue Title</label>
+                <input
+                  value={parserConfig.issueTitle}
+                  onChange={(e) => setParserConfig({ ...parserConfig, issueTitle: e.target.value })}
+                  className={inputClass}
+                  placeholder={`${selectedPackageManager || "Package manager"} needs repair`}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Issue Message</label>
+                <input
+                  value={parserConfig.issueMessage}
+                  onChange={(e) => setParserConfig({ ...parserConfig, issueMessage: e.target.value })}
+                  className={inputClass}
+                  placeholder="Run this repair action, then refresh updates."
+                />
+              </div>
+            </div>
+          </div>
+        </details>
+      )}
+
       <div className="flex justify-end gap-3">
         <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
           Cancel
@@ -1475,7 +1558,6 @@ function PackageManagerEditor({
       configEntries: draft.configEntries.filter((_entry, entryIndex) => entryIndex !== index),
     });
   };
-
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1844,6 +1926,7 @@ export default function Scripts() {
       const next: ManagedPackageManager = {
         name: manager,
         label: BUILTIN_PACKAGE_MANAGER_LABELS[manager] ?? manager,
+        parserConfig: null,
         configEntries: [],
         builtin: BUILTIN_PACKAGE_MANAGERS.includes(manager),
         registered: BUILTIN_PACKAGE_MANAGERS.includes(manager),
@@ -1867,6 +1950,7 @@ export default function Scripts() {
     for (const manager of data?.packageManagers ?? []) {
       ensureManager(manager.name, {
         label: manager.label,
+        parserConfig: manager.parserConfig ? { ...manager.parserConfig } : null,
         configEntries: manager.configEntries ?? [],
         builtin: manager.builtin,
         registered: true,
@@ -2019,6 +2103,7 @@ export default function Scripts() {
     setPackageManagerDraft({
       name: existing.name,
       label: existing.label,
+      parserConfig: existing.parserConfig ? { ...existing.parserConfig } : null,
       configEntries: (existing.configEntries ?? []).map((entry) => ({ ...entry })),
       builtin: existing.builtin,
     });
@@ -2047,6 +2132,9 @@ export default function Scripts() {
       setPackageManagerDraft({
         name: bundle.packageManager.name,
         label: bundle.packageManager.label,
+        parserConfig: bundle.packageManager.parserConfig
+          ? { ...bundle.packageManager.parserConfig }
+          : null,
         configEntries: (bundle.packageManager.configEntries ?? []).map((entry) => ({
           ...entry,
           key: getLegacyCustomConfigKey(importedManagerName, entry.key),

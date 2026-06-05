@@ -16,7 +16,12 @@ import {
   upsertPackageManagerIssue,
 } from "../../server/services/package-manager-issue-service";
 import { createSystem } from "../../server/services/system-service";
-import { buildOperationKey, createScript, setSystemOverrides } from "../../server/services/script-service";
+import {
+  buildOperationKey,
+  createCustomPackageManager,
+  createScript,
+  setSystemOverrides,
+} from "../../server/services/script-service";
 
 const SYSTEM_INFO_OUTPUT = `===OS===
 NAME="Debian GNU/Linux"
@@ -105,6 +110,45 @@ describe("package manager issues", () => {
       pkgManager: "dnf",
       detectedPkgManagers: JSON.stringify(["dnf"]),
     }).returning({ id: systems.id }).get().id;
+  }
+
+  function createCustomSystem(): number {
+    const systemId = getDb().insert(systems).values({
+      name: "Brew",
+      hostname: "brew.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      hostKeyVerificationEnabled: 0,
+      pkgManager: "brewlinux",
+      detectedPkgManagers: JSON.stringify(["brewlinux"]),
+    }).returning({ id: systems.id }).get().id;
+
+    createCustomPackageManager({
+      name: "brewlinux",
+      label: "Linuxbrew",
+    });
+    createScript({
+      name: "Check Linuxbrew",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew check" }],
+    });
+    createScript({
+      name: "Repair Linuxbrew",
+      type: "package_manager",
+      operation: "repair_issue",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Repair", command: "brew repair" }],
+      parserConfig: {
+        issueRegex: "database needs repair",
+        issueTitle: "Linuxbrew needs repair",
+        issueMessage: "Linuxbrew database needs repair before updates can be checked.",
+      },
+    });
+
+    return systemId;
   }
 
   test("detects interrupted dpkg from apt check failures", async () => {
@@ -276,6 +320,51 @@ describe("package manager issues", () => {
         active: 1,
       },
     ]);
+  });
+
+  test("detects and solves custom package manager issues through configured repair scripts", async () => {
+    const systemId = createCustomSystem();
+    let repaired = false;
+    const commands: string[] = [];
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      commands.push(command);
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command === "brew check") {
+        return repaired
+          ? { stdout: "", stderr: "", exitCode: 0 }
+          : { stdout: "database needs repair\n", stderr: "", exitCode: 1 };
+      }
+      if (command === "brew repair") {
+        repaired = true;
+        return { stdout: "repaired\n", stderr: "", exitCode: 0 };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await expect(checkUpdates(systemId)).rejects.toThrow(
+      "[brewlinux] Linuxbrew database needs repair",
+    );
+
+    const [issue] = listVisiblePackageManagerIssues(systemId);
+    expect(issue).toMatchObject({
+      pkgManager: "brewlinux",
+      issueKey: "custom_issue_detected",
+      title: "Linuxbrew needs repair",
+      message: "Linuxbrew database needs repair before updates can be checked.",
+      active: 1,
+    });
+
+    const result = await solvePackageManagerIssue(systemId, issue.id);
+
+    expect(result.success).toBe(true);
+    expect(commands).toContain("brew repair");
+    expect(listVisiblePackageManagerIssues(systemId)).toHaveLength(0);
   });
 
   test("solves apt dpkg issues by running repair and rechecking", async () => {

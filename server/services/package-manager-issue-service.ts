@@ -7,7 +7,8 @@ import { sudo } from "../ssh/parsers/types";
 export type PackageManagerIssueKey =
   | "apt_dpkg_interrupted"
   | "dnf_repo_key_prompt"
-  | "yum_repo_key_prompt";
+  | "yum_repo_key_prompt"
+  | "custom_issue_detected";
 
 export type PackageManagerIssueRow = typeof packageManagerIssues.$inferSelect;
 
@@ -59,6 +60,44 @@ export function detectPackageManagerIssue(
   }
 
   return null;
+}
+
+export function detectCustomPackageManagerIssue(
+  pkgManager: string,
+  label: string,
+  config: {
+    issueRegex?: string;
+    issueTitle?: string;
+    issueMessage?: string;
+  } | null | undefined,
+  output: string,
+): PackageManagerIssueInput | null {
+  const source = config?.issueRegex?.trim();
+  if (!source) return null;
+  const configuredTitle = config?.issueTitle?.trim();
+  const configuredMessage = config?.issueMessage?.trim();
+
+  let match: RegExpExecArray | null = null;
+  try {
+    match = new RegExp(source, "im").exec(output);
+  } catch {
+    return null;
+  }
+  if (!match) return null;
+
+  const title = match.groups?.title?.trim() || configuredTitle || `${label} needs repair`;
+  const message =
+    match.groups?.message?.trim() ||
+    configuredMessage ||
+    `${label} reported a package manager issue. Run the configured repair action, then refresh updates.`;
+
+  return {
+    pkgManager,
+    issueKey: "custom_issue_detected",
+    title,
+    message,
+    repairCommand: null,
+  };
 }
 
 function nowSql(): string {

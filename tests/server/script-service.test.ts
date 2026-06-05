@@ -893,6 +893,7 @@ describe("script service", () => {
       parserConfig: {
         updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
         installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
+        issueRegex: "needs repair",
         successExitCodes: [0],
         updatesExitCodes: [100],
       },
@@ -906,8 +907,23 @@ describe("script service", () => {
       parserConfig: {
         updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
         installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
+        issueRegex: "needs repair",
         successExitCodes: [0],
         updatesExitCodes: [100],
+      },
+    });
+    const repairScript = createScript({
+      name: "Repair Linuxbrew",
+      type: "package_manager",
+      operation: "repair_issue",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Repair", command: "brew repair" }],
+      parserConfig: {
+        updateRegex: "^(?<packageName>\\S+)\\s+(?<newVersion>\\S+)$",
+        issueRegex: "needs repair",
+        issueTitle: "Linuxbrew needs repair",
+        issueMessage: "Run repair",
+        successExitCodes: [0],
       },
     });
 
@@ -920,6 +936,11 @@ describe("script service", () => {
       installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
       successExitCodes: [0],
     });
+    expect(repairScript.parserConfig).toEqual({
+      issueRegex: "needs repair",
+      issueTitle: "Linuxbrew needs repair",
+      issueMessage: "Run repair",
+    });
 
     const bundle = exportCustomPackageManagerBundle("brewlinux");
     expect(bundle.scripts.find((script) => script.name === "Check Linuxbrew")?.parserConfig).toEqual({
@@ -930,6 +951,11 @@ describe("script service", () => {
     expect(bundle.scripts.find((script) => script.name === "List Linuxbrew")?.parserConfig).toEqual({
       installedPackageRegex: "^(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$",
       successExitCodes: [0],
+    });
+    expect(bundle.scripts.find((script) => script.name === "Repair Linuxbrew")?.parserConfig).toEqual({
+      issueRegex: "needs repair",
+      issueTitle: "Linuxbrew needs repair",
+      issueMessage: "Run repair",
     });
   });
 

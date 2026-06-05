@@ -366,9 +366,28 @@ function recordPackageManagerIssueFromFailure(
   pkgManager: string,
   output: string,
 ): void {
-  const detectedIssue = packageIssueService.detectPackageManagerIssue(pkgManager, output);
+  const detectedIssue = detectPackageManagerIssue(systemId, pkgManager, output);
   if (!detectedIssue) return;
   packageIssueService.upsertPackageManagerIssue(systemId, detectedIssue);
+}
+
+function detectPackageManagerIssue(
+  systemId: number,
+  pkgManager: string,
+  output: string,
+): packageIssueService.PackageManagerIssueInput | null {
+  const builtinIssue = packageIssueService.detectPackageManagerIssue(pkgManager, output);
+  if (builtinIssue) return builtinIssue;
+
+  const manager = listPackageManagerDefinitions().find((entry) => entry.name === pkgManager);
+  if (!manager || manager.builtin) return null;
+  const repairScript = resolveScript(systemId, "repair_issue", pkgManager);
+  return packageIssueService.detectCustomPackageManagerIssue(
+    pkgManager,
+    manager.label,
+    repairScript?.parserConfig,
+    output,
+  );
 }
 
 function getSystemPackageManagerConfigs(system: {
@@ -930,7 +949,7 @@ async function checkUpdatesUnlocked(
           const parserReportedError =
             parser?.getCheckErrorMessage?.(result.stdout, result.stderr, result.exitCode)
             ?? getCustomCheckErrorMessage(customScript?.parserConfig, result.stdout, result.stderr, result.exitCode);
-          const checkErrorMessage =
+          let checkErrorMessage =
             parserReportedError
             || (result.exitCode !== 0
               ? result.stderr
@@ -939,13 +958,17 @@ async function checkUpdatesUnlocked(
                 || `Command exited with code ${result.exitCode}`
               : null);
           const commandFailed = result.exitCode !== 0 || checkErrorMessage !== null;
-          const detectedIssue = packageIssueService.detectPackageManagerIssue(
+          const detectedIssue = detectPackageManagerIssue(
+            systemId,
             pmName,
             `${result.stdout}\n${result.stderr}\n${combinedOutput}\n${checkErrorMessage ?? ""}`,
           );
           if (detectedIssue) {
             detectedIssues.set(detectedIssue.issueKey, detectedIssue);
             packageIssueService.upsertPackageManagerIssue(systemId, detectedIssue);
+            if (result.exitCode !== 0 || checkErrorMessage !== null) {
+              checkErrorMessage = detectedIssue.message;
+            }
           }
           lastStdout = result.stdout;
           lastStderr = result.stderr;
