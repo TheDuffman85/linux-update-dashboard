@@ -192,6 +192,8 @@ describe("OperationNoticeBanner", () => {
     expect(html).toContain("Upgrade failed");
     expect(html).toContain("Could not get lock");
     expect(html).toContain("mb-6");
+    expect(html).toContain("max-h-64 overflow-x-auto overflow-y-auto");
+    expect(html).toContain("break-all");
   });
 
   test("does not produce a banner state for a latest successful operation", () => {

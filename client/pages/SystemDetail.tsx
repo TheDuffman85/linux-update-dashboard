@@ -589,8 +589,9 @@ export function OperationNoticeBanner({
             <div className="mt-3">
               <CopyableCodeBlock
                 text={state.error}
-                className={`overflow-x-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${tone.code}`}
+                className={`max-h-64 overflow-x-auto overflow-y-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap break-all ${tone.code}`}
                 successMessage="Copied check output"
+                expandable
               >
                 {state.error}
               </CopyableCodeBlock>
