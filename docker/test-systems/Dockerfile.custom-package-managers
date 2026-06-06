@@ -1,0 +1,30 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y \
+      ca-certificates curl openssh-server sudo \
+      nodejs npm \
+      python3 python3-pip python3-setuptools python3-venv python3-wheel pipx && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /run/sshd
+
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd
+
+COPY custom-package-managers /opt/ludash-custom-package-managers
+RUN chmod 755 /opt/ludash-custom-package-managers/entrypoint.sh \
+      /opt/ludash-custom-package-managers/prepare-fixtures.sh \
+      /opt/ludash-custom-package-managers/reset-fixtures.sh && \
+    /opt/ludash-custom-package-managers/prepare-fixtures.sh
+
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/opt/ludash-custom-package-managers/entrypoint.sh"]
