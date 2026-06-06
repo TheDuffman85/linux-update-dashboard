@@ -112,9 +112,6 @@ jobs:
 
             const git = (args) =>
               execFileSync("git", args, { encoding: "utf8" }).trim();
-            const shortSha = (sha) => sha.slice(0, 7);
-            const commitUrl = (sha) =>
-              `https://github.com/${repository}/commit/${sha}`;
             const prUrl = (number) =>
               `https://github.com/${repository}/pull/${number}`;
 
@@ -173,10 +170,7 @@ jobs:
 
               for (const commit of prCommits) {
                 const subject = commit.commit.message.split("\n")[0];
-                const url = commit.html_url || commitUrl(commit.sha);
-                lines.push(
-                  `- ${subject} ([${shortSha(commit.sha)}](${url}))`
-                );
+                lines.push(`- ${subject}`);
               }
 
               lines.push("");
@@ -186,9 +180,7 @@ jobs:
               lines.push("### Direct commits", "");
 
               for (const commit of directCommits) {
-                lines.push(
-                  `- ${commit.subject} ([${shortSha(commit.sha)}](${commitUrl(commit.sha)}))`
-                );
+                lines.push(`- ${commit.subject}`);
               }
 
               lines.push("");
