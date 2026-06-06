@@ -62,7 +62,9 @@ export function buildPersistentSetupCommand(
 
   const scriptBody = [
     "#!/bin/sh",
+    "(",
     persistentCommand,
+    ")",
     "RC=$?",
     'printf "%s" "$RC" > "$1"',
     'rm -f "$0"',

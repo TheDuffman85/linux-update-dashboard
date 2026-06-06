@@ -119,6 +119,19 @@ describe("buildPersistentSetupCommand", () => {
     expect(scriptBody).toContain("sudo -n apk upgrade");
     expect(scriptBody).not.toContain("sudo -S -p '' apk upgrade");
   });
+
+  test("isolates user commands so set -- and exit do not skip exit-file recording", () => {
+    const { setupCmd } = buildPersistentSetupCommand(
+      "set -- update\nexit 7",
+      false
+    );
+
+    const scriptBase64 = setupCmd.match(/printf '%s' '([^']+)' \| base64 -d/)?.[1];
+    expect(scriptBase64).toBeDefined();
+    const scriptBody = Buffer.from(scriptBase64 ?? "", "base64").toString("utf8");
+    expect(scriptBody).toContain("(\nset -- update\nexit 7\n)\nRC=$?");
+    expect(scriptBody).toContain('printf "%s" "$RC" > "$1"');
+  });
 });
 
 describe("buildTailMonitorCommand", () => {
