@@ -1,0 +1,115 @@
+{
+  "format": "ludash.custom-package-manager.v1",
+  "exportedAt": "2026-06-06T00:00:00.000Z",
+  "packageManager": {
+    "name": "pipx",
+    "label": "pipx",
+    "parserConfig": null,
+    "configEntries": [
+      {
+        "key": "pipxCommand",
+        "description": "pipx executable used for app checks and upgrades.",
+        "defaultValue": "pipx"
+      }
+    ]
+  },
+  "scripts": [
+    {
+      "name": "Check pipx Updates",
+      "description": "Checks pipx-managed apps and emits stable dashboard parser lines.",
+      "type": "package_manager",
+      "operation": "check_updates",
+      "pkgManager": "pipx",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Check pipx updates",
+          "command": "pipx_cmd=\"{{config.pipxCommand}}\"\n[ -n \"$pipx_cmd\" ] || pipx_cmd=pipx\n\"$pipx_cmd\" list --json | python3 -c 'import json,os,subprocess,sys\ndata=json.load(sys.stdin)\nhome=os.environ.get(\"PIPX_HOME\") or os.path.expanduser(\"~/.local/share/pipx\")\nfor name in data.get(\"venvs\",{}):\n py=os.path.join(home,\"venvs\",name,\"bin\",\"python\")\n if not os.path.exists(py):\n  continue\n out=subprocess.check_output([py,\"-m\",\"pip\",\"list\",\"--outdated\",\"--format=json\"], text=True, stderr=subprocess.DEVNULL)\n for p in json.loads(out or \"[]\"):\n  if p.get(\"name\",\"\").lower().replace(\"_\",\"-\")==name.lower().replace(\"_\",\"-\"):\n   print(\"LUDASH_UPDATE %s %s %s\" % (p[\"name\"], p[\"version\"], p[\"latest_version\"]))'"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "updateRegex": "^LUDASH_UPDATE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<newVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Detect pipx",
+      "description": "Checks whether pipx is available.",
+      "type": "package_manager",
+      "operation": "detect",
+      "pkgManager": "pipx",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Detect pipx",
+          "command": "pipx_cmd=\"{{config.pipxCommand}}\"\n[ -n \"$pipx_cmd\" ] || pipx_cmd=pipx\ncommand -v \"$pipx_cmd\" >/dev/null 2>&1 && \"$pipx_cmd\" list --json >/dev/null 2>&1 && echo found"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "List Installed pipx Apps",
+      "description": "Reports pipx-managed apps for package inventory.",
+      "type": "package_manager",
+      "operation": "list_installed_packages",
+      "pkgManager": "pipx",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "List pipx apps",
+          "command": "pipx_cmd=\"{{config.pipxCommand}}\"\n[ -n \"$pipx_cmd\" ] || pipx_cmd=pipx\n\"$pipx_cmd\" list --json | python3 -c 'import json,os,subprocess,sys\ndata=json.load(sys.stdin)\nhome=os.environ.get(\"PIPX_HOME\") or os.path.expanduser(\"~/.local/share/pipx\")\nfor name in data.get(\"venvs\",{}):\n py=os.path.join(home,\"venvs\",name,\"bin\",\"python\")\n if not os.path.exists(py):\n  continue\n out=subprocess.check_output([py,\"-m\",\"pip\",\"show\",name], text=True, stderr=subprocess.DEVNULL)\n version=\"\"\n for line in out.splitlines():\n  if line.startswith(\"Version:\"):\n   version=line.split(\":\",1)[1].strip()\n if version:\n  print(\"LUDASH_PACKAGE %s %s\" % (name, version))'"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "installedPackageRegex": "^LUDASH_PACKAGE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update All pipx Apps",
+      "description": "Upgrades all pipx-managed apps by upgrading each app package inside its pipx virtual environment.",
+      "type": "package_manager",
+      "operation": "upgrade_all",
+      "pkgManager": "pipx",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update pipx apps",
+          "command": "pipx_cmd=\"{{config.pipxCommand}}\"\n[ -n \"$pipx_cmd\" ] || pipx_cmd=pipx\n\"$pipx_cmd\" list --json | python3 -c 'import json,os,subprocess,sys\ndata=json.load(sys.stdin)\nhome=os.environ.get(\"PIPX_HOME\") or os.path.expanduser(\"~/.local/share/pipx\")\nfor name in data.get(\"venvs\",{}):\n py=os.path.join(home,\"venvs\",name,\"bin\",\"python\")\n if os.path.exists(py):\n  subprocess.check_call([py,\"-m\",\"pip\",\"install\",\"--upgrade\",name])'"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update Selected pipx Apps",
+      "description": "Upgrades the selected pipx apps inside their pipx virtual environments.",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "pipx",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update selected pipx apps",
+          "command": "home=\"${PIPX_HOME:-$HOME/.local/share/pipx}\"\nfor pkg in {{quotedPackages}}; do\n  py=\"$home/venvs/$pkg/bin/python\"\n  if [ ! -x \"$py\" ]; then\n    echo \"pipx app is not installed: $pkg\" >&2\n    exit 2\n  fi\n  \"$py\" -m pip install --upgrade \"$pkg\"\ndone"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    }
+  ]
+}

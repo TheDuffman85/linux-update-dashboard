@@ -1,0 +1,120 @@
+{
+  "format": "ludash.custom-package-manager.v1",
+  "exportedAt": "2026-06-06T00:00:00.000Z",
+  "packageManager": {
+    "name": "npm-project",
+    "label": "npm Project",
+    "parserConfig": null,
+    "configEntries": [
+      {
+        "key": "npmCommand",
+        "description": "npm executable used for project package checks and upgrades.",
+        "defaultValue": "npm"
+      },
+      {
+        "key": "projectPath",
+        "description": "Project directory containing package.json.",
+        "defaultValue": "~/ludash-npm-project"
+      }
+    ]
+  },
+  "scripts": [
+    {
+      "name": "Check npm Project Updates",
+      "description": "Checks one npm project and emits stable dashboard parser lines.",
+      "type": "package_manager",
+      "operation": "check_updates",
+      "pkgManager": "npm-project",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Check npm project updates",
+          "command": "npm_cmd=\"{{config.npmCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$npm_cmd\" ] || npm_cmd=npm\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\nout=\"$($npm_cmd outdated --json 2>/dev/null || true)\"\nprintf '%s' \"$out\" | node -e 'let s=``;process.stdin.on(`data`,d=>s+=d);process.stdin.on(`end`,()=>{if(!s.trim())return;const o=JSON.parse(s);for(const n of Object.keys(o)){const p=o[n]||{};if(p.current&&p.latest&&p.current!==p.latest)console.log(`LUDASH_UPDATE ${n} ${p.current} ${p.latest}`)}})'"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "updateRegex": "^LUDASH_UPDATE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<newVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Detect npm Project",
+      "description": "Checks whether npm and the configured package.json are available.",
+      "type": "package_manager",
+      "operation": "detect",
+      "pkgManager": "npm-project",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Detect npm project",
+          "command": "npm_cmd=\"{{config.npmCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$npm_cmd\" ] || npm_cmd=npm\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncommand -v \"$npm_cmd\" >/dev/null 2>&1 && [ -f \"$project_path/package.json\" ] && echo found"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "List Installed npm Project Packages",
+      "description": "Reports direct npm project dependencies for package inventory.",
+      "type": "package_manager",
+      "operation": "list_installed_packages",
+      "pkgManager": "npm-project",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "List npm project packages",
+          "command": "npm_cmd=\"{{config.npmCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$npm_cmd\" ] || npm_cmd=npm\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\nout=\"$($npm_cmd ls --depth=0 --json 2>/dev/null || true)\"\nprintf '%s' \"$out\" | node -e 'let s=``;process.stdin.on(`data`,d=>s+=d);process.stdin.on(`end`,()=>{if(!s.trim())return;const o=JSON.parse(s);const deps=o.dependencies||{};for(const n of Object.keys(deps)){const v=deps[n]&&deps[n].version;if(v)console.log(`LUDASH_PACKAGE ${n} ${v}`)}})'"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "installedPackageRegex": "^LUDASH_PACKAGE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update All npm Project Packages",
+      "description": "Runs npm update in the configured project directory.",
+      "type": "package_manager",
+      "operation": "upgrade_all",
+      "pkgManager": "npm-project",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update npm project packages",
+          "command": "npm_cmd=\"{{config.npmCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$npm_cmd\" ] || npm_cmd=npm\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\nout=\"$($npm_cmd outdated --json 2>/dev/null || true)\"\nprintf '%s' \"$out\" | node -e 'let s=``;process.stdin.on(`data`,d=>s+=d);process.stdin.on(`end`,()=>{if(!s.trim())return;const o=JSON.parse(s);for(const n of Object.keys(o))console.log(n)})' | while IFS= read -r pkg; do\n  [ -n \"$pkg\" ] && $npm_cmd install \"${pkg}@latest\"\ndone"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update Selected npm Project Packages",
+      "description": "Installs the selected npm project packages at their latest matching versions.",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "npm-project",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update selected npm project packages",
+          "command": "npm_cmd=\"{{config.npmCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$npm_cmd\" ] || npm_cmd=npm\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\nfor pkg in {{quotedPackages}}; do\n  $npm_cmd install \"${pkg}@latest\"\ndone"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    }
+  ]
+}

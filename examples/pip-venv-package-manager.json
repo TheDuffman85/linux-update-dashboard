@@ -1,0 +1,115 @@
+{
+  "format": "ludash.custom-package-manager.v1",
+  "exportedAt": "2026-06-06T00:00:00.000Z",
+  "packageManager": {
+    "name": "pip-venv",
+    "label": "pip Virtualenv",
+    "parserConfig": null,
+    "configEntries": [
+      {
+        "key": "venvPath",
+        "description": "Python virtual environment directory.",
+        "defaultValue": "~/ludash-pip-venv"
+      }
+    ]
+  },
+  "scripts": [
+    {
+      "name": "Check pip Virtualenv Updates",
+      "description": "Checks one Python virtual environment and emits stable dashboard parser lines.",
+      "type": "package_manager",
+      "operation": "check_updates",
+      "pkgManager": "pip-venv",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Check pip virtualenv updates",
+          "command": "venv_path=\"{{config.venvPath}}\"\ncase \"$venv_path\" in \"~/\"*) venv_path=\"$HOME/${venv_path#??}\" ;; esac\npy=\"$venv_path/bin/python\"\n\"$py\" -m pip list --outdated --format=json 2>/dev/null | \"$py\" -c 'import json,sys\nfor p in json.load(sys.stdin):\n print(\"LUDASH_UPDATE %s %s %s\" % (p[\"name\"], p[\"version\"], p[\"latest_version\"]))'"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "updateRegex": "^LUDASH_UPDATE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<newVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Detect pip Virtualenv",
+      "description": "Checks whether the configured Python virtual environment is available.",
+      "type": "package_manager",
+      "operation": "detect",
+      "pkgManager": "pip-venv",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Detect pip virtualenv",
+          "command": "venv_path=\"{{config.venvPath}}\"\ncase \"$venv_path\" in \"~/\"*) venv_path=\"$HOME/${venv_path#??}\" ;; esac\n[ -x \"$venv_path/bin/python\" ] && \"$venv_path/bin/python\" -m pip --version >/dev/null 2>&1 && echo found"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "List Installed pip Virtualenv Packages",
+      "description": "Reports virtualenv packages for package inventory.",
+      "type": "package_manager",
+      "operation": "list_installed_packages",
+      "pkgManager": "pip-venv",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "List pip virtualenv packages",
+          "command": "venv_path=\"{{config.venvPath}}\"\ncase \"$venv_path\" in \"~/\"*) venv_path=\"$HOME/${venv_path#??}\" ;; esac\npy=\"$venv_path/bin/python\"\n\"$py\" -m pip list --format=json 2>/dev/null | \"$py\" -c 'import json,sys\nfor p in json.load(sys.stdin):\n print(\"LUDASH_PACKAGE %s %s\" % (p[\"name\"], p[\"version\"]))'"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "installedPackageRegex": "^LUDASH_PACKAGE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update All pip Virtualenv Packages",
+      "description": "Upgrades all outdated packages in the configured virtual environment.",
+      "type": "package_manager",
+      "operation": "upgrade_all",
+      "pkgManager": "pip-venv",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update pip virtualenv packages",
+          "command": "venv_path=\"{{config.venvPath}}\"\ncase \"$venv_path\" in \"~/\"*) venv_path=\"$HOME/${venv_path#??}\" ;; esac\npy=\"$venv_path/bin/python\"\nout=\"$(\"$py\" -m pip list --outdated --format=json 2>/dev/null)\"\npkgs=\"$(printf '%s' \"$out\" | \"$py\" -c 'import json,sys; print(\" \".join(p[\"name\"] for p in json.load(sys.stdin)))')\"\n[ -z \"$pkgs\" ] || \"$py\" -m pip install --upgrade $pkgs"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update Selected pip Virtualenv Packages",
+      "description": "Upgrades the selected packages in the configured virtual environment.",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "pip-venv",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update selected pip virtualenv packages",
+          "command": "venv_path=\"{{config.venvPath}}\"\ncase \"$venv_path\" in \"~/\"*) venv_path=\"$HOME/${venv_path#??}\" ;; esac\n\"$venv_path/bin/python\" -m pip install --upgrade {{quotedPackages}}"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    }
+  ]
+}

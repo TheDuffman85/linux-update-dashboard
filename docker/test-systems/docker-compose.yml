@@ -25,6 +25,7 @@
 #   Fedora  (DNF EULA prompt fixture) → localhost:2014
 #   Debian  (APT interrupted dpkg fixture) → localhost:2015
 #   Ubuntu  (APT+root login/full sudo) → localhost:2016
+#   Ubuntu  (custom npm/pip/pipx fixtures) → localhost:2017
 #
 # SSH examples:
 #   ssh testuser@localhost -p 2001   # Ubuntu  (APT)
@@ -44,6 +45,7 @@
 #   ssh testuser@localhost -p 2015   # Debian  (APT interrupted dpkg fixture)
 #   ssh root@localhost -p 2016       # Ubuntu  (APT + root login)
 #   ssh testuser@localhost -p 2016   # Ubuntu  (APT + full sudo)
+#   ssh testuser@localhost -p 2017   # Ubuntu  (custom npm/pip/pipx fixtures)
 #
 # Note: Flatpak needs --privileged for bubblewrap (used during install/update).
 # Snap needs systemd as PID 1 + --privileged for snapd to function.
@@ -215,4 +217,14 @@ services:
     hostname: ubuntu-root-test
     ports:
       - "2016:22"
+    restart: unless-stopped
+
+  custom-package-managers:
+    build:
+      context: .
+      dockerfile: Dockerfile.custom-package-managers
+    container_name: ludash-test-custom-package-managers
+    hostname: custom-package-managers-test
+    ports:
+      - "2017:22"
     restart: unless-stopped

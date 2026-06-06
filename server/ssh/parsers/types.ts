@@ -40,10 +40,11 @@ export interface PackageParser {
 
 /**
  * Validate a package name to prevent shell injection.
- * Allows alphanumeric, dots, hyphens, underscores, plus, colon, tilde.
+ * Allows standard package names plus npm scoped package names like
+ * @scope/package. Shell metacharacters and arbitrary paths remain rejected.
  * Throws if the name contains shell metacharacters or is empty.
  */
-const VALID_PKG_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._+:~-]*$/;
+const VALID_PKG_NAME = /^(?:@[a-zA-Z0-9][a-zA-Z0-9._+:~-]*\/)?[a-zA-Z0-9][a-zA-Z0-9._+:~-]*$/;
 
 export function validatePackageName(pkg: string): string {
   if (!pkg || !VALID_PKG_NAME.test(pkg)) {
