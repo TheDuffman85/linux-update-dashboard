@@ -114,6 +114,14 @@ jobs:
               execFileSync("git", args, { encoding: "utf8" }).trim();
             const prUrl = (number) =>
               `https://github.com/${repository}/pull/${number}`;
+            const contributors = new Map();
+            const addContributor = (user) => {
+              if (!user?.login || user.type === "Bot") return;
+              contributors.set(
+                user.login,
+                user.html_url || `https://github.com/${user.login}`
+              );
+            };
 
             const range = previousTag ? `${previousTag}..HEAD` : "HEAD";
             const log = git(["log", "--reverse", "--format=%H%x1f%s", range]);
@@ -145,6 +153,7 @@ jobs:
               if (!pullRequests.has(pullRequest.number)) {
                 prNumbers.push(pullRequest.number);
                 pullRequests.set(pullRequest.number, pullRequest);
+                addContributor(pullRequest.user);
               }
             }
 
@@ -171,6 +180,7 @@ jobs:
               for (const commit of prCommits) {
                 const subject = commit.commit.message.split("\n")[0];
                 lines.push(`- ${subject}`);
+                addContributor(commit.author);
               }
 
               lines.push("");
@@ -181,6 +191,22 @@ jobs:
 
               for (const commit of directCommits) {
                 lines.push(`- ${commit.subject}`);
+                const { data: directCommit } = await github.rest.repos.getCommit({
+                  owner,
+                  repo,
+                  ref: commit.sha,
+                });
+                addContributor(directCommit.author);
+              }
+
+              lines.push("");
+            }
+
+            if (contributors.size > 0) {
+              lines.push("## Contributors", "");
+
+              for (const [login, url] of [...contributors].sort()) {
+                lines.push(`- [@${login}](${url})`);
               }
 
               lines.push("");
