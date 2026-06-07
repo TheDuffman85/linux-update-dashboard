@@ -64,8 +64,8 @@ vi.mock("../../client/components/ConfirmDialog", () => ({
   ConfirmDialog: () => null,
 }));
 
-import Scripts, { ScriptEditor } from "../../client/pages/Scripts";
-import type { ScriptDefinition } from "../../client/lib/scripts";
+import Scripts, { PackageManagerEditor, ScriptEditor } from "../../client/pages/Scripts";
+import type { CustomPackageManagerBundle, ScriptDefinition } from "../../client/lib/scripts";
 
 function renderEditor(script: ScriptDefinition): string {
   return renderToStaticMarkup(
@@ -82,8 +82,35 @@ function renderEditor(script: ScriptDefinition): string {
   );
 }
 
+function renderPackageManagerEditor(options: {
+  importBundle?: CustomPackageManagerBundle | null;
+  importKeyExists?: boolean;
+} = {}): string {
+  return renderToStaticMarkup(
+    <PackageManagerEditor
+      draft={{
+        name: "npm-project",
+        label: "npm project",
+        parserConfig: null,
+        configEntries: [],
+        builtin: false,
+      }}
+      setDraft={vi.fn()}
+      onSave={vi.fn()}
+      onCancel={vi.fn()}
+      onImport={vi.fn()}
+      onClearImport={vi.fn()}
+      importBundle={options.importBundle}
+      importFileName={options.importBundle ? "npm-project-package-manager.json" : null}
+      saveLabel={options.importBundle ? "Import" : "Save"}
+      importKeyExists={options.importKeyExists}
+    />,
+  );
+}
+
 describe("Scripts page", () => {
   beforeEach(() => {
+    vi.stubGlobal("__APP_REPO_URL__", "");
     const mutation = { mutate: vi.fn(), isPending: false };
     mockUseCreatePackageManager.mockReturnValue(mutation);
     mockUseCreateScript.mockReturnValue(mutation);
@@ -109,6 +136,101 @@ describe("Scripts page", () => {
     expect(html).toContain("New Package Manager");
     expect(html).not.toContain("Copy Built-In");
     expect(html).not.toContain("Placeholder Help");
+  });
+
+  test("keeps package-manager import action stable and shows example guidance", () => {
+    vi.stubGlobal("__APP_REPO_URL__", "https://github.com/TheDuffman85/linux-update-dashboard");
+
+    const html = renderPackageManagerEditor();
+
+    expect(html).toContain("No support will be given for custom package managers.");
+    expect(html).toContain("Import File");
+    expect(html).toContain("The examples folder contains various custom package manager examples.");
+    expect(html).toContain("https://github.com/TheDuffman85/linux-update-dashboard/tree/main/examples");
+    expect(html).not.toContain("Load Import File");
+    expect(html).not.toContain("Replace Import File");
+    expect(html).not.toContain("Reload Import File");
+  });
+
+  test("hides package-manager import box after a file is loaded and offers unload", () => {
+    const importBundle: CustomPackageManagerBundle = {
+      format: "ludash.custom-package-manager.v1",
+      exportedAt: "2026-06-07T00:00:00.000Z",
+      packageManager: {
+        name: "npm-project",
+        label: "npm project",
+        parserConfig: null,
+        configEntries: [{ key: "projectPath", defaultValue: "~/project" }],
+      },
+      scripts: [
+        {
+          name: "Check npm project",
+          description: null,
+          type: "package_manager",
+          operation: "check_updates",
+          pkgManager: "npm-project",
+          isDefault: true,
+          steps: [{ label: "Check", command: "npm outdated" }],
+          parserConfig: null,
+          systemInfoConfig: null,
+          sourceScriptId: null,
+        },
+      ],
+    };
+
+    const html = renderPackageManagerEditor({ importBundle });
+
+    expect(html).toContain("Import Preview");
+    expect(html).toContain("npm-project-package-manager.json");
+    expect(html).toContain("Unload import file");
+    expect(html).toContain("rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium");
+    expect(html).not.toContain("Import File");
+    expect(html).not.toContain("The examples folder contains various custom package manager examples.");
+    expect(html).not.toContain("Load Import File");
+    expect(html).not.toContain("Replace Import File");
+    expect(html).not.toContain("Reload Import File");
+  });
+
+  test("warns and blocks package-manager imports for existing manager keys", () => {
+    const importBundle: CustomPackageManagerBundle = {
+      format: "ludash.custom-package-manager.v1",
+      exportedAt: "2026-06-07T00:00:00.000Z",
+      packageManager: {
+        name: "npm-project",
+        label: "npm project",
+        parserConfig: null,
+        configEntries: [],
+      },
+      scripts: [
+        {
+          name: "Check npm project",
+          description: null,
+          type: "package_manager",
+          operation: "check_updates",
+          pkgManager: "npm-project",
+          isDefault: true,
+          steps: [{ label: "Check", command: "npm outdated" }],
+          parserConfig: null,
+          systemInfoConfig: null,
+          sourceScriptId: null,
+        },
+      ],
+    };
+
+    const html = renderPackageManagerEditor({ importBundle, importKeyExists: true });
+
+    expect(html).toContain("This manager key already exists.");
+    expect(html).toContain("Choose a different key.");
+    expect(html).not.toContain("Choose a different key or unload the import file.");
+    expect(html).toContain("disabled=\"\"");
+  });
+
+  test("omits package-manager examples link when repository URL is unavailable", () => {
+    const html = renderPackageManagerEditor();
+
+    expect(html).toContain("The examples folder contains various custom package manager examples.");
+    expect(html).toContain("Import File");
+    expect(html).not.toContain("View examples on GitHub");
   });
 
   test("shows sudo badges for scripts with sudo helpers", () => {

@@ -1961,7 +1961,7 @@ export function exportCustomPackageManagerBundle(name: string): CustomPackageMan
   };
 }
 
-function normalizeBundle(value: unknown): CustomPackageManagerBundle {
+export function normalizeCustomPackageManagerBundle(value: unknown): CustomPackageManagerBundle {
   if (!isRecord(value)) throw new Error("Import file must contain a JSON object");
   if (value.format !== "ludash.custom-package-manager.v1") {
     throw new Error("Unsupported package manager export format");
@@ -2029,7 +2029,7 @@ function findImportScriptMatch(script: Pick<ScriptDefinition, "name" | "operatio
 }
 
 export function importCustomPackageManagerBundle(input: unknown): CustomPackageManagerImportResult {
-  const bundle = normalizeBundle(input);
+  const bundle = normalizeCustomPackageManagerBundle(input);
   const existingManager = findCustomPackageManager(bundle.packageManager.name);
   const manager = existingManager
     ? updateCustomPackageManager(bundle.packageManager.name, bundle.packageManager)

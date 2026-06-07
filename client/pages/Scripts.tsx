@@ -241,6 +241,11 @@ const inputClass =
 const labelClass = "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
 const PACKAGE_MANAGERS_PANEL_STORAGE_KEY = "scripts.packageManagersPanelOpen";
 
+function getExamplesRepositoryUrl(): string | null {
+  if (typeof __APP_REPO_URL__ !== "string" || !__APP_REPO_URL__) return null;
+  return `${__APP_REPO_URL__.replace(/\/+$/, "")}/tree/main/examples`;
+}
+
 type PackageManagerDraft = {
   name: string;
   label: string;
@@ -1506,35 +1511,40 @@ export function ScriptEditor({
   );
 }
 
-function PackageManagerEditor({
+export function PackageManagerEditor({
   draft,
   setDraft,
   onSave,
   onCancel,
   onImport,
+  onClearImport,
   importBundle,
   importFileName,
   saveLabel = "Save",
   busy,
   importing,
   editing,
+  importKeyExists,
 }: {
   draft: PackageManagerDraft;
   setDraft: (draft: PackageManagerDraft) => void;
   onSave: () => void;
   onCancel: () => void;
   onImport?: () => void;
+  onClearImport?: () => void;
   importBundle?: CustomPackageManagerBundle | null;
   importFileName?: string | null;
   saveLabel?: string;
   busy?: boolean;
   importing?: boolean;
   editing?: boolean;
+  importKeyExists?: boolean;
 }) {
   const importOperations = importBundle
     ? Array.from(new Set(importBundle.scripts.map((script) => script.operation)))
         .sort((a, b) => PACKAGE_MANAGER_OPERATIONS.indexOf(a) - PACKAGE_MANAGER_OPERATIONS.indexOf(b))
     : [];
+  const examplesUrl = getExamplesRepositoryUrl();
   const updateConfigEntry = (index: number, patch: Partial<CustomPackageManagerConfigEntry>) => {
     setDraft({
       ...draft,
@@ -1560,6 +1570,14 @@ function PackageManagerEditor({
   };
   return (
     <div className="space-y-4">
+      <div className="flex min-w-0 gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+        <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        </svg>
+        <p className="min-w-0 text-sm">
+          No support will be given for custom package managers.
+        </p>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Manager Key</label>
@@ -1575,6 +1593,11 @@ function PackageManagerEditor({
               Keys are used by scripts and systems, so rename by creating a new manager.
             </p>
           )}
+          {importKeyExists && (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+              This manager key already exists. Choose a different key.
+            </p>
+          )}
         </div>
         <div>
           <label className={labelClass}>Display Label</label>
@@ -1587,17 +1610,63 @@ function PackageManagerEditor({
           />
         </div>
       </div>
+      {!editing && onImport && !importBundle ? (
+        <div className="rounded-lg border border-dashed border-border bg-slate-50/70 p-3 dark:bg-slate-900/30">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              The examples folder contains various custom package manager examples.
+              {examplesUrl ? (
+                <>
+                  {" "}
+                  <a
+                    href={examplesUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-blue-600 hover:underline dark:text-blue-300"
+                  >
+                    View examples on GitHub
+                  </a>
+                  .
+                </>
+              ) : null}
+            </p>
+            <button
+              type="button"
+              onClick={onImport}
+              disabled={importing}
+              className="w-full shrink-0 rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-slate-50 disabled:opacity-50 dark:hover:bg-slate-700 sm:w-auto"
+            >
+              Import File
+            </button>
+          </div>
+        </div>
+      ) : null}
       {importBundle && (
         <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-              Import Preview
+          <div className="mb-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                Import Preview
+              </div>
+              {importFileName && (
+                <div className="mt-1 truncate text-xs text-blue-700/80 dark:text-blue-200/80">
+                  {importFileName}
+                </div>
+              )}
             </div>
-            {importFileName && (
-              <span className="truncate text-xs text-blue-700/80 dark:text-blue-200/80">
-                {importFileName}
-              </span>
-            )}
+            {onClearImport ? (
+              <button
+                type="button"
+                onClick={onClearImport}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-red-500 transition-colors hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-950/40"
+                title="Unload import file"
+                aria-label="Unload import file"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            ) : null}
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div>
@@ -1610,10 +1679,20 @@ function PackageManagerEditor({
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
                 Operations
               </div>
-              <div className="mt-1">
-                {importOperations.length
-                  ? importOperations.map((operation) => OPERATION_LABELS[operation] ?? operation).join(", ")
-                  : "None"}
+              <div className="mt-1 flex flex-wrap gap-1">
+                {importOperations.length ? (
+                  importOperations.map((operation) => (
+                    <span
+                      key={operation}
+                      className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                      title={OPERATION_LABELS[operation] ?? operation}
+                    >
+                      {OPERATION_LABELS[operation] ?? operation}
+                    </span>
+                  ))
+                ) : (
+                  <span>None</span>
+                )}
               </div>
             </div>
             <div>
@@ -1693,27 +1772,13 @@ function PackageManagerEditor({
           </p>
         )}
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {!editing && onImport ? (
-          <button
-            type="button"
-            onClick={onImport}
-            disabled={importing}
-            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
-          >
-            {importBundle ? "Replace Import File" : "Load Import File"}
-          </button>
-        ) : (
-          <span />
-        )}
-        <div className="flex justify-end gap-3">
-          <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
-            Cancel
-          </button>
-          <button type="button" disabled={busy} onClick={onSave} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-            {busy ? <span className="spinner spinner-sm" /> : saveLabel}
-          </button>
-        </div>
+      <div className="grid grid-cols-2 gap-3 sm:flex sm:justify-end">
+        <button type="button" onClick={onCancel} className="w-full px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto">
+          Cancel
+        </button>
+        <button type="button" disabled={busy || importKeyExists} onClick={onSave} className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 sm:w-auto">
+          {busy ? <span className="spinner spinner-sm" /> : saveLabel}
+        </button>
       </div>
     </div>
   );
@@ -1987,6 +2052,14 @@ export default function Scripts() {
       .map(([name, details]) => ({ name, label: details.label, configEntries: details.configEntries }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [managedPackageManagers]);
+  const packageManagerImportKeyExists = Boolean(
+    packageManagerImportBundle &&
+      !editingPackageManager &&
+      packageManagerDraft.name.trim() &&
+      managedPackageManagers.some(
+        (manager) => manager.name === packageManagerDraft.name.trim().toLowerCase(),
+      ),
+  );
 
   const saveScript = (script: ScriptDefinition) => {
     const callbacks = {
@@ -2019,6 +2092,18 @@ export default function Scripts() {
 
   const handleSavePackageManager = () => {
     const managerName = packageManagerDraft.name.trim().toLowerCase();
+    if (
+      packageManagerImportBundle &&
+      !editingPackageManager &&
+      managerName &&
+      managedPackageManagers.some((manager) => manager.name === managerName)
+    ) {
+      addToast(
+        `Package manager key "${managerName}" already exists. Choose a different key.`,
+        "danger",
+      );
+      return;
+    }
     const configEntries = normalizeConfigEntriesForManager(
       managerName,
       normalizeConfigEntries(packageManagerDraft.configEntries),
@@ -2414,6 +2499,12 @@ export default function Scripts() {
           setDraft={setPackageManagerDraft}
           onSave={handleSavePackageManager}
           onImport={() => importInputRef.current?.click()}
+          onClearImport={() => {
+            setPackageManagerImportBundle(null);
+            setPackageManagerImportFileName(null);
+            setPackageManagerDraft(emptyPackageManager());
+            if (importInputRef.current) importInputRef.current.value = "";
+          }}
           importBundle={packageManagerImportBundle}
           importFileName={packageManagerImportFileName}
           onCancel={() => {
@@ -2426,6 +2517,7 @@ export default function Scripts() {
           importing={importPackageManagerBundle.isPending}
           saveLabel={packageManagerImportBundle ? "Import" : "Save"}
           editing={editingPackageManager !== null}
+          importKeyExists={packageManagerImportKeyExists}
         />
       </Modal>
 
