@@ -103,6 +103,46 @@ describe("scripts routes security", () => {
     });
   });
 
+  test("package manager import route rejects existing manager keys", async () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    const app = new Hono();
+    app.route("/api/scripts", scriptsRoutes);
+
+    const res = await app.request("/api/scripts/package-managers/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        format: "ludash.custom-package-manager.v1",
+        exportedAt: "2026-06-07T00:00:00.000Z",
+        packageManager: {
+          name: "brewlinux",
+          label: "Linuxbrew import",
+          parserConfig: null,
+          configEntries: [],
+        },
+        scripts: [
+          {
+            name: "Detect Linuxbrew",
+            description: null,
+            type: "package_manager",
+            operation: "detect",
+            pkgManager: "brewlinux",
+            isDefault: true,
+            steps: [{ label: "Detect", command: "command -v brew && echo found" }],
+            parserConfig: null,
+            systemInfoConfig: null,
+            sourceScriptId: null,
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'Package manager key "brewlinux" already exists. Choose a different key.',
+    });
+  });
+
   test("full app stack blocks unauthenticated script access", async () => {
     getDb().insert(users).values({
       username: "browser-user",

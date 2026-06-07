@@ -55,7 +55,14 @@ scripts.post("/package-managers/import", async (c) => {
   const body = await c.req.json().catch(() => null);
   if (!body) return c.json({ error: "Invalid request body" }, 400);
   try {
-    const result = scriptService.importCustomPackageManagerBundle(body);
+    const bundle = scriptService.normalizeCustomPackageManagerBundle(body);
+    const managerName = bundle.packageManager.name;
+    if (scriptService.listPackageManagerDefinitions().some((manager) => manager.name === managerName)) {
+      return c.json({
+        error: `Package manager key "${managerName}" already exists. Choose a different key.`,
+      }, 409);
+    }
+    const result = scriptService.importCustomPackageManagerBundle(bundle);
     return c.json(result);
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Failed to import package manager" }, 400);
