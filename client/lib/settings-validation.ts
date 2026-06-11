@@ -6,13 +6,26 @@ export const NUMERIC_SETTING_RULES = {
 } as const;
 
 export type NumericSettingKey = keyof typeof NUMERIC_SETTING_RULES;
+export type NumericSettingRule = Readonly<{ min: number; max: number; fallback: number }>;
+export type NumericSettingRules = Readonly<Record<NumericSettingKey, NumericSettingRule>>;
 
 function isNumericSettingKey(key: string): key is NumericSettingKey {
   return key in NUMERIC_SETTING_RULES;
 }
 
-function normalizeIntegerSetting(key: NumericSettingKey, value: string): string {
-  const { min, max, fallback } = NUMERIC_SETTING_RULES[key];
+function getNumericSettingRule(
+  key: NumericSettingKey,
+  rules: Partial<NumericSettingRules> = {},
+): NumericSettingRule {
+  return rules[key] ?? NUMERIC_SETTING_RULES[key];
+}
+
+export function normalizeIntegerSetting(
+  key: NumericSettingKey,
+  value: string,
+  rules: Partial<NumericSettingRules> = {},
+): string {
+  const { min, max, fallback } = getNumericSettingRule(key, rules);
   const parsed = Number.parseInt(value, 10);
 
   if (!Number.isFinite(parsed)) {
@@ -22,12 +35,15 @@ function normalizeIntegerSetting(key: NumericSettingKey, value: string): string 
   return String(Math.min(max, Math.max(min, parsed)));
 }
 
-export function normalizeSettingsUpdate(data: Record<string, string>): Record<string, string> {
+export function normalizeSettingsUpdate(
+  data: Record<string, string>,
+  rules: Partial<NumericSettingRules> = {},
+): Record<string, string> {
   const normalized: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(data)) {
     normalized[key] = isNumericSettingKey(key)
-      ? normalizeIntegerSetting(key, value)
+      ? normalizeIntegerSetting(key, value, rules)
       : value;
   }
 

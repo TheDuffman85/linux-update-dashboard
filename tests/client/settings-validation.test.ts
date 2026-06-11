@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { normalizeSettingsUpdate } from "../../client/lib/settings-validation";
+import { NUMERIC_SETTING_RULES, normalizeSettingsUpdate } from "../../client/lib/settings-validation";
 
 describe("normalizeSettingsUpdate", () => {
   test("clamps numeric settings to their allowed ranges", () => {
@@ -35,6 +35,25 @@ describe("normalizeSettingsUpdate", () => {
       }),
     ).toEqual({
       activity_history_limit: "20",
+    });
+  });
+
+  test("uses provided numeric rules for timeout maximums", () => {
+    expect(
+      normalizeSettingsUpdate(
+        {
+          ssh_timeout_seconds: "240",
+          cmd_timeout_seconds: "900",
+        },
+        {
+          ...NUMERIC_SETTING_RULES,
+          ssh_timeout_seconds: { min: 5, max: 240, fallback: 30 },
+          cmd_timeout_seconds: { min: 10, max: 900, fallback: 120 },
+        },
+      ),
+    ).toEqual({
+      ssh_timeout_seconds: "240",
+      cmd_timeout_seconds: "900",
     });
   });
 });
