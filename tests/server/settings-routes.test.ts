@@ -69,6 +69,87 @@ describe("settings routes", () => {
     ).toBe("1");
   });
 
+  test("returns configured timeout bounds with settings", async () => {
+    const previousSshMax = process.env.LUDASH_MAX_SSH_TIMEOUT;
+    const previousCmdMax = process.env.LUDASH_MAX_CMD_TIMEOUT;
+    process.env.LUDASH_MAX_SSH_TIMEOUT = "240";
+    process.env.LUDASH_MAX_CMD_TIMEOUT = "900";
+
+    try {
+      const app = new Hono();
+      app.use("/api/settings/*", async (c, next) => {
+        c.set("user", { userId: 1, username: "admin", isAdmin: true });
+        await next();
+      });
+      app.route("/api/settings", settingsRoutes);
+      const db = getDb();
+      db.update(settings).set({ value: "300" }).where(eq(settings.key, "ssh_timeout_seconds")).run();
+      db.update(settings).set({ value: "1200" }).where(eq(settings.key, "cmd_timeout_seconds")).run();
+
+      const res = await app.request("/api/settings");
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.settings.ssh_timeout_seconds).toBe("240");
+      expect(body.settings.cmd_timeout_seconds).toBe("900");
+      expect(body.numericSettingRules.ssh_timeout_seconds).toMatchObject({
+        min: 5,
+        max: 240,
+        fallback: 30,
+      });
+      expect(body.numericSettingRules.cmd_timeout_seconds).toMatchObject({
+        min: 10,
+        max: 900,
+        fallback: 120,
+      });
+    } finally {
+      if (previousSshMax === undefined) delete process.env.LUDASH_MAX_SSH_TIMEOUT;
+      else process.env.LUDASH_MAX_SSH_TIMEOUT = previousSshMax;
+      if (previousCmdMax === undefined) delete process.env.LUDASH_MAX_CMD_TIMEOUT;
+      else process.env.LUDASH_MAX_CMD_TIMEOUT = previousCmdMax;
+    }
+  });
+
+  test("uses configured timeout maximums when storing settings", async () => {
+    const previousSshMax = process.env.LUDASH_MAX_SSH_TIMEOUT;
+    const previousCmdMax = process.env.LUDASH_MAX_CMD_TIMEOUT;
+    process.env.LUDASH_MAX_SSH_TIMEOUT = "45";
+    process.env.LUDASH_MAX_CMD_TIMEOUT = "90";
+
+    try {
+      const app = new Hono();
+      app.use("/api/settings/*", async (c, next) => {
+        c.set("user", { userId: 1, username: "admin", isAdmin: true });
+        await next();
+      });
+      app.route("/api/settings", settingsRoutes);
+
+      const res = await app.request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ssh_timeout_seconds: "999",
+          cmd_timeout_seconds: "999",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+
+      const db = getDb();
+      expect(
+        db.select({ value: settings.value }).from(settings).where(eq(settings.key, "ssh_timeout_seconds")).get()?.value,
+      ).toBe("45");
+      expect(
+        db.select({ value: settings.value }).from(settings).where(eq(settings.key, "cmd_timeout_seconds")).get()?.value,
+      ).toBe("90");
+    } finally {
+      if (previousSshMax === undefined) delete process.env.LUDASH_MAX_SSH_TIMEOUT;
+      else process.env.LUDASH_MAX_SSH_TIMEOUT = previousSshMax;
+      if (previousCmdMax === undefined) delete process.env.LUDASH_MAX_CMD_TIMEOUT;
+      else process.env.LUDASH_MAX_CMD_TIMEOUT = previousCmdMax;
+    }
+  });
+
   test("falls back to defaults for invalid numeric input", async () => {
     const app = new Hono();
     app.use("/api/settings/*", async (c, next) => {

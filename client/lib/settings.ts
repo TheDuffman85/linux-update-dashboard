@@ -1,13 +1,24 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
+import type { NumericSettingRules } from "./settings-validation";
+
+export type SettingsResponse = {
+  settings: Record<string, string>;
+  numericSettingRules: NumericSettingRules;
+};
+
+export function useSettingsResponse() {
+  return useQuery({
+    queryKey: ["settings"],
+    queryFn: () => apiFetch<SettingsResponse>("/settings"),
+  });
+}
 
 export function useSettings() {
   return useQuery({
     queryKey: ["settings"],
-    queryFn: () =>
-      apiFetch<{ settings: Record<string, string> }>("/settings").then(
-        (r) => r.settings
-      ),
+    queryFn: () => apiFetch<SettingsResponse>("/settings"),
+    select: (r) => r.settings,
   });
 }
 

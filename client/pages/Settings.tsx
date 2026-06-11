@@ -1,8 +1,14 @@
 import { useState, useEffect } from "react";
 import { Layout } from "../components/Layout";
-import { useSettings, useUpdateSettings } from "../lib/settings";
+import { useSettingsResponse, useUpdateSettings } from "../lib/settings";
 import { validatePassword, validateRequiredText } from "../lib/form-validation";
-import { normalizeSettingsUpdate } from "../lib/settings-validation";
+import {
+  NUMERIC_SETTING_RULES,
+  normalizeIntegerSetting,
+  normalizeSettingsUpdate,
+  type NumericSettingKey,
+  type NumericSettingRules,
+} from "../lib/settings-validation";
 import { usePasskeys, useDeletePasskey, useRegisterPasskey, useRenamePasskey } from "../lib/passkeys";
 import { useApiTokens, useCreateApiToken, useRenameApiToken, useDeleteApiToken } from "../lib/api-tokens";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -27,7 +33,7 @@ function SettingSection({
 }
 
 export default function Settings() {
-  const { data: settings, isLoading } = useSettings();
+  const { data: settingsResponse, isLoading } = useSettingsResponse();
   const updateSettings = useUpdateSettings();
   const { addToast } = useToast();
   const { hasPassword, refresh: refreshAuth } = useAuth();
@@ -64,10 +70,12 @@ export default function Settings() {
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
+  const numericSettingRules: NumericSettingRules =
+    settingsResponse?.numericSettingRules ?? NUMERIC_SETTING_RULES;
 
   useEffect(() => {
-    if (settings) {
-      const cleanedForm = { ...settings };
+    if (settingsResponse?.settings) {
+      const cleanedForm = { ...settingsResponse.settings };
       const secrets: Record<string, boolean> = {};
       for (const key of ["oidc_client_secret"]) {
         if (cleanedForm[key] === "(stored)") {
@@ -78,7 +86,21 @@ export default function Settings() {
       setStoredSecrets(secrets);
       setForm(cleanedForm);
     }
-  }, [settings]);
+  }, [settingsResponse]);
+
+  const setNumericField = (key: NumericSettingKey, value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  const normalizeNumericField = (key: NumericSettingKey) => {
+    setForm((prev) => ({
+      ...prev,
+      [key]: normalizeIntegerSetting(key, prev[key] ?? "", numericSettingRules),
+    }));
+  };
 
   const handleSave = (keys: string[]) => {
     const data: Record<string, string> = {};
@@ -89,7 +111,7 @@ export default function Settings() {
         data[k] = form[k] ?? "";
       }
     }
-    const normalizedData = normalizeSettingsUpdate(data);
+    const normalizedData = normalizeSettingsUpdate(data, numericSettingRules);
     setForm((prev) => ({ ...prev, ...normalizedData }));
 
     updateSettings.mutate(normalizedData, {
@@ -187,12 +209,11 @@ export default function Settings() {
             <label className={labelClass}>Connection Timeout (s)</label>
             <input
               type="number"
-              min={5}
-              max={120}
               value={form.ssh_timeout_seconds || "30"}
               onChange={(e) =>
-                setForm({ ...form, ssh_timeout_seconds: e.target.value })
+                setNumericField("ssh_timeout_seconds", e.target.value)
               }
+              onBlur={() => normalizeNumericField("ssh_timeout_seconds")}
               className={inputClass}
             />
           </div>
@@ -200,12 +221,11 @@ export default function Settings() {
             <label className={labelClass}>Command Timeout (s)</label>
             <input
               type="number"
-              min={10}
-              max={600}
               value={form.cmd_timeout_seconds || "120"}
               onChange={(e) =>
-                setForm({ ...form, cmd_timeout_seconds: e.target.value })
+                setNumericField("cmd_timeout_seconds", e.target.value)
               }
+              onBlur={() => normalizeNumericField("cmd_timeout_seconds")}
               className={inputClass}
             />
           </div>
@@ -213,12 +233,11 @@ export default function Settings() {
             <label className={labelClass}>Concurrent Connections</label>
             <input
               type="number"
-              min={1}
-              max={50}
               value={form.concurrent_connections || "5"}
               onChange={(e) =>
-                setForm({ ...form, concurrent_connections: e.target.value })
+                setNumericField("concurrent_connections", e.target.value)
               }
+              onBlur={() => normalizeNumericField("concurrent_connections")}
               className={inputClass}
             />
           </div>

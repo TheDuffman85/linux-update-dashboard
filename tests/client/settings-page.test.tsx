@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
 
 const {
-  mockUseSettings,
+  mockUseSettingsResponse,
   mockUseUpdateSettings,
   mockUsePasskeys,
   mockUseDeletePasskey,
@@ -16,7 +16,7 @@ const {
   mockUseToast,
   mockUseAuth,
 } = vi.hoisted(() => ({
-  mockUseSettings: vi.fn(),
+  mockUseSettingsResponse: vi.fn(),
   mockUseUpdateSettings: vi.fn(),
   mockUsePasskeys: vi.fn(),
   mockUseDeletePasskey: vi.fn(),
@@ -31,7 +31,7 @@ const {
 }));
 
 vi.mock("../../client/lib/settings", () => ({
-  useSettings: mockUseSettings,
+  useSettingsResponse: mockUseSettingsResponse,
   useUpdateSettings: mockUseUpdateSettings,
 }));
 
@@ -79,17 +79,25 @@ import Settings from "../../client/pages/Settings";
 describe("Settings page", () => {
   beforeEach(() => {
     vi.stubGlobal("window", { isSecureContext: false });
-    mockUseSettings.mockReturnValue({
+    mockUseSettingsResponse.mockReturnValue({
       data: {
-        activity_history_limit: "20",
-        ssh_timeout_seconds: "30",
-        cmd_timeout_seconds: "120",
-        concurrent_connections: "5",
-        enable_root_user_check: "true",
-        oidc_issuer: "",
-        oidc_client_id: "",
-        oidc_client_secret: "",
-        disable_password_login: "false",
+        settings: {
+          activity_history_limit: "20",
+          ssh_timeout_seconds: "30",
+          cmd_timeout_seconds: "120",
+          concurrent_connections: "5",
+          enable_root_user_check: "true",
+          oidc_issuer: "",
+          oidc_client_id: "",
+          oidc_client_secret: "",
+          disable_password_login: "false",
+        },
+        numericSettingRules: {
+          activity_history_limit: { min: 5, max: 200, fallback: 20 },
+          ssh_timeout_seconds: { min: 5, max: 120, fallback: 30 },
+          cmd_timeout_seconds: { min: 10, max: 900, fallback: 120 },
+          concurrent_connections: { min: 1, max: 50, fallback: 5 },
+        },
       },
       isLoading: false,
     });
@@ -115,6 +123,8 @@ describe("Settings page", () => {
 
     expect(html).toContain("Activity History");
     expect(html).toContain("Least-privilege root user check");
+    expect(html).not.toContain("Min 5 seconds, max 120 seconds");
+    expect(html).not.toContain("Min 10 seconds, max 900 seconds");
     expect(html).not.toContain("Update Schedule");
     expect(html).not.toContain("Scheduler Interval");
     expect(html).not.toContain("Cache Duration");

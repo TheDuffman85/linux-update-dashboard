@@ -6,6 +6,7 @@ import { configureOidc } from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as updateService from "../services/update-service";
 import {
+  getNumericSettingRules,
   isNumericSettingKey,
   normalizeNumericSetting,
   syncSSHManagerWithSettings,
@@ -30,11 +31,16 @@ settingsRouter.get("/", (c) => {
   for (const s of allSettings) {
     if (SENSITIVE_KEYS.includes(s.key) && s.value) {
       settingsMap[s.key] = "(stored)";
+    } else if (isNumericSettingKey(s.key)) {
+      settingsMap[s.key] = normalizeNumericSetting(s.key, s.value);
     } else {
       settingsMap[s.key] = s.value;
     }
   }
-  return c.json({ settings: settingsMap });
+  return c.json({
+    settings: settingsMap,
+    numericSettingRules: getNumericSettingRules(),
+  });
 });
 
 // Update settings
