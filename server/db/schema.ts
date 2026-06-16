@@ -84,8 +84,11 @@ export const systems = sqliteTable(
     autoHideKeptBackUpdates: integer("auto_hide_kept_back_updates")
       .notNull()
       .default(0),
+    osId: text("os_id"),
+    osIdLike: text("os_id_like"),
     osName: text("os_name"),
     osVersion: text("os_version"),
+    osVersionCodename: text("os_version_codename"),
     kernel: text("kernel"),
     hostnameRemote: text("hostname_remote"),
     uptime: text("uptime"),
@@ -98,6 +101,8 @@ export const systems = sqliteTable(
     rebootDismissedBootId: text("reboot_dismissed_boot_id"),
     rebootDismissedUptimeSeconds: real("reboot_dismissed_uptime_seconds"),
     rebootDismissedAt: text("reboot_dismissed_at"),
+    osLifecycleDismissedKey: text("os_lifecycle_dismissed_key"),
+    osLifecycleDismissedAt: text("os_lifecycle_dismissed_at"),
     rootUserBannerDismissed: integer("root_user_banner_dismissed")
       .notNull()
       .default(0),

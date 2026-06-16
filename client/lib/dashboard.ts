@@ -10,6 +10,7 @@ export interface DashboardStats {
   checkIssues: number;
   totalUpdates: number;
   needsReboot: number;
+  lifecycleWarnings: number;
 }
 
 export function useDashboardStats(hasActiveOps?: boolean) {

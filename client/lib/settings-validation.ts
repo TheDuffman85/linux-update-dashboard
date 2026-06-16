@@ -1,5 +1,6 @@
 export const NUMERIC_SETTING_RULES = {
   activity_history_limit: { min: 5, max: 200, fallback: 20 },
+  distro_eol_warning_days: { min: 0, max: 730, fallback: 180 },
   ssh_timeout_seconds: { min: 5, max: 120, fallback: 30 },
   cmd_timeout_seconds: { min: 10, max: 600, fallback: 120 },
   concurrent_connections: { min: 1, max: 50, fallback: 5 },

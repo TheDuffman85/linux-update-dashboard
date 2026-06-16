@@ -10,13 +10,36 @@ function hasCheckIssue(lastCheck: updateService.LastCheckSummary | null | undefi
   return lastCheck?.status === "failed" || lastCheck?.status === "warning";
 }
 
+function withLifecycle<T extends {
+  osId?: string | null;
+  osIdLike?: string | null;
+  osName?: string | null;
+  osVersion?: string | null;
+  osVersionCodename?: string | null;
+  osLifecycleDismissedKey?: string | null;
+}>(system: T) {
+  return {
+    ...system,
+    ...systemService.getOsLifecycle(system),
+  };
+}
+
+function hasLifecycleWarning(system: { osLifecycleStatus?: string | null }): boolean {
+  return (
+    system.osLifecycleStatus === "eol" ||
+    system.osLifecycleStatus === "approaching_eol" ||
+    system.osLifecycleStatus === "support_ending" ||
+    system.osLifecycleStatus === "support_ended"
+  );
+}
+
 dashboard.get("/stats", (c) => {
   const allSystems = systemService.listVisibleSystemsWithUpdateCounts();
   const lastChecks = updateService.getLatestCompletedChecks(
     allSystems.map((system) => system.id),
   );
 
-  const systemsWithMeta = allSystems.map((s) => ({
+  const systemsWithMeta = allSystems.map((s) => withLifecycle({
     ...s,
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
@@ -27,7 +50,7 @@ dashboard.get("/stats", (c) => {
 
   const total = systemsWithMeta.length;
   const upToDate = systemsWithMeta.filter(
-    (s) => s.updateCount === 0 && s.isReachable === 1 && !hasCheckIssue(s.lastCheck)
+    (s) => s.updateCount === 0 && s.isReachable === 1 && !hasCheckIssue(s.lastCheck) && !hasLifecycleWarning(s)
   ).length;
   const needsUpdates = systemsWithMeta.filter(
     (s) => s.updateCount > 0 && !hasCheckIssue(s.lastCheck)
@@ -43,9 +66,10 @@ dashboard.get("/stats", (c) => {
   const needsReboot = systemsWithMeta.filter(
     (s) => s.needsReboot === 1
   ).length;
+  const lifecycleWarnings = systemsWithMeta.filter(hasLifecycleWarning).length;
 
   return c.json({
-    stats: { total, upToDate, needsUpdates, unreachable, checkIssues, totalUpdates, needsReboot },
+    stats: { total, upToDate, needsUpdates, unreachable, checkIssues, totalUpdates, needsReboot, lifecycleWarnings },
   });
 });
 
@@ -55,7 +79,7 @@ dashboard.get("/systems", (c) => {
     allSystems.map((system) => system.id),
   );
 
-  const systemsWithMeta = allSystems.map((s) => ({
+  const systemsWithMeta = allSystems.map((s) => withLifecycle({
     ...s,
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),

@@ -2153,4 +2153,39 @@ describe("systems reorder route", () => {
     )).toBe(true);
     expect(Array.isArray(body.commandReference.warnings)).toBe(true);
   });
+
+  test("persists lifecycle warning dismissal for the current lifecycle key", async () => {
+    const db = getDb();
+    const systemId = db.insert(systems).values({
+      name: "Debian LTS",
+      hostname: "debian-lts.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      osId: "debian",
+      osName: "Debian GNU/Linux 12 (bookworm)",
+      osVersion: "12",
+    }).returning({ id: systems.id }).get().id;
+
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const beforeRes = await app.request(`/api/systems/${systemId}`);
+    expect(beforeRes.status).toBe(200);
+    const beforeBody = await beforeRes.json();
+    expect(beforeBody.system.osLifecycleStatus).toBe("support_ended");
+    expect(beforeBody.system.osLifecycleBannerDismissed).toBe(false);
+
+    const dismissRes = await app.request(`/api/systems/${systemId}/dismiss-os-lifecycle-warning`, {
+      method: "POST",
+    });
+    expect(dismissRes.status).toBe(200);
+
+    const afterRes = await app.request(`/api/systems/${systemId}`);
+    expect(afterRes.status).toBe(200);
+    const afterBody = await afterRes.json();
+    expect(afterBody.system.osLifecycleBannerDismissed).toBe(true);
+    expect(afterBody.system.osLifecycleDismissedKey).toBe("debian:12:2028-06-30:support_ended");
+  });
 });

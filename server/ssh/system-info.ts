@@ -64,8 +64,11 @@ export type NeedsRestartingStatus =
   | "unsupported";
 
 export interface SystemInfo {
+  osId: string;
+  osIdLike: string;
   osName: string;
   osVersion: string;
+  osVersionCodename: string;
   kernel: string;
   hostname: string;
   uptime: string;
@@ -156,6 +159,16 @@ function resolveOsDisplayName(
     osName: prettyName,
     osVersion: defaultVersion,
   };
+}
+
+function resolveOsVersionCodename(osFields: Record<string, string>): string {
+  const explicit = osFields["VERSION_CODENAME"] || osFields["UBUNTU_CODENAME"] || "";
+  if (explicit.trim()) return explicit.trim().toLowerCase();
+
+  const version = osFields["VERSION"] || "";
+  const match = version.match(/\(([^)]+)\)/);
+  const codename = match?.[1]?.split(/\s+/)[0] ?? "";
+  return codename.trim().toLowerCase();
 }
 
 export function hasPendingKernelUpdate(
@@ -307,8 +320,11 @@ export function resolveRebootDismissal(
 
 export function parseSystemInfo(stdout: string): SystemInfo {
   const info: SystemInfo = {
+    osId: "",
+    osIdLike: "",
     osName: "",
     osVersion: "",
+    osVersionCodename: "",
     kernel: "",
     hostname: "",
     uptime: "",
@@ -357,8 +373,17 @@ export function parseSystemInfo(stdout: string): SystemInfo {
   }
 
   const osDisplay = resolveOsDisplayName(osFields, sections);
+  const pveVersion = (sections["PVE_VERSION"] || "").trim();
+  const rpiIssue = (sections["RPI_ISSUE"] || "").trim();
+  info.osId = pveVersion
+    ? "proxmox"
+    : rpiIssue
+      ? "raspbian"
+      : (osFields["ID"] || "").trim().toLowerCase();
+  info.osIdLike = (osFields["ID_LIKE"] || "").trim().toLowerCase();
   info.osName = osDisplay.osName;
   info.osVersion = osDisplay.osVersion;
+  info.osVersionCodename = resolveOsVersionCodename(osFields);
   info.kernel = (sections["KERNEL"] || "").trim();
   info.hostname = (sections["HOSTNAME"] || "").trim();
   info.uptime = (sections["UPTIME"] || "").trim();

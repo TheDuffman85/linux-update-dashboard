@@ -83,8 +83,11 @@ PRESENT
 6.8.0-47-generic
 `;
     const info = parseSystemInfo(stdout);
+    expect(info.osId).toBe("ubuntu");
+    expect(info.osIdLike).toBe("");
     expect(info.osName).toBe("Ubuntu 24.04 LTS");
     expect(info.osVersion).toBe("24.04");
+    expect(info.osVersionCodename).toBe("noble");
     expect(info.kernel).toBe("6.8.0-45-generic");
     expect(info.hostname).toBe("web-server-01");
     expect(info.uptime).toContain("14 days");
@@ -163,6 +166,7 @@ Mem: 7.7Gi
 `;
 
     const info = parseSystemInfo(stdout);
+    expect(info.osId).toBe("raspbian");
     expect(info.osName).toBe("Raspberry Pi OS 12 (bookworm)");
     expect(info.osVersion).toBe("12");
   });
@@ -196,6 +200,7 @@ Mem: 31Gi
 `;
 
     const info = parseSystemInfo(stdout);
+    expect(info.osId).toBe("proxmox");
     expect(info.osName).toBe("Proxmox VE 9.0.3");
     expect(info.osVersion).toBe("9.0.3");
   });

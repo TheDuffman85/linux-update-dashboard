@@ -20,7 +20,7 @@ import {
 import type { System, UpgradeGroup } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
-import { deriveSystemUpdateState, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
+import { deriveSystemUpdateState, getSystemStatusDotClass, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 const UNGROUPED_KEY = "ungrouped";
 type UpgradeSystemPlacement = { groupId: number | null; upgradeOrder: number };
@@ -239,16 +239,33 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
+function getStatsGridClass(stats: { needsReboot: number; lifecycleWarnings: number }): string {
+  const optionalCards = (stats.needsReboot > 0 ? 1 : 0) + (stats.lifecycleWarnings > 0 ? 1 : 0);
+  return optionalCards === 2
+    ? "lg:grid-cols-8"
+    : optionalCards === 1
+      ? "lg:grid-cols-7"
+      : "lg:grid-cols-6";
+}
+
+function getLifecycleWarningLabel(system: Pick<System, "osLifecycleStatus" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd">): string {
+  if (system.osLifecycleStatus === "eol") return "EOL";
+  if (system.osLifecycleStatus === "support_ended") return "Support ended";
+  if (system.osLifecycleStatus === "support_ending") {
+    return typeof system.osLifecycleDaysUntilSupportEnd === "number"
+      ? `Support ends in ${system.osLifecycleDaysUntilSupportEnd}d`
+      : "Support ending";
+  }
+  if (typeof system.osLifecycleDaysUntilEol === "number") {
+    return `EOL in ${system.osLifecycleDaysUntilEol}d`;
+  }
+  return "EOL soon";
+}
+
+function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "osLifecycleStatus" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd" | "osLifecycleLabel" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const maintaining = updateState === "maintaining";
-  const dotColor = updateState === "check_failed" || updateState === "unreachable"
-    ? "bg-red-500"
-    : updateState === "check_warning" || updateState === "updates_available"
-      ? "bg-amber-500"
-      : updateState === "up_to_date"
-        ? "bg-green-500"
-        : "bg-slate-400";
+  const dotColor = getSystemStatusDotClass(updateState);
 
   return (
     <Link
@@ -286,6 +303,8 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
             <Badge variant="warning" small>Check warning</Badge>
           ) : updateState === "updates_available" ? (
             <Badge variant="warning" small>{system.updateCount} updates</Badge>
+          ) : updateState === "lifecycle_warning" ? (
+            <Badge variant={system.osLifecycleStatus === "eol" ? "danger" : "warning"} small>{getLifecycleWarningLabel(system)}</Badge>
           ) : updateState === "up_to_date" ? (
             <Badge variant="success" small>Up to date</Badge>
           ) : (
@@ -1118,7 +1137,7 @@ export default function Dashboard() {
     >
       {/* Stats */}
       {stats && (
-        <div className={`grid grid-cols-2 sm:grid-cols-3 ${stats.needsReboot > 0 ? "lg:grid-cols-7" : "lg:grid-cols-6"} gap-3 mb-6`}>
+        <div className={`grid grid-cols-2 sm:grid-cols-3 ${getStatsGridClass(stats)} gap-3 mb-6`}>
           <StatCard label="Total Systems" value={stats.total} color="text-slate-700 dark:text-slate-200" />
           <StatCard label="Up to Date" value={stats.upToDate} color="text-green-600" />
           <StatCard label="Need Updates" value={stats.needsUpdates} color="text-amber-600" />
@@ -1127,6 +1146,9 @@ export default function Dashboard() {
           <StatCard label="Total Updates" value={stats.totalUpdates} color="text-blue-600" />
           {stats.needsReboot > 0 && (
             <StatCard label="Needs Reboot" value={stats.needsReboot} color="text-amber-500" />
+          )}
+          {stats.lifecycleWarnings > 0 && (
+            <StatCard label="OS Warnings" value={stats.lifecycleWarnings} color="text-red-600" />
           )}
         </div>
       )}

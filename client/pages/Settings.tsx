@@ -70,8 +70,10 @@ export default function Settings() {
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
-  const numericSettingRules: NumericSettingRules =
-    settingsResponse?.numericSettingRules ?? NUMERIC_SETTING_RULES;
+  const numericSettingRules: NumericSettingRules = {
+    ...NUMERIC_SETTING_RULES,
+    ...(settingsResponse?.numericSettingRules ?? {}),
+  };
 
   useEffect(() => {
     if (settingsResponse?.settings) {
@@ -172,29 +174,50 @@ export default function Settings() {
 
   return (
     <Layout title="Settings">
-      <SettingSection title="Activity History">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md">
+      <SettingSection title="General">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
           <div>
             <label className={labelClass}>Number of Activities</label>
             <input
               type="number"
-              min={5}
-              max={200}
+              min={numericSettingRules.activity_history_limit.min}
+              max={numericSettingRules.activity_history_limit.max}
               value={form.activity_history_limit || "20"}
               onChange={(e) =>
-                setForm({ ...form, activity_history_limit: e.target.value })
+                setNumericField("activity_history_limit", e.target.value)
               }
+              onBlur={() => normalizeNumericField("activity_history_limit")}
               className={inputClass}
             />
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Keeps only this many recent activity entries per system. Older
+              history is automatically deleted, and the same limit is used on the
+              system detail page.
+            </p>
+          </div>
+          <div>
+            <label className={labelClass}>EOL Warning Window (days)</label>
+            <input
+              type="number"
+              min={numericSettingRules.distro_eol_warning_days.min}
+              max={numericSettingRules.distro_eol_warning_days.max}
+              value={form.distro_eol_warning_days || "180"}
+              onChange={(e) =>
+                setNumericField("distro_eol_warning_days", e.target.value)
+              }
+              onBlur={() => normalizeNumericField("distro_eol_warning_days")}
+              className={inputClass}
+            />
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Shows dashboard and system warnings this many days before a
+              detected distribution reaches end of life.
+            </p>
           </div>
         </div>
-        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-          Keeps only this many recent activity entries per system. Older history is
-          automatically deleted, and the same limit is used in the Activity History
-          on the system detail page.
-        </p>
         <button
-          onClick={() => handleSave(["activity_history_limit"])}
+          onClick={() =>
+            handleSave(["activity_history_limit", "distro_eol_warning_days"])
+          }
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
