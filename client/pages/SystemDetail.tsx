@@ -17,6 +17,7 @@ import {
   useRebootSystem,
   useDismissNeedsReboot,
   useDismissRootUserBanner,
+  useDismissOsLifecycleWarning,
   useSolvePackageIssue,
   useDismissPackageIssue,
 } from "../lib/systems";
@@ -38,6 +39,7 @@ import type {
 } from "../lib/systems";
 import {
   deriveSystemUpdateState,
+  getSystemStatusDotClass,
   getUpdatesPanelState,
   hasHostKeyVerificationError,
   isPostAutoremoveRecheck,
@@ -70,6 +72,33 @@ function InfoCard({ title, items }: { title: string; items: { label: string; val
       </dl>
     </div>
   );
+}
+
+function formatOsLifecycleField(system: {
+  osLifecycleStatus: string;
+  osLifecycleEolDate: string | null;
+  osLifecycleDaysUntilEol: number | null;
+  osLifecycleSupportEndDate: string | null;
+  osLifecycleDaysUntilSupportEnd: number | null;
+}): string {
+  if (system.osLifecycleStatus === "unknown") return "Unknown";
+  if (system.osLifecycleStatus === "eol") {
+    return system.osLifecycleEolDate ? `EOL on ${system.osLifecycleEolDate}` : "EOL";
+  }
+  if (system.osLifecycleStatus === "support_ended") {
+    return system.osLifecycleEolDate ? `LTS until ${system.osLifecycleEolDate}` : "Support ended";
+  }
+  if (system.osLifecycleStatus === "support_ending") {
+    return typeof system.osLifecycleDaysUntilSupportEnd === "number"
+      ? `Security support ends in ${system.osLifecycleDaysUntilSupportEnd} days`
+      : "Security support ending";
+  }
+  if (system.osLifecycleStatus === "approaching_eol") {
+    return typeof system.osLifecycleDaysUntilEol === "number"
+      ? `EOL in ${system.osLifecycleDaysUntilEol} days`
+      : "EOL soon";
+  }
+  return system.osLifecycleEolDate ? `Supported until ${system.osLifecycleEolDate}` : "Supported";
 }
 
 function UpdatesTable({
@@ -715,6 +744,73 @@ export function RootUserInfoBanner({
           ) : "Dismiss"}
         </button>
       </div>
+    </div>
+  );
+}
+
+export function OsLifecycleWarningBanner({
+  systemName,
+  status,
+  label,
+  eolDate,
+  daysUntilEol,
+  supportEndDate,
+  daysUntilSupportEnd,
+  busy,
+  onDismiss,
+}: {
+  systemName: string;
+  status: "support_ending" | "support_ended" | "approaching_eol" | "eol";
+  label: string;
+  eolDate: string | null;
+  daysUntilEol: number | null;
+  supportEndDate: string | null;
+  daysUntilSupportEnd: number | null;
+  busy?: boolean;
+  onDismiss: () => void;
+}) {
+  const isEol = status === "eol";
+  const tone = isEol
+    ? {
+        wrapper: "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300",
+        body: "text-red-600 dark:text-red-400",
+        button: "border-red-300 dark:border-red-700 text-red-700 dark:text-red-300",
+      }
+    : {
+        wrapper: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300",
+        body: "text-amber-700 dark:text-amber-400",
+        button: "border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400",
+      };
+  const detail = isEol
+    ? `${systemName} is running a distribution release that has reached end of life${eolDate ? ` on ${eolDate}` : ""}.`
+    : status === "support_ended"
+      ? `${systemName} is running a distribution release whose regular security support ended${supportEndDate ? ` on ${supportEndDate}` : ""}${eolDate ? `; LTS runs until ${eolDate}` : ""}.`
+      : status === "support_ending"
+        ? `${systemName} is running a distribution release whose regular security support ends${supportEndDate ? ` on ${supportEndDate}` : ""}${typeof daysUntilSupportEnd === "number" ? `, in ${daysUntilSupportEnd} day${daysUntilSupportEnd === 1 ? "" : "s"}` : ""}.`
+        : `${systemName} is running a distribution release that reaches end of life${eolDate ? ` on ${eolDate}` : ""}${typeof daysUntilEol === "number" ? `, in ${daysUntilEol} day${daysUntilEol === 1 ? "" : "s"}` : ""}.`;
+
+  return (
+    <div className={`flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border text-sm sm:flex-row sm:items-center ${tone.wrapper}`}>
+      <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+      </svg>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{label}</p>
+        <p className={`mt-1 ${tone.body}`}>{detail}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        disabled={busy}
+        className={`px-3 py-1 text-xs font-medium rounded-lg border bg-white/70 dark:bg-slate-900/30 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap ${tone.button}`}
+      >
+        {busy ? (
+          <span className="flex items-center gap-1.5">
+            <span className="spinner spinner-sm" />
+            Dismissing...
+          </span>
+        ) : "Dismiss"}
+      </button>
     </div>
   );
 }
@@ -1857,6 +1953,7 @@ export default function SystemDetail() {
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
   const dismissRootUserBanner = useDismissRootUserBanner();
+  const dismissOsLifecycleWarning = useDismissOsLifecycleWarning();
   const solvePackageIssue = useSolvePackageIssue();
   const dismissPackageIssue = useDismissPackageIssue();
   const updateSystem = useUpdateSystem();
@@ -1936,6 +2033,7 @@ export default function SystemDetail() {
   const repairingPackageIssue = solvePackageIssue.isPending || activeOp?.type === "package_manager_repair";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
   const dismissingRootUserBanner = dismissRootUserBanner.isPending;
+  const dismissingOsLifecycleWarning = dismissOsLifecycleWarning.isPending;
   const dismissingPackageIssue = dismissPackageIssue.isPending;
   const operationCancellable = !!activeOp && !activeOp.cancelRequested && !cancelOperation.isPending;
   const updatesSignature = data?.updates
@@ -1985,13 +2083,7 @@ export default function SystemDetail() {
       : dedupedOperationNoticeState;
   const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
-  const dotColor = updateState === "check_failed" || updateState === "unreachable"
-    ? "bg-red-500"
-    : updateState === "check_warning" || updateState === "updates_available"
-      ? "bg-amber-500"
-      : updateState === "up_to_date"
-        ? "bg-green-500"
-        : "bg-slate-400";
+  const dotColor = getSystemStatusDotClass(updateState);
   const hasSelectedPackages = packageSelectionState.selectedCount > 0;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
     .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
@@ -2009,6 +2101,14 @@ export default function SystemDetail() {
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport);
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
   const showRootUserBanner = rootUserCheckEnabled && shouldShowRootUserInfoBanner(system);
+  const showOsLifecycleBanner =
+    (
+      system.osLifecycleStatus === "eol" ||
+      system.osLifecycleStatus === "approaching_eol" ||
+      system.osLifecycleStatus === "support_ending" ||
+      system.osLifecycleStatus === "support_ended"
+    ) &&
+    !system.osLifecycleBannerDismissed;
 
   const handleUpdateConfiguration = (formData: SystemFormSubmitData) => {
     updateSystem.mutate(
@@ -2124,6 +2224,13 @@ export default function SystemDetail() {
   const handleDismissRootUserBanner = () => {
     dismissRootUserBanner.mutate(systemId, {
       onSuccess: () => addToast("Root user notice dismissed", "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleDismissOsLifecycleWarning = () => {
+    dismissOsLifecycleWarning.mutate(systemId, {
+      onSuccess: () => addToast("EOL warning dismissed", "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -2382,6 +2489,7 @@ export default function SystemDetail() {
           items={[
             { label: "OS", value: system.osName },
             { label: "Version", value: system.osVersion },
+            { label: "EOL", value: formatOsLifecycleField(system) },
             { label: "Kernel", value: system.kernel },
             { label: "Architecture", value: system.arch },
             {
@@ -2420,6 +2528,26 @@ export default function SystemDetail() {
         <HostKeyVerificationBanner
           systemName={system.name}
           onOpenConfiguration={() => setShowConfigurationModal(true)}
+        />
+      )}
+
+      {showOsLifecycleBanner && (
+        <OsLifecycleWarningBanner
+          systemName={system.name}
+          status={
+            system.osLifecycleStatus === "eol" ||
+            system.osLifecycleStatus === "support_ending" ||
+            system.osLifecycleStatus === "support_ended"
+              ? system.osLifecycleStatus
+              : "approaching_eol"
+          }
+          label={system.osLifecycleLabel}
+          eolDate={system.osLifecycleEolDate}
+          daysUntilEol={system.osLifecycleDaysUntilEol}
+          supportEndDate={system.osLifecycleSupportEndDate}
+          daysUntilSupportEnd={system.osLifecycleDaysUntilSupportEnd}
+          busy={dismissingOsLifecycleWarning}
+          onDismiss={handleDismissOsLifecycleWarning}
         />
       )}
 

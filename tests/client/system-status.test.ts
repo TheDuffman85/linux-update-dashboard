@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   deriveSystemUpdateState,
+  getSystemStatusDotClass,
   getUpdatesPanelState,
   hasHostKeyVerificationError,
   isHostKeyVerificationErrorMessage,
@@ -21,12 +22,14 @@ function makeLastCheck(status: LastCheckSummary["status"], error: string | null 
 function makeSystem(overrides?: {
   isReachable?: number;
   updateCount?: number;
+  osLifecycleStatus?: "supported" | "support_ending" | "support_ended" | "approaching_eol" | "eol" | "unknown";
   lastCheck?: LastCheckSummary | null;
   activeOperation?: ActiveOperation | null;
 }) {
   return {
     isReachable: overrides?.isReachable ?? 1,
     updateCount: overrides?.updateCount ?? 0,
+    osLifecycleStatus: overrides?.osLifecycleStatus,
     lastCheck: overrides?.lastCheck ?? null,
     activeOperation: overrides?.activeOperation ?? null,
   };
@@ -59,6 +62,15 @@ describe("deriveSystemUpdateState", () => {
     expect(
       deriveSystemUpdateState(makeSystem({ lastCheck: makeLastCheck("success") })),
     ).toBe("up_to_date");
+  });
+
+  test("returns lifecycle warning instead of up to date for EOL systems", () => {
+    expect(
+      deriveSystemUpdateState(makeSystem({
+        lastCheck: makeLastCheck("success"),
+        osLifecycleStatus: "eol",
+      })),
+    ).toBe("lifecycle_warning");
   });
 
   test("returns unreachable before check issues", () => {
@@ -112,6 +124,17 @@ describe("deriveSystemUpdateState", () => {
     expect(deriveSystemUpdateState(makeSystem({
       activeOperation: { ...operation, phase: "rechecking" },
     }))).toBe("checking");
+  });
+});
+
+describe("getSystemStatusDotClass", () => {
+  test("uses the update warning color for lifecycle warnings", () => {
+    expect(getSystemStatusDotClass("lifecycle_warning")).toBe("bg-amber-500");
+  });
+
+  test("keeps operational failures red", () => {
+    expect(getSystemStatusDotClass("check_failed")).toBe("bg-red-500");
+    expect(getSystemStatusDotClass("unreachable")).toBe("bg-red-500");
   });
 });
 

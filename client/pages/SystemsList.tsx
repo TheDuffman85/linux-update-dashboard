@@ -30,6 +30,30 @@ function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   return nextItems;
 }
 
+function getLifecycleBadge(system: Pick<System, "osLifecycleStatus" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd">): { label: string; variant: "warning" | "danger" } | null {
+  if (system.osLifecycleStatus === "eol") return { label: "EOL", variant: "danger" };
+  if (system.osLifecycleStatus === "support_ended") {
+    return { label: "support ended", variant: "warning" };
+  }
+  if (system.osLifecycleStatus === "support_ending") {
+    return {
+      label: typeof system.osLifecycleDaysUntilSupportEnd === "number"
+        ? `support ends in ${system.osLifecycleDaysUntilSupportEnd}d`
+        : "support ending",
+      variant: "warning",
+    };
+  }
+  if (system.osLifecycleStatus === "approaching_eol") {
+    return {
+      label: typeof system.osLifecycleDaysUntilEol === "number"
+        ? `EOL in ${system.osLifecycleDaysUntilEol}d`
+        : "EOL soon",
+      variant: "warning",
+    };
+  }
+  return null;
+}
+
 export function getEditSystemIdFromRouteState(state: unknown): number | null {
   if (!state || typeof state !== "object") return null;
   const editSystemId = (state as { editSystemId?: unknown }).editSystemId;
@@ -204,11 +228,13 @@ export default function SystemsList() {
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedSystems.map((s) => (
-                <tr
-                  key={s.id}
-                  className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
-                >
+              {orderedSystems.map((s) => {
+                const lifecycleBadge = getLifecycleBadge(s);
+                return (
+                  <tr
+                    key={s.id}
+                    className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  >
                   <td className="px-2 sm:px-4 py-3">
                     <div className="flex items-center gap-2 min-w-0">
                       <span
@@ -246,6 +272,9 @@ export default function SystemsList() {
                       )}
                       {s.hidden === 1 && (
                         <Badge variant="muted" small>Hidden</Badge>
+                      )}
+                      {lifecycleBadge && (
+                        <Badge variant={lifecycleBadge.variant} small>{lifecycleBadge.label}</Badge>
                       )}
                       {s.hostKeyStatus === "verification_disabled" ? (
                         <Badge variant="warning" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus)}</Badge>
@@ -319,8 +348,9 @@ export default function SystemsList() {
                       </button>
                     </div>
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

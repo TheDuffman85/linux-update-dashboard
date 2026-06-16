@@ -37,6 +37,11 @@ const DEFAULT_SETTINGS = [
     description: "How many recent activity history entries to keep per system; older entries are deleted and the same limit is shown in the UI",
   },
   {
+    key: "distro_eol_warning_days",
+    value: "180",
+    description: "How many days before a distribution end-of-life date to show warnings",
+  },
+  {
     key: "concurrent_connections",
     value: "5",
     description: "Max simultaneous SSH connections",
@@ -153,8 +158,11 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     disabled_pkg_managers TEXT,
     pkg_manager_configs TEXT,
     auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
+    os_id TEXT,
+    os_id_like TEXT,
     os_name TEXT,
     os_version TEXT,
+    os_version_codename TEXT,
     kernel TEXT,
     hostname_remote TEXT,
     uptime TEXT,
@@ -172,6 +180,8 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     reboot_dismissed_boot_id TEXT,
     reboot_dismissed_uptime_seconds REAL,
     reboot_dismissed_at TEXT,
+    os_lifecycle_dismissed_key TEXT,
+    os_lifecycle_dismissed_at TEXT,
     root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0,
     root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT,
     system_info_updated_at TEXT,
@@ -494,12 +504,27 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN os_id TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN os_id_like TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN os_name TEXT`);
   } catch {
     // Column already exists
   }
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN os_version TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN os_version_codename TEXT`);
   } catch {
     // Column already exists
   }
@@ -594,6 +619,16 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   }
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN reboot_dismissed_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN os_lifecycle_dismissed_key TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN os_lifecycle_dismissed_at TEXT`);
   } catch {
     // Column already exists
   }
@@ -1215,8 +1250,11 @@ function rebuildSystemsTable(
       disabled_pkg_managers TEXT,
       pkg_manager_configs TEXT,
       auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
+      os_id TEXT,
+      os_id_like TEXT,
       os_name TEXT,
       os_version TEXT,
+      os_version_codename TEXT,
       kernel TEXT,
       hostname_remote TEXT,
       uptime TEXT,
@@ -1234,6 +1272,8 @@ function rebuildSystemsTable(
       reboot_dismissed_boot_id TEXT,
       reboot_dismissed_uptime_seconds REAL,
       reboot_dismissed_at TEXT,
+      os_lifecycle_dismissed_key TEXT,
+      os_lifecycle_dismissed_at TEXT,
       root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0,
       root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT,
       system_info_updated_at TEXT,
@@ -1268,8 +1308,11 @@ function rebuildSystemsTable(
     "disabled_pkg_managers",
     "pkg_manager_configs",
     "auto_hide_kept_back_updates",
+    "os_id",
+    "os_id_like",
     "os_name",
     "os_version",
+    "os_version_codename",
     "kernel",
     "hostname_remote",
     "uptime",
@@ -1287,6 +1330,8 @@ function rebuildSystemsTable(
     "reboot_dismissed_boot_id",
     "reboot_dismissed_uptime_seconds",
     "reboot_dismissed_at",
+    "os_lifecycle_dismissed_key",
+    "os_lifecycle_dismissed_at",
     "root_user_banner_dismissed",
     "root_user_banner_dismissed_host_key_fingerprint_sha256",
     "system_info_updated_at",
@@ -1324,8 +1369,11 @@ function rebuildSystemsTable(
       : opts.hasIgnoreKeptBackPackages
         ? "ignore_kept_back_packages AS auto_hide_kept_back_updates"
         : "0 AS auto_hide_kept_back_updates",
+    "os_id",
+    "os_id_like",
     "os_name",
     "os_version",
+    "os_version_codename",
     "kernel",
     "hostname_remote",
     "uptime",
@@ -1343,6 +1391,8 @@ function rebuildSystemsTable(
     "reboot_dismissed_boot_id",
     "reboot_dismissed_uptime_seconds",
     "reboot_dismissed_at",
+    "os_lifecycle_dismissed_key",
+    "os_lifecycle_dismissed_at",
     "root_user_banner_dismissed",
     "root_user_banner_dismissed_host_key_fingerprint_sha256",
     "system_info_updated_at",

@@ -8,12 +8,14 @@ export type SystemUpdateState =
   | "check_failed"
   | "check_warning"
   | "updates_available"
+  | "lifecycle_warning"
   | "up_to_date"
   | "unchecked";
 
 type SystemStatusInput = {
   isReachable: number;
   updateCount: number;
+  osLifecycleStatus?: "supported" | "support_ending" | "support_ended" | "approaching_eol" | "eol" | "unknown";
   lastCheck: LastCheckSummary | null;
   activeOperation?: ActiveOperation | null;
 };
@@ -79,8 +81,22 @@ export function deriveSystemUpdateState(
   if (system.lastCheck?.status === "failed") return "check_failed";
   if (system.lastCheck?.status === "warning") return "check_warning";
   if (system.updateCount > 0) return "updates_available";
+  if (
+    system.osLifecycleStatus === "eol" ||
+    system.osLifecycleStatus === "approaching_eol" ||
+    system.osLifecycleStatus === "support_ending" ||
+    system.osLifecycleStatus === "support_ended"
+  ) return "lifecycle_warning";
   if (system.isReachable === 1) return "up_to_date";
   return "unchecked";
+}
+
+export function getSystemStatusDotClass(state: SystemUpdateState): string {
+  if (state === "check_failed" || state === "unreachable") return "bg-red-500";
+  if (state === "check_warning" || state === "updates_available" || state === "lifecycle_warning") return "bg-amber-500";
+  if (state === "up_to_date") return "bg-green-500";
+  if (state === "upgrading" || state === "maintaining" || state === "checking") return "bg-blue-500";
+  return "bg-slate-400";
 }
 
 export function getUpdatesPanelState(

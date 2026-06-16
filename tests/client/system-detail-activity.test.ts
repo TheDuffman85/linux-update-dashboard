@@ -150,7 +150,7 @@ describe("HostKeyVerificationBanner", () => {
     expect(html).toContain("SSH host-key approval required");
     expect(html).toContain("Debian needs its SSH host key reviewed");
     expect(html).toContain("Open Configuration");
-    expect(html).toContain("bg-red-50");
+    expect(html).toContain("bg-amber-50");
   });
 });
 

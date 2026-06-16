@@ -288,6 +288,14 @@ function serializeSystem(s: Record<string, unknown>) {
   } = s;
   return {
     ...safe,
+    ...systemService.getOsLifecycle({
+      osId: s.osId as string | null,
+      osIdLike: s.osIdLike as string | null,
+      osName: s.osName as string | null,
+      osVersion: s.osVersion as string | null,
+      osVersionCodename: s.osVersionCodename as string | null,
+      osLifecycleDismissedKey: s.osLifecycleDismissedKey as string | null,
+    }),
     hasSudoPassword: !!encryptedSudoPassword,
     approvedHostKey:
       typeof s.trustedHostKey === "string" &&
@@ -1070,6 +1078,16 @@ systems.post("/:id/dismiss-root-user-banner", (c) => {
   if (!system) return c.json({ error: "System not found" }, 404);
 
   systemService.dismissRootUserBanner(id);
+  return c.json({ status: "ok" });
+});
+
+systems.post("/:id/dismiss-os-lifecycle-warning", (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const system = systemService.getSystem(id);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  systemService.dismissOsLifecycleWarning(id);
   return c.json({ status: "ok" });
 });
 

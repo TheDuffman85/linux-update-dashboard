@@ -199,6 +199,40 @@ describe("dashboard routes", () => {
     });
   });
 
+  test("counts lifecycle warnings separately from up to date", async () => {
+    const db = getDb();
+    db.insert(systems).values({
+      name: "Debian LTS",
+      hostname: "debian-lts.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      hidden: 0,
+      osId: "debian",
+      osName: "Debian GNU/Linux 12 (bookworm)",
+      osVersion: "12",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/dashboard", dashboardRoutes);
+
+    const statsRes = await app.request("/api/dashboard/stats");
+    expect(statsRes.status).toBe(200);
+    const statsBody = await statsRes.json();
+    expect(statsBody.stats.upToDate).toBe(0);
+    expect(statsBody.stats.lifecycleWarnings).toBe(1);
+
+    const systemsRes = await app.request("/api/dashboard/systems");
+    expect(systemsRes.status).toBe(200);
+    const systemsBody = await systemsRes.json();
+    expect(systemsBody.systems[0]).toMatchObject({
+      osLifecycleStatus: "support_ended",
+      osLifecycleSupportEndDate: "2026-06-10",
+      osLifecycleEolDate: "2028-06-30",
+    });
+  });
+
   test("keeps warning checks out of needs updates while preserving total update counts", async () => {
     const db = getDb();
     const inserted = db.insert(systems).values({

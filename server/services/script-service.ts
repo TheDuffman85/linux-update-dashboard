@@ -185,8 +185,11 @@ const MAX_EXIT_CODE_COUNT = 16;
 const MAX_PARSE_STEP = 20;
 const PACKAGE_MANAGER_NAME_PATTERN = /^[a-z][a-z0-9_-]{1,31}$/;
 const SYSTEM_INFO_FIELDS = new Set<keyof SystemInfo>([
+  "osId",
+  "osIdLike",
   "osName",
   "osVersion",
+  "osVersionCodename",
   "kernel",
   "hostname",
   "uptime",

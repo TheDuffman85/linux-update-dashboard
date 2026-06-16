@@ -37,6 +37,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, add custom package managers, and assign per-system script overrides
 - **Granular updates:** upgrade everything at once, queue grouped Upgrade All batches, pick individual packages, or autoremove unused packages per system
 - **Installed package inventory:** collect installed package versions during refreshes and browse the cached snapshot from each system detail page
+- **Distribution lifecycle warnings:** show dashboard and per-system warnings when a detected OS release is near EOL, past regular support, or fully EOL
 - **Cron-based scheduling:** create refresh, update, and notification schedules with per-schedule system scope and cache behavior
 - **APT kept-back auto-hide:** optionally move kept-back APT packages into the hidden-updates list for specific systems so they disappear from visible counts and dashboards
 - **Flexible notifications:** set up multiple channels per event type (Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, Webhooks), scope them to specific systems, and pick which events trigger each channel
@@ -356,6 +357,51 @@ docker inspect --format='{{.State.Health.Status}}' linux-update-dashboard
 | `NODE_ENV`                             | No       | -                       | Set to `production` for static file serving                                                                                                                                       |
 
 If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`. If both `VAR` and `VAR_FILE` are set for the same setting, startup fails with a configuration error.
+
+## Distribution EOL Warnings
+
+Linux Update Dashboard records OS identity fields from `/etc/os-release` during system refreshes and compares them with a bundled distribution lifecycle catalog. The dashboard shows OS lifecycle warnings when a release is close to end of life, fully end of life, or in a reduced support phase such as Debian LTS after regular Debian Security Support has ended.
+
+These warnings appear on the dashboard, systems list, and system detail page. The detail page also shows an **EOL** field in the system information card. The warning window is configurable from **Settings > Lifecycle Warnings**; the default is **180 days**.
+
+Lifecycle data is generated at build time:
+
+- `scripts/generate-distro-lifecycle-data.mjs` fetches data from `https://endoflife.date/api`
+- `server/generated/distro-lifecycle-data.json` is the generated JSON data file used by the app
+- `server/default-distro-lifecycle-catalog.json` is a checked-in offline fallback catalog
+
+`pnpm run build` runs the generator before compiling. If `endoflife.date` is unavailable, the build logs a warning and keeps the existing generated file. If the generated file is missing, the generator writes one from `server/default-distro-lifecycle-catalog.json`, so offline builds still work.
+
+### Custom EOL data
+
+For source builds, provide your own lifecycle catalog by setting `LUDASH_EOL_CATALOG_FILE` before running the generator or build:
+
+```bash
+LUDASH_EOL_CATALOG_FILE=/path/to/my-eol-catalog.json pnpm run generate:eol
+# or
+LUDASH_EOL_CATALOG_FILE=/path/to/my-eol-catalog.json pnpm run build
+```
+
+The custom JSON file uses the same shape as `server/default-distro-lifecycle-catalog.json`:
+
+```json
+{
+  "debian": {
+    "label": "Debian",
+    "entries": [
+      {
+        "cycle": "12",
+        "supportEnd": "2026-06-10",
+        "eol": "2028-06-30"
+      }
+    ]
+  }
+}
+```
+
+Catalog keys are the normalized product keys used by the resolver: `ubuntu`, `debian`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Each entry needs a `cycle` and an `eol` value. `eol` can be an ISO date (`YYYY-MM-DD`) or `false` for releases without a known final EOL date. `supportEnd` is optional and represents the end of regular support before final EOL; when present, the dashboard treats the release as warning-worthy but not fully EOL until `eol`.
+
+If you edit `server/generated/distro-lifecycle-data.json` directly, keep in mind that `pnpm run build` regenerates it. Use `LUDASH_EOL_CATALOG_FILE` for repeatable custom data.
 
 ## Update Scheduling
 

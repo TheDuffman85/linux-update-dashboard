@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings, systems, upgradeGroups } from "../db/schema";
+import { resolveOsLifecycle } from "../distro-lifecycle";
 import { getEncryptor } from "../security";
 import { resolveSystemCredential } from "./credential-service";
 import * as cacheService from "./cache-service";
@@ -20,6 +21,7 @@ import {
   resolveRuntimeSteps,
   resolveScript,
 } from "./script-service";
+import { getDistroEolWarningDays } from "./settings-service";
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
@@ -635,6 +637,36 @@ export function dismissNeedsReboot(systemId: number): void {
     .run();
 }
 
+export function getOsLifecycle(system: {
+  osId?: string | null;
+  osIdLike?: string | null;
+  osName?: string | null;
+  osVersion?: string | null;
+  osVersionCodename?: string | null;
+  osLifecycleDismissedKey?: string | null;
+}) {
+  return resolveOsLifecycle(system, {
+    warningDays: getDistroEolWarningDays(),
+  });
+}
+
+export function dismissOsLifecycleWarning(systemId: number): void {
+  const system = getSystem(systemId);
+  if (!system) throw new Error("System not found");
+
+  const lifecycle = getOsLifecycle(system);
+  if (!lifecycle.osLifecycleDismissedKey) return;
+
+  getDb().update(systems)
+    .set({
+      osLifecycleDismissedKey: lifecycle.osLifecycleDismissedKey,
+      osLifecycleDismissedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
 export function dismissRootUserBanner(systemId: number): void {
   const db = getDb();
   const existing = getSystem(systemId);
@@ -849,7 +881,10 @@ export async function updateSystemInfo(
   db.update(systems)
     .set({
       osName: info.osName,
+      osId: info.osId || null,
+      osIdLike: info.osIdLike || null,
       osVersion: info.osVersion,
+      osVersionCodename: info.osVersionCodename || null,
       kernel: info.kernel,
       hostnameRemote: info.hostname,
       uptime: info.uptime,

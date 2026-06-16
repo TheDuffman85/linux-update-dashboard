@@ -222,8 +222,11 @@ const BUILTIN_PACKAGE_MANAGER_CONFIG_KEY_NAMES = new Map(
   ]),
 );
 const SYSTEM_INFO_FIELDS = [
+  "osId",
+  "osIdLike",
   "osName",
   "osVersion",
+  "osVersionCodename",
   "kernel",
   "hostname",
   "uptime",

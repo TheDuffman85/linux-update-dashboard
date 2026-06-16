@@ -10,6 +10,8 @@
     "dev": "APP_VERSION=dev-$(date -u +'%Y%m%d%H%M'); VITE_APP_VERSION=\"$APP_VERSION\" LUDASH_APP_VERSION=\"$APP_VERSION\" pnpm run dev:server & VITE_APP_VERSION=\"$APP_VERSION\" LUDASH_APP_VERSION=\"$APP_VERSION\" pnpm run dev:client",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
+    "generate:eol": "node scripts/generate-distro-lifecycle-data.mjs",
+    "prebuild": "pnpm run generate:eol",
     "build": "vite build && tsup",
     "start": "node dist/server/index.js",
     "screenshots": "screenshots/create-screenshots.sh",

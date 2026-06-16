@@ -41,8 +41,20 @@ export interface System {
   disabledPkgManagers: string[] | null;
   pkgManagerConfigs: PackageManagerConfigs | null;
   autoHideKeptBackUpdates: number;
+  osId: string | null;
+  osIdLike: string | null;
   osName: string | null;
   osVersion: string | null;
+  osVersionCodename: string | null;
+  osLifecycleStatus: "supported" | "support_ending" | "support_ended" | "approaching_eol" | "eol" | "unknown";
+  osLifecycleEolDate: string | null;
+  osLifecycleDaysUntilEol: number | null;
+  osLifecycleSupportEndDate: string | null;
+  osLifecycleDaysUntilSupportEnd: number | null;
+  osLifecycleLabel: string;
+  osLifecycleDismissedKey: string | null;
+  osLifecycleDismissedAt: string | null;
+  osLifecycleBannerDismissed: boolean;
   kernel: string | null;
   hostnameRemote: string | null;
   uptime: string | null;
@@ -557,6 +569,19 @@ export function useDismissRootUserBanner() {
     onSuccess: async (_data, id) => {
       await qc.invalidateQueries({ queryKey: ["system", id] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
+    },
+  });
+}
+
+export function useDismissOsLifecycleWarning() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ status: string }>(`/systems/${id}/dismiss-os-lifecycle-warning`, { method: "POST" }),
+    onSuccess: async (_data, id) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
