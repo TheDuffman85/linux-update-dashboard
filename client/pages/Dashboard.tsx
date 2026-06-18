@@ -233,7 +233,7 @@ export function getDashboardUpgradeToast(
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 text-center">
-      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      <div className={`text-2xl font-semibold ${color}`}>{value}</div>
       <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{label}</div>
     </div>
   );
@@ -1140,18 +1140,18 @@ export default function Dashboard() {
       {/* Stats */}
       {stats && (
         <div className={`grid grid-cols-2 sm:grid-cols-3 ${getStatsGridClass(stats)} gap-3 mb-6`}>
-          <StatCard label="Total Systems" value={stats.total} color="text-slate-700 dark:text-slate-200" />
-          <StatCard label="Up to Date" value={stats.upToDate} color="text-green-600" />
-          <StatCard label="Need Updates" value={stats.needsUpdates} color="text-amber-600" />
-          <StatCard label="Unreachable" value={stats.unreachable} color="text-red-600" />
-          <StatCard label="Check Issues" value={stats.checkIssues} color="text-amber-500" />
-          <StatCard label="Total Updates" value={stats.totalUpdates} color="text-blue-600" />
+          <StatCard label="Total Systems" value={stats.total} color="text-slate-700 dark:text-slate-100" />
+          <StatCard label="Up to Date" value={stats.upToDate} color="text-slate-700 dark:text-slate-100" />
+          <StatCard label="Need Updates" value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" />
           {stats.needsReboot > 0 && (
-            <StatCard label="Needs Reboot" value={stats.needsReboot} color="text-amber-500" />
+            <StatCard label="Needs Reboot" value={stats.needsReboot} color="text-amber-600 dark:text-amber-500" />
           )}
           {stats.lifecycleWarnings > 0 && (
-            <StatCard label="OS Warnings" value={stats.lifecycleWarnings} color="text-yellow-500 dark:text-yellow-400" />
+            <StatCard label="OS Warnings" value={stats.lifecycleWarnings} color="text-amber-600 dark:text-amber-500" />
           )}
+          <StatCard label="Check Issues" value={stats.checkIssues} color="text-amber-600 dark:text-amber-500" />
+          <StatCard label="Unreachable" value={stats.unreachable} color="text-red-600 dark:text-red-500" />
+          <StatCard label="Total Updates" value={stats.totalUpdates} color="text-slate-700 dark:text-slate-100" />
         </div>
       )}
 
