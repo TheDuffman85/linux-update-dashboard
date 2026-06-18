@@ -81,6 +81,11 @@ const DEFAULT_SETTINGS = [
     value: "false",
     description: "Disable password-based login",
   },
+  {
+    key: "language",
+    value: "browser",
+    description: "UI language preference; browser uses the client browser language when available",
+  },
 ];
 
 const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";

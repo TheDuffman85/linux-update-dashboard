@@ -38,6 +38,7 @@ import {
 } from "../lib/schedules";
 import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
 import { useToast } from "../context/ToastContext";
+import { useI18n } from "../lib/i18n";
 
 const inputClass =
   "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
@@ -48,16 +49,16 @@ const checkboxClass =
 const mutedTextClass = "text-xs text-slate-500 dark:text-slate-400";
 const MASKED_VALUE = "(stored)";
 const TELEGRAM_BINDING_STATUS_LABELS: Record<string, string> = {
-  unbound: "Not linked",
-  pending: "Link pending",
-  bound: "Linked",
+  unbound: "pages.notifications.telegram.status.notLinked",
+  pending: "pages.notifications.telegram.status.linkPending",
+  bound: "pages.notifications.telegram.status.linked",
 };
 const TELEGRAM_COMMAND_TOKEN_STATUS_LABELS: Record<string, string> = {
-  "not-required": "Not required",
-  pending: "Waiting for linked chat",
-  missing: "Missing or revoked",
-  expired: "Expired",
-  active: "Active",
+  "not-required": "pages.notifications.telegram.tokenStatus.notRequired",
+  pending: "pages.notifications.telegram.tokenStatus.waitingForLinkedChat",
+  missing: "pages.notifications.telegram.tokenStatus.missingOrRevoked",
+  expired: "pages.notifications.telegram.tokenStatus.expired",
+  active: "pages.notifications.telegram.tokenStatus.active",
 };
 const DISCORD_TEMPLATE = `{
   "embeds": [
@@ -70,67 +71,70 @@ const DISCORD_TEMPLATE = `{
 }`;
 
 const TYPE_LABELS: Record<string, string> = {
-  email: "Email",
-  gotify: "Gotify",
-  mqtt: "MQTT",
-  ntfy: "ntfy.sh",
-  telegram: "Telegram",
-  webhook: "Webhook",
+  email: "pages.notifications.type.email",
+  gotify: "pages.notifications.type.gotify",
+  mqtt: "pages.notifications.type.mqtt",
+  ntfy: "pages.notifications.type.ntfy",
+  telegram: "pages.notifications.type.telegram",
+  webhook: "pages.notifications.type.webhook",
 };
 
 const PUSH_PRIORITY_OPTIONS = [
-  { value: "auto", label: "Automatic" },
-  { value: "min", label: "Min" },
-  { value: "low", label: "Low" },
-  { value: "default", label: "Default" },
-  { value: "high", label: "High" },
-  { value: "urgent", label: "Urgent" },
+  { value: "auto", labelKey: "pages.notifications.priority.auto" },
+  { value: "min", labelKey: "pages.notifications.priority.min" },
+  { value: "low", labelKey: "pages.notifications.priority.low" },
+  { value: "default", labelKey: "pages.notifications.priority.default" },
+  { value: "high", labelKey: "pages.notifications.priority.high" },
+  { value: "urgent", labelKey: "pages.notifications.priority.urgent" },
 ];
 
 const GOTIFY_PRIORITY_OPTIONS = [
-  { value: "auto", label: "Automatic" },
-  { value: "0", label: "0 - Silent" },
-  { value: "1", label: "1 - Low" },
-  { value: "3", label: "3 - Default low" },
-  { value: "5", label: "5 - Normal" },
-  { value: "8", label: "8 - High" },
-  { value: "10", label: "10 - Max" },
+  { value: "auto", labelKey: "pages.notifications.priority.auto" },
+  { value: "0", labelKey: "pages.notifications.priority.gotifySilent" },
+  { value: "1", labelKey: "pages.notifications.priority.gotifyLow" },
+  { value: "3", labelKey: "pages.notifications.priority.gotifyDefaultLow" },
+  { value: "5", labelKey: "pages.notifications.priority.gotifyNormal" },
+  { value: "8", labelKey: "pages.notifications.priority.gotifyHigh" },
+  { value: "10", labelKey: "pages.notifications.priority.gotifyMax" },
 ];
 
 const EMAIL_IMPORTANCE_OPTIONS = [
-  { value: "auto", label: "Automatic" },
-  { value: "normal", label: "Normal" },
-  { value: "important", label: "Important" },
+  { value: "auto", labelKey: "pages.notifications.priority.auto" },
+  { value: "normal", labelKey: "pages.notifications.importance.normal" },
+  { value: "important", labelKey: "pages.notifications.importance.important" },
 ];
 
-const EMAIL_TLS_MODE_OPTIONS: Array<{ value: EmailTlsMode; label: string }> = [
-  { value: "plain", label: "Plain SMTP" },
-  { value: "starttls", label: "STARTTLS" },
-  { value: "tls", label: "SMTPS / Implicit TLS" },
+const EMAIL_TLS_MODE_OPTIONS: Array<{ value: EmailTlsMode; labelKey: string }> = [
+  { value: "plain", labelKey: "pages.notifications.smtpSecurity.plain" },
+  { value: "starttls", labelKey: "pages.notifications.smtpSecurity.starttls" },
+  { value: "tls", labelKey: "pages.notifications.smtpSecurity.tls" },
 ];
 
 const EVENT_LABELS: Record<string, string> = {
-  updates: "Updates",
-  unreachable: "Unreachable",
-  appUpdates: "Application updates",
+  updates: "pages.notifications.event.updates",
+  unreachable: "pages.notifications.event.unreachable",
+  appUpdates: "pages.notifications.event.appUpdates",
 };
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];
 const MIN_SCHEDULE_INTERVAL_MINUTES = getMinScheduleIntervalMinutes();
 const MIN_SCHEDULE_INTERVAL_MS = MIN_SCHEDULE_INTERVAL_MINUTES * 60 * 1000;
-const SCHEDULE_PRESETS: { label: string; value: string }[] = [
-  { label: "Every 15 minutes", value: "*/15 * * * *" },
-  { label: "Every 30 minutes", value: "*/30 * * * *" },
-  { label: "Every hour", value: "0 * * * *" },
-  { label: "Every 3 hours", value: "0 */3 * * *" },
-  { label: "Every 6 hours", value: "0 */6 * * *" },
-  { label: "Daily at 00:00", value: "0 0 * * *" },
-  { label: "Daily at 03:00", value: "0 3 * * *" },
-  { label: "Weekly Sunday 03:00", value: "0 3 * * 0" },
-  { label: "Weekly Monday 09:00", value: "0 9 * * 1" },
-  { label: "Monthly on the 1st", value: "0 3 1 * *" },
-  { label: "Custom", value: "custom" },
+const SCHEDULE_PRESETS: { labelKey: string; value: string }[] = [
+  { labelKey: "common.cron.every5Minutes", value: "*/5 * * * *" },
+  { labelKey: "common.cron.every15Minutes", value: "*/15 * * * *" },
+  { labelKey: "common.cron.every30Minutes", value: "*/30 * * * *" },
+  { labelKey: "common.cron.everyHour", value: "0 * * * *" },
+  { labelKey: "common.cron.every3Hours", value: "0 */3 * * *" },
+  { labelKey: "common.cron.every6Hours", value: "0 */6 * * *" },
+  { labelKey: "common.cron.dailyAt0000", value: "0 0 * * *" },
+  { labelKey: "common.cron.dailyAt0300", value: "0 3 * * *" },
+  { labelKey: "common.cron.weeklySunday0300", value: "0 3 * * 0" },
+  { labelKey: "common.cron.weeklyMonday0900", value: "0 9 * * 1" },
+  { labelKey: "common.cron.monthlyOnThe1st", value: "0 3 1 * *" },
+  { labelKey: "common.custom", value: "custom" },
 ];
+
+type Translate = ReturnType<typeof useI18n>["t"];
 
 function moveNotification<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -210,7 +214,7 @@ function normalizeGotifyPriorityOverride(value: string | undefined): string {
   }
 }
 
-function describeNotificationSchedule(channel: NotificationChannel): string {
+function describeNotificationSchedule(channel: NotificationChannel, t: Translate): string {
   const scheduleNames =
     channel.scheduleNames?.length
       ? channel.scheduleNames
@@ -219,16 +223,19 @@ function describeNotificationSchedule(channel: NotificationChannel): string {
         : [];
   if (scheduleNames.length === 1) return scheduleNames[0];
   if (scheduleNames.length === 2) return scheduleNames.join(", ");
-  if (scheduleNames.length > 2) return `${scheduleNames.length} schedules`;
-  if (channel.schedule) return channel.schedule;
-  return "Immediate";
+  if (scheduleNames.length > 2) {
+    return t("pages.notifications.countSchedules", { count: scheduleNames.length });
+  }
+  if (channel.schedule) return describeCron(channel.schedule, t);
+  return t("pages.notifications.immediate");
 }
 
-function describeCron(cron: string): string {
-  return SCHEDULE_PRESETS.find((preset) => preset.value === cron)?.label ?? cron;
+function describeCron(cron: string, t: Translate): string {
+  const preset = SCHEDULE_PRESETS.find((item) => item.value === cron);
+  return preset ? t(preset.labelKey) : cron;
 }
 
-function buildDuplicateNotification(channel: NotificationChannel): NotificationChannel {
+function buildDuplicateNotification(channel: NotificationChannel, t: Translate): NotificationChannel {
   const config = { ...channel.config };
   if (channel.type === "telegram") {
     delete config.chatId;
@@ -247,7 +254,7 @@ function buildDuplicateNotification(channel: NotificationChannel): NotificationC
   return {
     ...channel,
     id: 0,
-    name: `${channel.name} (Copy)`,
+    name: t("pages.notifications.nameCopy", { name: channel.name }),
     config,
     scheduleId: channel.scheduleId,
     scheduleIds: [...channel.scheduleIds],
@@ -290,11 +297,12 @@ function isBelowMinimumScheduleInterval(cronExpression: string): boolean {
 }
 
 function ScheduleMinimumWarning({ cron }: { cron: string }) {
+  const { t } = useI18n();
   if (!isBelowMinimumScheduleInterval(cron)) return null;
 
   return (
     <span className="text-xs text-amber-600 dark:text-amber-400">
-      Below {MIN_SCHEDULE_INTERVAL_MINUTES} min minimum
+      {t("pages.notifications.belowMinutesMinMinimum", { minutes: MIN_SCHEDULE_INTERVAL_MINUTES })}
     </span>
   );
 }
@@ -308,7 +316,8 @@ function NewNotificationScheduleForm({
   onCancel: () => void;
   loading?: boolean;
 }) {
-  const [name, setName] = useState("Notification schedule");
+  const { t } = useI18n();
+  const [name, setName] = useState(() => t("pages.notifications.notificationSchedule"));
   const [cronPreset, setCronPreset] = useState(SCHEDULE_PRESETS[3].value);
   const [customCron, setCustomCron] = useState("");
   const [error, setError] = useState("");
@@ -319,11 +328,11 @@ function NewNotificationScheduleForm({
     setError("");
     const cron = cronPreset === "custom" ? customCron.trim() : cronPreset;
     if (!name.trim()) {
-      setError("Name is required");
+      setError(t("pages.notifications.nameIsRequired"));
       return;
     }
     if (!cron) {
-      setError("Cron expression is required");
+      setError(t("pages.notifications.cronExpressionIsRequired"));
       return;
     }
     onSubmit({ name: name.trim(), cron });
@@ -337,7 +346,7 @@ function NewNotificationScheduleForm({
         </div>
       )}
       <div>
-        <label className={labelClass}>Name</label>
+        <label className={labelClass}>{t("pages.notifications.name")}</label>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -347,7 +356,7 @@ function NewNotificationScheduleForm({
         />
       </div>
       <div>
-        <label className={labelClass}>Schedule</label>
+        <label className={labelClass}>{t("pages.notifications.schedule")}</label>
         <select
           value={cronPreset}
           onChange={(e) => setCronPreset(e.target.value)}
@@ -355,7 +364,7 @@ function NewNotificationScheduleForm({
         >
           {SCHEDULE_PRESETS.map((preset) => (
             <option key={preset.value} value={preset.value}>
-              {preset.label}
+              {t(preset.labelKey)}
             </option>
           ))}
         </select>
@@ -379,14 +388,14 @@ function NewNotificationScheduleForm({
           onClick={onCancel}
           className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
         >
-          Cancel
+          {t("pages.notifications.cancel")}
         </button>
         <button
           type="submit"
           disabled={loading}
           className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          {loading ? <span className="spinner spinner-sm" /> : "Save"}
+          {loading ? <span className="spinner spinner-sm" /> : t("pages.notifications.save")}
         </button>
       </div>
     </form>
@@ -613,10 +622,10 @@ function getWebhookDestinationWarning(urlValue: string): string | null {
     const url = new URL(urlValue);
     const host = url.hostname.toLowerCase();
     if (host === "metadata.google.internal" || host === "169.254.169.254") {
-      return "This destination is blocked server-side because it targets cloud metadata endpoints.";
+      return "pages.notifications.webhook.warning.metadataBlocked";
     }
     if (isLoopbackOrPrivateHost(host)) {
-      return "This destination appears to be loopback, link-local, or private. That is allowed for trusted self-hosted targets, but treat it as an advanced setting.";
+      return "pages.notifications.webhook.warning.privateHost";
     }
   } catch {
     return null;
@@ -635,6 +644,7 @@ function RowEditor({
   label: string;
   allowSensitive?: boolean;
 }) {
+  const { t } = useI18n();
   const updateItem = (index: number, patch: Partial<WebhookField>) => {
     onChange(items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
   };
@@ -652,12 +662,12 @@ function RowEditor({
           onClick={() => onChange([...items, { name: "", value: "", sensitive: false }])}
           className="px-2 py-1 text-xs rounded border border-border hover:bg-slate-50 dark:hover:bg-slate-700"
         >
-          Add row
+          {t("pages.notifications.webhook.addRow")}
         </button>
       </div>
       <div className="space-y-2">
         {items.length === 0 ? (
-          <p className={mutedTextClass}>No entries configured</p>
+          <p className={mutedTextClass}>{t("pages.notifications.webhook.noEntriesConfigured")}</p>
         ) : (
           items.map((item, index) => (
             <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-2 items-center">
@@ -666,14 +676,14 @@ function RowEditor({
                 value={item.name}
                 onChange={(e) => updateItem(index, { name: e.target.value })}
                 className={inputClass}
-                placeholder="Name"
+                placeholder={t("common.name")}
               />
               <input
                 type={allowSensitive && item.sensitive ? "password" : "text"}
                 value={item.value === MASKED_VALUE ? "" : item.value}
                 onChange={(e) => updateItem(index, { value: e.target.value })}
                 className={inputClass}
-                placeholder={item.value === MASKED_VALUE ? "(unchanged)" : "Value"}
+                placeholder={item.value === MASKED_VALUE ? t("common.unchanged") : t("pages.notifications.webhook.value")}
               />
               {allowSensitive ? (
                 <label className="flex items-center gap-2 text-sm">
@@ -686,7 +696,7 @@ function RowEditor({
                     })}
                     className={checkboxClass}
                   />
-                  Secret
+                  {t("pages.notifications.webhook.secret")}
                 </label>
               ) : (
                 <span />
@@ -696,7 +706,7 @@ function RowEditor({
                 onClick={() => removeItem(index)}
                 className="px-2 py-2 text-xs rounded border border-border hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500"
               >
-                Remove
+                {t("pages.notifications.webhook.remove")}
               </button>
             </div>
           ))
@@ -728,6 +738,7 @@ function NotificationForm({
   onCancel: () => void;
   loading: boolean;
 }) {
+  const { t } = useI18n();
   const { data: systemsList } = useVisibleSystems();
   const { data: schedules } = useSchedules();
   const createSchedule = useCreateSchedule();
@@ -789,12 +800,12 @@ function NotificationForm({
     !telegramCommandsEnabled
       ? null
       : persistedTelegramCommandsEnabled
-        ? TELEGRAM_COMMAND_TOKEN_STATUS_LABELS[initialTelegram.commandTokenStatus || "not-required"] || "Unknown"
+        ? t(TELEGRAM_COMMAND_TOKEN_STATUS_LABELS[initialTelegram.commandTokenStatus || "not-required"] || "pages.notifications.unknown")
         : !initial?.id
-          ? "Save notification first"
+          ? t("pages.notifications.telegram.tokenStatus.saveNotificationFirst")
           : !initialTelegram.chatId
-            ? "Waiting for linked chat"
-            : "Will be issued after save";
+            ? t("pages.notifications.telegram.tokenStatus.waitingForLinkedChat")
+            : t("pages.notifications.telegram.tokenStatus.willBeIssuedAfterSave");
 
   const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>(initialWebhook);
   const [mqttConfig, setMqttConfig] = useState<MqttConfig>(initialMqtt);
@@ -943,7 +954,7 @@ function NotificationForm({
     }
 
     if (deliveryMode === "scheduled" && selectedScheduleIds.length === 0) {
-      addToast("Select at least one schedule", "danger");
+      addToast(t("pages.notifications.selectAtLeastOneSchedule"), "danger");
       return;
     }
 
@@ -979,9 +990,9 @@ function NotificationForm({
       {
         onSuccess: (data) => {
           if (data.success) {
-            addToast("Test notification sent", "success");
+            addToast(t("pages.notifications.testNotificationSent"), "success");
           } else {
-            addToast(`Test failed: ${data.error}`, "danger");
+            addToast(t("pages.notifications.testFailedError", { error: data.error }), "danger");
           }
         },
         onError: (err) => addToast(err.message, "danger"),
@@ -995,7 +1006,7 @@ function NotificationForm({
       onSuccess: (data) => {
         setTelegramLinkUrl(data.url);
         setTelegramLinkExpiresAt(data.expiresAt);
-        addToast("Telegram link created", "success");
+        addToast(t("pages.notifications.telegramLinkCreated"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -1007,7 +1018,7 @@ function NotificationForm({
       onSuccess: () => {
         setTelegramLinkUrl(null);
         setTelegramLinkExpiresAt(null);
-        addToast("Telegram chat unlinked", "success");
+        addToast(t("pages.notifications.telegramChatUnlinked"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -1016,7 +1027,7 @@ function NotificationForm({
   const handleTelegramReissueCommandToken = () => {
     if (!initial?.id) return;
     reissueTelegramCommandToken.mutate(initial.id, {
-      onSuccess: () => addToast("Telegram command token reissued", "success"),
+      onSuccess: () => addToast(t("pages.notifications.telegramCommandTokenReissued"), "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -1042,7 +1053,7 @@ function NotificationForm({
           setSelectedScheduleIds((prev) => Array.from(new Set([...prev, result.id])));
           setDeliveryMode("scheduled");
           setShowScheduleForm(false);
-          addToast("Schedule created", "success");
+          addToast(t("pages.notifications.scheduleCreated"), "success");
         },
         onError: (err) => addToast(err.message, "danger"),
       },
@@ -1057,30 +1068,30 @@ function NotificationForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Name</label>
+          <label className={labelClass}>{t("pages.notifications.name")}</label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             className={inputClass}
-            placeholder="e.g. Ops Team Email"
+            placeholder={t("pages.notifications.eGOpsTeamEmail")}
             required
           />
         </div>
         <div>
-          <label className={labelClass}>Type</label>
+          <label className={labelClass}>{t("pages.notifications.type")}</label>
           <select
             value={type}
             onChange={(e) => setType(e.target.value)}
             className={inputClass}
             disabled={!!initial}
           >
-            <option value="email">Email (SMTP)</option>
-            <option value="gotify">Gotify</option>
-            <option value="mqtt">MQTT</option>
-            <option value="ntfy">ntfy.sh</option>
-            <option value="telegram">Telegram</option>
-            <option value="webhook">Webhook</option>
+            <option value="email">{t(TYPE_LABELS.email)} (SMTP)</option>
+            <option value="gotify">{t(TYPE_LABELS.gotify)}</option>
+            <option value="mqtt">{t(TYPE_LABELS.mqtt)}</option>
+            <option value="ntfy">{t(TYPE_LABELS.ntfy)}</option>
+            <option value="telegram">{t(TYPE_LABELS.telegram)}</option>
+            <option value="webhook">{t(TYPE_LABELS.webhook)}</option>
           </select>
         </div>
       </div>
@@ -1092,11 +1103,11 @@ function NotificationForm({
           onChange={(e) => setEnabled(e.target.checked)}
           className={checkboxClass}
         />
-        <span className="text-sm font-medium">Enabled</span>
+        <span className="text-sm font-medium">{t("pages.notifications.enabled")}</span>
       </label>
 
       <div>
-        <span className={labelClass}>Events</span>
+        <span className={labelClass}>{t("pages.notifications.events")}</span>
         <div className="flex flex-wrap gap-4">
           {Object.entries(EVENT_LABELS).map(([event, label]) => (
             <label key={event} className="flex items-center gap-2">
@@ -1106,14 +1117,14 @@ function NotificationForm({
                 onChange={() => toggleNotifyOn(event)}
                 className={checkboxClass}
               />
-              <span className="text-sm">{label}</span>
+              <span className="text-sm">{t(label)}</span>
             </label>
           ))}
         </div>
       </div>
 
       <div>
-        <span className={labelClass}>Systems</span>
+        <span className={labelClass}>{t("pages.notifications.systems")}</span>
         <label className="flex items-center gap-2 mb-2">
           <input
             type="checkbox"
@@ -1121,12 +1132,12 @@ function NotificationForm({
             onChange={(e) => setAllSystems(e.target.checked)}
             className={checkboxClass}
           />
-          <span className="text-sm font-medium">All systems</span>
+          <span className="text-sm font-medium">{t("pages.notifications.allSystems")}</span>
         </label>
         {!allSystems && (
           <div className="max-h-40 overflow-y-auto border border-border rounded-lg p-2 space-y-1">
             {(systemsList || []).length === 0 ? (
-              <p className="text-xs text-slate-400 p-1">No systems configured</p>
+              <p className="text-xs text-slate-400 p-1">{t("pages.notifications.noSystemsConfigured")}</p>
             ) : (
               (systemsList || []).map((system) => (
                 <label
@@ -1149,7 +1160,7 @@ function NotificationForm({
       </div>
 
       <div>
-        <span className={labelClass}>Delivery</span>
+        <span className={labelClass}>{t("pages.notifications.delivery")}</span>
         <div className="flex gap-4 mb-2">
           <label className="flex items-center gap-2">
             <input
@@ -1159,7 +1170,7 @@ function NotificationForm({
               onChange={() => setDeliveryMode("immediate")}
               className="w-4 h-4 text-blue-600 focus:ring-blue-500"
             />
-            <span className="text-sm">Immediate</span>
+            <span className="text-sm">{t("pages.notifications.immediate")}</span>
           </label>
           <label className="flex items-center gap-2">
             <input
@@ -1169,7 +1180,7 @@ function NotificationForm({
               onChange={() => setDeliveryMode("scheduled")}
               className="w-4 h-4 text-blue-600 focus:ring-blue-500"
             />
-            <span className="text-sm">Schedule</span>
+            <span className="text-sm">{t("pages.notifications.schedule")}</span>
           </label>
         </div>
         {deliveryMode === "scheduled" && (
@@ -1177,7 +1188,7 @@ function NotificationForm({
           <div className="flex flex-col gap-2">
             <div className="max-h-40 overflow-y-auto border border-border rounded-lg p-2 space-y-1">
               {scheduleOptions.length === 0 ? (
-                <p className="text-xs text-slate-400 p-1">No schedules configured</p>
+                <p className="text-xs text-slate-400 p-1">{t("pages.notifications.noSchedulesConfigured")}</p>
               ) : (
                 scheduleOptions.map((schedule) => (
                   <label
@@ -1192,7 +1203,7 @@ function NotificationForm({
                       className={checkboxClass}
                     />
                     <span className="text-sm">{schedule.name}</span>
-                    <span className="text-xs text-slate-400">{describeCron(schedule.cron)}</span>
+                    <span className="text-xs text-slate-400">{describeCron(schedule.cron, t)}</span>
                     <ScheduleMinimumWarning cron={schedule.cron} />
                   </label>
                 ))
@@ -1203,11 +1214,11 @@ function NotificationForm({
               onClick={() => setShowScheduleForm(true)}
               className="self-start px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
             >
-              New schedule
+              {t("pages.notifications.newSchedule")}
             </button>
           </div>
           <p className={mutedTextClass}>
-            Events are batched and sent when any selected schedule runs.
+            {t("pages.notifications.eventsAreBatchedAndSentWhenAnySelected")}
           </p>
         </div>
         )}
@@ -1215,70 +1226,69 @@ function NotificationForm({
 
       <div className="border-t border-border pt-4 space-y-4">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          {TYPE_LABELS[type] || type}
+          {TYPE_LABELS[type] ? t(TYPE_LABELS[type]) : type}
         </h3>
 
         {type === "email" && (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>SMTP Host</label>
+                <label className={labelClass}>{t("pages.notifications.smtpHost")}</label>
                 <input value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>SMTP Port</label>
+                <label className={labelClass}>{t("pages.notifications.smtpPort")}</label>
                 <input value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>SMTP Security</label>
+                <label className={labelClass}>{t("pages.notifications.smtpSecurity")}</label>
                 <select
                   value={smtpTlsMode}
                   onChange={(e) => setSmtpTlsMode(e.target.value as EmailTlsMode)}
                   className={inputClass}
                 >
                   {EMAIL_TLS_MODE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
+                    <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                   ))}
                 </select>
               </div>
               <div className="sm:col-span-2">
-                <label className={labelClass}>SMTP User</label>
+                <label className={labelClass}>{t("pages.notifications.smtpUser")}</label>
                 <input value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} className={inputClass} />
               </div>
               <div className="sm:col-span-2">
-                <label className={labelClass}>SMTP Password</label>
+                <label className={labelClass}>{t("pages.notifications.smtpPassword")}</label>
                 <input
                   type="password"
                   value={smtpPassword}
                   onChange={(e) => setSmtpPassword(e.target.value)}
                   className={inputClass}
-                  placeholder={readString(initial?.config || {}, "smtpPassword") === MASKED_VALUE ? "(unchanged)" : ""}
+                  placeholder={readString(initial?.config || {}, "smtpPassword") === MASKED_VALUE ? t("common.unchanged") : ""}
                 />
               </div>
               <div>
-                <label className={labelClass}>From Address</label>
+                <label className={labelClass}>{t("pages.notifications.fromAddress")}</label>
                 <input value={smtpFrom} onChange={(e) => setSmtpFrom(e.target.value)} className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>To Address(es)</label>
+                <label className={labelClass}>{t("pages.notifications.toAddresses")}</label>
                 <input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>Importance</label>
+                <label className={labelClass}>{t("pages.notifications.importance")}</label>
                 <select
                   value={emailImportanceOverride}
                   onChange={(e) => setEmailImportanceOverride(e.target.value)}
                   className={inputClass}
                 >
                   {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
+                    <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                   ))}
                 </select>
               </div>
             </div>
             <p className={mutedTextClass}>
-              Use `Plain SMTP` for unencrypted relays on port 25, `STARTTLS` for ports like 587, and
-              `SMTPS / Implicit TLS` for port 465. Prefer `NODE_EXTRA_CA_CERTS` for trusted private CAs.
+              {t("pages.notifications.smtpSecurityHelp")}
             </p>
             {smtpTlsMode !== "plain" && (
               <div className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
@@ -1289,10 +1299,10 @@ function NotificationForm({
                     onChange={(e) => setSmtpAllowInsecureTls(e.target.checked)}
                     className={checkboxClass}
                   />
-                  <span className="text-sm font-medium">Allow insecure TLS (advanced)</span>
+                  <span className="text-sm font-medium">{t("pages.notifications.allowInsecureTlsAdvanced")}</span>
                 </label>
                 <p className="text-xs text-amber-700 dark:text-amber-300">
-                  Disabled by default. Use this only for exceptional self-signed SMTP endpoints you explicitly trust.
+                  {t("pages.notifications.smtpAllowInsecureTlsHelp")}
                 </p>
               </div>
             )}
@@ -1302,29 +1312,29 @@ function NotificationForm({
         {type === "gotify" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Server URL</label>
+              <label className={labelClass}>{t("pages.notifications.serverUrl")}</label>
               <input value={gotifyUrl} onChange={(e) => setGotifyUrl(e.target.value)} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Priority</label>
+              <label className={labelClass}>{t("pages.notifications.priority")}</label>
               <select
                 value={gotifyPriorityOverride}
                 onChange={(e) => setGotifyPriorityOverride(e.target.value)}
                 className={inputClass}
               >
                 {GOTIFY_PRIORITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
+                  <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                 ))}
               </select>
             </div>
             <div className="sm:col-span-2">
-              <label className={labelClass}>App Token</label>
+              <label className={labelClass}>{t("pages.notifications.appToken")}</label>
               <input
                 type="password"
                 value={gotifyToken}
                 onChange={(e) => setGotifyToken(e.target.value)}
                 className={inputClass}
-                placeholder={readString(initial?.config || {}, "gotifyToken") === MASKED_VALUE ? "(unchanged)" : ""}
+                placeholder={readString(initial?.config || {}, "gotifyToken") === MASKED_VALUE ? t("common.unchanged") : ""}
               />
             </div>
           </div>
@@ -1333,32 +1343,32 @@ function NotificationForm({
         {type === "ntfy" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Server URL</label>
+              <label className={labelClass}>{t("pages.notifications.serverUrl")}</label>
               <input value={ntfyUrl} onChange={(e) => setNtfyUrl(e.target.value)} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Topic</label>
+              <label className={labelClass}>{t("pages.notifications.topic")}</label>
               <input value={ntfyTopic} onChange={(e) => setNtfyTopic(e.target.value)} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Access Token</label>
+              <label className={labelClass}>{t("pages.notifications.accessToken")}</label>
               <input
                 type="password"
                 value={ntfyToken}
                 onChange={(e) => setNtfyToken(e.target.value)}
                 className={inputClass}
-                placeholder={readString(initial?.config || {}, "ntfyToken") === MASKED_VALUE ? "(unchanged)" : ""}
+                placeholder={readString(initial?.config || {}, "ntfyToken") === MASKED_VALUE ? t("common.unchanged") : ""}
               />
             </div>
             <div>
-              <label className={labelClass}>Priority</label>
+              <label className={labelClass}>{t("pages.notifications.priority")}</label>
               <select
                 value={ntfyPriorityOverride}
                 onChange={(e) => setNtfyPriorityOverride(e.target.value)}
                 className={inputClass}
               >
                 {PUSH_PRIORITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
+                  <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                 ))}
               </select>
             </div>
@@ -1369,7 +1379,7 @@ function NotificationForm({
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
-                <label className={labelClass}>Broker URL</label>
+                <label className={labelClass}>{t("pages.notifications.brokerUrl")}</label>
                 <input
                   value={mqttConfig.brokerUrl}
                   onChange={(e) => setMqttConfig((prev) => ({ ...prev, brokerUrl: e.target.value }))}
@@ -1378,7 +1388,7 @@ function NotificationForm({
                 />
               </div>
               <div>
-                <label className={labelClass}>Username</label>
+                <label className={labelClass}>{t("common.username")}</label>
                 <input
                   value={mqttConfig.username || ""}
                   onChange={(e) => setMqttConfig((prev) => ({ ...prev, username: e.target.value }))}
@@ -1386,26 +1396,26 @@ function NotificationForm({
                 />
               </div>
               <div>
-                <label className={labelClass}>Password</label>
+                <label className={labelClass}>{t("common.password")}</label>
                 <input
                   type="password"
                   value={mqttConfig.password === MASKED_VALUE ? "" : (mqttConfig.password || "")}
                   onChange={(e) => setMqttConfig((prev) => ({ ...prev, password: e.target.value }))}
                   className={inputClass}
-                  placeholder={readString(initial?.config || {}, "password") === MASKED_VALUE ? "(unchanged)" : ""}
+                  placeholder={readString(initial?.config || {}, "password") === MASKED_VALUE ? t("common.unchanged") : ""}
                 />
               </div>
               <div>
-                <label className={labelClass}>Client ID</label>
+                <label className={labelClass}>{t("pages.notifications.clientId")}</label>
                 <input
                   value={mqttConfig.clientId || ""}
                   onChange={(e) => setMqttConfig((prev) => ({ ...prev, clientId: e.target.value }))}
                   className={inputClass}
-                  placeholder="Optional"
+                  placeholder={t("pages.notifications.optional")}
                 />
               </div>
               <div>
-                <label className={labelClass}>QoS</label>
+                <label className={labelClass}>{t("pages.notifications.qos")}</label>
                 <select
                   value={String(mqttConfig.qos)}
                   onChange={(e) => setMqttConfig((prev) => ({ ...prev, qos: e.target.value === "0" ? 0 : 1 }))}
@@ -1416,7 +1426,7 @@ function NotificationForm({
                 </select>
               </div>
               <div>
-                <label className={labelClass}>Keepalive (s)</label>
+                <label className={labelClass}>{t("pages.notifications.keepaliveSeconds")}</label>
                 <input
                   type="number"
                   min={1}
@@ -1427,7 +1437,7 @@ function NotificationForm({
                 />
               </div>
               <div>
-                <label className={labelClass}>Connect Timeout (ms)</label>
+                <label className={labelClass}>{t("pages.notifications.connectTimeoutMs")}</label>
                 <input
                   type="number"
                   min={1000}
@@ -1440,7 +1450,7 @@ function NotificationForm({
             </div>
 
             <div className="rounded-lg border border-border p-3 space-y-3">
-              <div className="text-sm font-medium">Generic MQTT events</div>
+              <div className="text-sm font-medium">{t("pages.notifications.genericMqttEvents")}</div>
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -1448,12 +1458,12 @@ function NotificationForm({
                   onChange={(e) => setMqttConfig((prev) => ({ ...prev, publishEvents: e.target.checked }))}
                   className={checkboxClass}
                 />
-                <span className="text-sm">Publish notification events to a topic</span>
+                <span className="text-sm">{t("pages.notifications.publishNotificationEventsToTopic")}</span>
               </label>
               {mqttConfig.publishEvents && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="sm:col-span-2">
-                    <label className={labelClass}>Event Topic</label>
+                    <label className={labelClass}>{t("pages.notifications.eventTopic")}</label>
                     <input
                       value={mqttConfig.topic}
                       onChange={(e) => setMqttConfig((prev) => ({ ...prev, topic: e.target.value }))}
@@ -1468,14 +1478,14 @@ function NotificationForm({
                       onChange={(e) => setMqttConfig((prev) => ({ ...prev, retainEvents: e.target.checked }))}
                       className={checkboxClass}
                     />
-                    <span className="text-sm">Retain event payloads</span>
+                    <span className="text-sm">{t("pages.notifications.retainEventPayloads")}</span>
                   </label>
                 </div>
               )}
             </div>
 
             <div className="rounded-lg border border-border p-3 space-y-3">
-              <div className="text-sm font-medium">Home Assistant MQTT Update</div>
+              <div className="text-sm font-medium">{t("pages.notifications.homeAssistantMqttUpdate")}</div>
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -1483,13 +1493,13 @@ function NotificationForm({
                   onChange={(e) => setMqttConfig((prev) => ({ ...prev, homeAssistantEnabled: e.target.checked }))}
                   className={checkboxClass}
                 />
-                <span className="text-sm">Enable Home Assistant discovery and retained state sync</span>
+                <span className="text-sm">{t("pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync")}</span>
               </label>
               {mqttConfig.homeAssistantEnabled && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="sm:col-span-2">
-                      <label className={labelClass}>Device Name</label>
+                      <label className={labelClass}>{t("pages.notifications.deviceName")}</label>
                       <input
                         value={mqttConfig.deviceName}
                         onChange={(e) => setMqttConfig((prev) => ({ ...prev, deviceName: e.target.value }))}
@@ -1498,7 +1508,7 @@ function NotificationForm({
                       />
                     </div>
                     <div>
-                      <label className={labelClass}>Discovery Prefix</label>
+                      <label className={labelClass}>{t("pages.notifications.discoveryPrefix")}</label>
                       <input
                         value={mqttConfig.discoveryPrefix}
                         onChange={(e) => setMqttConfig((prev) => ({ ...prev, discoveryPrefix: e.target.value }))}
@@ -1507,7 +1517,7 @@ function NotificationForm({
                       />
                     </div>
                     <div>
-                      <label className={labelClass}>Base Topic</label>
+                      <label className={labelClass}>{t("pages.notifications.baseTopic")}</label>
                       <input
                         value={mqttConfig.baseTopic}
                         onChange={(e) => setMqttConfig((prev) => ({ ...prev, baseTopic: e.target.value }))}
@@ -1524,7 +1534,7 @@ function NotificationForm({
                       onChange={(e) => setMqttConfig((prev) => ({ ...prev, publishAppEntity: e.target.checked }))}
                       className={checkboxClass}
                     />
-                    <span className="text-sm">Publish Linux Update Dashboard app update entity</span>
+                    <span className="text-sm">{t("pages.notifications.publishAppUpdateEntity")}</span>
                   </label>
 
                   <label className="flex items-center gap-2">
@@ -1534,12 +1544,12 @@ function NotificationForm({
                       onChange={(e) => setMqttConfig((prev) => ({ ...prev, commandsEnabled: e.target.checked }))}
                       className={checkboxClass}
                     />
-                    <span className="text-sm">Enable Home Assistant install commands for per-system entities</span>
+                    <span className="text-sm">{t("pages.notifications.enableHomeAssistantInstallCommands")}</span>
                   </label>
 
                   {mqttConfig.commandsEnabled && (
                     <div>
-                      <label className={labelClass}>Install Payload</label>
+                      <label className={labelClass}>{t("pages.notifications.installPayload")}</label>
                       <input
                         value={mqttConfig.payloadInstall}
                         onChange={(e) => setMqttConfig((prev) => ({ ...prev, payloadInstall: e.target.value }))}
@@ -1551,10 +1561,10 @@ function NotificationForm({
 
                   <div className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-1">
                     <p className="text-xs text-amber-700 dark:text-amber-300">
-                      The app update entity is visibility-only. Per-system entities use synthetic fingerprint versions for the current pending update set, not real package version pairs.
+                      {t("pages.notifications.appUpdateEntityVisibilityOnly")}
                     </p>
                     <p className="text-xs text-amber-700 dark:text-amber-300">
-                      Home Assistant discovery and retained state sync update immediately and are not affected by scheduled delivery.
+                      {t("pages.notifications.homeAssistantDiscoveryImmediate")}
                     </p>
                   </div>
                 </div>
@@ -1567,16 +1577,16 @@ function NotificationForm({
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
-                <label className={labelClass}>Bot Token</label>
+                <label className={labelClass}>{t("pages.notifications.telegram.botToken")}</label>
                 <input
                   type="password"
                   value={telegramBotToken}
                   onChange={(e) => setTelegramBotToken(e.target.value)}
                   className={inputClass}
-                  placeholder={initialTelegram.telegramBotToken === MASKED_VALUE ? "(unchanged)" : "123456789:AA..."}
+                  placeholder={initialTelegram.telegramBotToken === MASKED_VALUE ? t("common.unchanged") : "123456789:AA..."}
                 />
                 <p className={mutedTextClass}>
-                  Create the bot with BotFather, then paste the bot token here.
+                  {t("pages.notifications.telegram.botTokenHelp")}
                 </p>
               </div>
             </div>
@@ -1584,9 +1594,9 @@ function NotificationForm({
             <div className="rounded-lg border border-border p-3 space-y-2">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <div className="text-sm font-medium">Chat binding</div>
+                  <div className="text-sm font-medium">{t("pages.notifications.telegram.chatBinding")}</div>
                   <div className={mutedTextClass}>
-                    {TELEGRAM_BINDING_STATUS_LABELS[initialTelegram.chatBindingStatus || "unbound"] || "Not linked"}
+                    {t(TELEGRAM_BINDING_STATUS_LABELS[initialTelegram.chatBindingStatus || "unbound"] || "pages.notifications.telegram.status.notLinked")}
                     {initialTelegram.chatDisplayName ? ` · ${initialTelegram.chatDisplayName}` : ""}
                   </div>
                 </div>
@@ -1597,7 +1607,7 @@ function NotificationForm({
                     disabled={!initial?.id || createTelegramLink.isPending}
                     className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
                   >
-                    {createTelegramLink.isPending ? <span className="spinner spinner-sm" /> : "Create Link"}
+                    {createTelegramLink.isPending ? <span className="spinner spinner-sm" /> : t("pages.notifications.telegram.createLink")}
                   </button>
                   <button
                     type="button"
@@ -1605,19 +1615,19 @@ function NotificationForm({
                     disabled={!initial?.id || !initialTelegram.chatId || unlinkTelegramChat.isPending}
                     className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
                   >
-                    {unlinkTelegramChat.isPending ? <span className="spinner spinner-sm" /> : "Unlink"}
+                    {unlinkTelegramChat.isPending ? <span className="spinner spinner-sm" /> : t("pages.notifications.telegram.unlink")}
                   </button>
                 </div>
               </div>
               {!initial?.id && (
                 <p className={mutedTextClass}>
-                  Save this notification first, then reopen it to create the one-time Telegram connect link.
+                  {t("pages.notifications.telegram.saveFirstToCreateLink")}
                 </p>
               )}
               {telegramLinkUrl && (
                 <div className="rounded-lg border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/20 p-3 space-y-2">
                   <p className="text-sm">
-                    Open this link in Telegram to bind the private chat:
+                    {t("pages.notifications.telegram.openLinkToBind")}
                   </p>
                   <a
                     href={telegramLinkUrl}
@@ -1629,7 +1639,7 @@ function NotificationForm({
                   </a>
                   {telegramLinkExpiresAt && (
                     <p className={mutedTextClass}>
-                      Expires: {formatTimestamp(telegramLinkExpiresAt)}
+                      {t("pages.notifications.telegram.expires", { value: formatTimestamp(telegramLinkExpiresAt) })}
                     </p>
                   )}
                 </div>
@@ -1644,10 +1654,10 @@ function NotificationForm({
                   onChange={(e) => setTelegramCommandsEnabled(e.target.checked)}
                   className={checkboxClass}
                 />
-                <span className="text-sm font-medium">Enable bot commands</span>
+                <span className="text-sm font-medium">{t("pages.notifications.telegram.enableBotCommands")}</span>
               </label>
               <p className="text-xs text-amber-700 dark:text-amber-300">
-                Disabled by default. When enabled, the dashboard auto-generates a dedicated writable API token for this Telegram channel after the private chat is linked.
+                {t("pages.notifications.telegram.botCommandsHelp")}
               </p>
             </div>
 
@@ -1655,7 +1665,7 @@ function NotificationForm({
               <div className="rounded-lg border border-border p-3 space-y-2">
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <div className="text-sm font-medium">Command token</div>
+                    <div className="text-sm font-medium">{t("pages.notifications.telegram.commandToken")}</div>
                     <div className={mutedTextClass}>
                       {telegramCommandStatusLabel}
                       {persistedTelegramCommandsEnabled && initialTelegram.commandTokenName ? ` · ${initialTelegram.commandTokenName}` : ""}
@@ -1672,34 +1682,34 @@ function NotificationForm({
                     }
                     className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
                   >
-                    {reissueTelegramCommandToken.isPending ? <span className="spinner spinner-sm" /> : "Reissue Token"}
+                    {reissueTelegramCommandToken.isPending ? <span className="spinner spinner-sm" /> : t("pages.notifications.telegram.reissueToken")}
                   </button>
                 </div>
                 {persistedTelegramCommandsEnabled && initialTelegram.commandApiTokenId ? (
-                  <p className={mutedTextClass}>Token ID: #{initialTelegram.commandApiTokenId}</p>
+                  <p className={mutedTextClass}>{t("pages.notifications.telegram.tokenId", { id: initialTelegram.commandApiTokenId })}</p>
                 ) : null}
                 {persistedTelegramCommandsEnabled && initialTelegram.commandTokenCreatedAt ? (
-                  <p className={mutedTextClass}>Created: {formatTimestamp(initialTelegram.commandTokenCreatedAt)}</p>
+                  <p className={mutedTextClass}>{t("pages.notifications.telegram.created", { value: formatTimestamp(initialTelegram.commandTokenCreatedAt) })}</p>
                 ) : null}
                 {persistedTelegramCommandsEnabled && initialTelegram.commandTokenLastUsedAt ? (
-                  <p className={mutedTextClass}>Last used: {formatTimestamp(initialTelegram.commandTokenLastUsedAt)}</p>
+                  <p className={mutedTextClass}>{t("pages.notifications.telegram.lastUsed", { value: formatTimestamp(initialTelegram.commandTokenLastUsedAt) })}</p>
                 ) : null}
                 {persistedTelegramCommandsEnabled && initialTelegram.commandTokenExpiresAt ? (
-                  <p className={mutedTextClass}>Expires: {formatTimestamp(initialTelegram.commandTokenExpiresAt)}</p>
+                  <p className={mutedTextClass}>{t("pages.notifications.telegram.expires", { value: formatTimestamp(initialTelegram.commandTokenExpiresAt) })}</p>
                 ) : null}
                 {!persistedTelegramCommandsEnabled && (
                   <p className={mutedTextClass}>
-                    Save this notification to activate Telegram commands and issue the dedicated command token.
+                    {t("pages.notifications.telegram.saveToActivateCommands")}
                   </p>
                 )}
                 {persistedTelegramCommandsEnabled && !initialTelegram.chatId && (
                   <p className={mutedTextClass}>
-                    Link the Telegram private chat first. The command token is issued only after the chat is linked.
+                    {t("pages.notifications.telegram.linkChatFirst")}
                   </p>
                 )}
                 {persistedTelegramCommandsEnabled && initialTelegram.chatId && (initialTelegram.commandTokenStatus === "missing" || initialTelegram.commandTokenStatus === "expired") && (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    Telegram bot commands cannot authenticate right now. Reissue the token to restore command access.
+                    {t("pages.notifications.telegram.commandsCannotAuthenticate")}
                   </p>
                 )}
               </div>
@@ -1711,7 +1721,7 @@ function NotificationForm({
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>Preset</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.preset")}</label>
                 <select
                   value={webhookConfig.preset}
                   onChange={(e) => {
@@ -1724,12 +1734,12 @@ function NotificationForm({
                   }}
                   className={inputClass}
                 >
-                  <option value="custom">Custom</option>
+                  <option value="custom">{t("common.custom")}</option>
                   <option value="discord">Discord</option>
                 </select>
               </div>
               <div>
-                <label className={labelClass}>Method</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.method")}</label>
                 <select
                   value={webhookConfig.method}
                   onChange={(e) => setWebhookConfig((prev) => ({
@@ -1746,7 +1756,7 @@ function NotificationForm({
             </div>
 
             <div>
-              <label className={labelClass}>URL</label>
+              <label className={labelClass}>{t("pages.notifications.url")}</label>
               <input
                 type="url"
                 value={webhookConfig.url}
@@ -1755,12 +1765,12 @@ function NotificationForm({
                 placeholder="https://example.com/webhook"
               />
               {destinationWarning && (
-                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{destinationWarning}</p>
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{t(destinationWarning)}</p>
               )}
             </div>
 
             <RowEditor
-              label="Query Parameters"
+              label={t("pages.notifications.webhook.queryParameters")}
               items={webhookConfig.query.map((entry) => ({ ...entry, sensitive: false }))}
               onChange={(items) => setWebhookConfig((prev) => ({
                 ...prev,
@@ -1768,11 +1778,11 @@ function NotificationForm({
               }))}
             />
             <p className={mutedTextClass}>
-              Query parameters are intentionally not secret. URLs are more likely to be logged by receivers, proxies, and monitoring systems.
+              {t("pages.notifications.webhook.queryParametersHelp")}
             </p>
 
             <RowEditor
-              label="Headers"
+              label={t("pages.notifications.webhook.headers")}
               items={webhookConfig.headers}
               onChange={(items) => setWebhookConfig((prev) => ({ ...prev, headers: items }))}
               allowSensitive
@@ -1780,7 +1790,7 @@ function NotificationForm({
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <label className={labelClass}>Auth</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.auth")}</label>
                 <select
                   value={webhookConfig.auth.mode}
                   onChange={(e) => {
@@ -1797,14 +1807,14 @@ function NotificationForm({
                   }}
                   className={inputClass}
                 >
-                  <option value="none">None</option>
-                  <option value="bearer">Bearer token</option>
-                  <option value="basic">Basic auth</option>
+                  <option value="none">{t("pages.notifications.none")}</option>
+                  <option value="bearer">{t("pages.notifications.webhook.bearerToken")}</option>
+                  <option value="basic">{t("pages.notifications.webhook.basicAuth")}</option>
                 </select>
               </div>
               {webhookConfig.auth.mode === "bearer" && (
                 <div className="sm:col-span-2">
-                  <label className={labelClass}>Bearer Token</label>
+                  <label className={labelClass}>{t("pages.notifications.webhook.bearerToken")}</label>
                   <input
                     type="password"
                     value={webhookConfig.auth.token === MASKED_VALUE ? "" : webhookConfig.auth.token}
@@ -1813,14 +1823,14 @@ function NotificationForm({
                       auth: { mode: "bearer", token: e.target.value },
                     }))}
                     className={inputClass}
-                    placeholder={initialWebhook.auth.mode === "bearer" && initialWebhook.auth.token === MASKED_VALUE ? "(unchanged)" : ""}
+                    placeholder={initialWebhook.auth.mode === "bearer" && initialWebhook.auth.token === MASKED_VALUE ? t("common.unchanged") : ""}
                   />
                 </div>
               )}
               {webhookConfig.auth.mode === "basic" && (
                 <>
                   <div>
-                    <label className={labelClass}>Username</label>
+                    <label className={labelClass}>{t("common.username")}</label>
                     <input
                       value={webhookConfig.auth.username}
                       onChange={(e) => setWebhookConfig((prev) => ({
@@ -1831,7 +1841,7 @@ function NotificationForm({
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Password</label>
+                    <label className={labelClass}>{t("common.password")}</label>
                     <input
                       type="password"
                       value={webhookConfig.auth.password === MASKED_VALUE ? "" : webhookConfig.auth.password}
@@ -1840,7 +1850,7 @@ function NotificationForm({
                         auth: { mode: "basic", username: prev.auth.mode === "basic" ? prev.auth.username : "", password: e.target.value },
                       }))}
                       className={inputClass}
-                      placeholder={initialWebhook.auth.mode === "basic" && initialWebhook.auth.password === MASKED_VALUE ? "(unchanged)" : ""}
+                      placeholder={initialWebhook.auth.mode === "basic" && initialWebhook.auth.password === MASKED_VALUE ? t("common.unchanged") : ""}
                     />
                   </div>
                 </>
@@ -1849,7 +1859,7 @@ function NotificationForm({
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               <div>
-                <label className={labelClass}>Body Mode</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.bodyMode")}</label>
                 <select
                   value={webhookConfig.body.mode}
                   onChange={(e) => {
@@ -1867,13 +1877,13 @@ function NotificationForm({
                   }}
                   className={inputClass}
                 >
-                  <option value="text">Text</option>
-                  <option value="json">JSON</option>
-                  <option value="form">Form URL Encoded</option>
+                  <option value="text">{t("pages.notifications.webhook.bodyMode.text")}</option>
+                  <option value="json">{t("pages.notifications.webhook.bodyMode.json")}</option>
+                  <option value="form">{t("pages.notifications.webhook.bodyMode.form")}</option>
                 </select>
               </div>
               <div>
-                <label className={labelClass}>Timeout (ms)</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.timeoutMs")}</label>
                 <input
                   type="number"
                   min={1000}
@@ -1884,7 +1894,7 @@ function NotificationForm({
                 />
               </div>
               <div>
-                <label className={labelClass}>Retry Attempts</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.retryAttempts")}</label>
                 <input
                   type="number"
                   min={0}
@@ -1895,7 +1905,7 @@ function NotificationForm({
                 />
               </div>
               <div>
-                <label className={labelClass}>Retry Delay (ms)</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.retryDelayMs")}</label>
                 <input
                   type="number"
                   min={0}
@@ -1909,7 +1919,7 @@ function NotificationForm({
 
             {webhookConfig.body.mode === "form" ? (
               <RowEditor
-                label="Form Fields"
+                label={t("pages.notifications.webhook.formFields")}
                 items={webhookConfig.body.fields}
                 onChange={(items) => setWebhookConfig((prev) => ({
                   ...prev,
@@ -1919,7 +1929,7 @@ function NotificationForm({
               />
             ) : (
               <div>
-                <label className={labelClass}>Body Template</label>
+                <label className={labelClass}>{t("pages.notifications.webhook.bodyTemplate")}</label>
                 <textarea
                   value={webhookConfig.body.template}
                   onChange={(e) => setWebhookConfig((prev) => ({
@@ -1936,7 +1946,7 @@ function NotificationForm({
                   }
                 />
                 <p className={mutedTextClass}>
-                  Templates support simple dotted event paths like <code>{"{{event.title}}"}</code>.
+                  {t("pages.notifications.webhook.templatesSupport")} <code>{"{{event.title}}"}</code>.
                 </p>
               </div>
             )}
@@ -1952,10 +1962,10 @@ function NotificationForm({
                   }))}
                   className={checkboxClass}
                 />
-                <span className="text-sm font-medium">Allow insecure TLS (advanced)</span>
+                <span className="text-sm font-medium">{t("pages.notifications.allowInsecureTlsAdvanced")}</span>
               </label>
               <p className="text-xs text-amber-700 dark:text-amber-300">
-                Disabled by default. Only use this for exceptional self-signed endpoints you explicitly trust.
+                {t("pages.notifications.webhook.allowInsecureTlsHelp")}
               </p>
             </div>
           </div>
@@ -1968,30 +1978,30 @@ function NotificationForm({
           onClick={handleInlineTest}
           disabled={testConfig.isPending || !canSendTest}
           className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mr-auto"
-          title="Send test notification"
+          title={t("pages.notifications.sendTestNotification")}
         >
-          {testConfig.isPending ? <span className="spinner spinner-sm" /> : "Send Test"}
+          {testConfig.isPending ? <span className="spinner spinner-sm" /> : t("pages.notifications.sendTest")}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
         >
-          Cancel
+          {t("pages.notifications.cancel")}
         </button>
         <button
           type="submit"
           disabled={loading}
           className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          {loading ? <span className="spinner spinner-sm" /> : "Save"}
+          {loading ? <span className="spinner spinner-sm" /> : t("pages.notifications.save")}
         </button>
       </div>
     </form>
     <Modal
       open={showScheduleForm}
       onClose={() => setShowScheduleForm(false)}
-      title="New Schedule"
+      title={t("pages.notifications.newSchedule")}
       dismissible={!createSchedule.isPending}
     >
       <NewNotificationScheduleForm
@@ -2014,6 +2024,7 @@ export default function Notifications() {
   const reorderNotifications = useReorderNotifications();
   const testNotification = useTestNotification();
   const { addToast } = useToast();
+  const { t } = useI18n();
   const [showForm, setShowForm] = useState(false);
   const [duplicateChannel, setDuplicateChannel] = useState<NotificationChannel | null>(null);
   const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
@@ -2106,7 +2117,7 @@ export default function Notifications() {
       onSuccess: () => {
         setShowForm(false);
         setDuplicateChannel(null);
-        addToast("Notification channel created", "success");
+        addToast(t("pages.notifications.notificationChannelCreated"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -2129,7 +2140,7 @@ export default function Notifications() {
       {
         onSuccess: () => {
           setEditChannel(null);
-          addToast("Notification channel updated", "success");
+          addToast(t("pages.notifications.notificationChannelUpdated"), "success");
         },
         onError: (err) => addToast(err.message, "danger"),
       }
@@ -2141,7 +2152,7 @@ export default function Notifications() {
     deleteNotification.mutate(deleteId, {
       onSuccess: () => {
         setDeleteId(null);
-        addToast("Notification channel deleted", "success");
+        addToast(t("pages.notifications.notificationChannelDeleted"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -2152,7 +2163,7 @@ export default function Notifications() {
     resetNotificationUpdateDedupe.mutate(resetDedupeId, {
       onSuccess: () => {
         setResetDedupeId(null);
-        addToast("Update dedupe reset for notification channel", "success");
+        addToast(t("pages.notifications.updateDedupeResetForNotificationChannel"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -2162,9 +2173,9 @@ export default function Notifications() {
     testNotification.mutate(id, {
       onSuccess: (data) => {
         if (data.success) {
-          addToast("Test notification sent", "success");
+          addToast(t("pages.notifications.testNotificationSent"), "success");
         } else {
-          addToast(`Test failed: ${data.error}`, "danger");
+          addToast(t("pages.notifications.testFailedError", { error: data.error }), "danger");
         }
       },
       onError: (err) => addToast(err.message, "danger"),
@@ -2181,32 +2192,42 @@ export default function Notifications() {
   };
 
   const getSystemScopeLabel = (systemIds: number[] | null): string => {
-    if (systemIds === null) return "All";
-    if (systemIds.length === 0) return "None";
-    if (!systemsList) return `${systemIds.length} system${systemIds.length !== 1 ? "s" : ""}`;
+    if (systemIds === null) return t("pages.notifications.all");
+    if (systemIds.length === 0) return t("pages.notifications.none");
+    if (!systemsList) {
+      return t("pages.notifications.countSystemlabel", {
+        count: systemIds.length,
+        systemLabel: systemIds.length === 1 ? t("pages.notifications.system") : t("pages.notifications.systems2"),
+      });
+    }
     const names = systemIds
       .map((id) => systemsList.find((system) => system.id === id)?.name)
       .filter(Boolean);
-    if (names.length === 0) return `${systemIds.length} system${systemIds.length !== 1 ? "s" : ""}`;
+    if (names.length === 0) {
+      return t("pages.notifications.countSystemlabel", {
+        count: systemIds.length,
+        systemLabel: systemIds.length === 1 ? t("pages.notifications.system") : t("pages.notifications.systems2"),
+      });
+    }
     if (names.length <= 2) return names.join(", ");
-    return `${names.length} systems`;
+    return t("pages.notifications.countSystems", { count: names.length });
   };
 
   const getEventLabel = (channel: NotificationChannel): string =>
-    channel.notifyOn.map((event) => EVENT_LABELS[event] || event).join(", ");
+    channel.notifyOn.map((event) => t(EVENT_LABELS[event] || event)).join(", ");
 
   const canResetUpdateDedupe = (channel: NotificationChannel): boolean =>
     channel.notifyOn.includes("updates");
 
   return (
     <Layout
-      title="Notifications"
+      title={t("pages.notifications.notifications")}
       actions={
         <button
           onClick={() => setShowForm(true)}
           className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
         >
-          Add Notification
+          {t("pages.notifications.addNotification")}
         </button>
       }
     >
@@ -2219,13 +2240,13 @@ export default function Notifications() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3 hidden sm:table-cell">Events</th>
-                <th className="px-4 py-3 hidden md:table-cell">Systems</th>
-                <th className="px-4 py-3 hidden lg:table-cell">Delivery</th>
-                <th className="px-4 py-3">Enabled</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-4 py-3">{t("pages.notifications.name")}</th>
+                <th className="px-4 py-3">{t("pages.notifications.type")}</th>
+                <th className="px-4 py-3 hidden sm:table-cell">{t("pages.notifications.events")}</th>
+                <th className="px-4 py-3 hidden md:table-cell">{t("pages.notifications.systems")}</th>
+                <th className="px-4 py-3 hidden lg:table-cell">{t("pages.notifications.delivery")}</th>
+                <th className="px-4 py-3">{t("pages.notifications.enabled")}</th>
+                <th className="px-4 py-3 text-right">{t("pages.notifications.actions")}</th>
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
@@ -2242,8 +2263,8 @@ export default function Notifications() {
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title="Drag to reorder"
-                        aria-label={`Drag to reorder ${channel.name}`}
+                        title={t("pages.notifications.dragToReorder")}
+                        aria-label={t("pages.notifications.dragToReorderName", { name: channel.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
@@ -2253,14 +2274,16 @@ export default function Notifications() {
                         <div className="truncate font-medium">{channel.name}</div>
                         {describeDelivery(channel) && (
                           <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                            Last delivery: {describeDelivery(channel)}
+                            {t("pages.notifications.lastDeliveryDelivery", {
+                              delivery: describeDelivery(channel) ?? "",
+                            })}
                           </div>
                         )}
                       </div>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                    {TYPE_LABELS[channel.type] || channel.type}
+                    {TYPE_LABELS[channel.type] ? t(TYPE_LABELS[channel.type]) : channel.type}
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
                     <span className="block max-w-md truncate" title={getEventLabel(channel)}>
@@ -2273,8 +2296,8 @@ export default function Notifications() {
                     </span>
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
-                    <span className="block max-w-md truncate" title={describeNotificationSchedule(channel)}>
-                      {describeNotificationSchedule(channel)}
+                    <span className="block max-w-md truncate" title={describeNotificationSchedule(channel, t)}>
+                      {describeNotificationSchedule(channel, t)}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -2297,7 +2320,7 @@ export default function Notifications() {
                         onClick={() => handleTest(channel.id)}
                         disabled={testNotification.isPending}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Send test notification"
+                        title={t("pages.notifications.sendTestNotification")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -2313,8 +2336,8 @@ export default function Notifications() {
                         }`}
                         title={
                           canResetUpdateDedupe(channel)
-                            ? "Reset update dedupe"
-                            : "Update dedupe reset is only available for channels subscribed to updates"
+                            ? t("pages.notifications.resetUpdateDedupe")
+                            : t("pages.notifications.updateDedupeResetIsOnlyAvailableForChannels")
                         }
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2332,7 +2355,7 @@ export default function Notifications() {
                           setShowForm(true);
                         }}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Copy notification"
+                        title={t("pages.notifications.copyNotification")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -2341,7 +2364,7 @@ export default function Notifications() {
                       <button
                         onClick={() => setEditChannel(channel)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Edit notification"
+                        title={t("pages.notifications.editNotification")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -2350,7 +2373,7 @@ export default function Notifications() {
                       <button
                         onClick={() => setDeleteId(channel.id)}
                         className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                        title="Delete notification"
+                        title={t("pages.notifications.deleteNotification")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -2366,13 +2389,13 @@ export default function Notifications() {
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">
-            No notification channels configured yet
+            {t("pages.notifications.noNotificationChannelsConfiguredYet")}
           </p>
           <button
             onClick={() => setShowForm(true)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            Add Your First Notification
+            {t("pages.notifications.addYourFirstNotification")}
           </button>
         </div>
       )}
@@ -2383,12 +2406,12 @@ export default function Notifications() {
           setShowForm(false);
           setDuplicateChannel(null);
         }}
-        title={duplicateChannel ? "Duplicate Notification" : "Add Notification"}
+        title={duplicateChannel ? t("pages.notifications.duplicateNotification") : t("pages.notifications.addNotification")}
         dismissible={!createNotification.isPending}
       >
         <NotificationForm
           key={duplicateChannel?.id ?? "new"}
-          initial={duplicateChannel ? buildDuplicateNotification(duplicateChannel) : undefined}
+          initial={duplicateChannel ? buildDuplicateNotification(duplicateChannel, t) : undefined}
           onSubmit={(data) => handleCreate({
             ...data,
             sourceNotificationId: duplicateChannel?.id,
@@ -2404,7 +2427,7 @@ export default function Notifications() {
       <Modal
         open={editChannel !== null}
         onClose={() => setEditChannel(null)}
-        title="Edit Notification"
+        title={t("pages.notifications.editNotification2")}
         dismissible={!updateNotification.isPending}
       >
         {editChannel && (
@@ -2421,9 +2444,9 @@ export default function Notifications() {
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete Notification"
-        message="Are you sure you want to delete this notification channel? This action cannot be undone."
-        confirmLabel="Delete"
+        title={t("pages.notifications.deleteNotification2")}
+        message={t("pages.notifications.areYouSureYouWantToDeleteThis")}
+        confirmLabel={t("pages.notifications.delete")}
         danger
         loading={deleteNotification.isPending}
       />
@@ -2432,9 +2455,9 @@ export default function Notifications() {
         open={resetDedupeId !== null}
         onClose={() => setResetDedupeId(null)}
         onConfirm={handleResetUpdateDedupe}
-        title="Reset Update Dedupe"
-        message="This clears the stored update-version dedupe state for this notification channel only. The next matching update check can notify again for currently available updates."
-        confirmLabel="Reset Dedupe"
+        title={t("pages.notifications.resetUpdateDedupe2")}
+        message={t("pages.notifications.thisClearsTheStoredUpdateVersionDedupeState")}
+        confirmLabel={t("pages.notifications.resetDedupe")}
         loading={resetNotificationUpdateDedupe.isPending}
       />
     </Layout>

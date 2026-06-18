@@ -172,6 +172,125 @@ describe("Dashboard", () => {
     expect(html).not.toContain("Upgrade All (7)");
   });
 
+  test("shows OS warnings as amber and labels Debian LTS warnings without dates", () => {
+    mockUseDashboardStats.mockReturnValue({
+      data: {
+        total: 1,
+        upToDate: 0,
+        needsUpdates: 0,
+        unreachable: 0,
+        checkIssues: 0,
+        totalUpdates: 0,
+        needsReboot: 0,
+        lifecycleWarnings: 1,
+      },
+    });
+    mockUseDashboardSystems.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          name: "Alpha",
+          hostname: "alpha.local",
+          port: 22,
+          osName: "Debian",
+          isReachable: 1,
+          updateCount: 0,
+          securityCount: 0,
+          keptBackCount: 0,
+          osLifecycleStatus: "support_ended",
+          osLifecycleEolDate: "2028-06-30",
+          osLifecycleDaysUntilEol: 744,
+          osLifecycleDaysUntilSupportEnd: -6,
+          osLifecycleLabel: "Debian 12 is in LTS until 2028-06-30",
+          cacheAge: null,
+          cacheTimestamp: null,
+          isStale: false,
+          lastCheck: null,
+          activeOperation: null,
+          excludeFromUpgradeAll: 0,
+          upgradeOrder: 1,
+          pkgManager: "apt",
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: null,
+          supportsFullUpgrade: true,
+        },
+      ],
+      dataUpdatedAt: Date.now(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("text-amber-600 dark:text-amber-500");
+    expect(html).toContain("OS Warnings");
+    expect(html).toContain("LTS");
+    expect(html).not.toContain("In LTS");
+    expect(html).not.toContain("LTS until 2028-06-30");
+    expect(html).toContain("w-3 h-3 rounded-full shrink-0 bg-green-500");
+    expect(html).not.toContain("Support ended");
+  });
+
+  test("uses a short lifecycle badge without remaining days for upcoming support end", () => {
+    mockUseDashboardStats.mockReturnValue({
+      data: {
+        total: 1,
+        upToDate: 0,
+        needsUpdates: 0,
+        unreachable: 0,
+        checkIssues: 0,
+        totalUpdates: 0,
+        needsReboot: 0,
+        lifecycleWarnings: 1,
+      },
+    });
+    mockUseDashboardSystems.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          name: "Alpha",
+          hostname: "alpha.local",
+          port: 22,
+          osName: "Debian",
+          isReachable: 1,
+          updateCount: 0,
+          securityCount: 0,
+          keptBackCount: 0,
+          osLifecycleStatus: "support_ending",
+          osLifecycleEolDate: "2030-06-30",
+          osLifecycleDaysUntilEol: 1491,
+          osLifecycleDaysUntilSupportEnd: 23,
+          osLifecycleLabel: "Debian 13 security support ends in 23 days; LTS until 2030-06-30",
+          cacheAge: null,
+          cacheTimestamp: null,
+          isStale: false,
+          lastCheck: null,
+          activeOperation: null,
+          excludeFromUpgradeAll: 0,
+          upgradeOrder: 1,
+          pkgManager: "apt",
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: null,
+          supportsFullUpgrade: true,
+        },
+      ],
+      dataUpdatedAt: Date.now(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Security support ending soon");
+    expect(html).not.toContain("23d");
+  });
+
   test("shows active upgrades without disabling the dashboard upgrade modal launcher", () => {
     mockUseDashboardSystems.mockReturnValue({
       data: [

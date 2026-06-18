@@ -202,8 +202,8 @@ describe("dashboard routes", () => {
   test("counts lifecycle warnings separately from up to date", async () => {
     const db = getDb();
     db.insert(systems).values({
-      name: "Debian LTS",
-      hostname: "debian-lts.local",
+      name: "Debian support ending",
+      hostname: "debian-support-ending.local",
       port: 22,
       authType: "password",
       username: "root",
@@ -227,8 +227,8 @@ describe("dashboard routes", () => {
     expect(systemsRes.status).toBe(200);
     const systemsBody = await systemsRes.json();
     expect(systemsBody.systems[0]).toMatchObject({
-      osLifecycleStatus: "support_ended",
-      osLifecycleSupportEndDate: "2026-06-10",
+      osLifecycleStatus: "support_ending",
+      osLifecycleSupportEndDate: "2026-07-11",
       osLifecycleEolDate: "2028-06-30",
     });
   });

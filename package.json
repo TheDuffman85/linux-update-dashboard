@@ -29,6 +29,7 @@
     "drizzle-orm": "^0.45.1",
     "highlight.js": "^11.11.1",
     "hono": "^4.12.15",
+    "i18next": "^26.3.1",
     "jose": "^6.2.3",
     "mqtt": "^5.15.1",
     "mustache": "^4.2.0",
@@ -36,6 +37,7 @@
     "openid-client": "^6.8.4",
     "prettier": "^3.8.3",
     "prettier-plugin-sh": "^0.18.1",
+    "react-i18next": "^17.0.8",
     "sortablejs": "^1.15.7",
     "ssh2": "^1.16.0",
     "ws": "^8.20.0"

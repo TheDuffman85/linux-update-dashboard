@@ -36,11 +36,26 @@ function resolvePriority(
 
 function sanitizeHeaderValue(value: string): string {
   return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replaceAll("⏸️ ", "")
     .replaceAll("⚠️ ", "")
     .replace(/[^\t\x20-\x7e]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function sanitizeNtfyActionLabel(value: string): string {
+  return sanitizeHeaderValue(value)
+    .replace(/[,;]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    || "Open";
+}
+
+export function buildNtfyActionHeader(payload: NotificationPayload): string {
+  const label = sanitizeNtfyActionLabel(resolveNotificationLinkLabel(payload));
+  return `view, ${label}, ${resolveNotificationLinkUrl(payload)}`;
 }
 
 export const ntfyProvider = createFlatProvider({
@@ -88,7 +103,7 @@ export const ntfyProvider = createFlatProvider({
       "Title": sanitizeHeaderValue(payload.title),
       "Priority": resolvePriority(payload.priority, config.ntfyPriorityOverride),
       "Click": resolveNotificationLinkUrl(payload),
-      "Actions": `view, ${resolveNotificationLinkLabel(payload)}, ${resolveNotificationLinkUrl(payload)}`,
+      "Actions": buildNtfyActionHeader(payload),
     };
 
     if (payload.tags?.length) {

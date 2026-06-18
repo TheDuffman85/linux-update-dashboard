@@ -2,6 +2,7 @@ import { useRef, useEffect, useMemo } from "react";
 import type { WsMessage } from "../hooks/useCommandOutput";
 import { ContentExpansionButton, CopyButton, useContentExpansion } from "./CopyableCodeBlock";
 import { TerminalText } from "./TerminalText";
+import { useI18n } from "../lib/i18n";
 
 interface TerminalOutputProps {
   messages: WsMessage[];
@@ -11,6 +12,7 @@ interface TerminalOutputProps {
 }
 
 export function TerminalOutput({ messages, isActive, phase, connected }: TerminalOutputProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const isScrolledToBottom = useRef(true);
   const copyText = useMemo(() => {
@@ -21,18 +23,18 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
         case "output":
           return msg.data;
         case "phase":
-          return `--- ${msg.phase === "rechecking" ? "Rechecking for updates..." : msg.phase} ---\n`;
+          return `--- ${msg.phase === "rechecking" ? t("components.terminalOutput.recheckingForUpdates") : msg.phase} ---\n`;
         case "done":
-          return `${msg.success ? "Done." : "Failed."}\n`;
+          return `${msg.success ? t("components.terminalOutput.done") : t("components.terminalOutput.failed")}\n`;
         case "error":
-          return `Error: ${msg.message}\n`;
+          return `${t("components.terminalOutput.error")}: ${msg.message}\n`;
         case "warning":
-          return `Warning: ${msg.message}\n`;
+          return `${t("components.terminalOutput.warning")}: ${msg.message}\n`;
         default:
           return "";
       }
     }).join("");
-  }, [messages]);
+  }, [messages, t]);
   const {
     expanded,
     canExpand,
@@ -61,15 +63,17 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
     .reverse()
     .find((m): m is Extract<WsMessage, { type: "done" }> => m.type === "done");
 
-  let headerText = "Command Output";
+  let headerText = t("components.terminalOutput.commandOutput");
   if (phase === "reconnecting") {
-    headerText = "Reconnecting to remote server...";
+    headerText = t("components.terminalOutput.reconnectingToRemoteServer");
   } else if (phase === "rechecking") {
-    headerText = "Rechecking for updates...";
+    headerText = t("components.terminalOutput.recheckingForUpdates");
   } else if (isActive && lastStarted) {
-    headerText = `Running: ${lastStarted.command}`;
+    headerText = t("components.terminalOutput.runningCommand", { command: lastStarted.command });
   } else if (lastDone) {
-    headerText = lastDone.success ? "Completed successfully" : "Command failed";
+    headerText = lastDone.success
+      ? t("components.terminalOutput.completedSuccessfully")
+      : t("components.terminalOutput.commandFailed");
   }
 
   return (
@@ -85,11 +89,11 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
           {isActive && (
             <span className={`flex items-center gap-1.5 text-xs ${phase === "reconnecting" ? "text-amber-400" : "text-green-400"}`}>
               <span className="spinner spinner-sm !w-3 !h-3" />
-              {phase === "reconnecting" ? "Reconnecting" : "Running"}
+              {phase === "reconnecting" ? t("components.terminalOutput.reconnecting") : t("components.terminalOutput.running")}
             </span>
           )}
           {!connected && (
-            <span className="text-xs text-amber-400">Disconnected</span>
+            <span className="text-xs text-amber-400">{t("components.terminalOutput.disconnected")}</span>
           )}
           {canExpand && (
             <ContentExpansionButton
@@ -101,7 +105,7 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
           <CopyButton
             text={copyText}
             className="h-6 w-6"
-            successMessage="Copied command output"
+            successMessage="components.terminalOutput.copiedCommandOutput"
           />
         </div>
       </div>
@@ -115,7 +119,9 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
       >
         {messages.length === 0 && (
           <span className="text-slate-500 italic">
-            {connected ? "Waiting for output…" : "Waiting for output… (reconnecting)"}
+            {connected
+              ? t("components.terminalOutput.waitingForOutput")
+              : t("components.terminalOutput.waitingForOutputReconnecting")}
           </span>
         )}
         {messages.map((msg, i) => {

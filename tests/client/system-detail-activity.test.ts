@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+import i18next from "i18next";
 import {
   buildActivityDisplayRows,
   dedupePackageIssueUpdateNotice,
@@ -8,6 +9,7 @@ import {
   getAutoremoveConfirmMessage,
   getPackageSelectionState,
   filterInstalledPackages,
+  formatOsLifecycleField,
   InstalledPackagesSection,
   getVisiblePackageIssuesForCurrentCheck,
   HostKeyVerificationBanner,
@@ -21,6 +23,7 @@ import {
   shouldShowAutoremoveAction,
   getOperationNoticeState,
   OperationNoticeBanner,
+  OsLifecycleWarningBanner,
 } from "../../client/pages/SystemDetail";
 import { SudoersSetupPanel } from "../../client/components/systems/SudoersSetupPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
@@ -52,6 +55,69 @@ describe("autoremove action", () => {
     expect(getAutoremoveConfirmMessage("Debian", support)).toContain("Will run for: apt, flatpak.");
     expect(getAutoremoveConfirmMessage("Debian", support)).toContain("configured: snap.");
     expect(shouldShowAutoremoveAction({ supportedManagers: [] })).toBe(false);
+  });
+});
+
+describe("OS lifecycle presentation", () => {
+  test("uses the security support date before Debian enters LTS", () => {
+    expect(formatOsLifecycleField({
+      osLifecycleStatus: "supported",
+      osLifecycleEolDate: "2030-06-30",
+      osLifecycleDaysUntilEol: 1475,
+      osLifecycleSupportEndDate: "2028-08-09",
+      osLifecycleDaysUntilSupportEnd: 785,
+      osLifecycleLabel: "Debian 13 security support until 2028-08-09; LTS until 2030-06-30",
+    })).toBe("Security support until 2028-08-09; LTS until 2030-06-30");
+  });
+
+  test("uses the final LTS date after regular Debian security support ends", () => {
+    expect(formatOsLifecycleField({
+      osLifecycleStatus: "support_ended",
+      osLifecycleEolDate: "2028-06-30",
+      osLifecycleDaysUntilEol: 744,
+      osLifecycleSupportEndDate: "2026-07-11",
+      osLifecycleDaysUntilSupportEnd: -6,
+      osLifecycleLabel: "Debian 12 is in LTS until 2028-06-30",
+    })).toBe("LTS until 2028-06-30");
+  });
+
+  test("includes both security support and LTS dates in upcoming support warnings", () => {
+    const html = renderToStaticMarkup(createElement(OsLifecycleWarningBanner, {
+      systemName: "Alpha",
+      status: "support_ending",
+      label: "Debian 13 security support ends in 30 days; LTS until 2030-06-30",
+      eolDate: "2030-06-30",
+      daysUntilEol: 1461,
+      supportEndDate: "2028-08-09",
+      daysUntilSupportEnd: 30,
+      onDismiss: () => {},
+    }));
+
+    expect(html).toContain("regular security support ends on 2028-08-09");
+    expect(html).toContain("LTS runs until 2030-06-30");
+  });
+
+  test("translates the lifecycle warning title instead of showing the server label", async () => {
+    await i18next.changeLanguage("zh");
+    let html = "";
+    try {
+      html = renderToStaticMarkup(createElement(OsLifecycleWarningBanner, {
+        systemName: "Test FISH (Sudo)",
+        status: "support_ending",
+        label: "Debian 12 security support ends in 23 days; LTS until 2028-06-30",
+        eolDate: "2028-06-30",
+        daysUntilEol: 737,
+        supportEndDate: "2026-07-11",
+        daysUntilSupportEnd: 23,
+        onDismiss: () => {},
+      }));
+    } finally {
+      await i18next.changeLanguage("en");
+    }
+
+    expect(html).toContain("安全支持于 2026-07-11 结束（23 天）");
+    expect(html).toContain("LTS 持续至 2028-06-30");
+    expect(html).not.toContain("Debian 12 security support ends in 23 days");
   });
 });
 
@@ -694,7 +760,7 @@ describe("PackageManagerIssueBanner", () => {
   };
 
   test("renders solve and dismiss actions for visible package manager issues", () => {
-    const html = renderToStaticMarkup(PackageManagerIssueBanner({
+    const html = renderToStaticMarkup(createElement(PackageManagerIssueBanner, {
       issues: [issue],
       onSolve: () => {},
       onDismiss: () => {},

@@ -11,6 +11,7 @@ import {
   type UIEventHandler,
 } from "react";
 import { useOptionalToast } from "../context/ToastContext";
+import { useI18n } from "../lib/i18n";
 
 async function writeClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
@@ -55,7 +56,7 @@ export function CopyButton({
   text,
   className = "",
   disabled = false,
-  successMessage = "Copied to clipboard",
+  successMessage = "components.copyableCodeBlock.copiedToClipboard",
 }: {
   text: string;
   className?: string;
@@ -63,6 +64,7 @@ export function CopyButton({
   successMessage?: string;
 }) {
   const toast = useOptionalToast();
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const canCopy = !disabled && text.length > 0;
 
@@ -78,9 +80,9 @@ export function CopyButton({
     try {
       await writeClipboard(text);
       setCopied(true);
-      toast?.addToast(successMessage, "success");
+      toast?.addToast(t(successMessage), "success");
     } catch {
-      toast?.addToast("Could not copy to clipboard", "danger");
+      toast?.addToast(t("components.copyableCodeBlock.couldNotCopyToClipboard"), "danger");
     }
   };
 
@@ -90,8 +92,8 @@ export function CopyButton({
       onClick={copy}
       disabled={!canCopy}
       className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-600/70 bg-slate-800/90 text-slate-200 shadow-sm transition-colors hover:bg-slate-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
-      title={copied ? "Copied" : "Copy to clipboard"}
-      aria-label={copied ? "Copied" : "Copy to clipboard"}
+      title={copied ? t("components.copyableCodeBlock.copied") : t("components.copyableCodeBlock.copyToClipboard")}
+      aria-label={copied ? t("components.copyableCodeBlock.copied") : t("components.copyableCodeBlock.copyToClipboard")}
     >
       <CopyIcon copied={copied} />
     </button>
@@ -156,7 +158,8 @@ export function ContentExpansionButton({
   onToggle: () => void;
   className?: string;
 }) {
-  const label = expanded ? "Collapse content" : "Show all content";
+  const { t } = useI18n();
+  const label = expanded ? t("components.copyableCodeBlock.collapseContent") : t("components.copyableCodeBlock.showAllContent");
 
   return (
     <button

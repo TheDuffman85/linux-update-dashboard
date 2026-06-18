@@ -6,6 +6,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { ToastProvider } from "./context/ToastContext";
 import { UpgradeProvider } from "./context/UpgradeContext";
 import { ThemeProvider } from "./hooks/useTheme";
+import { I18nProvider } from "./lib/i18n";
 import App from "./App";
 import "./styles/app.css";
 
@@ -25,11 +26,13 @@ createRoot(document.getElementById("root")!).render(
       <BrowserRouter>
         <ThemeProvider>
           <AuthProvider>
-            <ToastProvider>
-              <UpgradeProvider>
-                <App />
-              </UpgradeProvider>
-            </ToastProvider>
+            <I18nProvider>
+              <ToastProvider>
+                <UpgradeProvider>
+                  <App />
+                </UpgradeProvider>
+              </ToastProvider>
+            </I18nProvider>
           </AuthProvider>
         </ThemeProvider>
       </BrowserRouter>

@@ -1,5 +1,7 @@
 import type { ActiveOperation, LastCheckSummary } from "./systems";
 
+type OsLifecycleStatus = "supported" | "support_ending" | "support_ended" | "approaching_eol" | "eol" | "unknown";
+
 export type SystemUpdateState =
   | "upgrading"
   | "maintaining"
@@ -15,7 +17,7 @@ export type SystemUpdateState =
 type SystemStatusInput = {
   isReachable: number;
   updateCount: number;
-  osLifecycleStatus?: "supported" | "support_ending" | "support_ended" | "approaching_eol" | "eol" | "unknown";
+  osLifecycleStatus?: OsLifecycleStatus;
   lastCheck: LastCheckSummary | null;
   activeOperation?: ActiveOperation | null;
 };
@@ -91,9 +93,17 @@ export function deriveSystemUpdateState(
   return "unchecked";
 }
 
-export function getSystemStatusDotClass(state: SystemUpdateState): string {
+export function getSystemStatusDotClass(
+  state: SystemUpdateState,
+  system?: { osLifecycleStatus?: OsLifecycleStatus },
+): string {
   if (state === "check_failed" || state === "unreachable") return "bg-red-500";
-  if (state === "check_warning" || state === "updates_available" || state === "lifecycle_warning") return "bg-amber-500";
+  if (state === "lifecycle_warning") {
+    if (system?.osLifecycleStatus === "eol") return "bg-red-500";
+    if (system?.osLifecycleStatus) return "bg-green-500";
+    return "bg-amber-500";
+  }
+  if (state === "check_warning" || state === "updates_available") return "bg-amber-500";
   if (state === "up_to_date") return "bg-green-500";
   if (state === "upgrading" || state === "maintaining" || state === "checking") return "bg-blue-500";
   return "bg-slate-400";

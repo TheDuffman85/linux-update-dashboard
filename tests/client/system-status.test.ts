@@ -128,7 +128,17 @@ describe("deriveSystemUpdateState", () => {
 });
 
 describe("getSystemStatusDotClass", () => {
-  test("uses the update warning color for lifecycle warnings", () => {
+  test("keeps non-EOL lifecycle warnings green", () => {
+    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "support_ending" })).toBe("bg-green-500");
+    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "support_ended" })).toBe("bg-green-500");
+    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "approaching_eol" })).toBe("bg-green-500");
+  });
+
+  test("marks final EOL lifecycle warnings red", () => {
+    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "eol" })).toBe("bg-red-500");
+  });
+
+  test("keeps lifecycle warnings amber without lifecycle context", () => {
     expect(getSystemStatusDotClass("lifecycle_warning")).toBe("bg-amber-500");
   });
 

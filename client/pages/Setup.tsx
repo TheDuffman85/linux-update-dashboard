@@ -2,9 +2,11 @@ import { useState } from "react";
 import { PenguinLogo } from "../components/PenguinLogo";
 import { useAuth } from "../context/AuthContext";
 import { validatePassword } from "../lib/form-validation";
+import { useI18n } from "../lib/i18n";
 
 export default function Setup() {
   const { setup } = useAuth();
+  const { t } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -22,7 +24,7 @@ export default function Setup() {
     try {
       await setup(username, password);
     } catch (err: unknown) {
-      setError((err as Error).message || "Setup failed");
+      setError((err as Error).message || t("pages.setup.setupFailed"));
     } finally {
       setLoading(false);
     }
@@ -33,9 +35,9 @@ export default function Setup() {
       <div className="w-full max-w-sm bg-white dark:bg-slate-800 rounded-xl shadow-lg p-8">
         <div className="text-center mb-6">
           <PenguinLogo size={48} />
-          <h1 className="mt-3 text-xl font-semibold">Initial Setup</h1>
+          <h1 className="mt-3 text-xl font-semibold">{t("pages.setup.initialSetup")}</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Create your admin account
+            {t("pages.setup.createYourAdminAccount")}
           </p>
         </div>
 
@@ -48,7 +50,7 @@ export default function Setup() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-              Username
+              {t("pages.setup.username")}
             </label>
             <input
               type="text"
@@ -60,7 +62,7 @@ export default function Setup() {
           </div>
           <div>
             <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-              Password
+              {t("pages.setup.password")}
             </label>
             <input
               type="password"
@@ -71,7 +73,7 @@ export default function Setup() {
               className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
             <p className="mt-1 text-xs text-slate-400">
-              Minimum 8 characters, with uppercase, lowercase, and a digit
+              {t("pages.setup.minimumCharactersWithUppercaseLowercaseAndADigit")}
             </p>
           </div>
           <button
@@ -79,7 +81,7 @@ export default function Setup() {
             disabled={loading}
             className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
           >
-            {loading ? <span className="spinner spinner-sm" /> : "Create Account"}
+            {loading ? <span className="spinner spinner-sm" /> : t("pages.setup.createAccount")}
           </button>
         </form>
       </div>

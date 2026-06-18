@@ -20,6 +20,7 @@ import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 import { useSettings } from "../lib/settings";
+import { useI18n } from "../lib/i18n";
 
 function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -30,24 +31,32 @@ function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   return nextItems;
 }
 
-function getLifecycleBadge(system: Pick<System, "osLifecycleStatus" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd">): { label: string; variant: "warning" | "danger" } | null {
-  if (system.osLifecycleStatus === "eol") return { label: "EOL", variant: "danger" };
+function hasLtsLifecycleLabel(system: Pick<System, "osLifecycleLabel">): boolean {
+  return /\bLTS\b/.test(system.osLifecycleLabel);
+}
+
+function getLifecycleBadge(
+  system: Pick<System, "osLifecycleStatus" | "osLifecycleLabel">,
+  t: (key: string) => string,
+): { label: string; variant: "warning" | "danger" } | null {
+  if (system.osLifecycleStatus === "eol") return { label: t("pages.systemDetail.lifecycle.eol"), variant: "danger" };
   if (system.osLifecycleStatus === "support_ended") {
-    return { label: "support ended", variant: "warning" };
+    return {
+      label: hasLtsLifecycleLabel(system)
+        ? t("pages.systemDetail.lifecycle.lts")
+        : t("pages.systemDetail.lifecycle.regularSupportEndedLower"),
+      variant: "warning",
+    };
   }
   if (system.osLifecycleStatus === "support_ending") {
     return {
-      label: typeof system.osLifecycleDaysUntilSupportEnd === "number"
-        ? `support ends in ${system.osLifecycleDaysUntilSupportEnd}d`
-        : "support ending",
+      label: t("pages.systemDetail.lifecycle.securitySupportEndingSoonLower"),
       variant: "warning",
     };
   }
   if (system.osLifecycleStatus === "approaching_eol") {
     return {
-      label: typeof system.osLifecycleDaysUntilEol === "number"
-        ? `EOL in ${system.osLifecycleDaysUntilEol}d`
-        : "EOL soon",
+      label: t("pages.systemDetail.lifecycle.eolSoon"),
       variant: "warning",
     };
   }
@@ -71,6 +80,7 @@ export default function SystemsList() {
   const deleteSystem = useDeleteSystem();
   const reorderSystems = useReorderSystems();
   const { addToast } = useToast();
+  const { t } = useI18n();
   const [showForm, setShowForm] = useState(false);
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
   const [editSystem, setEditSystem] = useState<System | null>(
@@ -159,7 +169,7 @@ export default function SystemsList() {
         await refetch();
         setShowForm(false);
         setDuplicateSource(null);
-        addToast("System added successfully", "success");
+        addToast(t("pages.systemsList.systemAddedSuccessfully"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -178,7 +188,7 @@ export default function SystemsList() {
         onSuccess: async () => {
           await refetch();
           setEditSystem(null);
-          addToast("System updated successfully", "success");
+          addToast(t("pages.systemsList.systemUpdatedSuccessfully"), "success");
         },
         onError: (err) => addToast(err.message, "danger"),
       }
@@ -191,7 +201,7 @@ export default function SystemsList() {
       onSuccess: async () => {
         await refetch();
         setDeleteId(null);
-        addToast("System deleted", "success");
+        addToast(t("pages.systemsList.systemDeleted"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -199,14 +209,14 @@ export default function SystemsList() {
 
   return (
     <Layout
-      title="Systems"
+      title={t("pages.systemsList.systems")}
       contentWidth="wide"
       actions={
         <button
           onClick={() => setShowForm(true)}
           className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
         >
-          Add System
+          {t("pages.systemsList.addSystem")}
         </button>
       }
     >
@@ -219,17 +229,17 @@ export default function SystemsList() {
           <table className="min-w-full w-max text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                <th className="px-2 sm:px-4 py-3">Name</th>
-                <th className="px-2 sm:px-4 py-3 hidden sm:table-cell">Host</th>
+                <th className="px-2 sm:px-4 py-3">{t("pages.systemsList.name")}</th>
+                <th className="px-2 sm:px-4 py-3 hidden sm:table-cell">{t("pages.systemsList.host")}</th>
                 <th className="px-2 sm:px-4 py-3 hidden md:table-cell">OS</th>
-                <th className="px-2 sm:px-4 py-3">Status</th>
-                <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">Last Checked</th>
-                <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">Actions</th>
+                <th className="px-2 sm:px-4 py-3">{t("pages.systemsList.status")}</th>
+                <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">{t("pages.systemsList.lastChecked")}</th>
+                <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">{t("pages.systemsList.actions")}</th>
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
               {orderedSystems.map((s) => {
-                const lifecycleBadge = getLifecycleBadge(s);
+                const lifecycleBadge = getLifecycleBadge(s, t);
                 return (
                   <tr
                     key={s.id}
@@ -243,8 +253,8 @@ export default function SystemsList() {
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title="Drag to reorder"
-                        aria-label={`Drag to reorder ${s.name}`}
+                        title={t("pages.systemsList.dragToReorder")}
+                        aria-label={t("pages.systemsList.dragToReorderName", { name: s.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
@@ -264,39 +274,39 @@ export default function SystemsList() {
                   <td className="px-2 sm:px-4 py-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {s.isReachable === 1 ? (
-                        <Badge variant="success" small>Online</Badge>
+                        <Badge variant="success" small>{t("pages.systemsList.online")}</Badge>
                       ) : s.isReachable === -1 ? (
-                        <Badge variant="danger" small>Offline</Badge>
+                        <Badge variant="danger" small>{t("pages.systemsList.offline")}</Badge>
                       ) : (
-                        <Badge variant="muted" small>Unknown</Badge>
+                        <Badge variant="muted" small>{t("pages.systemsList.unknown")}</Badge>
                       )}
                       {s.hidden === 1 && (
-                        <Badge variant="muted" small>Hidden</Badge>
+                        <Badge variant="muted" small>{t("pages.systemsList.hidden")}</Badge>
                       )}
                       {lifecycleBadge && (
                         <Badge variant={lifecycleBadge.variant} small>{lifecycleBadge.label}</Badge>
                       )}
                       {s.hostKeyStatus === "verification_disabled" ? (
-                        <Badge variant="warning" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus)}</Badge>
+                        <Badge variant="warning" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus, t)}</Badge>
                       ) : s.hostKeyStatus === "needs_approval" ? (
-                        <Badge variant="info" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus)}</Badge>
+                        <Badge variant="info" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus, t)}</Badge>
                       ) : (
-                        <Badge variant="success" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus)}</Badge>
+                        <Badge variant="success" small>{getHostKeyStatusBadgeLabel(s.hostKeyStatus, t)}</Badge>
                       )}
                       {s.proxyJumpChain.length > 0 && (
                         <Badge variant="muted" small>
-                          via {s.proxyJumpChain[0].name}
+                          {t("pages.systemsList.viaName", { name: s.proxyJumpChain[0].name })}
                         </Badge>
                       )}
                       {s.needsReboot === 1 && (
-                        <span className="text-amber-500" title="Reboot required">
+                        <span className="text-amber-500" title={t("pages.systemsList.rebootRequired")}>
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                           </svg>
                         </span>
                       )}
                       {(s.packageIssueCount ?? 0) > 0 && (
-                        <Badge variant="danger" small>pkg issue</Badge>
+                        <Badge variant="danger" small>{t("pages.systemsList.pkgIssue")}</Badge>
                       )}
                     </div>
                   </td>
@@ -304,7 +314,7 @@ export default function SystemsList() {
                     {s.cacheTimestamp ? (
                       <AgoLabel timestamp={s.cacheTimestamp} stale={s.isStale} />
                     ) : (
-                      <span className="text-xs text-slate-400">Never</span>
+                      <span className="text-xs text-slate-400">{t("pages.systemsList.never")}</span>
                     )}
                   </td>
                   <td className="px-2 sm:px-4 py-3 text-right">
@@ -312,8 +322,8 @@ export default function SystemsList() {
                       <button
                         onClick={() => setSudoersSystem(s)}
                         className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Sudoers setup"
-                        aria-label={`Sudoers setup for ${s.name}`}
+                        title={t("pages.systemsList.sudoersSetup")}
+                        aria-label={t("pages.systemsList.sudoersSetupForName", { name: s.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -322,7 +332,7 @@ export default function SystemsList() {
                       <button
                         onClick={() => handleDuplicate(s)}
                         className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Duplicate system"
+                        title={t("pages.systemsList.duplicateSystem")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -331,7 +341,7 @@ export default function SystemsList() {
                       <button
                         onClick={() => setEditSystem(s)}
                         className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Edit system"
+                        title={t("pages.systemsList.editSystem")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -340,7 +350,7 @@ export default function SystemsList() {
                       <button
                         onClick={() => setDeleteId(s.id)}
                         className="p-1 sm:p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                        title="Delete system"
+                        title={t("pages.systemsList.deleteSystem")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -356,12 +366,12 @@ export default function SystemsList() {
         </div>
       ) : (
         <div className="text-center py-16">
-          <p className="text-slate-500 dark:text-slate-400 mb-4">No systems configured yet</p>
+          <p className="text-slate-500 dark:text-slate-400 mb-4">{t("pages.systemsList.noSystemsConfiguredYet")}</p>
           <button
             onClick={() => setShowForm(true)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            Add Your First System
+            {t("pages.systemsList.addYourFirstSystem")}
           </button>
         </div>
       )}
@@ -372,13 +382,13 @@ export default function SystemsList() {
           setShowForm(false);
           setDuplicateSource(null);
         }}
-        title={duplicateSource ? "Duplicate System" : "Add System"}
+        title={duplicateSource ? t("pages.systemsList.duplicateSystem2") : t("pages.systemsList.addSystem")}
         dismissible={!createSystem.isPending}
       >
         <SystemForm
           key={duplicateSource?.id ?? "new"}
           initial={duplicateSource ? {
-            name: `${duplicateSource.name} (Copy)`,
+            name: t("pages.systemsList.nameCopy", { name: duplicateSource.name }),
             hostname: duplicateSource.hostname,
             port: duplicateSource.port,
             credentialId: duplicateSource.credentialId ?? undefined,
@@ -406,7 +416,7 @@ export default function SystemsList() {
       <Modal
         open={editSystem !== null}
         onClose={() => setEditSystem(null)}
-        title="Edit System"
+        title={t("pages.systemsList.editSystem2")}
         dismissible={!updateSystem.isPending}
       >
         {editSystem && (
@@ -441,7 +451,7 @@ export default function SystemsList() {
       <Modal
         open={sudoersSystem !== null}
         onClose={() => setSudoersSystem(null)}
-        title={sudoersSystem ? `Sudoers Setup for ${sudoersSystem.name}` : "Sudoers Setup"}
+        title={sudoersSystem ? t("pages.systemsList.sudoersSetupForName2", { name: sudoersSystem.name }) : t("pages.systemsList.sudoersSetup2")}
       >
         {sudoersSystem && sudoersPreview.isLoading ? (
           <div className="flex justify-center py-10">
@@ -454,7 +464,7 @@ export default function SystemsList() {
           />
         ) : (
           <div className="text-sm text-slate-500 dark:text-slate-400">
-            Unable to load sudoers setup for this system right now.
+            {t("pages.systemsList.unableToLoadSudoersSetupForThisSystem")}
           </div>
         )}
       </Modal>
@@ -463,9 +473,9 @@ export default function SystemsList() {
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete System"
-        message="Are you sure you want to delete this system? This action cannot be undone."
-        confirmLabel="Delete"
+        title={t("pages.systemsList.deleteSystem2")}
+        message={t("pages.systemsList.areYouSureYouWantToDeleteThis")}
+        confirmLabel={t("pages.systemsList.delete")}
         danger
         loading={deleteSystem.isPending}
       />

@@ -1,13 +1,15 @@
 import { useTheme } from "../hooks/useTheme";
+import { useI18n } from "../lib/i18n";
 
 export function ThemeToggle() {
   const { theme, toggle } = useTheme();
+  const { t } = useI18n();
 
   return (
     <button
       onClick={toggle}
       className="p-1.5 rounded hover:bg-sidebar-hover text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
-      title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+      title={theme === "dark" ? t("components.themeToggle.switchToLightTheme") : t("components.themeToggle.switchToDarkTheme")}
     >
       {theme === "dark" ? (
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -22,6 +22,7 @@ import { useVisibleSystems } from "../lib/systems";
 import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
 import { getCronPreview } from "../lib/cron-preview";
 import { useToast } from "../context/ToastContext";
+import { useI18n } from "../lib/i18n";
 
 const inputClass =
   "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
@@ -38,20 +39,28 @@ const TYPE_LABELS: Record<ScheduleType, string> = {
   update: "Update",
   notification_digest: "Notification",
 };
+const TYPE_LABEL_KEYS: Record<ScheduleType, string> = {
+  refresh: "pages.schedules.type.refresh",
+  update: "pages.schedules.type.update",
+  notification_digest: "pages.schedules.type.notification",
+};
 
-const CRON_PRESETS: { label: string; value: string }[] = [
-  { label: "Every 15 minutes", value: "*/15 * * * *" },
-  { label: "Every 30 minutes", value: "*/30 * * * *" },
-  { label: "Every hour", value: "0 * * * *" },
-  { label: "Every 3 hours", value: "0 */3 * * *" },
-  { label: "Every 6 hours", value: "0 */6 * * *" },
-  { label: "Daily at 00:00", value: "0 0 * * *" },
-  { label: "Daily at 03:00", value: "0 3 * * *" },
-  { label: "Weekly Sunday 03:00", value: "0 3 * * 0" },
-  { label: "Weekly Monday 09:00", value: "0 9 * * 1" },
-  { label: "Monthly on the 1st", value: "0 3 1 * *" },
-  { label: "Custom", value: "custom" },
+const CRON_PRESETS: { label: string; labelKey: string; value: string }[] = [
+  { label: "Every 5 minutes", labelKey: "common.cron.every5Minutes", value: "*/5 * * * *" },
+  { label: "Every 15 minutes", labelKey: "common.cron.every15Minutes", value: "*/15 * * * *" },
+  { label: "Every 30 minutes", labelKey: "common.cron.every30Minutes", value: "*/30 * * * *" },
+  { label: "Every hour", labelKey: "common.cron.everyHour", value: "0 * * * *" },
+  { label: "Every 3 hours", labelKey: "common.cron.every3Hours", value: "0 */3 * * *" },
+  { label: "Every 6 hours", labelKey: "common.cron.every6Hours", value: "0 */6 * * *" },
+  { label: "Daily at 00:00", labelKey: "common.cron.dailyAt0000", value: "0 0 * * *" },
+  { label: "Daily at 03:00", labelKey: "common.cron.dailyAt0300", value: "0 3 * * *" },
+  { label: "Weekly Sunday 03:00", labelKey: "common.cron.weeklySunday0300", value: "0 3 * * 0" },
+  { label: "Weekly Monday 09:00", labelKey: "common.cron.weeklyMonday0900", value: "0 9 * * 1" },
+  { label: "Monthly on the 1st", labelKey: "common.cron.monthlyOnThe1st", value: "0 3 1 * *" },
+  { label: "Custom", labelKey: "common.custom", value: "custom" },
 ];
+
+type Translate = ReturnType<typeof useI18n>["t"];
 
 function moveSchedule<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -61,8 +70,8 @@ function moveSchedule<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   return nextItems;
 }
 
-function formatDate(value: string | null): string {
-  if (!value) return "Never";
+function formatDate(value: string | null, t: Translate): string {
+  if (!value) return t("pages.schedules.never");
   const parsed = new Date(value.includes("T") ? value : `${value}Z`);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
@@ -100,8 +109,8 @@ function truncateScheduleName(value: string): string {
   return `${value.slice(0, MAX_SCHEDULE_NAME_LENGTH - 3).trimEnd()}...`;
 }
 
-function generateScheduleName(type: ScheduleType, cron: string): string | null {
-  const preview = getCronPreview(cron);
+function generateScheduleName(type: ScheduleType, cron: string, language: ReturnType<typeof useI18n>["language"]): string | null {
+  const preview = getCronPreview(cron, new Date(), 3, language);
   if ("error" in preview) return null;
   return truncateScheduleName(`${TYPE_LABELS[type]} - ${preview.description}`);
 }
@@ -110,38 +119,54 @@ function getScheduleCron(schedule: Schedule): string | null {
   return "cron" in schedule.config ? schedule.config.cron : null;
 }
 
-function describeSchedule(schedule: Schedule): string {
+function describeCronExpression(
+  cron: string,
+  t: Translate,
+  language: ReturnType<typeof useI18n>["language"],
+): string {
+  const preset = CRON_PRESETS.find((item) => item.value === cron);
+  if (preset) return t(preset.labelKey);
+  const preview = getCronPreview(cron, new Date(), 0, language);
+  return "error" in preview ? cron : preview.description;
+}
+
+function describeSchedule(
+  schedule: Schedule,
+  t: Translate,
+  language: ReturnType<typeof useI18n>["language"],
+): string {
   if (schedule.type === "refresh" && isRefreshConfig(schedule.config)) {
     const config = schedule.config;
     const cache =
       config.cacheDurationHours === 0
-        ? "no cache reuse"
-        : `${config.cacheDurationHours}h cache`;
-    const preset = CRON_PRESETS.find((item) => item.value === config.cron);
-    return `${preset ? preset.label : config.cron}, ${cache}`;
+        ? t("pages.schedules.noCacheReuse")
+        : t("pages.schedules.hoursCache", { hours: config.cacheDurationHours });
+    return t("pages.schedules.descriptionWithCache", {
+      schedule: describeCronExpression(config.cron, t, language),
+      cache,
+    });
   }
 
   if (schedule.type === "update" && isUpdateConfig(schedule.config)) {
-    const config = schedule.config;
-    const preset = CRON_PRESETS.find((item) => item.value === config.cron);
-    return preset ? preset.label : config.cron;
+    return describeCronExpression(schedule.config.cron, t, language);
   }
 
   if (schedule.type === "notification_digest" && isNotificationScheduleConfig(schedule.config)) {
-    const config = schedule.config;
-    const preset = CRON_PRESETS.find((item) => item.value === config.cron);
-    return preset ? preset.label : config.cron;
+    return describeCronExpression(schedule.config.cron, t, language);
   }
 
-  return "Invalid config";
+  return t("pages.schedules.invalidConfig");
 }
 
 function ScheduleMinimumWarning({ cron }: { cron: string }) {
+  const { t } = useI18n();
   if (!isBelowMinimumScheduleInterval(cron)) return null;
 
   return (
     <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-      Runs more often than the supported {MIN_SCHEDULE_INTERVAL_MINUTES} minute minimum.
+      {t("pages.schedules.runsMoreOftenThanTheSupportedMinutesMinute", {
+        minutes: MIN_SCHEDULE_INTERVAL_MINUTES,
+      })}
     </p>
   );
 }
@@ -155,7 +180,8 @@ function ScheduleCronPreview({
   showCronString: boolean;
   className?: string;
 }) {
-  const preview = useMemo(() => getCronPreview(cron), [cron]);
+  const { language, t } = useI18n();
+  const preview = useMemo(() => getCronPreview(cron, new Date(), 3, language), [cron, language]);
 
   if (!cron.trim()) return null;
 
@@ -188,7 +214,7 @@ function ScheduleCronPreview({
       </div>
       {preview.nextRuns.length > 0 && (
         <div className="mt-2 space-y-1 text-slate-500 dark:text-slate-400">
-          <div className="font-medium">Next runs</div>
+          <div className="font-medium">{t("pages.schedules.nextRuns")}</div>
           {nextRuns.map((run) => (
             <div key={run}>{run}</div>
           ))}
@@ -199,13 +225,14 @@ function ScheduleCronPreview({
 }
 
 function ScheduleCronError({ cron }: { cron: string }) {
-  const preview = useMemo(() => getCronPreview(cron), [cron]);
+  const { language, t } = useI18n();
+  const preview = useMemo(() => getCronPreview(cron, new Date(), 3, language), [cron, language]);
 
   if (!cron.trim() || !("error" in preview)) return null;
 
   return (
     <p className="mt-2 text-xs text-red-600 dark:text-red-300">
-      {preview.error}
+      {t("pages.schedules.cronExpressionIsInvalid")}
     </p>
   );
 }
@@ -236,6 +263,7 @@ function ScheduleForm({
   onCancel: () => void;
   loading?: boolean;
 }) {
+  const { language, t } = useI18n();
   const { data: systemsList } = useVisibleSystems();
   const { data: notificationsList } = useNotifications();
   const initialType = initial?.type ?? "refresh";
@@ -300,9 +328,9 @@ function ScheduleForm({
 
   const handleGenerateName = () => {
     setError("");
-    const generatedName = generateScheduleName(type, activeCron);
+    const generatedName = generateScheduleName(type, activeCron, language);
     if (!generatedName) {
-      setError("Enter a valid cron expression before generating a name");
+      setError(t("pages.schedules.enterValidCronBeforeGeneratingName"));
       return;
     }
     setName(generatedName);
@@ -313,7 +341,7 @@ function ScheduleForm({
     setError("");
 
     if (!name.trim()) {
-      setError("Name is required");
+      setError(t("pages.schedules.nameIsRequired"));
       return;
     }
 
@@ -332,11 +360,11 @@ function ScheduleForm({
           : { cron };
 
     if (!config.cron) {
-      setError("Cron expression is required");
+      setError(t("pages.schedules.cronExpressionIsRequired"));
       return;
     }
-    if ("error" in getCronPreview(config.cron)) {
-      setError("Cron expression is invalid");
+    if ("error" in getCronPreview(config.cron, new Date(), 3, language)) {
+      setError(t("pages.schedules.cronExpressionIsInvalid"));
       return;
     }
 
@@ -359,7 +387,7 @@ function ScheduleForm({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Name</label>
+          <label className={labelClass}>{t("pages.schedules.name")}</label>
           <div className="relative">
             <input
               value={name}
@@ -372,8 +400,8 @@ function ScheduleForm({
               type="button"
               onClick={handleGenerateName}
               className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors"
-              title="Generate schedule name"
-              aria-label="Generate schedule name"
+              title={t("pages.schedules.generateScheduleName")}
+              aria-label={t("pages.schedules.generateScheduleName")}
             >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
@@ -383,15 +411,15 @@ function ScheduleForm({
           </div>
         </div>
         <div>
-          <label className={labelClass}>Type</label>
+          <label className={labelClass}>{t("pages.schedules.type")}</label>
           <select
             value={type}
             onChange={(e) => setType(e.target.value as ScheduleType)}
             className={inputClass}
           >
-            <option value="refresh">Refresh</option>
-            <option value="update">Update</option>
-            <option value="notification_digest">Notification</option>
+            <option value="refresh">{t("pages.schedules.type.refresh")}</option>
+            <option value="update">{t("pages.schedules.type.update")}</option>
+            <option value="notification_digest">{t("pages.schedules.type.notification")}</option>
           </select>
         </div>
       </div>
@@ -403,12 +431,12 @@ function ScheduleForm({
           onChange={(e) => setEnabled(e.target.checked)}
           className={checkboxClass}
         />
-        <span className="text-sm font-medium">Enabled</span>
+        <span className="text-sm font-medium">{t("pages.schedules.enabled")}</span>
       </label>
 
       {type === "notification_digest" ? (
         <div>
-          <label className={labelClass}>Notification channels</label>
+          <label className={labelClass}>{t("pages.schedules.notificationChannels")}</label>
           <div className="max-h-44 overflow-y-auto rounded-lg border border-border divide-y divide-border">
             {(notificationsList ?? []).map((channel) => (
               <label
@@ -427,14 +455,14 @@ function ScheduleForm({
             ))}
             {notificationsList?.length === 0 && (
               <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">
-                No notification channels
+                {t("pages.schedules.noNotificationChannels")}
               </div>
             )}
           </div>
         </div>
       ) : (
         <div>
-          <label className={labelClass}>Systems</label>
+          <label className={labelClass}>{t("pages.schedules.systems")}</label>
           <div className="flex flex-wrap gap-3">
             <label className="flex items-center gap-2">
               <input
@@ -444,7 +472,7 @@ function ScheduleForm({
                 onChange={() => setScope("all")}
                 className={checkboxClass}
               />
-              <span className="text-sm">All systems</span>
+              <span className="text-sm">{t("pages.schedules.allSystems")}</span>
             </label>
             <label className="flex items-center gap-2">
               <input
@@ -454,7 +482,7 @@ function ScheduleForm({
                 onChange={() => setScope("selected")}
                 className={checkboxClass}
               />
-              <span className="text-sm">Selected systems</span>
+              <span className="text-sm">{t("pages.schedules.selectedSystems")}</span>
             </label>
           </div>
           {scope === "selected" && (
@@ -475,7 +503,7 @@ function ScheduleForm({
               ))}
               {systemsList?.length === 0 && (
                 <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">
-                  No visible systems
+                  {t("pages.schedules.noVisibleSystems")}
                 </div>
               )}
             </div>
@@ -485,7 +513,7 @@ function ScheduleForm({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
         <div>
-          <label className={labelClass}>Cron</label>
+          <label className={labelClass}>{t("pages.schedules.cron")}</label>
           <select
             value={cronPreset}
             onChange={(e) => setCronPreset(e.target.value)}
@@ -493,7 +521,7 @@ function ScheduleForm({
           >
             {CRON_PRESETS.map((preset) => (
               <option key={preset.value} value={preset.value}>
-                {preset.label}
+              {t(preset.labelKey)}
               </option>
             ))}
           </select>
@@ -518,7 +546,7 @@ function ScheduleForm({
         <div className="space-y-4">
           {type === "refresh" && (
             <div>
-              <label className={labelClass}>Cache duration hours</label>
+              <label className={labelClass}>{t("pages.schedules.cacheDurationHours")}</label>
               <input
                 type="number"
                 min={0}
@@ -538,14 +566,14 @@ function ScheduleForm({
           onClick={onCancel}
           className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
         >
-          Cancel
+          {t("pages.schedules.cancel")}
         </button>
         <button
           type="submit"
           disabled={loading}
           className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          {loading ? <span className="spinner spinner-sm" /> : "Save"}
+          {loading ? <span className="spinner spinner-sm" /> : t("pages.schedules.save")}
         </button>
       </div>
     </form>
@@ -561,6 +589,7 @@ export default function Schedules() {
   const deleteSchedule = useDeleteSchedule();
   const reorderSchedules = useReorderSchedules();
   const { addToast } = useToast();
+  const { language, t } = useI18n();
   const [showForm, setShowForm] = useState(false);
   const [duplicateSchedule, setDuplicateSchedule] = useState<Schedule | null>(null);
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
@@ -636,15 +665,21 @@ export default function Schedules() {
   }, [reorderSchedules.isPending]);
 
   const getSystemScopeLabel = (systemIds: number[] | null): string => {
-    if (systemIds === null) return "All";
-    if (systemIds.length === 0) return "None";
-    if (!systemsList) return `${systemIds.length} system${systemIds.length !== 1 ? "s" : ""}`;
+    if (systemIds === null) return t("pages.schedules.all");
+    if (systemIds.length === 0) return t("pages.schedules.none");
+    if (!systemsList) return t("pages.schedules.countSystemlabel", {
+      count: systemIds.length,
+      systemLabel: systemIds.length === 1 ? t("pages.schedules.system") : t("pages.schedules.systems"),
+    });
     const names = systemIds
       .map((id) => systemsList.find((system) => system.id === id)?.name)
       .filter(Boolean);
-    if (names.length === 0) return `${systemIds.length} system${systemIds.length !== 1 ? "s" : ""}`;
+    if (names.length === 0) return t("pages.schedules.countSystemlabel", {
+      count: systemIds.length,
+      systemLabel: systemIds.length === 1 ? t("pages.schedules.system") : t("pages.schedules.systems"),
+    });
     if (names.length <= 2) return names.join(", ");
-    return `${names.length} systems`;
+    return t("pages.schedules.countSystems", { count: names.length });
   };
 
   const getTargetLabel = (schedule: Schedule): string => {
@@ -652,16 +687,22 @@ export default function Schedules() {
       return getSystemScopeLabel(schedule.systemIds);
     }
 
-    if (!isNotificationScheduleConfig(schedule.config)) return "Invalid";
+    if (!isNotificationScheduleConfig(schedule.config)) return t("pages.schedules.invalid");
     const notificationIds = schedule.config.notificationIds;
-    if (notificationIds.length === 0) return "None";
-    if (!notificationsList) return `${notificationIds.length} channel${notificationIds.length !== 1 ? "s" : ""}`;
+    if (notificationIds.length === 0) return t("pages.schedules.none");
+    if (!notificationsList) return t("pages.schedules.countChannellabel", {
+      count: notificationIds.length,
+      channelLabel: notificationIds.length === 1 ? t("pages.schedules.channel") : t("pages.schedules.channels"),
+    });
     const names = notificationIds
       .map((id) => notificationsList.find((channel) => channel.id === id)?.name)
       .filter(Boolean);
-    if (names.length === 0) return `${notificationIds.length} channel${notificationIds.length !== 1 ? "s" : ""}`;
+    if (names.length === 0) return t("pages.schedules.countChannellabel", {
+      count: notificationIds.length,
+      channelLabel: notificationIds.length === 1 ? t("pages.schedules.channel") : t("pages.schedules.channels"),
+    });
     if (names.length <= 2) return names.join(", ");
-    return `${names.length} channels`;
+    return t("pages.schedules.countChannels", { count: names.length });
   };
 
   const handleCreate = (data: ScheduleFormData) => {
@@ -669,7 +710,7 @@ export default function Schedules() {
       onSuccess: () => {
         setShowForm(false);
         setDuplicateSchedule(null);
-        addToast("Schedule created", "success");
+        addToast(t("pages.schedules.scheduleCreated"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -682,7 +723,7 @@ export default function Schedules() {
       {
         onSuccess: () => {
           setEditSchedule(null);
-          addToast("Schedule updated", "success");
+          addToast(t("pages.schedules.scheduleUpdated"), "success");
         },
         onError: (err) => addToast(err.message, "danger"),
       },
@@ -694,7 +735,7 @@ export default function Schedules() {
     deleteSchedule.mutate(deleteId, {
       onSuccess: () => {
         setDeleteId(null);
-        addToast("Schedule deleted", "success");
+        addToast(t("pages.schedules.scheduleDeleted"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -709,13 +750,13 @@ export default function Schedules() {
 
   return (
     <Layout
-      title="Schedules"
+      title={t("pages.schedules.schedules")}
       actions={
         <button
           onClick={() => setShowForm(true)}
           className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
         >
-          Add Schedule
+          {t("pages.schedules.addSchedule")}
         </button>
       }
     >
@@ -728,13 +769,13 @@ export default function Schedules() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3 hidden md:table-cell">Targets</th>
-                <th className="px-4 py-3 hidden lg:table-cell">Schedule</th>
-                <th className="px-4 py-3 hidden xl:table-cell">Last run</th>
-                <th className="px-4 py-3">Enabled</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-4 py-3">{t("pages.schedules.name")}</th>
+                <th className="px-4 py-3">{t("pages.schedules.type")}</th>
+                <th className="px-4 py-3 hidden md:table-cell">{t("pages.schedules.targets")}</th>
+                <th className="px-4 py-3 hidden lg:table-cell">{t("pages.schedules.schedule")}</th>
+                <th className="px-4 py-3 hidden xl:table-cell">{t("pages.schedules.lastRun")}</th>
+                <th className="px-4 py-3">{t("pages.schedules.enabled")}</th>
+                <th className="px-4 py-3 text-right">{t("pages.schedules.actions")}</th>
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
@@ -751,8 +792,8 @@ export default function Schedules() {
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title="Drag to reorder"
-                        aria-label={`Drag to reorder ${schedule.name}`}
+                        title={t("pages.schedules.dragToReorder")}
+                        aria-label={t("pages.schedules.dragToReorderName", { name: schedule.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
@@ -769,7 +810,7 @@ export default function Schedules() {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                    {TYPE_LABELS[schedule.type]}
+                    {t(TYPE_LABEL_KEYS[schedule.type])}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-slate-500 dark:text-slate-400">
                     <span className="block max-w-md truncate" title={getTargetLabel(schedule)}>
@@ -778,7 +819,7 @@ export default function Schedules() {
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
                     <div>
-                      <div>{describeSchedule(schedule)}</div>
+                      <div>{describeSchedule(schedule, t, language)}</div>
                       {(() => {
                         const cron = getScheduleCron(schedule);
                         return cron ? <ScheduleMinimumWarning cron={cron} /> : null;
@@ -788,10 +829,12 @@ export default function Schedules() {
                   <td className="px-4 py-3 hidden xl:table-cell">
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs ${statusClass(schedule.lastRunStatus)}`}>
-                        {schedule.lastRunStatus || "None"}
+                        {schedule.lastRunStatus
+                          ? t(`pages.schedules.status.${schedule.lastRunStatus}`)
+                          : t("pages.schedules.none")}
                       </span>
                       <span className="text-slate-500 dark:text-slate-400">
-                        {formatDate(schedule.lastRunAt)}
+                        {formatDate(schedule.lastRunAt, t)}
                       </span>
                     </div>
                   </td>
@@ -817,7 +860,7 @@ export default function Schedules() {
                           setShowForm(true);
                         }}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Copy schedule"
+                        title={t("pages.schedules.copySchedule")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -826,7 +869,7 @@ export default function Schedules() {
                       <button
                         onClick={() => setEditSchedule(schedule)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Edit schedule"
+                        title={t("pages.schedules.editSchedule")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -835,7 +878,7 @@ export default function Schedules() {
                       <button
                         onClick={() => setDeleteId(schedule.id)}
                         className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                        title="Delete schedule"
+                        title={t("pages.schedules.deleteSchedule")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -851,13 +894,13 @@ export default function Schedules() {
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">
-            No schedules configured yet
+            {t("pages.schedules.noSchedulesConfiguredYet")}
           </p>
           <button
             onClick={() => setShowForm(true)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            Add Your First Schedule
+            {t("pages.schedules.addYourFirstSchedule")}
           </button>
         </div>
       )}
@@ -868,7 +911,7 @@ export default function Schedules() {
           setShowForm(false);
           setDuplicateSchedule(null);
         }}
-        title={duplicateSchedule ? "Duplicate Schedule" : "Add Schedule"}
+        title={duplicateSchedule ? t("pages.schedules.duplicateSchedule") : t("pages.schedules.addSchedule")}
         dismissible={!createSchedule.isPending}
       >
         <ScheduleForm
@@ -876,7 +919,7 @@ export default function Schedules() {
           initial={duplicateSchedule ? {
             ...duplicateSchedule,
             id: 0,
-            name: `${duplicateSchedule.name} (Copy)`,
+            name: t("pages.schedules.nameCopy", { name: duplicateSchedule.name }),
           } : undefined}
           onSubmit={handleCreate}
           onCancel={() => {
@@ -890,7 +933,7 @@ export default function Schedules() {
       <Modal
         open={editSchedule !== null}
         onClose={() => setEditSchedule(null)}
-        title="Edit Schedule"
+        title={t("pages.schedules.editSchedule2")}
         dismissible={!updateSchedule.isPending}
       >
         {editSchedule && (
@@ -907,9 +950,9 @@ export default function Schedules() {
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete Schedule"
-        message="Are you sure you want to delete this schedule? This action cannot be undone."
-        confirmLabel="Delete"
+        title={t("pages.schedules.deleteSchedule2")}
+        message={t("pages.schedules.areYouSureYouWantToDeleteThis")}
+        confirmLabel={t("pages.schedules.delete")}
         danger
         loading={deleteSchedule.isPending}
       />

@@ -2,9 +2,11 @@ import { useState } from "react";
 import type { CredentialDetail, CredentialKind } from "../../lib/credentials";
 import {
   buildCredentialPayload,
-  CREDENTIAL_KIND_LABELS,
+  CREDENTIAL_KIND_LABEL_KEYS,
+  SSH_CREDENTIAL_KINDS,
   validateCredentialForm,
 } from "../../lib/credential-form";
+import { useI18n } from "../../lib/i18n";
 
 const inputClass =
   "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
@@ -26,6 +28,7 @@ export function CredentialForm({
   onCancel: () => void;
   loading: boolean;
 }) {
+  const { t } = useI18n();
   const [name, setName] = useState(initial?.name || "");
   const [kind, setKind] = useState<CredentialKind>(
     initial?.kind || "usernamePassword"
@@ -91,7 +94,7 @@ export function CredentialForm({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label className={labelClass}>Name</label>
+          <label className={labelClass}>{t("common.name")}</label>
           <input
             type="text"
             value={name}
@@ -100,13 +103,13 @@ export function CredentialForm({
               if (error) setError(null);
             }}
             className={inputClass}
-            placeholder="Ops SSH Key"
+            placeholder={t("components.credentialForm.opsSshKey")}
             required
             maxLength={100}
           />
         </div>
         <div>
-          <label className={labelClass}>Type</label>
+          <label className={labelClass}>{t("common.type")}</label>
           <select
             value={kind}
             onChange={(e) => {
@@ -116,10 +119,10 @@ export function CredentialForm({
             className={inputClass}
             disabled={!!initial}
           >
-            {(Object.keys(CREDENTIAL_KIND_LABELS) as CredentialKind[]).map(
+            {SSH_CREDENTIAL_KINDS.map(
               (value) => (
                 <option key={value} value={value}>
-                  {CREDENTIAL_KIND_LABELS[value]}
+                  {t(CREDENTIAL_KIND_LABEL_KEYS[value])}
                 </option>
               )
             )}
@@ -128,7 +131,7 @@ export function CredentialForm({
       </div>
 
       <div>
-        <label className={labelClass}>Username</label>
+        <label className={labelClass}>{t("common.username")}</label>
         <input
           type="text"
           value={username}
@@ -144,7 +147,7 @@ export function CredentialForm({
 
       {kind === "usernamePassword" && (
         <div>
-          <label className={labelClass}>Password</label>
+          <label className={labelClass}>{t("common.password")}</label>
           <input
             type="password"
             value={password}
@@ -154,7 +157,7 @@ export function CredentialForm({
             }}
             className={inputClass}
             placeholder={
-              initial?.payload.password === "(stored)" ? "(unchanged)" : ""
+              initial?.payload.password === "(stored)" ? t("common.unchanged") : ""
             }
           />
         </div>
@@ -163,7 +166,7 @@ export function CredentialForm({
       {kind === "sshKey" && (
         <>
           <div>
-            <label className={labelClass}>Private Key</label>
+            <label className={labelClass}>{t("components.credentialForm.privateKey")}</label>
             <textarea
               value={privateKey}
               onChange={(e) => {
@@ -173,13 +176,13 @@ export function CredentialForm({
               className={`${inputClass} h-32 resize-y font-mono text-xs`}
               placeholder={
                 initial?.payload.privateKey === "(stored)"
-                  ? "(unchanged)"
+                  ? t("common.unchanged")
                   : "-----BEGIN OPENSSH PRIVATE KEY-----"
               }
             />
           </div>
           <div>
-            <label className={labelClass}>Passphrase</label>
+            <label className={labelClass}>{t("components.credentialForm.passphrase")}</label>
             <input
               type="password"
               value={passphrase}
@@ -189,7 +192,7 @@ export function CredentialForm({
               }}
               className={inputClass}
               placeholder={
-                initial?.payload.passphrase === "(stored)" ? "(unchanged)" : ""
+                initial?.payload.passphrase === "(stored)" ? t("common.unchanged") : ""
               }
             />
           </div>
@@ -199,7 +202,7 @@ export function CredentialForm({
       {kind === "certificate" && (
         <>
           <div>
-            <label className={labelClass}>OpenSSH Certificate</label>
+            <label className={labelClass}>{t("components.credentialForm.openSshCertificate")}</label>
             <textarea
               value={certificatePem}
               onChange={(e) => {
@@ -209,13 +212,13 @@ export function CredentialForm({
               className={`${inputClass} h-28 resize-y font-mono text-xs`}
               placeholder={
                 initial?.payload.certificatePem === "(stored)"
-                  ? "(unchanged)"
+                  ? t("common.unchanged")
                   : "ssh-ed25519-cert-v01@openssh.com AAAA..."
               }
             />
           </div>
           <div>
-            <label className={labelClass}>Private Key</label>
+            <label className={labelClass}>{t("components.credentialForm.privateKey")}</label>
             <textarea
               value={privateKeyPem}
               onChange={(e) => {
@@ -225,13 +228,13 @@ export function CredentialForm({
               className={`${inputClass} h-28 resize-y font-mono text-xs`}
               placeholder={
                 initial?.payload.privateKeyPem === "(stored)"
-                  ? "(unchanged)"
+                  ? t("common.unchanged")
                   : "-----BEGIN OPENSSH PRIVATE KEY-----"
               }
             />
           </div>
           <div>
-            <label className={labelClass}>Private Key Password</label>
+            <label className={labelClass}>{t("components.credentialForm.privateKeyPassword")}</label>
             <input
               type="password"
               value={privateKeyPassword}
@@ -242,7 +245,7 @@ export function CredentialForm({
               className={inputClass}
               placeholder={
                 initial?.payload.privateKeyPassword === "(stored)"
-                  ? "(unchanged)"
+                  ? t("common.unchanged")
                   : ""
               }
             />
@@ -256,14 +259,14 @@ export function CredentialForm({
           onClick={onCancel}
           className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
         >
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           type="submit"
           disabled={loading}
           className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
-          {loading ? <span className="spinner spinner-sm" /> : "Save"}
+          {loading ? <span className="spinner spinner-sm" /> : t("common.save")}
         </button>
       </div>
     </form>

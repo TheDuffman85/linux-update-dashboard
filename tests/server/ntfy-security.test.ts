@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { __testing as requestSecurityTesting, rememberTrustedPublicOrigin } from "../../server/request-security";
-import { ntfyProvider } from "../../server/services/notifications/ntfy";
+import { buildNtfyActionHeader, ntfyProvider, sanitizeNtfyActionLabel } from "../../server/services/notifications/ntfy";
 
 describe("ntfy provider validation", () => {
   test("rejects invalid URL format", () => {
@@ -152,6 +152,45 @@ describe("ntfy provider sending", () => {
 
     expect(result.success).toBe(true);
     expect(new Headers(requestHeaders).get("Title")).toBe("2 updates available (1 kept back)");
+  });
+
+  test("sanitizes translated action labels for the ntfy Actions header", () => {
+    expect(sanitizeNtfyActionLabel("Linux Update Dashboard öffnen, jetzt")).toBe(
+      "Linux Update Dashboard offnen jetzt"
+    );
+
+    const header = buildNtfyActionHeader({
+      title: "Updates",
+      body: "hello",
+      priority: "default",
+      event: {
+        title: "Updates",
+        body: "hello",
+        priority: "default",
+        tags: [],
+        sentAt: "2026-06-18T12:00:00.000Z",
+        eventTypes: ["appUpdates"],
+        totals: {
+          systemsWithUpdates: 0,
+          totalUpdates: 0,
+          totalSecurity: 0,
+          totalKeptBack: 0,
+          unreachableSystems: 0,
+        },
+        updates: [],
+        unreachable: [],
+        appUpdate: {
+          currentVersion: "2026.6.1",
+          currentBranch: "main",
+          remoteVersion: "2026.6.2",
+          releaseUrl: null,
+          repoUrl: "https://github.com/TheDuffman85/linux-update-dashboard",
+        },
+      },
+    });
+
+    expect(header).toBe("view, Open repo, https://github.com/TheDuffman85/linux-update-dashboard");
+    expect(/^[\x20-\x7e]+$/.test(header)).toBe(true);
   });
 
   test("adds a click header that opens the dashboard root", async () => {

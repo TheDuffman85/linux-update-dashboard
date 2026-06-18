@@ -7,10 +7,10 @@ export const SSH_CREDENTIAL_KINDS: CredentialKind[] = [
   "certificate",
 ];
 
-export const CREDENTIAL_KIND_LABELS: Record<CredentialKind, string> = {
-  usernamePassword: "User / Password",
-  sshKey: "SSH Key",
-  certificate: "Certificate",
+export const CREDENTIAL_KIND_LABEL_KEYS: Record<CredentialKind, string> = {
+  usernamePassword: "pages.credentials.type.usernamePassword",
+  sshKey: "pages.credentials.type.sshKey",
+  certificate: "pages.credentials.type.certificate",
 };
 
 export interface CredentialFormValues {

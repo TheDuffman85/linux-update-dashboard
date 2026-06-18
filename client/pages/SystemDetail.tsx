@@ -54,9 +54,15 @@ import { formatDurationBetween } from "../lib/time";
 import { highlightShell } from "../lib/shell-highlight";
 import { formatScriptCommand } from "../lib/scripts";
 import { useSettings } from "../lib/settings";
+import { useI18n, type TranslationValues } from "../lib/i18n";
 
 const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 type SystemFormSubmitData = Parameters<ComponentProps<typeof SystemForm>["onSubmit"]>[0];
+type Translate = (key: string, values?: TranslationValues) => string;
+
+function translateOrFallback(t: Translate | undefined, key: string, fallback: string, values?: TranslationValues): string {
+  return t ? t(key, values) : fallback;
+}
 
 function InfoCard({ title, items }: { title: string; items: { label: string; value: string | null }[] }) {
   return (
@@ -74,31 +80,70 @@ function InfoCard({ title, items }: { title: string; items: { label: string; val
   );
 }
 
-function formatOsLifecycleField(system: {
+export function formatOsLifecycleField(system: {
   osLifecycleStatus: string;
   osLifecycleEolDate: string | null;
   osLifecycleDaysUntilEol: number | null;
   osLifecycleSupportEndDate: string | null;
   osLifecycleDaysUntilSupportEnd: number | null;
-}): string {
-  if (system.osLifecycleStatus === "unknown") return "Unknown";
+  osLifecycleLabel: string;
+}, t?: Translate): string {
+  const usesLtsWording = /\bLTS\b/.test(system.osLifecycleLabel);
+  if (system.osLifecycleStatus === "unknown") return translateOrFallback(t, "pages.systemDetail.unknown", "Unknown");
   if (system.osLifecycleStatus === "eol") {
-    return system.osLifecycleEolDate ? `EOL on ${system.osLifecycleEolDate}` : "EOL";
+    return system.osLifecycleEolDate
+      ? translateOrFallback(t, "pages.systemDetail.lifecycle.eolOnDate", `EOL on ${system.osLifecycleEolDate}`, { date: system.osLifecycleEolDate })
+      : translateOrFallback(t, "pages.systemDetail.lifecycle.eol", "EOL");
   }
   if (system.osLifecycleStatus === "support_ended") {
-    return system.osLifecycleEolDate ? `LTS until ${system.osLifecycleEolDate}` : "Support ended";
+    if (usesLtsWording && system.osLifecycleEolDate) {
+      return translateOrFallback(t, "pages.systemDetail.lifecycle.ltsUntilDate", `LTS until ${system.osLifecycleEolDate}`, { date: system.osLifecycleEolDate });
+    }
+    return system.osLifecycleEolDate
+      ? translateOrFallback(t, "pages.systemDetail.lifecycle.eolOnDate", `EOL on ${system.osLifecycleEolDate}`, { date: system.osLifecycleEolDate })
+      : translateOrFallback(t, "pages.systemDetail.lifecycle.regularSupportEnded", "Regular support ended");
   }
   if (system.osLifecycleStatus === "support_ending") {
-    return typeof system.osLifecycleDaysUntilSupportEnd === "number"
-      ? `Security support ends in ${system.osLifecycleDaysUntilSupportEnd} days`
-      : "Security support ending";
+    if (system.osLifecycleSupportEndDate && typeof system.osLifecycleDaysUntilSupportEnd === "number") {
+      return translateOrFallback(
+        t,
+        "pages.systemDetail.lifecycle.securitySupportEndsDateDays",
+        `Security support ends ${system.osLifecycleSupportEndDate} (${system.osLifecycleDaysUntilSupportEnd}d)`,
+        { date: system.osLifecycleSupportEndDate, days: system.osLifecycleDaysUntilSupportEnd },
+      );
+    }
+    return system.osLifecycleSupportEndDate
+      ? translateOrFallback(t, "pages.systemDetail.lifecycle.securitySupportEndsDate", `Security support ends ${system.osLifecycleSupportEndDate}`, { date: system.osLifecycleSupportEndDate })
+      : translateOrFallback(t, "pages.systemDetail.lifecycle.securitySupportEnding", "Security support ending");
   }
   if (system.osLifecycleStatus === "approaching_eol") {
-    return typeof system.osLifecycleDaysUntilEol === "number"
-      ? `EOL in ${system.osLifecycleDaysUntilEol} days`
-      : "EOL soon";
+    if (system.osLifecycleEolDate && typeof system.osLifecycleDaysUntilEol === "number") {
+      return translateOrFallback(t, "pages.systemDetail.lifecycle.eolDateDays", `EOL ${system.osLifecycleEolDate} (${system.osLifecycleDaysUntilEol}d)`, {
+        date: system.osLifecycleEolDate,
+        days: system.osLifecycleDaysUntilEol,
+      });
+    }
+    return system.osLifecycleEolDate
+      ? translateOrFallback(t, "pages.systemDetail.lifecycle.eolOnDate", `EOL on ${system.osLifecycleEolDate}`, { date: system.osLifecycleEolDate })
+      : translateOrFallback(t, "pages.systemDetail.lifecycle.eolSoon", "EOL soon");
   }
-  return system.osLifecycleEolDate ? `Supported until ${system.osLifecycleEolDate}` : "Supported";
+  if (system.osLifecycleSupportEndDate && system.osLifecycleEolDate) {
+    return usesLtsWording
+      ? translateOrFallback(t, "pages.systemDetail.lifecycle.securitySupportUntilDateLtsUntilDate", `Security support until ${system.osLifecycleSupportEndDate}; LTS until ${system.osLifecycleEolDate}`, {
+          supportDate: system.osLifecycleSupportEndDate,
+          eolDate: system.osLifecycleEolDate,
+        })
+      : translateOrFallback(t, "pages.systemDetail.lifecycle.regularSupportUntilDateEolDate", `Regular support until ${system.osLifecycleSupportEndDate}; EOL ${system.osLifecycleEolDate}`, {
+          supportDate: system.osLifecycleSupportEndDate,
+          eolDate: system.osLifecycleEolDate,
+        });
+  }
+  if (system.osLifecycleSupportEndDate) {
+    return translateOrFallback(t, "pages.systemDetail.lifecycle.securitySupportUntilDate", `Security support until ${system.osLifecycleSupportEndDate}`, { date: system.osLifecycleSupportEndDate });
+  }
+  return system.osLifecycleEolDate
+    ? translateOrFallback(t, "pages.systemDetail.lifecycle.supportedUntilDate", `Supported until ${system.osLifecycleEolDate}`, { date: system.osLifecycleEolDate })
+    : translateOrFallback(t, "pages.systemDetail.lifecycle.supported", "Supported");
 }
 
 function UpdatesTable({
@@ -116,10 +161,12 @@ function UpdatesTable({
   selectionDisabled?: boolean;
   hideBusy?: boolean;
 }) {
+  const { t } = useI18n();
+
   if (!updates.length) {
     return (
       <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
-        No updates available
+        {t("pages.systemDetail.noUpdatesAvailable")}
       </div>
     );
   }
@@ -130,12 +177,12 @@ function UpdatesTable({
         <thead>
           <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
             <th className="px-2 sm:px-4 py-2 w-10" />
-            <th className="px-2 sm:px-4 py-2">Package</th>
-            <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">Current</th>
-            <th className="px-2 sm:px-4 py-2">Available</th>
-            <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
-            <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
-            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Actions</th>
+            <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.package")}</th>
+            <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">{t("pages.systemDetail.current")}</th>
+            <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.available")}</th>
+            <th className="px-2 sm:px-4 py-2 hidden md:table-cell">{t("pages.systemDetail.manager")}</th>
+            <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">{t("pages.systemDetail.repository")}</th>
+            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">{t("pages.systemDetail.actions")}</th>
           </tr>
         </thead>
         <tbody>
@@ -144,7 +191,7 @@ function UpdatesTable({
               <td className="px-2 sm:px-4 py-2 align-top">
                 <input
                   type="checkbox"
-                  aria-label={`Select ${u.packageName}`}
+                  aria-label={t("pages.systemDetail.selectPackage", { packageName: u.packageName })}
                   checked={selectedPackageNames.includes(u.packageName)}
                   disabled={selectionDisabled}
                   onChange={() => onTogglePackage(u.packageName)}
@@ -154,10 +201,10 @@ function UpdatesTable({
               <td className="px-2 sm:px-4 py-2 break-all">
                 {u.packageName}
                 {u.isSecurity ? (
-                  <Badge variant="danger" small>security</Badge>
+                  <Badge variant="danger" small>{t("pages.systemDetail.security")}</Badge>
                 ) : null}
                 {u.isKeptBack ? (
-                  <Badge variant="muted" small>kept back</Badge>
+                  <Badge variant="muted" small>{t("pages.systemDetail.keptBack")}</Badge>
                 ) : null}
               </td>
               <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
@@ -178,7 +225,7 @@ function UpdatesTable({
                     onClick={() => onHide(u)}
                     disabled={selectionDisabled || hideBusy}
                     className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors disabled:opacity-50"
-                    title={`Hide ${u.packageName} ${u.newVersion || ""}`.trim()}
+                    title={t("pages.systemDetail.hidePackageVersion", { packageName: u.packageName, version: u.newVersion || "" }).trim()}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
@@ -205,27 +252,29 @@ function HiddenUpdatesSection({
   busy?: boolean;
   onUnhide: (hiddenUpdate: HiddenUpdate) => void;
 }) {
+  const { t } = useI18n();
+
   if (hiddenUpdates.length === 0) return null;
 
   return (
     <details className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
       <summary className="px-4 py-3 border-b border-border flex items-center justify-between cursor-pointer select-none">
         <span className="text-sm font-semibold">
-          Hidden Updates
+          {t("pages.systemDetail.hiddenUpdates")}
           <Badge variant="muted" small>{hiddenUpdates.length}</Badge>
         </span>
-        <span className="text-xs text-slate-400">Hidden until this exact update disappears</span>
+        <span className="text-xs text-slate-400">{t("pages.systemDetail.hiddenUntilExactUpdateDisappears")}</span>
       </summary>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
-              <th className="px-2 sm:px-4 py-2">Package</th>
-              <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">Current</th>
-              <th className="px-2 sm:px-4 py-2">Hidden Version</th>
-              <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
-              <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Repository</th>
-              <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">Action</th>
+              <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.package")}</th>
+              <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">{t("pages.systemDetail.current")}</th>
+              <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.hiddenVersion")}</th>
+              <th className="px-2 sm:px-4 py-2 hidden md:table-cell">{t("pages.systemDetail.manager")}</th>
+              <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">{t("pages.systemDetail.repository")}</th>
+              <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">{t("pages.systemDetail.action")}</th>
             </tr>
           </thead>
           <tbody>
@@ -234,10 +283,10 @@ function HiddenUpdatesSection({
                 <td className="px-2 sm:px-4 py-2 break-all">
                   {update.packageName}
                   {update.isSecurity ? (
-                    <Badge variant="danger" small>security</Badge>
+                    <Badge variant="danger" small>{t("pages.systemDetail.security")}</Badge>
                   ) : null}
                   {update.isKeptBack ? (
-                    <Badge variant="muted" small>kept back</Badge>
+                    <Badge variant="muted" small>{t("pages.systemDetail.keptBack")}</Badge>
                   ) : null}
                 </td>
                 <td className="px-2 sm:px-4 py-2 hidden sm:table-cell text-slate-500 font-mono text-xs">
@@ -257,7 +306,7 @@ function HiddenUpdatesSection({
                     onClick={() => onUnhide(update)}
                     disabled={busy}
                     className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors disabled:opacity-50"
-                    title={`Unhide ${update.packageName} ${update.newVersion || ""}`.trim()}
+                    title={t("pages.systemDetail.unhidePackageVersion", { packageName: update.packageName, version: update.newVersion || "" }).trim()}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.522 5 12 5s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S3.732 16.057 2.458 12z" />
@@ -300,13 +349,14 @@ export function InstalledPackagesSection({
   isStale?: boolean;
 }) {
   const [search, setSearch] = useState("");
+  const { t } = useI18n();
   const filteredPackages = filterInstalledPackages(installedPackages, search);
 
   return (
     <details className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
       <summary className="px-4 py-3 flex items-center justify-between cursor-pointer select-none">
         <span className="text-sm font-semibold">
-          Installed Packages
+          {t("pages.systemDetail.installedPackages")}
           <Badge variant="muted" small>{installedPackages.length}</Badge>
         </span>
         {cacheTimestamp && <AgoLabel timestamp={cacheTimestamp} stale={isStale} />}
@@ -314,7 +364,7 @@ export function InstalledPackagesSection({
       <div className="border-t border-border">
         {installedPackages.length === 0 ? (
           <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
-            No installed package snapshot collected. Run Refresh to collect one.
+            {t("pages.systemDetail.noInstalledPackageSnapshot")}
           </div>
         ) : (
           <>
@@ -324,16 +374,16 @@ export function InstalledPackagesSection({
                   type="text"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search installed packages"
-                  aria-label="Search installed packages"
+                  placeholder={t("pages.systemDetail.searchInstalledPackages")}
+                  aria-label={t("pages.systemDetail.searchInstalledPackages")}
                   className="w-full px-3 py-2 pr-9 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 />
                 {search && (
                   <button
                     type="button"
                     onClick={() => setSearch("")}
-                    aria-label="Clear installed package search"
-                    title="Clear search"
+                    aria-label={t("pages.systemDetail.clearInstalledPackageSearch")}
+                    title={t("pages.systemDetail.clearSearch")}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -345,17 +395,17 @@ export function InstalledPackagesSection({
             </div>
             {filteredPackages.length === 0 ? (
               <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
-                No installed packages match your search.
+                {t("pages.systemDetail.noInstalledPackagesMatchSearch")}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
-                      <th className="px-2 sm:px-4 py-2">Package</th>
-                      <th className="px-2 sm:px-4 py-2">Installed Version</th>
-                      <th className="px-2 sm:px-4 py-2 hidden md:table-cell">Manager</th>
-                      <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">Architecture</th>
+                      <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.package")}</th>
+                      <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.installedVersion")}</th>
+                      <th className="px-2 sm:px-4 py-2 hidden md:table-cell">{t("pages.systemDetail.manager")}</th>
+                      <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">{t("pages.systemDetail.architecture")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -438,6 +488,30 @@ function getCheckOperationNoticeState(state: UpdatesPanelState | null): CheckOpe
   return state.kind === "check_failed" || state.kind === "check_warning" ? state : null;
 }
 
+function translateUpdatesPanelState(
+  state: UpdatesPanelState,
+  updatesCount: number,
+  t: Translate,
+): UpdatesPanelState {
+  if (state.kind === "check_failed") {
+    return {
+      ...state,
+      title: t("pages.systemDetail.notice.updateCheckFailedTitle"),
+      message: t("pages.systemDetail.notice.updateCheckFailedMessage"),
+    };
+  }
+  if (state.kind === "check_warning") {
+    return {
+      ...state,
+      title: t("pages.systemDetail.notice.updateCheckWarningTitle"),
+      message: updatesCount > 0
+        ? t("pages.systemDetail.notice.updateCheckPartialMessage")
+        : t("pages.systemDetail.notice.updateCheckWarningMessage"),
+    };
+  }
+  return state;
+}
+
 function getHistoryEntryError(entry: HistoryEntry): string | null {
   if (entry.error?.trim()) return entry.error;
 
@@ -453,78 +527,79 @@ function getHistoryEntryError(entry: HistoryEntry): string | null {
 function getOperationNoticeCopy(
   action: string,
   status: "failed" | "warning",
+  t?: Translate,
 ): Pick<OperationNoticeState, "title" | "message"> {
   if (action === "check") {
     return status === "failed"
       ? {
-          title: "Update check failed",
-          message: "The latest update check did not complete, so the package list may be unavailable.",
+          title: translateOrFallback(t, "pages.systemDetail.notice.updateCheckFailedTitle", "Update check failed"),
+          message: translateOrFallback(t, "pages.systemDetail.notice.updateCheckFailedMessage", "The latest update check did not complete, so the package list may be unavailable."),
         }
       : {
-          title: "Update check completed with warnings",
-          message: "One or more package manager checks failed, so this result may be incomplete.",
+          title: translateOrFallback(t, "pages.systemDetail.notice.updateCheckWarningTitle", "Update check completed with warnings"),
+          message: translateOrFallback(t, "pages.systemDetail.notice.updateCheckWarningMessage", "One or more package manager checks failed, so this result may be incomplete."),
         };
   }
 
   const copies: Record<string, Record<"failed" | "warning", Pick<OperationNoticeState, "title" | "message">>> = {
     autoremove: {
       failed: {
-        title: "Autoremove failed",
-        message: "The latest autoremove operation did not complete.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.autoremoveFailedTitle", "Autoremove failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.autoremoveFailedMessage", "The latest autoremove operation did not complete."),
       },
       warning: {
-        title: "Autoremove completed with warnings",
-        message: "The latest autoremove operation completed with warnings.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.autoremoveWarningTitle", "Autoremove completed with warnings"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.autoremoveWarningMessage", "The latest autoremove operation completed with warnings."),
       },
     },
     upgrade_all: {
       failed: {
-        title: "Upgrade failed",
-        message: "The latest upgrade operation did not complete.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.upgradeFailedTitle", "Upgrade failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.upgradeFailedMessage", "The latest upgrade operation did not complete."),
       },
       warning: {
-        title: "Upgrade completed with warnings",
-        message: "The latest upgrade operation completed with warnings.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.upgradeWarningTitle", "Upgrade completed with warnings"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.upgradeWarningMessage", "The latest upgrade operation completed with warnings."),
       },
     },
     full_upgrade_all: {
       failed: {
-        title: "Full upgrade failed",
-        message: "The latest full upgrade operation did not complete.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.fullUpgradeFailedTitle", "Full upgrade failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.fullUpgradeFailedMessage", "The latest full upgrade operation did not complete."),
       },
       warning: {
-        title: "Full upgrade completed with warnings",
-        message: "The latest full upgrade operation completed with warnings.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.fullUpgradeWarningTitle", "Full upgrade completed with warnings"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.fullUpgradeWarningMessage", "The latest full upgrade operation completed with warnings."),
       },
     },
     upgrade_package: {
       failed: {
-        title: "Selected upgrade failed",
-        message: "The selected package upgrade did not complete.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.selectedUpgradeFailedTitle", "Selected upgrade failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.selectedUpgradeFailedMessage", "The selected package upgrade did not complete."),
       },
       warning: {
-        title: "Selected upgrade completed with warnings",
-        message: "The selected package upgrade completed with warnings.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.selectedUpgradeWarningTitle", "Selected upgrade completed with warnings"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.selectedUpgradeWarningMessage", "The selected package upgrade completed with warnings."),
       },
     },
     reboot: {
       failed: {
-        title: "Reboot failed",
-        message: "The reboot operation did not complete.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.rebootFailedTitle", "Reboot failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.rebootFailedMessage", "The reboot operation did not complete."),
       },
       warning: {
-        title: "Reboot completed with warnings",
-        message: "The reboot operation completed with warnings.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningTitle", "Reboot completed with warnings"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningMessage", "The reboot operation completed with warnings."),
       },
     },
     package_manager_repair: {
       failed: {
-        title: "Package manager repair failed",
-        message: "The package manager repair operation did not complete.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.packageManagerRepairFailedTitle", "Package manager repair failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.packageManagerRepairFailedMessage", "The package manager repair operation did not complete."),
       },
       warning: {
-        title: "Package manager repair completed with warnings",
-        message: "The package manager repair operation completed with warnings.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.packageManagerRepairWarningTitle", "Package manager repair completed with warnings"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.packageManagerRepairWarningMessage", "The package manager repair operation completed with warnings."),
       },
     },
   };
@@ -532,12 +607,12 @@ function getOperationNoticeCopy(
   return copies[action]?.[status] ?? (
     status === "failed"
       ? {
-          title: "Operation failed",
-          message: "The latest operation did not complete.",
+          title: translateOrFallback(t, "pages.systemDetail.notice.operationFailedTitle", "Operation failed"),
+          message: translateOrFallback(t, "pages.systemDetail.notice.operationFailedMessage", "The latest operation did not complete."),
         }
       : {
-          title: "Operation completed with warnings",
-          message: "The latest operation completed with warnings.",
+          title: translateOrFallback(t, "pages.systemDetail.notice.operationWarningTitle", "Operation completed with warnings"),
+          message: translateOrFallback(t, "pages.systemDetail.notice.operationWarningMessage", "The latest operation completed with warnings."),
         }
   );
 }
@@ -545,6 +620,7 @@ function getOperationNoticeCopy(
 export function getOperationNoticeState(
   latestHistoryEntry: HistoryEntry | null | undefined,
   updatesCount: number,
+  t?: Translate,
 ): OperationNoticeState | null {
   if (!latestHistoryEntry) return null;
   if (latestHistoryEntry.status !== "failed" && latestHistoryEntry.status !== "warning") return null;
@@ -556,8 +632,8 @@ export function getOperationNoticeState(
     if (latestHistoryEntry.status === "failed") {
       return {
         kind: "check_failed",
-        title: "Update check failed",
-        message: "The latest update check did not complete, so the package list may be unavailable.",
+        title: translateOrFallback(t, "pages.systemDetail.notice.updateCheckFailedTitle", "Update check failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.updateCheckFailedMessage", "The latest update check did not complete, so the package list may be unavailable."),
         error,
       };
     }
@@ -565,10 +641,10 @@ export function getOperationNoticeState(
     const checkedUpdatesCount = latestHistoryEntry.packageCount ?? updatesCount;
     return {
       kind: "check_warning",
-      title: "Update check completed with warnings",
+      title: translateOrFallback(t, "pages.systemDetail.notice.updateCheckWarningTitle", "Update check completed with warnings"),
       message: checkedUpdatesCount > 0
-        ? "Showing the updates that were found before one or more package manager checks failed."
-        : "One or more package manager checks failed, so this result may be incomplete.",
+        ? translateOrFallback(t, "pages.systemDetail.notice.updateCheckPartialMessage", "Showing the updates that were found before one or more package manager checks failed.")
+        : translateOrFallback(t, "pages.systemDetail.notice.updateCheckWarningMessage", "One or more package manager checks failed, so this result may be incomplete."),
       error,
     };
   }
@@ -576,7 +652,7 @@ export function getOperationNoticeState(
   return {
     kind: latestHistoryEntry.status === "failed" ? "operation_failed" : "operation_warning",
     action: latestHistoryEntry.action,
-    ...getOperationNoticeCopy(latestHistoryEntry.action, latestHistoryEntry.status),
+    ...getOperationNoticeCopy(latestHistoryEntry.action, latestHistoryEntry.status, t),
     error,
   };
 }
@@ -619,7 +695,7 @@ export function OperationNoticeBanner({
               <CopyableCodeBlock
                 text={state.error}
                 className={`max-h-64 overflow-x-auto overflow-y-auto rounded-lg px-3 py-2 text-xs whitespace-pre-wrap break-all ${tone.code}`}
-                successMessage="Copied check output"
+                successMessage="pages.systemDetail.copiedCheckOutput"
                 expandable
               >
                 {state.error}
@@ -647,6 +723,8 @@ export function PackageManagerIssueBanner({
   onSolve: (issue: PackageManagerIssue) => void;
   onDismiss: (issue: PackageManagerIssue) => void;
 }) {
+  const { t } = useI18n();
+
   if (issues.length === 0) return null;
 
   return (
@@ -677,9 +755,9 @@ export function PackageManagerIssueBanner({
               {solving ? (
                 <span className="flex items-center gap-1.5">
                   <span className="spinner spinner-sm" />
-                  Solving...
+                  {t("pages.systemDetail.solving")}
                 </span>
-              ) : "Solve"}
+              ) : t("pages.systemDetail.solve")}
             </button>
             <button
               onClick={() => onDismiss(issue)}
@@ -689,9 +767,9 @@ export function PackageManagerIssueBanner({
               {dismissing ? (
                 <span className="flex items-center gap-1.5">
                   <span className="spinner spinner-sm" />
-                  Dismissing...
+                  {t("pages.systemDetail.dismissing")}
                 </span>
-              ) : "Dismiss"}
+              ) : t("pages.systemDetail.dismiss")}
             </button>
           </div>
         );
@@ -711,15 +789,17 @@ export function RootUserInfoBanner({
   onOpenSudoers: () => void;
   onDismiss: () => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 text-sm sm:flex-row sm:items-center">
       <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
       <div className="min-w-0 flex-1">
-        <p className="font-medium">Least-privilege user recommended</p>
+        <p className="font-medium">{t("pages.systemDetail.leastPrivilegeUserRecommended")}</p>
         <p className="mt-1 text-blue-700 dark:text-blue-300">
-          {systemName} connects as <code className="font-mono">root</code>. A dedicated non-root SSH user with limited sudoers rules is recommended for routine update work.
+          {t("pages.systemDetail.rootUserNotice", { systemName })} <code className="font-mono">root</code>. {t("pages.systemDetail.rootUserNoticeSuffix")}
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
@@ -728,7 +808,7 @@ export function RootUserInfoBanner({
           onClick={onOpenSudoers}
           className="px-3 py-1 text-xs font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap"
         >
-          Sudoers Setup
+          {t("pages.systemDetail.sudoersSetup")}
         </button>
         <button
           type="button"
@@ -739,9 +819,9 @@ export function RootUserInfoBanner({
           {busy ? (
             <span className="flex items-center gap-1.5">
               <span className="spinner spinner-sm" />
-              Dismissing...
+              {t("pages.systemDetail.dismissing")}
             </span>
-          ) : "Dismiss"}
+          ) : t("pages.systemDetail.dismiss")}
         </button>
       </div>
     </div>
@@ -769,6 +849,7 @@ export function OsLifecycleWarningBanner({
   busy?: boolean;
   onDismiss: () => void;
 }) {
+  const { t } = useI18n();
   const isEol = status === "eol";
   const tone = isEol
     ? {
@@ -781,13 +862,49 @@ export function OsLifecycleWarningBanner({
         body: "text-amber-700 dark:text-amber-400",
         button: "border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400",
       };
-  const detail = isEol
-    ? `${systemName} is running a distribution release that has reached end of life${eolDate ? ` on ${eolDate}` : ""}.`
-    : status === "support_ended"
-      ? `${systemName} is running a distribution release whose regular security support ended${supportEndDate ? ` on ${supportEndDate}` : ""}${eolDate ? `; LTS runs until ${eolDate}` : ""}.`
-      : status === "support_ending"
-        ? `${systemName} is running a distribution release whose regular security support ends${supportEndDate ? ` on ${supportEndDate}` : ""}${typeof daysUntilSupportEnd === "number" ? `, in ${daysUntilSupportEnd} day${daysUntilSupportEnd === 1 ? "" : "s"}` : ""}.`
-        : `${systemName} is running a distribution release that reaches end of life${eolDate ? ` on ${eolDate}` : ""}${typeof daysUntilEol === "number" ? `, in ${daysUntilEol} day${daysUntilEol === 1 ? "" : "s"}` : ""}.`;
+  let detail: string;
+  if (isEol) {
+    detail = eolDate
+      ? t("pages.systemDetail.lifecycleBanner.eolWithDate", { systemName, date: eolDate })
+      : t("pages.systemDetail.lifecycleBanner.eol", { systemName });
+  } else if (status === "support_ended") {
+    if (supportEndDate && eolDate) {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEndedDateLts", { systemName, supportDate: supportEndDate, eolDate });
+    } else if (supportEndDate) {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEndedDate", { systemName, supportDate: supportEndDate });
+    } else if (eolDate) {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEndedLts", { systemName, eolDate });
+    } else {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEnded", { systemName });
+    }
+  } else if (status === "support_ending") {
+    const hasLtsDate = /\bLTS\b/.test(label) && !!eolDate;
+    if (supportEndDate && typeof daysUntilSupportEnd === "number" && hasLtsDate) {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEndingDateDaysLts", { systemName, supportDate: supportEndDate, days: daysUntilSupportEnd, eolDate: eolDate || "" });
+    } else if (supportEndDate && typeof daysUntilSupportEnd === "number") {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEndingDateDays", { systemName, supportDate: supportEndDate, days: daysUntilSupportEnd });
+    } else if (supportEndDate && hasLtsDate) {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEndingDateLts", { systemName, supportDate: supportEndDate, eolDate: eolDate || "" });
+    } else if (supportEndDate) {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEndingDate", { systemName, supportDate: supportEndDate });
+    } else {
+      detail = t("pages.systemDetail.lifecycleBanner.supportEnding", { systemName });
+    }
+  } else if (eolDate && typeof daysUntilEol === "number") {
+    detail = t("pages.systemDetail.lifecycleBanner.approachingEolDateDays", { systemName, date: eolDate, days: daysUntilEol });
+  } else if (eolDate) {
+    detail = t("pages.systemDetail.lifecycleBanner.approachingEolDate", { systemName, date: eolDate });
+  } else {
+    detail = t("pages.systemDetail.lifecycleBanner.approachingEol", { systemName });
+  }
+  const translatedLabel = formatOsLifecycleField({
+    osLifecycleStatus: status,
+    osLifecycleEolDate: eolDate,
+    osLifecycleDaysUntilEol: daysUntilEol,
+    osLifecycleSupportEndDate: supportEndDate,
+    osLifecycleDaysUntilSupportEnd: daysUntilSupportEnd,
+    osLifecycleLabel: label,
+  }, t);
 
   return (
     <div className={`flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border text-sm sm:flex-row sm:items-center ${tone.wrapper}`}>
@@ -795,7 +912,7 @@ export function OsLifecycleWarningBanner({
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
       </svg>
       <div className="min-w-0 flex-1">
-        <p className="font-medium">{label}</p>
+        <p className="font-medium">{translatedLabel}</p>
         <p className={`mt-1 ${tone.body}`}>{detail}</p>
       </div>
       <button
@@ -807,9 +924,9 @@ export function OsLifecycleWarningBanner({
         {busy ? (
           <span className="flex items-center gap-1.5">
             <span className="spinner spinner-sm" />
-            Dismissing...
+            {t("pages.systemDetail.dismissing")}
           </span>
-        ) : "Dismiss"}
+        ) : t("pages.systemDetail.dismiss")}
       </button>
     </div>
   );
@@ -822,15 +939,17 @@ export function HostKeyVerificationBanner({
   systemName: string;
   onOpenConfiguration: () => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <div className="flex flex-col gap-3 px-4 py-3 mb-6 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm sm:flex-row sm:items-center">
       <svg className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c.943 0 1.809.325 2.493.869M17 8.5V7a5 5 0 00-10 0v1.5M5 11h14v9H5v-9z" />
       </svg>
       <div className="min-w-0 flex-1">
-        <p className="font-medium">SSH host-key approval required</p>
+        <p className="font-medium">{t("pages.systemDetail.sshHostKeyApprovalRequired")}</p>
         <p className="mt-1 text-amber-700 dark:text-amber-400">
-          {systemName} needs its SSH host key reviewed before update checks can run.
+          {t("pages.systemDetail.sshHostKeyApprovalRequiredDescription", { systemName })}
         </p>
       </div>
       <button
@@ -838,7 +957,7 @@ export function HostKeyVerificationBanner({
         onClick={onOpenConfiguration}
         className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors whitespace-nowrap shrink-0"
       >
-        Open Configuration
+        {t("pages.systemDetail.openConfiguration")}
       </button>
     </div>
   );
@@ -863,6 +982,17 @@ function getStatusVariant(status: string): "success" | "warning" | "danger" | "m
   if (status === "cancelled") return "warning";
   if (status === "failed") return "danger";
   return "muted";
+}
+
+function getActivityStatusLabel(status: string, t: Translate): string {
+  if (status === "success") return t("pages.systemDetail.status.success");
+  if (status === "warning") return t("pages.systemDetail.status.warning");
+  if (status === "cancelled") return t("pages.systemDetail.status.cancelled");
+  if (status === "failed") return t("pages.systemDetail.status.failed");
+  if (status === "started") return t("pages.systemDetail.status.started");
+  if (status === "running") return t("pages.systemDetail.status.running");
+  if (status === "connecting") return t("pages.systemDetail.status.connecting");
+  return status;
 }
 
 function useNowTicker(enabled: boolean): number {
@@ -919,14 +1049,17 @@ export function getActivityTitle(
   action: string,
   packagesList: string[],
   packageName?: string,
+  t?: Translate,
 ): string {
-  if (action === "check") return "Checked for updates";
-  if (action === "autoremove") return "Removed unused packages";
-  if (action === "upgrade_all") return "Upgraded all packages";
-  if (action === "full_upgrade_all") return "Full upgraded all packages";
-  if (action === "reboot") return "Rebooted system";
-  if (action === "package_manager_repair") return "Repaired package manager";
-  return `Upgraded ${packagesList.join(", ") || packageName || "package"}`;
+  if (action === "check") return translateOrFallback(t, "pages.systemDetail.activity.checkedForUpdates", "Checked for updates");
+  if (action === "autoremove") return translateOrFallback(t, "pages.systemDetail.activity.removedUnusedPackages", "Removed unused packages");
+  if (action === "upgrade_all") return translateOrFallback(t, "pages.systemDetail.activity.upgradedAllPackages", "Upgraded all packages");
+  if (action === "full_upgrade_all") return translateOrFallback(t, "pages.systemDetail.activity.fullUpgradedAllPackages", "Full upgraded all packages");
+  if (action === "reboot") return translateOrFallback(t, "pages.systemDetail.activity.rebootedSystem", "Rebooted system");
+  if (action === "package_manager_repair") return translateOrFallback(t, "pages.systemDetail.activity.repairedPackageManager", "Repaired package manager");
+  return translateOrFallback(t, "pages.systemDetail.activity.upgradedPackageList", `Upgraded ${packagesList.join(", ") || packageName || "package"}`, {
+    packages: packagesList.join(", ") || packageName || "package",
+  });
 }
 
 function getActiveOperationPackageNames(activeOp: ActiveOperation | null | undefined): string[] {
@@ -951,12 +1084,30 @@ export function getAutoremoveConfirmMessage(
     supportedManagers: string[];
     skippedManagers: string[];
   },
+  t?: Translate,
 ): string {
   return [
-    `Remove unused packages and runtimes on ${systemName}? This is a destructive maintenance action.`,
-    `Will run for: ${support.supportedManagers.join(", ")}.`,
+    translateOrFallback(
+      t,
+      "pages.systemDetail.autoremoveConfirmRemoveMessage",
+      `Remove unused packages and runtimes on ${systemName}? This is a destructive maintenance action.`,
+      { systemName },
+    ),
+    translateOrFallback(
+      t,
+      "pages.systemDetail.autoremoveConfirmManagers",
+      `Will run for: ${support.supportedManagers.join(", ")}.`,
+      { managers: support.supportedManagers.join(", ") },
+    ),
     ...(support.skippedManagers.length > 0
-      ? [`Skipped because no autoremove script or equivalent is configured: ${support.skippedManagers.join(", ")}.`]
+      ? [
+          translateOrFallback(
+            t,
+            "pages.systemDetail.autoremoveConfirmSkippedManagers",
+            `Skipped because no autoremove script or equivalent is configured: ${support.skippedManagers.join(", ")}.`,
+            { managers: support.skippedManagers.join(", ") },
+          ),
+        ]
       : []),
   ].join(" ");
 }
@@ -1361,12 +1512,14 @@ function StepPanel({
   children,
   className,
   copyText,
+  copySuccessMessage,
   followContentKey,
 }: {
   title: string;
   children: React.ReactNode;
   className: string;
   copyText: string;
+  copySuccessMessage: string;
   followContentKey?: string;
 }) {
   const containerRef = useRef<HTMLPreElement>(null);
@@ -1391,7 +1544,7 @@ function StepPanel({
         ref={containerRef}
         onScroll={followContentKey ? handleScroll : undefined}
         className={className}
-        successMessage={`Copied ${title.toLowerCase()}`}
+        successMessage={copySuccessMessage}
         expandable
       >
         {children}
@@ -1401,6 +1554,7 @@ function StepPanel({
 }
 
 function ShellCommandPanel({ command }: { command: string }) {
+  const { t } = useI18n();
   const [displayCommand, setDisplayCommand] = useState(command);
 
   useEffect(() => {
@@ -1425,9 +1579,10 @@ function ShellCommandPanel({ command }: { command: string }) {
 
   return (
     <StepPanel
-      title="Command"
+      title={t("pages.systemDetail.command")}
       className="script-code text-xs font-mono bg-slate-900 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-words"
       copyText={displayCommand}
+      copySuccessMessage="pages.systemDetail.copiedCommand"
     >
       <code dangerouslySetInnerHTML={{ __html: highlighted }} />
     </StepPanel>
@@ -1437,7 +1592,7 @@ function ShellCommandPanel({ command }: { command: string }) {
 function TerminalOutputPanel({
   title,
   output,
-  emptyText = "No output",
+  emptyText,
   followContentKey,
   tone = "default",
 }: {
@@ -1447,6 +1602,7 @@ function TerminalOutputPanel({
   followContentKey?: string;
   tone?: "default" | "error";
 }) {
+  const { t } = useI18n();
   return (
     <StepPanel
       title={title}
@@ -1456,12 +1612,13 @@ function TerminalOutputPanel({
           : "bg-slate-900 text-slate-300"
       }`}
       copyText={output ?? ""}
+      copySuccessMessage={tone === "error" ? "pages.systemDetail.copiedError" : "pages.systemDetail.copiedOutput"}
       followContentKey={followContentKey}
     >
       {output ? (
         <TerminalText text={output} stream={tone === "error" ? "stderr" : "stdout"} />
       ) : (
-        <span className="text-slate-500 italic">{emptyText}</span>
+        <span className="text-slate-500 italic">{emptyText ?? t("pages.systemDetail.noOutput")}</span>
       )}
     </StepPanel>
   );
@@ -1476,6 +1633,8 @@ function LegacyActivityDetails({
   output: string | null;
   error: string | null;
 }) {
+  const { t } = useI18n();
+
   return (
     <>
       {command && (
@@ -1483,13 +1642,13 @@ function LegacyActivityDetails({
       )}
       {(command || output) && (
         <TerminalOutputPanel
-          title="Output"
+          title={t("pages.systemDetail.output")}
           output={output}
         />
       )}
       {error && (
         <TerminalOutputPanel
-          title="Error"
+          title={t("pages.systemDetail.error")}
           output={error}
           tone="error"
         />
@@ -1503,20 +1662,21 @@ function isSshConnectionStep(step: ActivityStep): boolean {
 }
 
 function SshConnectionSummary({ step, nowMs }: { step: ActivityStep; nowMs: number }) {
+  const { t } = useI18n();
   const runtime = formatDurationBetween(step.startedAt, step.completedAt, nowMs);
   const isConnecting = step.status === "started" && !step.completedAt;
   const text = isConnecting
     ? runtime
-      ? `Connecting over SSH for ${runtime}`
-      : "Connecting over SSH"
+      ? t("pages.systemDetail.connectingOverSshForDuration", { duration: runtime })
+      : t("pages.systemDetail.connectingOverSsh")
     : runtime
-      ? `SSH connected in ${runtime}`
-      : "SSH connected";
+      ? t("pages.systemDetail.sshConnectedInDuration", { duration: runtime })
+      : t("pages.systemDetail.sshConnected");
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
       <Badge variant={getStatusVariant(step.status)} small>
-        {isConnecting ? "connecting" : step.status}
+        {isConnecting ? t("pages.systemDetail.status.connecting") : getActivityStatusLabel(step.status, t)}
       </Badge>
       <span>{text}</span>
     </div>
@@ -1545,6 +1705,7 @@ export function ActivityStepViewer({
   isLive?: boolean;
   phase?: string | null;
 }) {
+  const { t } = useI18n();
   const connectionStep = steps.find(isSshConnectionStep);
   const visibleSteps = steps.filter((step) => !isSshConnectionStep(step));
   const [selectedIndex, setSelectedIndex] = useState(() =>
@@ -1580,7 +1741,7 @@ export function ActivityStepViewer({
           <SshConnectionSummary step={connectionStep} nowMs={nowMs} />
         )}
         <div className="text-xs text-slate-500 italic">
-          Waiting for output…
+          {t("pages.systemDetail.waitingForOutput")}
         </div>
       </div>
     );
@@ -1594,12 +1755,12 @@ export function ActivityStepViewer({
         {isLive && (
           <span className="flex items-center gap-1 text-[10px] text-green-500">
             <span className="spinner spinner-sm !w-2.5 !h-2.5" />
-            live
+            {t("pages.systemDetail.live")}
           </span>
         )}
         {isGlobalPhase && (
           <Badge variant={phase === "reconnecting" ? "warning" : "muted"} small>
-            {phase === "reconnecting" ? "reconnecting" : "rechecking"}
+            {phase === "reconnecting" ? t("pages.systemDetail.reconnecting") : t("pages.systemDetail.rechecking")}
           </Badge>
         )}
       </div>
@@ -1612,7 +1773,7 @@ export function ActivityStepViewer({
         <div
           className="flex gap-2 overflow-x-auto pb-1"
           role="tablist"
-          aria-label="Activity steps"
+          aria-label={t("pages.systemDetail.activitySteps")}
         >
           {visibleSteps.map((step, index) => {
             const isSelected = index === selectedIndex;
@@ -1658,7 +1819,7 @@ export function ActivityStepViewer({
       >
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={getStatusVariant(selectedStep.status)} small>
-            {selectedStep.status}
+            {getActivityStatusLabel(selectedStep.status, t)}
           </Badge>
           <span className="text-xs text-slate-500 dark:text-slate-400">
             {selectedStep.pkgManager}
@@ -1670,14 +1831,14 @@ export function ActivityStepViewer({
         )}
 
         <TerminalOutputPanel
-          title="Output"
+          title={t("pages.systemDetail.output")}
           output={selectedStep.output}
           followContentKey={isLive ? `${selectedIndex}:${selectedStep.output || ""}` : undefined}
         />
 
         {selectedStep.error && (
           <TerminalOutputPanel
-            title="Error"
+            title={t("pages.systemDetail.error")}
             output={selectedStep.error}
             tone="error"
           />
@@ -1698,6 +1859,7 @@ function HistoryList({
   activeOp: ActiveOperation | null | undefined;
   liveActionHint?: HistoryEntry["action"] | null;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Tracks whether we're waiting for the DB result of a check-type op (no "started" row).
   // Using state (not ref) so that showSynthetic keeps the placeholder visible during the gap
@@ -1793,7 +1955,7 @@ function HistoryList({
   if (!displayRows.length && !hasOutput) {
     return (
       <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
-        No activity yet
+        {t("pages.systemDetail.noActivityYet")}
       </div>
     );
   }
@@ -1806,9 +1968,17 @@ function HistoryList({
           row.isRunning ? null : row.completedAt,
           nowMs,
         );
-        const activityStateLabel = row.isConnecting ? "connecting" : row.isRunning ? "running" : row.status;
+        const activityStateLabel = row.isConnecting
+          ? t("pages.systemDetail.status.connecting")
+          : row.isRunning
+            ? t("pages.systemDetail.status.running")
+            : getActivityStatusLabel(row.status, t);
         const activityRuntime = totalRuntime
-          ? `${row.isConnecting ? "connecting for" : row.isRunning ? "running for" : "completed in"} ${totalRuntime}`
+          ? row.isConnecting
+            ? t("pages.systemDetail.connectingForDuration", { duration: totalRuntime })
+            : row.isRunning
+              ? t("pages.systemDetail.runningForDuration", { duration: totalRuntime })
+              : t("pages.systemDetail.completedInDuration", { duration: totalRuntime })
           : null;
         const displaySteps =
           row.useLiveDetails && row.liveSteps.length > 0
@@ -1869,14 +2039,14 @@ function HistoryList({
               </Badge>
               <div className="flex-1 min-w-0">
                 <p className="font-medium">
-                  {getActivityTitle(row.action, row.packagesList, row.packageName)}
+                  {getActivityTitle(row.action, row.packagesList, row.packageName, t)}
                   {isSshSafeActivity(row.action) && (
                     <span className="relative group ml-2 inline-flex align-middle">
-                      <Badge variant="info" small>SSH-safe</Badge>
+                      <Badge variant="info" small>{t("pages.systemDetail.sshSafe")}</Badge>
                       <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-xs rounded bg-slate-900 dark:bg-slate-700 px-2 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
                         {row.isRunning
-                          ? "This command runs via nohup on the remote system and will continue even if the SSH connection drops."
-                          : "This command ran via nohup on the remote system and would have continued even if the SSH connection dropped."}
+                          ? t("pages.systemDetail.sshSafeRunningDescription")
+                          : t("pages.systemDetail.sshSafeCompletedDescription")}
                       </span>
                     </span>
                   )}
@@ -1884,7 +2054,7 @@ function HistoryList({
                 {row.packageCount !== null && row.action === "check" && (
                   <p className="text-xs text-slate-500">
                     {joinMetaParts([
-                      `${row.packageCount} update${row.packageCount !== 1 ? "s" : ""} found`,
+                      t("pages.systemDetail.countUpdatesFound", { count: row.packageCount }),
                       row.pkgManager,
                       activityRuntime,
                     ])}
@@ -1949,6 +2119,7 @@ export default function SystemDetail() {
   const unhideUpdate = useUnhideUpdate();
   const { upgradeAll, fullUpgradeAll, upgradePackages, isUpgrading, removeUpgrading, upgradingSystems } = useUpgrade();
   const { addToast } = useToast();
+  const { t } = useI18n();
   const cancelOperation = useCancelOperation();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
@@ -2056,7 +2227,7 @@ export default function SystemDetail() {
 
   if (isLoading || !data) {
     return (
-      <Layout title="System Detail">
+      <Layout title={t("pages.systemDetail.systemDetail")}>
         <div className="flex justify-center py-16">
           <span className="spinner !w-6 !h-6 text-blue-500" />
         </div>
@@ -2069,9 +2240,9 @@ export default function SystemDetail() {
   const selectionBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
   const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
-  const updatesPanelState = getUpdatesPanelState(system, updates.length);
+  const updatesPanelState = translateUpdatesPanelState(getUpdatesPanelState(system, updates.length), updates.length, t);
   const latestOperationNoticeState: OperationNoticeState | null = history.length > 0
-    ? getOperationNoticeState(history[0], updates.length)
+    ? getOperationNoticeState(history[0], updates.length, t)
     : getCheckOperationNoticeState(updatesPanelState);
   const dedupedOperationNoticeState: OperationNoticeState | null =
     latestOperationNoticeState && isCheckOperationNoticeState(latestOperationNoticeState)
@@ -2083,13 +2254,13 @@ export default function SystemDetail() {
       : dedupedOperationNoticeState;
   const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
-  const dotColor = getSystemStatusDotClass(updateState);
+  const dotColor = getSystemStatusDotClass(updateState, system);
   const hasSelectedPackages = packageSelectionState.selectedCount > 0;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
     .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
-  const upgradeBehaviorNotes = getUpgradeBehaviorNotes(activeManagers, system.pkgManagerConfigs);
+  const upgradeBehaviorNotes = getUpgradeBehaviorNotes(activeManagers, system.pkgManagerConfigs, t);
   const upgradeConfirmMessage = [
-    `Apply all ${system.updateCount} updates to ${system.name}?`,
+    t("pages.systemDetail.upgradeAllMessage", { count: system.updateCount, systemName: system.name }),
     ...upgradeBehaviorNotes,
   ].join(" ");
   const autoremoveSupport = system.autoremoveSupport ?? { supportedManagers: [], skippedManagers: [] };
@@ -2098,7 +2269,7 @@ export default function SystemDetail() {
   const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || autoremoving;
   const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction;
   const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
-  const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport);
+  const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport, t);
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
   const showRootUserBanner = rootUserCheckEnabled && shouldShowRootUserInfoBanner(system);
   const showOsLifecycleBanner =
@@ -2116,7 +2287,7 @@ export default function SystemDetail() {
       {
         onSuccess: () => {
           setShowConfigurationModal(false);
-          addToast("System updated successfully", "success");
+          addToast(t("pages.systemDetail.systemUpdatedSuccessfully"), "success");
         },
         onError: (err) => addToast(err.message, "danger"),
       },
@@ -2139,10 +2310,10 @@ export default function SystemDetail() {
     upgradeAll(systemId, {
       onSuccess: (d: any) =>
         addToast(
-          d.status === "success" ? "Upgrade complete"
-            : d.status === "warning" ? "Upgrade likely complete (inferred after reboot)"
-              : d.status === "cancelled" ? "Upgrade cancelled"
-                : "Upgrade failed",
+          d.status === "success" ? t("pages.systemDetail.toast.upgradeComplete")
+            : d.status === "warning" ? t("pages.systemDetail.toast.upgradeLikelyComplete")
+              : d.status === "cancelled" ? t("pages.systemDetail.toast.upgradeCancelled")
+                : t("pages.systemDetail.toast.upgradeFailed"),
           d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
@@ -2154,10 +2325,10 @@ export default function SystemDetail() {
     autoremove.mutate(systemId, {
       onSuccess: (d) =>
         addToast(
-          d.status === "success" ? "Autoremove complete"
-            : d.status === "warning" ? "Autoremove still running or completed with warnings"
-              : d.status === "cancelled" ? "Autoremove cancelled"
-                : "Autoremove failed",
+          d.status === "success" ? t("pages.systemDetail.toast.autoremoveComplete")
+            : d.status === "warning" ? t("pages.systemDetail.toast.autoremoveWarning")
+              : d.status === "cancelled" ? t("pages.systemDetail.toast.autoremoveCancelled")
+                : t("pages.systemDetail.toast.autoremoveFailed"),
           d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success",
         ),
       onError: (err) => addToast(err.message, "danger"),
@@ -2169,10 +2340,10 @@ export default function SystemDetail() {
     fullUpgradeAll(systemId, {
       onSuccess: (d: any) =>
         addToast(
-          d.status === "success" ? "Full upgrade complete"
-            : d.status === "warning" ? "Full upgrade likely complete (inferred after reboot)"
-              : d.status === "cancelled" ? "Full upgrade cancelled"
-                : "Full upgrade failed",
+          d.status === "success" ? t("pages.systemDetail.toast.fullUpgradeComplete")
+            : d.status === "warning" ? t("pages.systemDetail.toast.fullUpgradeLikelyComplete")
+              : d.status === "cancelled" ? t("pages.systemDetail.toast.fullUpgradeCancelled")
+                : t("pages.systemDetail.toast.fullUpgradeFailed"),
           d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
         ),
       onError: (err: Error) => addToast(err.message, "danger"),
@@ -2189,12 +2360,12 @@ export default function SystemDetail() {
       onSuccess: (d: any) =>
         addToast(
           d.status === "success"
-            ? `Selected update${selectedNames.length !== 1 ? "s" : ""} complete`
+            ? t("pages.systemDetail.toast.selectedUpdatesComplete", { count: selectedNames.length })
             : d.status === "warning"
-              ? `Selected update${selectedNames.length !== 1 ? "s" : ""} likely complete (inferred after reboot)`
+              ? t("pages.systemDetail.toast.selectedUpdatesLikelyComplete", { count: selectedNames.length })
               : d.status === "cancelled"
-                ? `Selected update${selectedNames.length !== 1 ? "s" : ""} cancelled`
-                : `Selected update${selectedNames.length !== 1 ? "s" : ""} failed`,
+                ? t("pages.systemDetail.toast.selectedUpdatesCancelled", { count: selectedNames.length })
+                : t("pages.systemDetail.toast.selectedUpdatesFailed", { count: selectedNames.length }),
           d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
         ),
       onError: (err: Error) => {
@@ -2208,7 +2379,7 @@ export default function SystemDetail() {
     setShowRebootConfirm(false);
     rebootSystem.mutate(systemId, {
       onSuccess: (d) =>
-        addToast(d.success ? "Reboot command sent" : d.message, d.success ? "success" : "danger"),
+        addToast(d.success ? t("pages.systemDetail.toast.rebootCommandSent") : d.message, d.success ? "success" : "danger"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -2216,21 +2387,21 @@ export default function SystemDetail() {
   const handleDismissNeedsReboot = () => {
     setShowDismissNeedsRebootConfirm(false);
     dismissNeedsReboot.mutate(systemId, {
-      onSuccess: () => addToast("Reboot warning dismissed", "success"),
+      onSuccess: () => addToast(t("pages.systemDetail.toast.rebootWarningDismissed"), "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
 
   const handleDismissRootUserBanner = () => {
     dismissRootUserBanner.mutate(systemId, {
-      onSuccess: () => addToast("Root user notice dismissed", "success"),
+      onSuccess: () => addToast(t("pages.systemDetail.toast.rootUserNoticeDismissed"), "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
 
   const handleDismissOsLifecycleWarning = () => {
     dismissOsLifecycleWarning.mutate(systemId, {
-      onSuccess: () => addToast("EOL warning dismissed", "success"),
+      onSuccess: () => addToast(t("pages.systemDetail.toast.eolWarningDismissed"), "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -2244,9 +2415,9 @@ export default function SystemDetail() {
       {
         onSuccess: (d) =>
           addToast(
-            d.status === "success" ? "Package manager issue solved"
-              : d.status === "cancelled" ? "Package manager repair cancelled"
-                : d.output || "Package manager repair failed",
+            d.status === "success" ? t("pages.systemDetail.toast.packageManagerIssueSolved")
+              : d.status === "cancelled" ? t("pages.systemDetail.toast.packageManagerRepairCancelled")
+                : d.output || t("pages.systemDetail.toast.packageManagerRepairFailed"),
             d.status === "success" ? "success" : d.status === "cancelled" ? "info" : "danger",
           ),
         onError: (err) => addToast(err.message, "danger"),
@@ -2261,7 +2432,7 @@ export default function SystemDetail() {
     dismissPackageIssue.mutate(
       { systemId, issueId: issue.id },
       {
-        onSuccess: () => addToast("Package manager warning dismissed", "success"),
+        onSuccess: () => addToast(t("pages.systemDetail.toast.packageManagerWarningDismissed"), "success"),
         onError: (err) => addToast(err.message, "danger"),
       },
     );
@@ -2270,7 +2441,7 @@ export default function SystemDetail() {
   const handleCancelOperation = () => {
     setShowCancelConfirm(false);
     cancelOperation.mutate(systemId, {
-      onSuccess: () => addToast("Cancellation requested", "info"),
+      onSuccess: () => addToast(t("pages.systemDetail.toast.cancellationRequested"), "info"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -2287,7 +2458,10 @@ export default function SystemDetail() {
       {
         onSuccess: () => {
           addToast(
-            `Hidden ${pendingHideUpdate.packageName} ${pendingHideUpdate.newVersion}`,
+            t("pages.systemDetail.toast.hiddenPackageVersion", {
+              packageName: pendingHideUpdate.packageName,
+              version: pendingHideUpdate.newVersion,
+            }),
             "success",
           );
           setPendingHideUpdate(null);
@@ -2306,7 +2480,10 @@ export default function SystemDetail() {
       {
         onSuccess: () =>
           addToast(
-            `Unhid ${hiddenUpdateRow.packageName} ${hiddenUpdateRow.newVersion || ""}`.trim(),
+            t("pages.systemDetail.toast.unhidPackageVersion", {
+              packageName: hiddenUpdateRow.packageName,
+              version: hiddenUpdateRow.newVersion || "",
+            }).trim(),
             "success",
           ),
         onError: (err) => addToast(err.message, "danger"),
@@ -2324,11 +2501,11 @@ export default function SystemDetail() {
       onClick={() => setShowCancelConfirm(true)}
       disabled={!operationCancellable}
       className={className}
-      aria-label={`Cancel ${label.toLowerCase().replace("...", "")}`}
+      aria-label={t("pages.systemDetail.cancelAction", { action: label.replace("...", "") })}
     >
       <span className="flex items-center justify-center gap-1.5">
         <span className="spinner spinner-sm" />
-        <span>{activeOp?.cancelRequested || cancelOperation.isPending ? "Cancelling..." : label}</span>
+        <span>{activeOp?.cancelRequested || cancelOperation.isPending ? t("pages.systemDetail.cancelling") : label}</span>
         <span className="mx-0.5 h-4 w-px bg-current opacity-25" aria-hidden="true" />
         <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
@@ -2362,10 +2539,13 @@ export default function SystemDetail() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-            Back
+            {t("pages.systemDetail.back")}
           </button>
           {(checking || repairingPackageIssue) && activeOp ? (
-            renderRunningCancelAction(repairingPackageIssue ? "Repairing..." : "Checking...", checkingCancelClass)
+            renderRunningCancelAction(
+              repairingPackageIssue ? t("pages.systemDetail.repairing") : t("common.checking"),
+              checkingCancelClass,
+            )
           ) : (
             <button
               onClick={handleCheck}
@@ -2375,16 +2555,16 @@ export default function SystemDetail() {
               {checking ? (
               <span className="flex items-center gap-1.5">
                 <span className="spinner spinner-sm" />
-                Checking...
+                {t("common.checking")}
               </span>
-              ) : "Refresh"}
+              ) : t("pages.systemDetail.refresh")}
             </button>
           )}
           {showUpgradeActions && (
             activeOp?.type === "autoremove" && autoremoving ? (
-              renderRunningCancelAction("Autoremoving...", upgradeCancelClass)
+              renderRunningCancelAction(t("pages.systemDetail.autoremoving"), upgradeCancelClass)
             ) : activeOp && upgrading ? (
-              renderRunningCancelAction("Upgrading...", upgradeCancelClass)
+              renderRunningCancelAction(t("components.layout.upgrading"), upgradeCancelClass)
             ) : showUpgradeDropdownActions ? (
               <div className="relative" ref={dropdownRef}>
                 <div className="flex">
@@ -2396,13 +2576,13 @@ export default function SystemDetail() {
                     className="px-3 py-1.5 text-sm rounded-l-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-32"
                   >
                     {hasSelectedPackages
-                      ? `Upgrade Selected (${packageSelectionState.selectedCount})`
-                      : `Upgrade All (${system.updateCount})`}
+                      ? t("pages.systemDetail.upgradeSelectedCount", { count: packageSelectionState.selectedCount })
+                      : t("pages.systemDetail.upgradeAllCount", { count: system.updateCount })}
                   </button>
                   <button
                     onClick={() => setShowUpgradeDropdown((v) => !v)}
                     disabled={upgradeActionsBusy}
-                    aria-label="Show maintenance actions"
+                    aria-label={t("pages.systemDetail.showMaintenanceActions")}
                     className="px-1.5 py-1.5 text-sm rounded-r-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 border-l border-blue-500"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2421,7 +2601,7 @@ export default function SystemDetail() {
                         disabled={system.updateCount === 0}
                         className="w-full px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                       >
-                        Full Upgrade
+                        {t("pages.systemDetail.fullUpgrade")}
                       </button>
                     )}
                     {hasAutoremoveAction && (
@@ -2434,7 +2614,7 @@ export default function SystemDetail() {
                           system.supportsFullUpgrade ? "border-t border-border" : ""
                         }`}
                       >
-                        Autoremove
+                        {t("pages.systemDetail.autoremove")}
                       </button>
                     )}
                   </div>
@@ -2446,7 +2626,7 @@ export default function SystemDetail() {
                 disabled={upgradeActionsBusy}
                 className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
               >
-                {`Upgrade Selected (${packageSelectionState.selectedCount})`}
+                {t("pages.systemDetail.upgradeSelectedCount", { count: packageSelectionState.selectedCount })}
               </button>
             ) : (
               showUpgradeAllButton && (
@@ -2455,7 +2635,7 @@ export default function SystemDetail() {
                   disabled={upgradeActionsBusy}
                   className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap min-w-36"
                 >
-                  {`Upgrade All (${system.updateCount})`}
+                  {t("pages.systemDetail.upgradeAllCount", { count: system.updateCount })}
                 </button>
               )
             )
@@ -2466,51 +2646,58 @@ export default function SystemDetail() {
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <InfoCard
-          title="Connection"
+          title={t("pages.systemDetail.connection")}
           items={[
-            { label: "Hostname", value: `${system.hostname}${system.port !== 22 ? `:${system.port}` : ""}` },
-            { label: "Username", value: system.username },
-            { label: "Auth Type", value: system.authType },
+            { label: t("pages.systemDetail.hostname"), value: `${system.hostname}${system.port !== 22 ? `:${system.port}` : ""}` },
+            { label: t("common.username"), value: system.username },
+            { label: t("pages.systemDetail.authType"), value: system.authType },
             {
-              label: "ProxyJump",
+              label: t("pages.systemDetail.proxyJump"),
               value: system.proxyJumpChain.length > 0
                 ? system.proxyJumpChain.map((hop) => hop.name).join(" -> ")
-                : "Direct",
+                : t("components.systemForm.directConnection"),
             },
             {
-              label: "Host Key",
-              value: getHostKeyStatusText(system.hostKeyStatus),
+              label: t("pages.systemDetail.hostKey"),
+              value: getHostKeyStatusText(system.hostKeyStatus, t),
             },
-            { label: "Status", value: system.isReachable === 1 ? "Online" : system.isReachable === -1 ? "Offline" : "Unknown" },
+            {
+              label: t("pages.systemDetail.status"),
+              value: system.isReachable === 1
+                ? t("pages.systemDetail.online")
+                : system.isReachable === -1
+                  ? t("pages.systemDetail.offline")
+                  : t("pages.systemDetail.unknown"),
+            },
           ]}
         />
         <InfoCard
-          title="System"
+          title={t("pages.systemDetail.system")}
           items={[
-            { label: "OS", value: system.osName },
-            { label: "Version", value: system.osVersion },
-            { label: "EOL", value: formatOsLifecycleField(system) },
-            { label: "Kernel", value: system.kernel },
-            { label: "Architecture", value: system.arch },
+            { label: t("pages.systemDetail.os"), value: system.osName },
+            { label: t("pages.systemDetail.version"), value: system.osVersion },
+            { label: t("pages.systemDetail.lifecycle"), value: formatOsLifecycleField(system, t) },
+            { label: t("pages.systemDetail.kernel"), value: system.kernel },
+            { label: t("pages.systemDetail.architecture"), value: system.arch },
             {
-              label: "Pkg Managers", value: (() => {
+              label: t("pages.systemDetail.pkgManagers"), value: (() => {
                 const detected: string[] = system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []);
                 const disabled: string[] = system.disabledPkgManagers ?? [];
                 const active = detected.filter((m) => !disabled.includes(m));
                 return active.length > 0 ? active.join(", ") : null;
               })()
             },
-            ...(system.needsReboot === 1 ? [{ label: "Reboot", value: "Required" }] : []),
+            ...(system.needsReboot === 1 ? [{ label: t("pages.systemDetail.reboot"), value: t("pages.systemDetail.required") }] : []),
           ]}
         />
         <InfoCard
-          title="Resources"
+          title={t("pages.systemDetail.resources")}
           items={[
-            { label: "Hostname", value: system.hostnameRemote },
-            { label: "Uptime", value: system.uptime },
-            { label: "CPU Cores", value: system.cpuCores },
-            { label: "Memory", value: system.memory },
-            { label: "Disk", value: system.disk },
+            { label: t("pages.systemDetail.hostname"), value: system.hostnameRemote },
+            { label: t("pages.systemDetail.uptime"), value: system.uptime },
+            { label: t("pages.systemDetail.cpuCores"), value: system.cpuCores },
+            { label: t("pages.systemDetail.memory"), value: system.memory },
+            { label: t("pages.systemDetail.disk"), value: system.disk },
           ]}
         />
       </div>
@@ -2568,8 +2755,8 @@ export default function SystemDetail() {
           <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
-          <span className="font-medium">Reboot required</span>
-          <span className="text-amber-600 dark:text-amber-500 flex-1">A kernel update has been installed. Reboot this system to apply it.</span>
+          <span className="font-medium">{t("pages.systemDetail.rebootRequired")}</span>
+          <span className="text-amber-600 dark:text-amber-500 flex-1">{t("pages.systemDetail.rebootRequiredDescription")}</span>
           <button
             onClick={() => setShowRebootConfirm(true)}
             disabled={rebooting || upgrading || autoremoving || checking || repairingPackageIssue || dismissingNeedsReboot}
@@ -2578,9 +2765,9 @@ export default function SystemDetail() {
             {rebooting ? (
               <span className="flex items-center gap-1.5">
                 <span className="spinner spinner-sm" />
-                Rebooting...
+                {t("pages.systemDetail.rebooting")}
               </span>
-            ) : "Reboot"}
+            ) : t("pages.systemDetail.reboot")}
           </button>
           <button
             onClick={() => setShowDismissNeedsRebootConfirm(true)}
@@ -2590,9 +2777,9 @@ export default function SystemDetail() {
             {dismissingNeedsReboot ? (
               <span className="flex items-center gap-1.5">
                 <span className="spinner spinner-sm" />
-                Dismissing...
+                {t("pages.systemDetail.dismissing")}
               </span>
-            ) : "Dismiss"}
+            ) : t("pages.systemDetail.dismiss")}
           </button>
         </div>
       )}
@@ -2601,15 +2788,15 @@ export default function SystemDetail() {
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h2 className="text-sm font-semibold">
-            Available Updates
+            {t("pages.systemDetail.availableUpdates")}
             {updates.length > 0 && (
               <Badge variant="warning" small>{updates.length}</Badge>
             )}
             {system.securityCount > 0 && (
-              <Badge variant="danger" small>{system.securityCount} security</Badge>
+              <Badge variant="danger" small>{t("pages.systemDetail.countSecurity", { count: system.securityCount })}</Badge>
             )}
             {system.keptBackCount > 0 && (
-              <Badge variant="muted" small>{system.keptBackCount} kept back</Badge>
+              <Badge variant="muted" small>{t("pages.systemDetail.countKeptBack", { count: system.keptBackCount })}</Badge>
             )}
           </h2>
           {system.cacheTimestamp && (
@@ -2641,7 +2828,7 @@ export default function SystemDetail() {
       {/* History */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-border">
         <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold">Activity</h2>
+          <h2 className="text-sm font-semibold">{t("pages.systemDetail.activity")}</h2>
         </div>
         <div className="p-4">
           <HistoryList
@@ -2658,9 +2845,9 @@ export default function SystemDetail() {
         open={showAutoremoveConfirm}
         onClose={() => setShowAutoremoveConfirm(false)}
         onConfirm={handleAutoremove}
-        title="Autoremove Unused Packages"
+        title={t("pages.systemDetail.autoremoveUnusedPackages")}
         message={autoremoveConfirmMessage}
-        confirmLabel="Autoremove"
+        confirmLabel={t("pages.systemDetail.autoremove")}
         danger
         loading={autoremoving}
       />
@@ -2668,31 +2855,34 @@ export default function SystemDetail() {
         open={showUpgradeConfirm}
         onClose={() => setShowUpgradeConfirm(false)}
         onConfirm={handleUpgradeAll}
-        title="Upgrade All Packages"
+        title={t("pages.systemDetail.upgradeAllPackages")}
         message={upgradeConfirmMessage}
-        confirmLabel="Upgrade All"
+        confirmLabel={t("pages.systemDetail.upgradeAll")}
         loading={upgrading}
       />
       <ConfirmDialog
         open={showUpgradeSelectedConfirm}
         onClose={() => setShowUpgradeSelectedConfirm(false)}
         onConfirm={handleUpgradeSelected}
-        title="Upgrade Selected Packages"
+        title={t("pages.systemDetail.upgradeSelectedPackages")}
         message={
-          `Apply ${packageSelectionState.selectedCount} selected update${packageSelectionState.selectedCount !== 1 ? "s" : ""} to ${system.name}?`
+          t("pages.systemDetail.upgradeSelectedMessage", {
+            count: packageSelectionState.selectedCount,
+            systemName: system.name,
+          })
         }
-        confirmLabel={`Upgrade Selected (${packageSelectionState.selectedCount})`}
+        confirmLabel={t("pages.systemDetail.upgradeSelectedCount", { count: packageSelectionState.selectedCount })}
         loading={upgrading}
       />
       <ConfirmDialog
         open={showFullUpgradeConfirm}
         onClose={() => setShowFullUpgradeConfirm(false)}
         onConfirm={handleFullUpgradeAll}
-        title="Full Upgrade All Packages"
+        title={t("pages.systemDetail.fullUpgradeAllPackages")}
         message={
-          `Perform a full upgrade on ${system.name}? This may install new dependencies or remove obsolete packages to complete the upgrade of all ${system.updateCount} packages.`
+          t("pages.systemDetail.fullUpgradeAllMessage", { systemName: system.name, count: system.updateCount })
         }
-        confirmLabel="Full Upgrade"
+        confirmLabel={t("pages.systemDetail.fullUpgrade")}
         danger
         loading={upgrading}
       />
@@ -2700,9 +2890,9 @@ export default function SystemDetail() {
         open={showRebootConfirm}
         onClose={() => setShowRebootConfirm(false)}
         onConfirm={handleReboot}
-        title="Reboot System"
-        message={`Reboot ${system.name}? The system will be temporarily unavailable while it restarts.`}
-        confirmLabel="Reboot"
+        title={t("pages.systemDetail.rebootSystem")}
+        message={t("pages.systemDetail.rebootSystemMessage", { systemName: system.name })}
+        confirmLabel={t("pages.systemDetail.reboot")}
         danger
         loading={rebooting}
       />
@@ -2710,9 +2900,9 @@ export default function SystemDetail() {
         open={showCancelConfirm}
         onClose={() => setShowCancelConfirm(false)}
         onConfirm={handleCancelOperation}
-        title="Cancel Running Operation"
-        message={`Cancel the running command on ${system.name}?`}
-        confirmLabel="Cancel Operation"
+        title={t("pages.systemDetail.cancelRunningOperation")}
+        message={t("pages.systemDetail.cancelRunningOperationMessage", { systemName: system.name })}
+        confirmLabel={t("pages.systemDetail.cancelOperation")}
         danger
         loading={cancelOperation.isPending}
       />
@@ -2720,55 +2910,65 @@ export default function SystemDetail() {
         open={showDismissNeedsRebootConfirm}
         onClose={() => setShowDismissNeedsRebootConfirm(false)}
         onConfirm={handleDismissNeedsReboot}
-        title="Dismiss Reboot Warning"
-        message={`Dismiss the reboot warning for ${system.name}? It will stay hidden until a later system scan detects that the host has rebooted.`}
-        confirmLabel="Dismiss Warning"
+        title={t("pages.systemDetail.dismissRebootWarning")}
+        message={t("pages.systemDetail.dismissRebootWarningMessage", { systemName: system.name })}
+        confirmLabel={t("pages.systemDetail.dismissWarning")}
         loading={dismissingNeedsReboot}
       />
       <ConfirmDialog
         open={pendingSolveIssue !== null}
         onClose={() => setPendingSolveIssue(null)}
         onConfirm={handleSolvePackageIssue}
-        title="Solve Package Manager Issue"
+        title={t("pages.systemDetail.solvePackageManagerIssue")}
         message={
           pendingSolveIssue
-            ? `Run the repair action for ${pendingSolveIssue.title} on ${system.name}? The dashboard will refresh updates afterwards.`
+            ? t("pages.systemDetail.solvePackageManagerIssueMessage", {
+                issueTitle: pendingSolveIssue.title,
+                systemName: system.name,
+              })
             : ""
         }
-        confirmLabel="Solve"
+        confirmLabel={t("pages.systemDetail.solve")}
         loading={repairingPackageIssue}
       />
       <ConfirmDialog
         open={pendingDismissIssue !== null}
         onClose={() => setPendingDismissIssue(null)}
         onConfirm={handleDismissPackageIssue}
-        title="Dismiss Package Manager Warning"
+        title={t("pages.systemDetail.dismissPackageManagerWarning")}
         message={
           pendingDismissIssue
-            ? `Dismiss ${pendingDismissIssue.title} for ${system.name}? It will stay hidden for this boot, or until a later check no longer detects it.`
+            ? t("pages.systemDetail.dismissPackageManagerWarningMessage", {
+                issueTitle: pendingDismissIssue.title,
+                systemName: system.name,
+              })
             : ""
         }
-        confirmLabel="Dismiss Warning"
+        confirmLabel={t("pages.systemDetail.dismissWarning")}
         loading={dismissingPackageIssue}
       />
       <ConfirmDialog
         open={pendingHideUpdate !== null}
         onClose={() => setPendingHideUpdate(null)}
         onConfirm={handleHideUpdate}
-        title="Hide Update"
+        title={t("pages.systemDetail.hideUpdate")}
         message={
           pendingHideUpdate
-            ? `Hide ${pendingHideUpdate.packageName} ${pendingHideUpdate.newVersion || ""} from visible update lists and counts on ${system.name}? Upgrade commands will still install it if run.`
+            ? t("pages.systemDetail.hideUpdateMessage", {
+                packageName: pendingHideUpdate.packageName,
+                version: pendingHideUpdate.newVersion || "",
+                systemName: system.name,
+              })
             : ""
         }
-        confirmLabel="Hide Update"
+        confirmLabel={t("pages.systemDetail.hideUpdate")}
         loading={hideUpdate.isPending}
       />
 
       <Modal
         open={showConfigurationModal}
         onClose={() => setShowConfigurationModal(false)}
-        title="Edit System"
+        title={t("pages.systemDetail.editSystem")}
         dismissible={!updateSystem.isPending}
       >
         <SystemForm
@@ -2801,7 +3001,7 @@ export default function SystemDetail() {
       <Modal
         open={showSudoersModal}
         onClose={() => setShowSudoersModal(false)}
-        title={`Sudoers Setup for ${system.name}`}
+        title={t("pages.systemDetail.sudoersSetupForSystem", { systemName: system.name })}
       >
         {sudoersPreview.isLoading ? (
           <div className="flex justify-center py-10">
@@ -2814,7 +3014,7 @@ export default function SystemDetail() {
           />
         ) : (
           <div className="text-sm text-slate-500 dark:text-slate-400">
-            Unable to load sudoers setup for this system right now.
+            {t("pages.systemDetail.unableToLoadSudoersSetup")}
           </div>
         )}
       </Modal>

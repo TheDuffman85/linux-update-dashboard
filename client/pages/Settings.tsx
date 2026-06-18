@@ -16,6 +16,17 @@ import { Modal } from "../components/Modal";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../lib/client";
+import {
+  BROWSER_LANGUAGE_SETTING,
+  LANGUAGE_SETTING_KEY,
+  SUPPORTED_LANGUAGES,
+  getLanguageLabel,
+  normalizeLanguagePreference,
+  resolveLanguagePreference,
+  translateForLanguage,
+  type TranslationValues,
+  useI18n,
+} from "../lib/i18n";
 
 function SettingSection({
   title,
@@ -37,6 +48,7 @@ export default function Settings() {
   const updateSettings = useUpdateSettings();
   const { addToast } = useToast();
   const { hasPassword, refresh: refreshAuth } = useAuth();
+  const { browserLanguage, t } = useI18n();
 
   const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
   const deletePasskey = useDeletePasskey();
@@ -115,13 +127,29 @@ export default function Settings() {
     }
     const normalizedData = normalizeSettingsUpdate(data, numericSettingRules);
     setForm((prev) => ({ ...prev, ...normalizedData }));
+    const toastT =
+      LANGUAGE_SETTING_KEY in normalizedData
+        ? (key: string, values?: TranslationValues) =>
+            translateForLanguage(
+              resolveLanguagePreference(
+                normalizeLanguagePreference(normalizedData[LANGUAGE_SETTING_KEY]),
+              ),
+              key,
+              values,
+            )
+        : t;
 
     updateSettings.mutate(normalizedData, {
       onSuccess: (res) => {
         if (res.oidcError) {
-          addToast(`Settings saved, but OIDC configuration failed: ${res.oidcError}`, "danger");
+          addToast(
+            toastT("pages.settings.settingsSavedButOidcConfigurationFailedError", {
+              error: res.oidcError,
+            }),
+            "danger",
+          );
         } else {
-          addToast("Settings saved", "success");
+          addToast(toastT("pages.settings.settingsSaved"), "success");
         }
       },
       onError: (err) => addToast(err.message, "danger"),
@@ -132,7 +160,7 @@ export default function Settings() {
     e.preventDefault();
     setPwError("");
     if (newPassword !== confirmPassword) {
-      setPwError("Passwords do not match");
+      setPwError(t("pages.settings.passwordsDoNotMatch"));
       return;
     }
     const passwordError = validatePassword(newPassword);
@@ -146,12 +174,12 @@ export default function Settings() {
         method: "POST",
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      addToast("Password changed successfully", "success");
+      addToast(t("pages.settings.passwordChangedSuccessfully"), "success");
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
     } catch (err: unknown) {
-      setPwError((err as Error).message || "Failed to change password");
+      setPwError((err as Error).message || t("pages.settings.failedToChangePassword"));
     } finally {
       setPwLoading(false);
     }
@@ -164,7 +192,7 @@ export default function Settings() {
 
   if (isLoading) {
     return (
-      <Layout title="Settings">
+      <Layout title={t("pages.settings.settings")}>
         <div className="flex justify-center py-16">
           <span className="spinner !w-6 !h-6 text-blue-500" />
         </div>
@@ -173,11 +201,11 @@ export default function Settings() {
   }
 
   return (
-    <Layout title="Settings">
-      <SettingSection title="General">
+    <Layout title={t("pages.settings.settings")}>
+      <SettingSection title={t("pages.settings.general")}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
           <div>
-            <label className={labelClass}>Number of Activities</label>
+            <label className={labelClass}>{t("pages.settings.activityHistory")}</label>
             <input
               type="number"
               min={numericSettingRules.activity_history_limit.min}
@@ -190,13 +218,11 @@ export default function Settings() {
               className={inputClass}
             />
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Keeps only this many recent activity entries per system. Older
-              history is automatically deleted, and the same limit is used on the
-              system detail page.
+              {t("pages.settings.keepsOnlyThisManyRecentActivityEntriesPer")}
             </p>
           </div>
           <div>
-            <label className={labelClass}>EOL Warning Window (days)</label>
+            <label className={labelClass}>{t("pages.settings.eolWarningWindowDays")}</label>
             <input
               type="number"
               min={numericSettingRules.distro_eol_warning_days.min}
@@ -209,27 +235,57 @@ export default function Settings() {
               className={inputClass}
             />
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Shows dashboard and system warnings this many days before a
-              detected distribution reaches end of life.
+              {t("pages.settings.showsDashboardAndSystemWarningsThisManyDays")}
+            </p>
+          </div>
+          <div>
+            <label className={labelClass}>{t("pages.settings.language")}</label>
+            <select
+              value={form[LANGUAGE_SETTING_KEY] || BROWSER_LANGUAGE_SETTING}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  [LANGUAGE_SETTING_KEY]: e.target.value,
+                })
+              }
+              className={inputClass}
+            >
+              <option value={BROWSER_LANGUAGE_SETTING}>
+                {t("pages.settings.browserDefaultLanguage", {
+                  language: getLanguageLabel(browserLanguage),
+                })}
+              </option>
+              {SUPPORTED_LANGUAGES.map((language) => (
+                <option key={language.code} value={language.code}>
+                  {language.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              {t("pages.settings.usesYourBrowserPreferredLanguageByDefaultAnd")}
             </p>
           </div>
         </div>
         <button
           onClick={() =>
-            handleSave(["activity_history_limit", "distro_eol_warning_days"])
+            handleSave([
+              "activity_history_limit",
+              "distro_eol_warning_days",
+              LANGUAGE_SETTING_KEY,
+            ])
           }
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          Save
+          {t("pages.settings.save")}
         </button>
       </SettingSection>
 
       {/* SSH */}
-      <SettingSection title="SSH">
+      <SettingSection title={t("pages.settings.ssh")}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className={labelClass}>Connection Timeout (s)</label>
+            <label className={labelClass}>{t("pages.settings.connectionTimeoutS")}</label>
             <input
               type="number"
               value={form.ssh_timeout_seconds || "30"}
@@ -241,7 +297,7 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>Command Timeout (s)</label>
+            <label className={labelClass}>{t("pages.settings.commandTimeoutS")}</label>
             <input
               type="number"
               value={form.cmd_timeout_seconds || "120"}
@@ -253,7 +309,7 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>Concurrent Connections</label>
+            <label className={labelClass}>{t("pages.settings.concurrentConnections")}</label>
             <input
               type="number"
               value={form.concurrent_connections || "5"}
@@ -279,9 +335,9 @@ export default function Settings() {
               className="mt-0.5 rounded border-border"
             />
             <span>
-              <span className="block text-sm">Least-privilege root user check</span>
+              <span className="block text-sm">{t("pages.settings.leastPrivilegeRootUserCheck")}</span>
               <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Show a notice when a system connects as root instead of a dedicated non-root SSH user.
+                {t("pages.settings.showANoticeWhenASystemConnectsAs")}
               </span>
             </span>
           </label>
@@ -298,12 +354,12 @@ export default function Settings() {
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          Save
+          {t("pages.settings.save")}
         </button>
       </SettingSection>
 
       {/* Password */}
-      <SettingSection title="Password">
+      <SettingSection title={t("pages.settings.password")}>
         {(() => {
           const hasAlternativeAuth =
             (passkeys && passkeys.length > 0) ||
@@ -321,15 +377,15 @@ export default function Settings() {
                   disabled={!canDisable && form.disable_password_login !== "true"}
                   className="rounded border-border"
                 />
-                <span className="text-sm">Disable password login</span>
+                <span className="text-sm">{t("pages.settings.disablePasswordLogin")}</span>
               </label>
               {!canDisable ? (
                 <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                  Register a passkey or configure SSO before disabling password login.
+                  {t("pages.settings.registerAPasskeyOrConfigureSsoBeforeDisabling")}
                 </p>
               ) : (
                 <p className="mt-1 text-xs text-slate-400">
-                  When enabled, only Passkey and SSO login methods are available.
+                  {t("pages.settings.whenEnabledOnlyPasskeyAndSsoLoginMethods")}
                 </p>
               )}
             </>
@@ -343,13 +399,13 @@ export default function Settings() {
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          Save
+          {t("pages.settings.save")}
         </button>
 
         {hasPassword && (
           <>
             <hr className="my-6 border-border" />
-            <h3 className="text-sm font-semibold mb-4">Change Password</h3>
+            <h3 className="text-sm font-semibold mb-4">{t("pages.settings.changePassword")}</h3>
             <form onSubmit={handleChangePassword} className="space-y-4 max-w-sm">
               {pwError && (
                 <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
@@ -357,7 +413,7 @@ export default function Settings() {
                 </div>
               )}
               <div>
-                <label className={labelClass}>Current Password</label>
+                <label className={labelClass}>{t("pages.settings.currentPassword")}</label>
                 <input
                   type="password"
                   value={currentPassword}
@@ -367,7 +423,7 @@ export default function Settings() {
                 />
               </div>
               <div>
-                <label className={labelClass}>New Password</label>
+                <label className={labelClass}>{t("pages.settings.newPassword")}</label>
                 <input
                   type="password"
                   value={newPassword}
@@ -377,11 +433,11 @@ export default function Settings() {
                   className={inputClass}
                 />
                 <p className="mt-1 text-xs text-slate-400">
-                  Minimum 8 characters, must include uppercase, lowercase, and a digit
+                  {t("pages.settings.minimumCharactersMustIncludeUppercaseLowercaseAndA")}
                 </p>
               </div>
               <div>
-                <label className={labelClass}>Confirm New Password</label>
+                <label className={labelClass}>{t("pages.settings.confirmNewPassword")}</label>
                 <input
                   type="password"
                   value={confirmPassword}
@@ -395,7 +451,7 @@ export default function Settings() {
                 disabled={pwLoading}
                 className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
               >
-                {pwLoading ? <span className="spinner spinner-sm" /> : "Change Password"}
+                {pwLoading ? <span className="spinner spinner-sm" /> : t("pages.settings.changePassword")}
               </button>
             </form>
           </>
@@ -404,7 +460,7 @@ export default function Settings() {
 
       {/* Passkeys — only in secure contexts where WebAuthn is available */}
       {window.isSecureContext && (
-        <SettingSection title="Passkeys">
+        <SettingSection title={t("pages.settings.passkeys")}>
           {passkeysLoading ? (
             <div className="flex justify-center py-4">
               <span className="spinner !w-5 !h-5 text-blue-500" />
@@ -433,8 +489,8 @@ export default function Settings() {
                             renamePasskey.mutate(
                               { id: pk.id, name: trimmed },
                               {
-                                onSuccess: () => addToast("Passkey renamed", "success"),
-                                onError: (err) => addToast(err.message || "Failed to rename", "danger"),
+                                onSuccess: () => addToast(t("pages.settings.passkeyRenamed"), "success"),
+                                onError: (err) => addToast(err.message || t("pages.settings.failedToRename"), "danger"),
                               }
                             );
                           }
@@ -454,7 +510,7 @@ export default function Settings() {
                           setEditingName(pk.name ?? "");
                         }}
                         className="text-sm truncate hover:underline cursor-pointer text-left"
-                        title="Click to rename"
+                        title={t("pages.settings.clickToRename")}
                       >
                         {pk.name || (
                           <span className="font-mono text-slate-400">
@@ -464,15 +520,17 @@ export default function Settings() {
                       </button>
                     )}
                     <span className="ml-3 text-xs text-slate-500 shrink-0">
-                      Added{" "}
+                      {t("pages.settings.added")}{" "}
                       {new Date(pk.createdAt + "Z").toLocaleDateString()}
                     </span>
                   </div>
                   <button
                     onClick={() => setDeleteTarget(pk.id)}
                     className="ml-4 shrink-0 p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                    title="Remove passkey"
-                    aria-label={`Remove passkey ${pk.name || pk.credentialId.slice(0, 16)}`}
+                    title={t("pages.settings.removePasskey")}
+                    aria-label={t("pages.settings.removePasskeyName", {
+                      name: pk.name || pk.credentialId.slice(0, 16),
+                    })}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -483,7 +541,7 @@ export default function Settings() {
             </div>
           ) : (
             <p className="text-sm text-slate-500 mb-4">
-              No passkeys registered. Add one to enable passwordless login.
+              {t("pages.settings.noPasskeysRegisteredAddOneToEnablePasswordless")}
             </p>
           )}
 
@@ -497,12 +555,12 @@ export default function Settings() {
                   if (e.key === "Enter") {
                     registerPasskey.mutate(newPasskeyName.trim() || undefined, {
                       onSuccess: () => {
-                        addToast("Passkey registered successfully", "success");
+                        addToast(t("pages.settings.passkeyRegisteredSuccessfully"), "success");
                         setShowNamePrompt(false);
                         setNewPasskeyName("");
                       },
                       onError: (err) =>
-                        addToast(err.message || "Failed to register passkey", "danger"),
+                        addToast(err.message || t("pages.settings.failedToRegisterPasskey"), "danger"),
                     });
                   }
                   if (e.key === "Escape") {
@@ -511,19 +569,19 @@ export default function Settings() {
                   }
                 }}
                 maxLength={50}
-                placeholder="Passkey name (e.g. YubiKey, MacBook)"
+                placeholder={t("pages.settings.passkeyNameEGYubikeyMacbook")}
                 className="px-3 py-2 text-sm rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
               />
               <button
                 onClick={() => {
                   registerPasskey.mutate(newPasskeyName.trim() || undefined, {
                     onSuccess: () => {
-                      addToast("Passkey registered successfully", "success");
+                      addToast(t("pages.settings.passkeyRegisteredSuccessfully"), "success");
                       setShowNamePrompt(false);
                       setNewPasskeyName("");
                     },
                     onError: (err) =>
-                      addToast(err.message || "Failed to register passkey", "danger"),
+                      addToast(err.message || t("pages.settings.failedToRegisterPasskey"), "danger"),
                   });
                 }}
                 disabled={registerPasskey.isPending}
@@ -532,7 +590,7 @@ export default function Settings() {
                 {registerPasskey.isPending ? (
                   <span className="spinner spinner-sm" />
                 ) : (
-                  "Register"
+                  t("pages.settings.register")
                 )}
               </button>
               <button
@@ -542,7 +600,7 @@ export default function Settings() {
                 }}
                 className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
               >
-                Cancel
+                {t("pages.settings.cancel")}
               </button>
             </div>
           ) : (
@@ -551,7 +609,7 @@ export default function Settings() {
               disabled={registerPasskey.isPending}
               className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
             >
-              Register New Passkey
+              {t("pages.settings.registerNewPasskey")}
             </button>
           )}
 
@@ -562,12 +620,12 @@ export default function Settings() {
               if (deleteTarget !== null) {
                 deletePasskey.mutate(deleteTarget, {
                   onSuccess: () => {
-                    addToast("Passkey removed", "success");
+                    addToast(t("pages.settings.passkeyRemoved"), "success");
                     setDeleteTarget(null);
                   },
                   onError: (err) => {
                     addToast(
-                      err.message || "Failed to remove passkey",
+                      err.message || t("pages.settings.failedToRemovePasskey"),
                       "danger"
                     );
                     setDeleteTarget(null);
@@ -575,9 +633,9 @@ export default function Settings() {
                 });
               }
             }}
-            title="Remove Passkey"
-            message="Are you sure you want to remove this passkey? You will no longer be able to use it to sign in."
-            confirmLabel="Remove"
+            title={t("pages.settings.removePasskey2")}
+            message={t("pages.settings.areYouSureYouWantToRemoveThis")}
+            confirmLabel={t("pages.settings.remove")}
             danger
             loading={deletePasskey.isPending}
           />
@@ -585,10 +643,10 @@ export default function Settings() {
       )}
 
       {/* OIDC */}
-      <SettingSection title="OIDC (SSO)">
+      <SettingSection title={t("pages.settings.oidcSso")}>
         <div className="space-y-4">
           <div>
-            <label className={labelClass}>Issuer URL</label>
+            <label className={labelClass}>{t("pages.settings.issuerUrl")}</label>
             <input
               type="url"
               value={form.oidc_issuer || ""}
@@ -600,7 +658,7 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>Client ID</label>
+            <label className={labelClass}>{t("pages.settings.clientId")}</label>
             <input
               type="text"
               value={form.oidc_client_id || ""}
@@ -611,7 +669,7 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>Client Secret</label>
+            <label className={labelClass}>{t("pages.settings.clientSecret")}</label>
             <input
               type="password"
               value={form.oidc_client_secret || ""}
@@ -619,7 +677,7 @@ export default function Settings() {
                 setForm({ ...form, oidc_client_secret: e.target.value })
               }
               className={inputClass}
-              placeholder={storedSecrets.oidc_client_secret && !form.oidc_client_secret ? "(unchanged)" : ""}
+              placeholder={storedSecrets.oidc_client_secret && !form.oidc_client_secret ? t("pages.settings.unchanged") : ""}
             />
           </div>
         </div>
@@ -630,15 +688,14 @@ export default function Settings() {
           disabled={updateSettings.isPending}
           className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          Save
+          {t("pages.settings.save")}
         </button>
       </SettingSection>
 
       {/* API Tokens */}
-      <SettingSection title="API Tokens">
+      <SettingSection title={t("pages.settings.apiTokens")}>
         <p className="text-xs text-slate-500 mb-4">
-          Use API tokens to access dashboard data from external tools (e.g. homepage widgets).
-          Tokens cannot access management endpoints (settings, auth, passkeys).
+          {t("pages.settings.useApiTokensToAccessDashboardDataFrom")}
         </p>
         {tokensLoading ? (
           <div className="flex justify-center py-4">
@@ -672,8 +729,8 @@ export default function Settings() {
                             renameApiToken.mutate(
                               { id: tk.id, name: trimmed },
                               {
-                                onSuccess: () => addToast("Token renamed", "success"),
-                                onError: (err) => addToast(err.message || "Failed to rename", "danger"),
+                                onSuccess: () => addToast(t("pages.settings.tokenRenamed"), "success"),
+                                onError: (err) => addToast(err.message || t("pages.settings.failedToRename"), "danger"),
                               }
                             );
                           }
@@ -693,10 +750,10 @@ export default function Settings() {
                           setTokenEditingName(tk.name ?? "");
                         }}
                         className="text-sm truncate hover:underline cursor-pointer text-left"
-                        title="Click to rename"
+                        title={t("pages.settings.clickToRename")}
                       >
                         {tk.name || (
-                          <span className="italic text-slate-400">Unnamed token</span>
+                          <span className="italic text-slate-400">{t("pages.settings.unnamedToken")}</span>
                         )}
                       </button>
                     )}
@@ -705,32 +762,34 @@ export default function Settings() {
                         ? "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
                         : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
                     }`}>
-                      {tk.readOnly ? "Read-only" : "Read/Write"}
+                      {tk.readOnly ? t("pages.settings.readOnly") : t("pages.settings.readWrite")}
                     </span>
                     {isExpired ? (
                       <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">
-                        Expired
+                        {t("pages.settings.expired")}
                       </span>
                     ) : tk.expiresAt ? (
                       <span className="ml-2 text-xs text-slate-500 shrink-0">
-                        Expires{" "}
+                        {t("pages.settings.expires")}{" "}
                         {new Date(tk.expiresAt + "Z").toLocaleDateString()}
                       </span>
                     ) : (
                       <span className="ml-2 text-xs text-slate-500 shrink-0">
-                        Never expires
+                        {t("pages.settings.neverExpires")}
                       </span>
                     )}
                     <span className="ml-2 text-xs text-slate-500 shrink-0">
-                      Created{" "}
+                      {t("pages.settings.created")}{" "}
                       {new Date(tk.createdAt + "Z").toLocaleDateString()}
                     </span>
                   </div>
                   <button
                     onClick={() => setTokenDeleteTarget(tk.id)}
                     className="ml-4 shrink-0 p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                    title="Revoke API token"
-                    aria-label={`Revoke API token ${tk.name}`}
+                    title={t("pages.settings.revokeApiToken")}
+                    aria-label={t("pages.settings.revokeApiTokenName", {
+                      name: tk.name ?? "",
+                    })}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -742,46 +801,46 @@ export default function Settings() {
           </div>
         ) : (
           <p className="text-sm text-slate-500 mb-4">
-            No API tokens created yet.
+            {t("pages.settings.noApiTokensCreatedYet")}
           </p>
         )}
 
         {showTokenForm ? (
           <div className="flex items-end gap-2 flex-wrap">
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Name</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">{t("pages.settings.name")}</label>
               <input
                 autoFocus
                 value={newTokenName}
                 onChange={(e) => setNewTokenName(e.target.value)}
                 maxLength={50}
-                placeholder="e.g. Homepage widget"
+                placeholder={t("pages.settings.eGHomepageWidget")}
                 className="px-3 py-2 text-sm rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Permission</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">{t("pages.settings.permission")}</label>
               <select
                 value={newTokenReadOnly ? "readonly" : "readwrite"}
                 onChange={(e) => setNewTokenReadOnly(e.target.value === "readonly")}
                 className="px-3 py-2 text-sm rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="readonly">Read-only</option>
-                <option value="readwrite">Read &amp; Write</option>
+                <option value="readonly">{t("pages.settings.readOnly")}</option>
+                <option value="readwrite">{t("pages.settings.readWrite2")}</option>
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Valid for</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">{t("pages.settings.validFor")}</label>
               <select
                 value={newTokenExpiry}
                 onChange={(e) => setNewTokenExpiry(e.target.value)}
                 className="px-3 py-2 text-sm rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="30">30 days</option>
-                <option value="60">60 days</option>
-                <option value="90">90 days</option>
-                <option value="365">1 year</option>
-                <option value="0">Never expires</option>
+                <option value="30">{t("pages.settings.days")}</option>
+                <option value="60">{t("pages.settings.days2")}</option>
+                <option value="90">{t("pages.settings.days3")}</option>
+                <option value="365">{t("pages.settings.year")}</option>
+                <option value="0">{t("pages.settings.neverExpires")}</option>
               </select>
             </div>
             <button
@@ -802,7 +861,7 @@ export default function Settings() {
                       setNewTokenReadOnly(true);
                     },
                     onError: (err) =>
-                      addToast(err.message || "Failed to create token", "danger"),
+                      addToast(err.message || t("pages.settings.failedToCreateToken"), "danger"),
                   }
                 );
               }}
@@ -812,7 +871,7 @@ export default function Settings() {
               {createApiToken.isPending ? (
                 <span className="spinner spinner-sm" />
               ) : (
-                "Generate"
+                t("pages.settings.generate")
               )}
             </button>
             <button
@@ -824,7 +883,7 @@ export default function Settings() {
               }}
               className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
             >
-              Cancel
+              {t("pages.settings.cancel")}
             </button>
           </div>
         ) : (
@@ -832,7 +891,7 @@ export default function Settings() {
             onClick={() => setShowTokenForm(true)}
             className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
           >
-            Generate New Token
+            {t("pages.settings.generateNewToken")}
           </button>
         )}
 
@@ -840,10 +899,10 @@ export default function Settings() {
         <Modal
           open={generatedToken !== null}
           onClose={() => setGeneratedToken(null)}
-          title="API Token Created"
+          title={t("pages.settings.apiTokenCreated")}
         >
           <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
-            Copy this token now. It will not be shown again.
+            {t("pages.settings.copyThisTokenNowItWillNotBe")}
           </p>
           <div className="flex items-center gap-2 mb-6">
             <input
@@ -861,7 +920,7 @@ export default function Settings() {
               }}
               className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shrink-0"
             >
-              {tokenCopied ? "Copied!" : "Copy"}
+              {tokenCopied ? t("pages.settings.copied") : t("pages.settings.copy")}
             </button>
           </div>
           <div className="flex justify-end">
@@ -869,7 +928,7 @@ export default function Settings() {
               onClick={() => setGeneratedToken(null)}
               className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
             >
-              Done
+              {t("pages.settings.done")}
             </button>
           </div>
         </Modal>
@@ -882,19 +941,19 @@ export default function Settings() {
             if (tokenDeleteTarget !== null) {
               deleteApiToken.mutate(tokenDeleteTarget, {
                 onSuccess: () => {
-                  addToast("API token revoked", "success");
+                  addToast(t("pages.settings.apiTokenRevoked"), "success");
                   setTokenDeleteTarget(null);
                 },
                 onError: (err) => {
-                  addToast(err.message || "Failed to revoke token", "danger");
+                  addToast(err.message || t("pages.settings.failedToRevokeToken"), "danger");
                   setTokenDeleteTarget(null);
                 },
               });
             }
           }}
-          title="Revoke API Token"
-          message="Are you sure you want to revoke this API token? Any integrations using it will stop working."
-          confirmLabel="Revoke"
+          title={t("pages.settings.revokeApiToken2")}
+          message={t("pages.settings.areYouSureYouWantToRevokeThis")}
+          confirmLabel={t("pages.settings.revoke")}
           danger
           loading={deleteApiToken.isPending}
         />

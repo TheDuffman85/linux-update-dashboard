@@ -151,6 +151,85 @@ describe("SystemsList", () => {
     expect(html).not.toContain("Sudoers Setup for Alpha");
   });
 
+  test("labels Debian LTS lifecycle warnings without dates", () => {
+    mockUseSystems.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          sortOrder: 0,
+          name: "Alpha",
+          hostname: "alpha.local",
+          port: 22,
+          credentialId: 1,
+          proxyJumpSystemId: null,
+          authType: "password",
+          username: "root",
+          hostKeyVerificationEnabled: 1,
+          approvedHostKey: null,
+          trustedHostKeyAlgorithm: null,
+          trustedHostKeyFingerprintSha256: null,
+          hostKeyTrustedAt: null,
+          hostKeyStatus: "verified",
+          proxyJumpChain: [],
+          pkgManager: "apt",
+          detectedPkgManagers: ["apt"],
+          disabledPkgManagers: [],
+          pkgManagerConfigs: null,
+          autoHideKeptBackUpdates: 0,
+          osName: "Debian",
+          osVersion: "12",
+          osLifecycleStatus: "support_ended",
+          osLifecycleEolDate: "2028-06-30",
+          osLifecycleDaysUntilEol: 744,
+          osLifecycleSupportEndDate: "2026-07-11",
+          osLifecycleDaysUntilSupportEnd: -6,
+          osLifecycleLabel: "Debian 12 is in LTS until 2028-06-30",
+          osLifecycleDismissedKey: "debian:12:2028-06-30:support_ended",
+          osLifecycleDismissedAt: null,
+          osLifecycleBannerDismissed: false,
+          kernel: null,
+          hostnameRemote: null,
+          uptime: null,
+          arch: null,
+          cpuCores: null,
+          memory: null,
+          disk: null,
+          excludeFromUpgradeAll: 0,
+          upgradeOrder: 1,
+          hidden: 0,
+          needsReboot: 0,
+          isReachable: 1,
+          lastSeenAt: null,
+          createdAt: "2026-03-30 10:00:00",
+          updatedAt: "2026-03-30 10:00:00",
+          updateCount: 0,
+          securityCount: 0,
+          keptBackCount: 0,
+          lastCheck: null,
+          cacheAge: null,
+          cacheTimestamp: null,
+          isStale: false,
+          activeOperation: null,
+          supportsFullUpgrade: true,
+          scriptOverrides: {},
+        },
+      ],
+      isLoading: false,
+      refetch: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <SystemsList />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("LTS");
+    expect(html).not.toContain("in LTS");
+    expect(html).not.toContain("LTS until 2028-06-30");
+    expect(html).not.toContain("support ended");
+  });
+
   test("parses the system configuration route state", () => {
     expect(getEditSystemIdFromRouteState({ editSystemId: 42 })).toBe(42);
     expect(getEditSystemIdFromRouteState({ editSystemId: "42" })).toBeNull();
