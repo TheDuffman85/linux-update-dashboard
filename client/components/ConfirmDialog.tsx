@@ -1,5 +1,6 @@
 import { Modal } from "./Modal";
 import type { ReactNode } from "react";
+import { useI18n } from "../lib/i18n";
 
 export function ConfirmDialog({
   open,
@@ -22,6 +23,8 @@ export function ConfirmDialog({
   danger?: boolean;
   loading?: boolean;
 }) {
+  const { t } = useI18n();
+
   return (
     <Modal open={open} onClose={onClose} title={title}>
       <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">
@@ -33,7 +36,7 @@ export function ConfirmDialog({
           onClick={onClose}
           className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
         >
-          Cancel
+          {t("components.confirmDialog.cancel")}
         </button>
         <button
           onClick={onConfirm}

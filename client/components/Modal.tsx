@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { useI18n } from "../lib/i18n";
 
 export function Modal({
   open,
@@ -13,6 +14,8 @@ export function Modal({
   children: ReactNode;
   dismissible?: boolean;
 }) {
+  const { t } = useI18n();
+
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape" && dismissible) onClose();
@@ -40,7 +43,7 @@ export function Modal({
           {dismissible ? (
             <button
               type="button"
-              aria-label={`Close ${title} modal`}
+              aria-label={t("components.modal.closeTitleModal", { title })}
               onClick={onClose}
               className="shrink-0 p-1 rounded transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
             >

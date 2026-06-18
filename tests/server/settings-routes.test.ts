@@ -69,6 +69,29 @@ describe("settings routes", () => {
     ).toBe("1");
   });
 
+  test("persists newly introduced settings that do not already have a row", async () => {
+    const db = getDb();
+    db.delete(settings).where(eq(settings.key, "language")).run();
+
+    const app = new Hono();
+    app.use("/api/settings/*", async (c, next) => {
+      c.set("user", { userId: 1, username: "admin", isAdmin: true });
+      await next();
+    });
+    app.route("/api/settings", settingsRoutes);
+
+    const res = await app.request("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ language: "de" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(
+      db.select({ value: settings.value }).from(settings).where(eq(settings.key, "language")).get()?.value,
+    ).toBe("de");
+  });
+
   test("returns configured timeout bounds with settings", async () => {
     const previousSshMax = process.env.LUDASH_MAX_SSH_TIMEOUT;
     const previousCmdMax = process.env.LUDASH_MAX_CMD_TIMEOUT;

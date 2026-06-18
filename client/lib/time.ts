@@ -2,21 +2,23 @@ export function parseTimestamp(timestamp: string): Date {
   return new Date(timestamp.includes("T") ? timestamp : `${timestamp.replace(" ", "T")}Z`);
 }
 
-export function formatTimeAgo(timestamp: string): string {
+type TranslateTime = (key: string, values?: Record<string, string | number>) => string;
+
+export function formatTimeAgo(timestamp: string, t?: TranslateTime, locale?: string): string {
   const date = parseTimestamp(timestamp);
   const diffMs = Date.now() - date.getTime();
   const minutes = Math.floor(diffMs / 60000);
 
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1) return t ? t("components.ago.justNow") : "just now";
+  if (minutes < 60) return t ? t("components.ago.minutesAgo", { count: minutes }) : `${minutes}m ago`;
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t ? t("components.ago.hoursAgo", { count: hours }) : `${hours}h ago`;
 
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return t ? t("components.ago.daysAgo", { count: days }) : `${days}d ago`;
 
-  return date.toLocaleDateString(undefined, {
+  return date.toLocaleDateString(locale, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -24,8 +26,8 @@ export function formatTimeAgo(timestamp: string): string {
   });
 }
 
-export function formatExactDateTime(timestamp: string): string {
-  return parseTimestamp(timestamp).toLocaleString(undefined, {
+export function formatExactDateTime(timestamp: string, locale?: string): string {
+  return parseTimestamp(timestamp).toLocaleString(locale, {
     year: "numeric",
     month: "short",
     day: "numeric",

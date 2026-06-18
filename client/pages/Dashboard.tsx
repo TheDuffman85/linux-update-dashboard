@@ -20,6 +20,7 @@ import {
 import type { System, UpgradeGroup } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
+import { useI18n } from "../lib/i18n";
 import { deriveSystemUpdateState, getSystemStatusDotClass, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 const UNGROUPED_KEY = "ungrouped";
@@ -252,19 +253,23 @@ function hasLtsLifecycleLabel(system: Pick<System, "osLifecycleLabel">): boolean
   return /\bLTS\b/.test(system.osLifecycleLabel);
 }
 
-function getLifecycleWarningLabel(system: Pick<System, "osLifecycleStatus" | "osLifecycleLabel">): string {
-  if (system.osLifecycleStatus === "eol") return "EOL";
+function getLifecycleWarningLabel(
+  system: Pick<System, "osLifecycleStatus" | "osLifecycleLabel">,
+  t: (key: string) => string,
+): string {
+  if (system.osLifecycleStatus === "eol") return t("pages.systemDetail.lifecycle.eol");
   if (system.osLifecycleStatus === "support_ended") {
-    if (hasLtsLifecycleLabel(system)) return "LTS";
-    return "Regular support ended";
+    if (hasLtsLifecycleLabel(system)) return t("pages.systemDetail.lifecycle.lts");
+    return t("pages.systemDetail.lifecycle.regularSupportEnded");
   }
   if (system.osLifecycleStatus === "support_ending") {
-    return "Security support ending soon";
+    return t("pages.systemDetail.lifecycle.securitySupportEndingSoon");
   }
-  return "EOL soon";
+  return t("pages.systemDetail.lifecycle.eolSoon");
 }
 
 function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "osLifecycleStatus" | "osLifecycleEolDate" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd" | "osLifecycleLabel" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
+  const { t } = useI18n();
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const maintaining = updateState === "maintaining";
   const dotColor = getSystemStatusDotClass(updateState, system);
@@ -292,37 +297,37 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
       <div className="flex items-center justify-between mt-3">
         <div className="flex items-center gap-1.5 flex-wrap">
           {updateState === "upgrading" ? (
-            <Badge variant="info" small>Upgrading...</Badge>
+            <Badge variant="info" small>{t("pages.dashboard.upgrading")}</Badge>
           ) : updateState === "maintaining" ? (
-            <Badge variant="info" small>Maintaining...</Badge>
+            <Badge variant="info" small>{t("pages.dashboard.maintaining")}</Badge>
           ) : updateState === "checking" ? (
-            <Badge variant="muted" small>Checking...</Badge>
+            <Badge variant="muted" small>{t("pages.dashboard.checking")}</Badge>
           ) : updateState === "unreachable" ? (
-            <Badge variant="danger" small>Unreachable</Badge>
+            <Badge variant="danger" small>{t("pages.dashboard.unreachable")}</Badge>
           ) : updateState === "check_failed" ? (
-            <Badge variant="danger" small>Check failed</Badge>
+            <Badge variant="danger" small>{t("pages.dashboard.checkFailed")}</Badge>
           ) : updateState === "check_warning" ? (
-            <Badge variant="warning" small>Check warning</Badge>
+            <Badge variant="warning" small>{t("pages.dashboard.checkWarning")}</Badge>
           ) : updateState === "updates_available" ? (
-            <Badge variant="warning" small>{system.updateCount} updates</Badge>
+            <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: system.updateCount })}</Badge>
           ) : updateState === "lifecycle_warning" ? (
-            <Badge variant={system.osLifecycleStatus === "eol" ? "danger" : "warning"} small>{getLifecycleWarningLabel(system)}</Badge>
+            <Badge variant={system.osLifecycleStatus === "eol" ? "danger" : "warning"} small>{getLifecycleWarningLabel(system, t)}</Badge>
           ) : updateState === "up_to_date" ? (
-            <Badge variant="success" small>Up to date</Badge>
+            <Badge variant="success" small>{t("pages.dashboard.upToDate")}</Badge>
           ) : (
-            <Badge variant="muted" small>Unchecked</Badge>
+            <Badge variant="muted" small>{t("pages.dashboard.unchecked")}</Badge>
           )}
           {updateState === "check_warning" && system.updateCount > 0 && (
-            <Badge variant="warning" small>{system.updateCount} updates</Badge>
+            <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: system.updateCount })}</Badge>
           )}
           {system.securityCount > 0 && (
-            <Badge variant="danger" small>{system.securityCount} security</Badge>
+            <Badge variant="danger" small>{t("pages.dashboard.countSecurity", { count: system.securityCount })}</Badge>
           )}
           {system.keptBackCount > 0 && (
-            <Badge variant="muted" small>{system.keptBackCount} kept back</Badge>
+            <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: system.keptBackCount })}</Badge>
           )}
           {system.needsReboot === 1 && (
-            <span className="text-amber-500" title="Reboot required">
+            <span className="text-amber-500" title={t("pages.dashboard.rebootRequired")}>
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
@@ -358,6 +363,7 @@ export default function Dashboard() {
   const updateSystemUpgradeAllExclusion = useUpdateSystemUpgradeAllExclusion();
   const updateSystemUpgradeMode = useUpdateSystemUpgradeMode();
   const { addToast } = useToast();
+  const { t } = useI18n();
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [upgradeEditMode, setUpgradeEditMode] = useState(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
@@ -401,7 +407,7 @@ export default function Dashboard() {
 
   const handleRefresh = () => {
     refreshCache.mutate(undefined, {
-      onSuccess: () => addToast("Cache cleared. Refreshing all systems...", "info"),
+      onSuccess: () => addToast(t("pages.dashboard.cacheClearedRefreshingAllSystems"), "info"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -1096,14 +1102,20 @@ export default function Dashboard() {
       };
     });
     upgradeAllBatch.mutate(items, {
-      onSuccess: () => addToast(`Upgrade All queued for ${items.length} system${items.length !== 1 ? "s" : ""}`, "info"),
+      onSuccess: () => addToast(
+        t("pages.dashboard.upgradeAllQueuedForCountSystemlabel", {
+          count: items.length,
+          systemLabel: items.length === 1 ? t("pages.dashboard.system") : t("pages.dashboard.systems"),
+        }),
+        "info",
+      ),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
 
   return (
     <Layout
-      title="Dashboard"
+      title={t("pages.dashboard.dashboard")}
       contentWidth="wide"
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -1115,10 +1127,10 @@ export default function Dashboard() {
             {hasRefreshInProgress ? (
               <span className="flex items-center gap-1.5">
                 <span className="spinner spinner-sm" />
-                Refreshing...
+                {t("pages.dashboard.refreshing")}
               </span>
             ) : (
-              "Refresh All"
+              t("pages.dashboard.refreshAll")
             )}
           </button>
           <button
@@ -1128,10 +1140,10 @@ export default function Dashboard() {
             {hasUpgradeInProgress ? (
               <span className="flex items-center gap-1.5">
                 <span className="spinner spinner-sm" />
-                Upgrading...
+                {t("pages.dashboard.upgrading")}
               </span>
             ) : (
-              "Upgrade All"
+              t("pages.dashboard.upgradeAll")
             )}
           </button>
         </div>
@@ -1140,18 +1152,18 @@ export default function Dashboard() {
       {/* Stats */}
       {stats && (
         <div className={`grid grid-cols-2 sm:grid-cols-3 ${getStatsGridClass(stats)} gap-3 mb-6`}>
-          <StatCard label="Total Systems" value={stats.total} color="text-slate-700 dark:text-slate-100" />
-          <StatCard label="Up to Date" value={stats.upToDate} color="text-slate-700 dark:text-slate-100" />
-          <StatCard label="Need Updates" value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" />
+          <StatCard label={t("pages.dashboard.totalSystems")} value={stats.total} color="text-slate-700 dark:text-slate-100" />
+          <StatCard label={t("pages.dashboard.upToDate2")} value={stats.upToDate} color="text-slate-700 dark:text-slate-100" />
+          <StatCard label={t("pages.dashboard.needUpdates")} value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" />
           {stats.needsReboot > 0 && (
-            <StatCard label="Needs Reboot" value={stats.needsReboot} color="text-amber-600 dark:text-amber-500" />
+            <StatCard label={t("pages.dashboard.needsReboot")} value={stats.needsReboot} color="text-amber-600 dark:text-amber-500" />
           )}
           {stats.lifecycleWarnings > 0 && (
-            <StatCard label="OS Warnings" value={stats.lifecycleWarnings} color="text-amber-600 dark:text-amber-500" />
+            <StatCard label={t("pages.dashboard.osWarnings")} value={stats.lifecycleWarnings} color="text-amber-600 dark:text-amber-500" />
           )}
-          <StatCard label="Check Issues" value={stats.checkIssues} color="text-amber-600 dark:text-amber-500" />
-          <StatCard label="Unreachable" value={stats.unreachable} color="text-red-600 dark:text-red-500" />
-          <StatCard label="Total Updates" value={stats.totalUpdates} color="text-slate-700 dark:text-slate-100" />
+          <StatCard label={t("pages.dashboard.checkIssues")} value={stats.checkIssues} color="text-amber-600 dark:text-amber-500" />
+          <StatCard label={t("pages.dashboard.unreachable")} value={stats.unreachable} color="text-red-600 dark:text-red-500" />
+          <StatCard label={t("pages.dashboard.totalUpdates")} value={stats.totalUpdates} color="text-slate-700 dark:text-slate-100" />
         </div>
       )}
 
@@ -1169,19 +1181,24 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="text-center py-16">
-          <p className="text-slate-500 dark:text-slate-400 mb-4">No systems configured yet</p>
+          <p className="text-slate-500 dark:text-slate-400 mb-4">{t("pages.dashboard.noSystemsConfiguredYet")}</p>
           <Link
             to="/systems"
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            Add System
+            {t("pages.dashboard.addSystem")}
           </Link>
         </div>
       )}
 
-      <Modal open={showUpgradeConfirm} onClose={closeUpgradeConfirm} title="Upgrade All Systems">
+      <Modal open={showUpgradeConfirm} onClose={closeUpgradeConfirm} title={t("pages.dashboard.upgradeAllSystems")}>
         <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
-          Apply {selectedUpdateCount} update{selectedUpdateCount !== 1 ? "s" : ""} across {selectedSystems.length} system{selectedSystems.length !== 1 ? "s" : ""}?
+          {t("pages.dashboard.applyUpdatesUpdatelabelAcrossSystemsSystemlabel", {
+            updates: selectedUpdateCount,
+            updateLabel: selectedUpdateCount === 1 ? t("pages.dashboard.update") : t("pages.dashboard.updates"),
+            systems: selectedSystems.length,
+            systemLabel: selectedSystems.length === 1 ? t("pages.dashboard.system") : t("pages.dashboard.systems"),
+          })}
         </p>
         {modalSystems.length > 0 ? (
           <div className="mb-4">
@@ -1205,7 +1222,7 @@ export default function Dashboard() {
                     }`}
                   />
                 </span>
-                Edit mode
+                {t("pages.dashboard.editMode")}
               </button>
               {upgradeEditMode && (
                 <button
@@ -1214,14 +1231,14 @@ export default function Dashboard() {
                   disabled={createUpgradeGroup.isPending}
                   className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700"
                 >
-                  Add group
+                  {t("pages.dashboard.addGroup")}
                 </button>
               )}
             </div>
             <div ref={upgradeGroupContainerRef} className="space-y-3">
               {orderedGroupsForModal.length === 0 && (
                 <div className="rounded-lg border border-dashed border-border p-4 text-sm text-slate-500 dark:text-slate-400">
-                  No systems have updates right now. Enable edit mode to organize all systems.
+                  {t("pages.dashboard.noSystemsHaveUpdatesRightNowEnableEdit")}
                 </div>
               )}
               {orderedGroupsForModal.map((group) => (
@@ -1240,7 +1257,7 @@ export default function Dashboard() {
                             ? "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                             : "cursor-default opacity-40"
                         }`}
-                        title={!upgradeSortingDisabled && orderedGroupsForModal.length > 1 ? "Drag to reorder group" : undefined}
+                        title={!upgradeSortingDisabled && orderedGroupsForModal.length > 1 ? t("pages.dashboard.dragToReorderGroup") : undefined}
                         aria-label={!upgradeSortingDisabled && orderedGroupsForModal.length > 1 ? `Drag to reorder ${group.name}` : undefined}
                         onPointerDown={(event) => handleGroupPointerDown(event, group.key)}
                         style={{ touchAction: "none" }}
@@ -1260,9 +1277,9 @@ export default function Dashboard() {
                           type="button"
                           onClick={() => openRenameGroup(group.realGroup!)}
                           className="rounded p-1.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
-                          title="Edit group name"
+                          title={t("pages.dashboard.editGroupName")}
                         >
-                          <span className="sr-only">Edit group name</span>
+                          <span className="sr-only">{t("pages.dashboard.editGroupName")}</span>
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
@@ -1271,9 +1288,9 @@ export default function Dashboard() {
                           type="button"
                           onClick={() => handleDeleteGroup(group.realGroup!)}
                           className="rounded p-1.5 text-red-500 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
-                          title="Delete group"
+                          title={t("pages.dashboard.deleteGroup")}
                         >
-                          <span className="sr-only">Delete group</span>
+                          <span className="sr-only">{t("pages.dashboard.deleteGroup")}</span>
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
@@ -1307,7 +1324,7 @@ export default function Dashboard() {
                                 ? "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                                 : "cursor-default opacity-40"
                             }`}
-                            title={!upgradeSortingDisabled ? "Drag to set upgrade group and order" : undefined}
+                            title={!upgradeSortingDisabled ? t("pages.dashboard.dragToSetUpgradeGroupAndOrder") : undefined}
                             aria-label={!upgradeSortingDisabled ? `Drag to set upgrade group and order for ${s.name}` : undefined}
                             onPointerDown={(event) => handleSystemPointerDown(event, s.id)}
                             style={{ touchAction: "none" }}
@@ -1339,23 +1356,23 @@ export default function Dashboard() {
                                     ? "border-blue-600 bg-blue-600 text-white"
                                     : "border-border bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                                 }`}
-                                title="Toggle and save full upgrade for this system"
+                                title={t("pages.dashboard.toggleAndSaveFullUpgradeForThisSystem")}
                               >
-                                Full upgrade
+                                {t("pages.dashboard.fullUpgrade")}
                               </button>
                             )}
                           </div>
                           <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-start-auto sm:justify-end">
                             {hasUpdates ? (
-                              <Badge variant="warning" small>{s.updateCount} updates</Badge>
+                              <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: s.updateCount })}</Badge>
                             ) : (
-                              <Badge variant="muted" small>no updates</Badge>
+                              <Badge variant="muted" small>{t("pages.dashboard.noUpdates")}</Badge>
                             )}
                             {s.securityCount > 0 && (
-                              <Badge variant="danger" small>{s.securityCount} security</Badge>
+                              <Badge variant="danger" small>{t("pages.dashboard.countSecurity", { count: s.securityCount })}</Badge>
                             )}
                             {s.keptBackCount > 0 && (
-                              <Badge variant="muted" small>{s.keptBackCount} kept back</Badge>
+                              <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: s.keptBackCount })}</Badge>
                             )}
                           </div>
                         </li>
@@ -1367,18 +1384,18 @@ export default function Dashboard() {
             </div>
             {upgradeEditMode && modalSystems.length > 1 && (
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
-                Drag groups and systems to set the saved upgrade order. Systems in the same group start together; the next group waits for the previous group to finish.
+                {t("pages.dashboard.dragGroupsAndSystemsToSetTheSaved")}
               </p>
             )}
             {systemsWithUpdates.length > 0 && (
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
-                Check a system to include it in future Upgrade All runs; uncheck it to exclude it.
+                {t("pages.dashboard.checkASystemToIncludeItInFuture")}
               </p>
             )}
           </div>
         ) : (
           <div className="mb-4 rounded-lg border border-dashed border-border p-4 text-sm text-slate-500 dark:text-slate-400">
-            No systems are available to group yet.
+            {t("pages.dashboard.noSystemsAreAvailableToGroupYet")}
           </div>
         )}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
@@ -1386,26 +1403,26 @@ export default function Dashboard() {
             onClick={closeUpgradeConfirm}
             className="w-full px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors sm:w-auto"
           >
-            Cancel
+            {t("pages.dashboard.cancel")}
           </button>
           <button
             onClick={handleUpgradeAll}
             disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, disableUpgradeSubmit)}
             className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 sm:w-auto"
           >
-            Upgrade All
+            {t("pages.dashboard.upgradeAll")}
           </button>
         </div>
       </Modal>
       <Modal
         open={!!renameGroup}
         onClose={() => setRenameGroup(null)}
-        title="Rename Group"
+        title={t("pages.dashboard.renameGroup")}
       >
         <div className="space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
-              Group name
+              {t("pages.dashboard.groupName")}
             </span>
             <input
               value={renameGroup?.name ?? ""}
@@ -1427,7 +1444,7 @@ export default function Dashboard() {
               onClick={() => setRenameGroup(null)}
               className="w-full rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto"
             >
-              Cancel
+              {t("pages.dashboard.cancel")}
             </button>
             <button
               type="button"
@@ -1435,7 +1452,7 @@ export default function Dashboard() {
               disabled={!renameGroup?.name.trim() || updateUpgradeGroup.isPending}
               className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:w-auto"
             >
-              Save
+              {t("pages.dashboard.save")}
             </button>
           </div>
         </div>
@@ -1443,11 +1460,13 @@ export default function Dashboard() {
       <Modal
         open={!!deleteGroup}
         onClose={() => setDeleteGroup(null)}
-        title="Delete Group"
+        title={t("pages.dashboard.deleteGroup2")}
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Delete {deleteGroup?.name}? Systems in this group will move to Ungrouped.
+            {t("pages.dashboard.deleteNameSystemsInThisGroupWillMove", {
+              name: deleteGroup?.name ?? "",
+            })}
           </p>
           <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
             <button
@@ -1455,7 +1474,7 @@ export default function Dashboard() {
               onClick={() => setDeleteGroup(null)}
               className="w-full rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto"
             >
-              Cancel
+              {t("pages.dashboard.cancel")}
             </button>
             <button
               type="button"
@@ -1463,7 +1482,7 @@ export default function Dashboard() {
               disabled={deleteUpgradeGroup.isPending}
               className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-50 sm:w-auto"
             >
-              Delete
+              {t("pages.dashboard.delete")}
             </button>
           </div>
         </div>

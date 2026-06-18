@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+import i18next from "i18next";
 import {
   buildActivityDisplayRows,
   dedupePackageIssueUpdateNotice,
@@ -94,6 +95,29 @@ describe("OS lifecycle presentation", () => {
 
     expect(html).toContain("regular security support ends on 2028-08-09");
     expect(html).toContain("LTS runs until 2030-06-30");
+  });
+
+  test("translates the lifecycle warning title instead of showing the server label", async () => {
+    await i18next.changeLanguage("zh");
+    let html = "";
+    try {
+      html = renderToStaticMarkup(createElement(OsLifecycleWarningBanner, {
+        systemName: "Test FISH (Sudo)",
+        status: "support_ending",
+        label: "Debian 12 security support ends in 23 days; LTS until 2028-06-30",
+        eolDate: "2028-06-30",
+        daysUntilEol: 737,
+        supportEndDate: "2026-07-11",
+        daysUntilSupportEnd: 23,
+        onDismiss: () => {},
+      }));
+    } finally {
+      await i18next.changeLanguage("en");
+    }
+
+    expect(html).toContain("安全支持于 2026-07-11 结束（23 天）");
+    expect(html).toContain("LTS 持续至 2028-06-30");
+    expect(html).not.toContain("Debian 12 security support ends in 23 days");
   });
 });
 
@@ -736,7 +760,7 @@ describe("PackageManagerIssueBanner", () => {
   };
 
   test("renders solve and dismiss actions for visible package manager issues", () => {
-    const html = renderToStaticMarkup(PackageManagerIssueBanner({
+    const html = renderToStaticMarkup(createElement(PackageManagerIssueBanner, {
       issues: [issue],
       onSolve: () => {},
       onDismiss: () => {},

@@ -46,6 +46,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Safer SSH workflows:** optional host-key verification with explicit trust approval, plus ProxyJump support for reaching internal hosts
 - **Encrypted credentials:** SSH passwords and private keys are encrypted at rest with AES-256-GCM
 - **Four auth methods:** password, Passkeys (WebAuthn), SSO (OpenID Connect), and API tokens for external integrations
+- **Localized UI:** English, German, French, Spanish, Russian, and Chinese translations with browser-language detection
 - **SSH-safe maintenance:** upgrade and autoremove commands run via nohup on the remote host, so they survive SSH disconnects and keep running even if the dashboard loses connection
 - **Full upgrade:** run `apt full-upgrade` or `dnf distro-sync` from the dashboard for dist-level upgrades
 - **Remote reboot:** trigger reboots from the UI with a dashboard-wide reboot-needed indicator
@@ -1224,6 +1225,10 @@ Autoremove uses the same detached runner. If its monitor is lost, the dashboard 
 | Reboot                      | No (fire-and-forget)          |
 
 The UI marks SSH-safe operations with an **SSH-safe** badge in the activity history.
+
+## Translations
+
+Linux Update Dashboard currently includes English, German, French, Spanish, Russian, and Chinese UI translations. Browser-language detection applies to the browser UI. Server-generated text such as notification bodies and scheduled messages can only use a translated language when the language setting is explicitly set; with **Browser default**, those server-generated messages are sent in English. Translation help is very welcome: corrections, more natural wording, and new languages can be contributed by updating the JSON files in `client/locales/` and keeping the same keys as `client/locales/en.json`.
 
 ## Star History
 

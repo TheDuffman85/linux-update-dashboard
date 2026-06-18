@@ -5,7 +5,7 @@ import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../context/ToastContext";
-import { CREDENTIAL_KIND_LABELS } from "../lib/credential-form";
+import { CREDENTIAL_KIND_LABEL_KEYS } from "../lib/credential-form";
 import {
   useCredential,
   useCredentials,
@@ -16,6 +16,7 @@ import {
   type CredentialKind,
   type CredentialSummary,
 } from "../lib/credentials";
+import { useI18n } from "../lib/i18n";
 
 function moveCredential<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   if (fromIndex === toIndex) return items;
@@ -38,6 +39,7 @@ export default function Credentials() {
   const deleteCredential = useDeleteCredential();
   const reorderCredentials = useReorderCredentials();
   const { addToast } = useToast();
+  const { t } = useI18n();
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteCredentialItem, setDeleteCredentialItem] = useState<CredentialSummary | null>(null);
@@ -109,7 +111,7 @@ export default function Credentials() {
     createCredential.mutate(data, {
       onSuccess: () => {
         setShowCreate(false);
-        addToast("Credential created", "success");
+        addToast(t("pages.credentials.credentialCreated"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -130,7 +132,7 @@ export default function Credentials() {
       {
         onSuccess: () => {
           setEditId(null);
-          addToast("Credential updated", "success");
+          addToast(t("pages.credentials.credentialUpdated"), "success");
         },
         onError: (err) => addToast(err.message, "danger"),
       }
@@ -142,7 +144,7 @@ export default function Credentials() {
     deleteCredential.mutate(deleteCredentialItem.id, {
       onSuccess: () => {
         setDeleteCredentialItem(null);
-        addToast("Credential deleted", "success");
+        addToast(t("pages.credentials.credentialDeleted"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -150,13 +152,13 @@ export default function Credentials() {
 
   return (
     <Layout
-      title="Credentials"
+      title={t("pages.credentials.credentials")}
       actions={
         <button
           onClick={() => setShowCreate(true)}
           className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
         >
-          Add Credential
+          {t("pages.credentials.addCredential")}
         </button>
       }
     >
@@ -169,10 +171,10 @@ export default function Credentials() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3 hidden sm:table-cell">Type</th>
-                <th className="px-4 py-3">References</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-4 py-3">{t("pages.credentials.name")}</th>
+                <th className="px-4 py-3 hidden sm:table-cell">{t("pages.credentials.type")}</th>
+                <th className="px-4 py-3">{t("pages.credentials.references")}</th>
+                <th className="px-4 py-3 text-right">{t("pages.credentials.actions")}</th>
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
@@ -189,8 +191,8 @@ export default function Credentials() {
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title="Drag to reorder"
-                        aria-label={`Drag to reorder ${credential.name}`}
+                        title={t("pages.credentials.dragToReorder")}
+                        aria-label={t("pages.credentials.dragToReorderName", { name: credential.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
@@ -200,16 +202,22 @@ export default function Credentials() {
                     </div>
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-slate-500 dark:text-slate-400">
-                    {CREDENTIAL_KIND_LABELS[credential.kind]}
+                    {t(CREDENTIAL_KIND_LABEL_KEYS[credential.kind])}
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                     <span
                       className={`block max-w-md truncate ${
                         credential.referenceCount === 0 ? "text-xs text-slate-400" : ""
                       }`}
-                      title={getReferenceLabel(credential)}
+                      title={
+                        credential.referenceCount === 0
+                          ? t("pages.credentials.unused")
+                          : getReferenceLabel(credential)
+                      }
                     >
-                      {getReferenceLabel(credential)}
+                      {credential.referenceCount === 0
+                        ? t("pages.credentials.unused")
+                        : getReferenceLabel(credential)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -217,7 +225,7 @@ export default function Credentials() {
                       <button
                         onClick={() => setEditId(credential.id)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Edit credential"
+                        title={t("pages.credentials.editCredential")}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -229,8 +237,8 @@ export default function Credentials() {
                         className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         title={
                           credential.referenceCount > 0
-                            ? "Credential is in use and cannot be deleted"
-                            : "Delete credential"
+                            ? t("pages.credentials.credentialIsInUseAndCannotBeDeleted")
+                            : t("pages.credentials.deleteCredential")
                         }
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -246,12 +254,12 @@ export default function Credentials() {
         </div>
       ) : (
         <div className="text-center py-16">
-          <p className="text-slate-500 dark:text-slate-400 mb-4">No reusable credentials yet</p>
+          <p className="text-slate-500 dark:text-slate-400 mb-4">{t("pages.credentials.noReusableCredentialsYet")}</p>
           <button
             onClick={() => setShowCreate(true)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            Add Your First Credential
+            {t("pages.credentials.addYourFirstCredential")}
           </button>
         </div>
       )}
@@ -259,7 +267,7 @@ export default function Credentials() {
       <Modal
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        title="Add Credential"
+        title={t("pages.credentials.addCredential")}
         dismissible={!createCredential.isPending}
       >
         <CredentialForm
@@ -272,7 +280,7 @@ export default function Credentials() {
       <Modal
         open={editId !== null}
         onClose={() => setEditId(null)}
-        title="Edit Credential"
+        title={t("pages.credentials.editCredential2")}
         dismissible={!updateCredential.isPending}
       >
         {editId !== null && editCredential && (
@@ -289,9 +297,9 @@ export default function Credentials() {
         open={deleteCredentialItem !== null}
         onClose={() => setDeleteCredentialItem(null)}
         onConfirm={handleDelete}
-        title="Delete Credential"
-        message="Are you sure you want to delete this credential? This action cannot be undone."
-        confirmLabel="Delete"
+        title={t("pages.credentials.deleteCredential2")}
+        message={t("pages.credentials.areYouSureYouWantToDeleteThis")}
+        confirmLabel={t("pages.credentials.delete")}
         danger
         loading={deleteCredential.isPending}
       />

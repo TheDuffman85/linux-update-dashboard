@@ -1,22 +1,36 @@
 import {
   createContext,
   useContext,
+  useRef,
   useState,
   useCallback,
   type ReactNode,
 } from "react";
 
 export type ToastType = "success" | "danger" | "info";
+export type ToastAction = {
+  label: string;
+  onClick: () => void;
+  variant?: "primary" | "secondary";
+};
 
-interface Toast {
+export type ToastOptions = {
+  actions?: ToastAction[];
+  durationMs?: number | null;
+  onClose?: () => void;
+};
+
+export interface Toast {
   id: string;
   message: string;
   type: ToastType;
+  actions?: ToastAction[];
+  onClose?: () => void;
 }
 
 interface ToastContextType {
   toasts: Toast[];
-  addToast: (message: string, type?: ToastType) => void;
+  addToast: (message: string, type?: ToastType, options?: ToastOptions) => string;
   removeToast: (id: string) => void;
 }
 
@@ -41,19 +55,42 @@ export function createToastId(): string {
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastsRef = useRef<Toast[]>([]);
 
   const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const toast = toastsRef.current.find((t) => t.id === id);
+    const nextToasts = toastsRef.current.filter((t) => t.id !== id);
+    toastsRef.current = nextToasts;
+    setToasts(nextToasts);
+    toast?.onClose?.();
   }, []);
 
   const addToast = useCallback(
-    (message: string, type: ToastType = "info") => {
+    (message: string, type: ToastType = "info", options: ToastOptions = {}) => {
       const id = createToastId();
-      setToasts((prev) => [...prev, { id, message, type }]);
+      const nextToasts = [
+        ...toastsRef.current,
+        {
+          id,
+          message,
+          type,
+          actions: options.actions,
+          onClose: options.onClose,
+        },
+      ];
+      toastsRef.current = nextToasts;
+      setToasts(nextToasts);
 
-      // Auto-dismiss
-      const duration = type === "danger" ? 15000 : 5000;
-      setTimeout(() => removeToast(id), duration);
+      const duration =
+        options.durationMs === undefined
+          ? type === "danger"
+            ? 15000
+            : 5000
+          : options.durationMs;
+      if (duration !== null) {
+        setTimeout(() => removeToast(id), duration);
+      }
+      return id;
     },
     [removeToast]
   );

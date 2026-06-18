@@ -28,6 +28,7 @@ import {
   useScripts,
   type ScriptOperation,
 } from "../../lib/scripts";
+import { useI18n } from "../../lib/i18n";
 
 interface SystemFormData {
   name: string;
@@ -58,6 +59,18 @@ const PACKAGE_MANAGER_LABELS: Record<string, string> = {
   snap: "Snap",
 };
 const PACKAGE_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
+const SCRIPT_OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
+  detect: "pages.scripts.operation.detect",
+  check_updates: "pages.scripts.operation.checkUpdates",
+  list_installed_packages: "pages.scripts.operation.listInstalledPackages",
+  repair_issue: "pages.scripts.operation.repairIssue",
+  autoremove: "pages.scripts.operation.autoremove",
+  upgrade_all: "pages.scripts.operation.upgradeAll",
+  full_upgrade_all: "pages.scripts.operation.fullUpgrade",
+  upgrade_selected: "pages.scripts.operation.upgradeSelected",
+  system_info: "pages.scripts.operation.systemInfo",
+  reboot: "pages.scripts.operation.reboot",
+};
 
 function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
@@ -102,6 +115,7 @@ export function SystemForm({
   onCancel: () => void;
   loading?: boolean;
 }) {
+  const { t } = useI18n();
   const testConnection = useTestConnection();
   const revokeHostKey = useRevokeHostKey();
   const createCredential = useCreateCredential();
@@ -396,18 +410,12 @@ export function SystemForm({
     "upgrade_selected",
   ];
   const systemScriptOperations: ScriptOperation[] = ["system_info", "reboot"];
-  const operationLabels: Record<ScriptOperation, string> = {
-    detect: "Detection",
-    check_updates: "Check updates",
-    list_installed_packages: "List installed packages",
-    repair_issue: "Repair issue",
-    autoremove: "Autoremove",
-    upgrade_all: "Upgrade all",
-    full_upgrade_all: "Full upgrade",
-    upgrade_selected: "Upgrade selected",
-    system_info: "System info",
-    reboot: "Reboot",
-  };
+  const operationLabels = Object.fromEntries(
+    Object.entries(SCRIPT_OPERATION_LABEL_KEYS).map(([operation, labelKey]) => [
+      operation,
+      t(labelKey),
+    ]),
+  ) as Record<ScriptOperation, string>;
   const compatibleScripts = (operation: ScriptOperation, pkgManager: string | null) =>
     (scriptsData?.scripts ?? []).filter(
       (script) => script.operation === operation && script.pkgManager === pkgManager,
@@ -533,7 +541,7 @@ export function SystemForm({
     hostKeyVerificationEnabled && (hasPendingHostKeyReview || needsHostKeyApproval);
   const showHostKeyFetchAction =
     hostKeyVerificationEnabled && !hasPendingHostKeyReview && needsHostKeyApproval;
-  const hostKeyFetchActionLabel = "Review key";
+  const hostKeyFetchActionLabel = t("components.systemForm.reviewKey");
   const showRevokeHostKeyAction =
     !!systemId && approvedHostKey !== null && !hasPendingHostKeyReview;
   const pendingTargetChallenge = pendingTrustChallenge?.challenges.find(
@@ -551,20 +559,20 @@ export function SystemForm({
   const footerConnectionTestDisabled =
     !canRunConnectionTest || approvalFlowActive;
   const footerConnectionTestTitle = approvalFlowActive
-    ? "Complete SSH host-key approval above before running a connection test."
+    ? t("components.systemForm.completeSshHostKeyApprovalBeforeConnectionTest")
     : undefined;
 
   const hostKeySummary = approvedHostKey
     ? hasPendingHostKeyReview
       ? ""
       : storedHostKeyNeedsAttention
-        ? "Stored approval no longer matches this host."
+        ? t("components.systemForm.storedApprovalNoLongerMatchesHost")
         : systemId
-          ? "Approved host key stored for this system."
-          : "Approved host key will be saved with this system."
+          ? t("components.systemForm.approvedHostKeyStoredForSystem")
+          : t("components.systemForm.approvedHostKeyWillBeSaved")
     : hasPendingHostKeyReview
       ? ""
-      : "No approved host key stored.";
+      : t("components.systemForm.noApprovedHostKeyStored");
 
   const handleCreateCredential = (data: {
     name: string;
@@ -575,7 +583,7 @@ export function SystemForm({
       onSuccess: (result) => {
         setCredentialId(result.id);
         setShowCreateCredential(false);
-        addToast("Credential created", "success");
+        addToast(t("components.systemForm.credentialCreated"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -585,17 +593,17 @@ export function SystemForm({
     <>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className={labelClass}>Display Name</label>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} required className={inputClass} placeholder="My Server" />
+          <label className={labelClass}>{t("components.systemForm.displayName")}</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} required className={inputClass} placeholder={t("components.systemForm.myServer")} />
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           <div className="col-span-2">
-            <label className={labelClass}>Hostname / IP</label>
+            <label className={labelClass}>{t("components.systemForm.hostnameIp")}</label>
             <input type="text" value={hostname} onChange={(e) => setHostname(e.target.value)} required className={inputClass} placeholder="192.168.1.100" />
           </div>
           <div>
-            <label className={labelClass}>SSH Port</label>
+            <label className={labelClass}>{t("components.systemForm.sshPort")}</label>
             <input
               type="number"
               min={1}
@@ -609,7 +617,7 @@ export function SystemForm({
         </div>
 
         <div>
-          <label className={labelClass}>SSH Credential</label>
+          <label className={labelClass}>{t("components.systemForm.sshCredential")}</label>
           <div className="flex items-center gap-3">
             <select
               value={credentialId || ""}
@@ -619,8 +627,8 @@ export function SystemForm({
             >
               <option value="" disabled>
                 {credentials.length > 0
-                  ? "Select a credential"
-                  : "Create a credential to continue"}
+                  ? t("components.systemForm.selectCredential")
+                  : t("components.systemForm.createCredentialToContinue")}
               </option>
               {credentials.map((credential) => (
                 <option key={credential.id} value={credential.id}>
@@ -633,24 +641,24 @@ export function SystemForm({
               onClick={() => setShowCreateCredential(true)}
               className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
             >
-              New Credential
+              {t("components.systemForm.newCredential")}
             </button>
           </div>
           {credentials.length === 0 && (
             <div className="mt-2 rounded-lg border border-dashed border-border bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
-              No SSH credentials are available yet. Create one here without leaving this dialog.
+              {t("components.systemForm.noSshCredentialsAvailable")}
             </div>
           )}
         </div>
 
         <div>
-          <label className={labelClass}>Proxy Jump System</label>
+          <label className={labelClass}>{t("components.systemForm.proxyJumpSystem")}</label>
           <select
             value={proxyJumpSystemId || ""}
             onChange={(e) => setProxyJumpSystemId(e.target.value ? Number(e.target.value) : null)}
             className={inputClass}
           >
-            <option value="">Direct connection</option>
+            <option value="">{t("components.systemForm.directConnection")}</option>
             {availableSystems.map((system) => (
               <option key={system.id} value={system.id}>
                 {system.name}
@@ -658,15 +666,15 @@ export function SystemForm({
             ))}
           </select>
           <p className="text-xs text-slate-400 mt-1">
-            Uses the selected system as a live SSH jump host chain.
+            {t("components.systemForm.proxyJumpDescription")}
           </p>
         </div>
 
         {showsProxyJumpLoopbackWarning && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-            With Proxy Jump enabled, <span className="font-mono">{hostname || "localhost"}</span> is
-            resolved from {selectedProxyJumpSystem ? ` ${selectedProxyJumpSystem.name}` : " the jump host"}.
-            Use a host or IP that the jump host can reach instead of loopback.
+            {t("components.systemForm.proxyJumpLoopbackPrefix")} <span className="font-mono">{hostname || "localhost"}</span> {t("components.systemForm.proxyJumpLoopbackMiddle")}
+            {selectedProxyJumpSystem ? ` ${selectedProxyJumpSystem.name}` : ` ${t("components.systemForm.theJumpHost")}`}.
+            {t("components.systemForm.proxyJumpLoopbackSuffix")}
           </div>
         )}
 
@@ -679,17 +687,17 @@ export function SystemForm({
           />
           <span className="min-w-0">
             <span className="block text-slate-700 dark:text-slate-200">
-              Verify SSH host key
+              {t("components.systemForm.verifySshHostKey")}
             </span>
             <span className="block text-xs text-slate-400 mt-0.5">
-              Enabled by default for new systems. Disabling this weakens SSH host-key verification for this system only.
+              {t("components.systemForm.verifySshHostKeyDescription")}
             </span>
           </span>
         </label>
 
         {!hostKeyVerificationEnabled && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-            Host-key verification is disabled for this system. Connections to this host will not verify the SSH server identity.
+            {t("components.systemForm.hostKeyVerificationDisabledWarning")}
           </div>
         )}
 
@@ -698,7 +706,7 @@ export function SystemForm({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  SSH Host Key Approval
+                  {t("components.systemForm.sshHostKeyApproval")}
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">
                   {hostKeySummary}
@@ -737,7 +745,7 @@ export function SystemForm({
                   disabled={revokeHostKey.isPending}
                   className="px-3 py-1.5 text-xs rounded-lg border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
                 >
-                  {revokeHostKey.isPending ? "Revoking..." : "Revoke"}
+                  {revokeHostKey.isPending ? t("components.systemForm.revoking") : t("components.systemForm.revoke")}
                 </button>
               )}
               {showHostKeyFetchAction && (
@@ -747,36 +755,35 @@ export function SystemForm({
                   disabled={!canRunConnectionTest}
                   className="whitespace-nowrap px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
                 >
-                  {testConnection.isPending ? "Checking..." : hostKeyFetchActionLabel}
+                  {testConnection.isPending ? t("common.checking") : hostKeyFetchActionLabel}
                 </button>
               )}
               </div>
             </div>
             {storedHostKeyNeedsAttention && !hasPendingHostKeyReview && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                The stored SSH host key no longer matches what this host presented during the latest check.
-                Review and re-approve the current host key before running SSH actions again.
+                {t("components.systemForm.storedSshHostKeyNoLongerMatches")}
               </div>
             )}
             {hasPendingHostKeyReview ? (
               <div className="space-y-4">
                 <div className="text-sm text-slate-600 dark:text-slate-300">
                   {pendingReviewShowsMultipleHosts
-                    ? `Review all ${pendingChallengeCount} fetched host keys below. Each one must match what you expect before you approve.`
+                    ? t("components.systemForm.reviewAllFetchedHostKeys", { count: pendingChallengeCount })
                     : fetchedHostKeyDiffersFromApproved
-                    ? "The host presented a different key than the one currently approved. Approve it only if you expected this change."
-                    : "Review the fetched host key below and approve it only if these details match what you expect for this host."}
+                    ? t("components.systemForm.hostPresentedDifferentKey")
+                    : t("components.systemForm.reviewFetchedHostKey")}
                 </div>
                 {fetchedHostKeyDiffersFromApproved && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                    <div className="font-medium">The approved host key does not match the current host key.</div>
+                    <div className="font-medium">{t("components.systemForm.approvedHostKeyDoesNotMatchCurrent")}</div>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <div>
-                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">Approved fingerprint</div>
+                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">{t("components.systemForm.approvedFingerprint")}</div>
                         <div className="mt-1 font-mono text-xs break-all">{approvedHostKeyFingerprint}</div>
                       </div>
                       <div>
-                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">Current fingerprint</div>
+                        <div className="text-[11px] font-medium uppercase tracking-wide opacity-80">{t("components.systemForm.currentFingerprint")}</div>
                         <div className="mt-1 font-mono text-xs break-all">{pendingTargetFingerprint}</div>
                       </div>
                     </div>
@@ -790,14 +797,14 @@ export function SystemForm({
                           <div className="flex items-center justify-between gap-3">
                             <div>
                               <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-                                {index + 1} of {pendingChallengeCount}
+                                {t("components.systemForm.indexOfCount", { index: index + 1, count: pendingChallengeCount })}
                               </div>
                               <div className="mt-1 font-medium text-slate-800 dark:text-slate-100">
                                 {getChallengeSystemName(challenge.systemId) ?? `${challenge.host}:${challenge.port}`}
                               </div>
                             </div>
                             <Badge variant={challenge.role === "target" ? "info" : "muted"} small>
-                              {challenge.role === "target" ? "Target" : "Jump"}
+                              {challenge.role === "target" ? t("components.systemForm.target") : t("components.systemForm.jump")}
                             </Badge>
                           </div>
                           <div className="mt-1 text-slate-500 dark:text-slate-400">
@@ -807,13 +814,13 @@ export function SystemForm({
                       )}
                       {!pendingReviewShowsMultipleHosts && (
                         <div className="text-sm text-slate-600 dark:text-slate-300">
-                          Reviewing {challenge.role === "target" ? "target" : "jump"} host key
-                          {getChallengeSystemName(challenge.systemId) ? ` for ${getChallengeSystemName(challenge.systemId)}` : ""}
+                          {t("components.systemForm.reviewingRoleHostKey", { role: challenge.role === "target" ? t("components.systemForm.targetLower") : t("components.systemForm.jumpLower") })}
+                          {getChallengeSystemName(challenge.systemId) ? ` ${t("components.systemForm.forName", { name: getChallengeSystemName(challenge.systemId) })}` : ""}
                           <span className="text-slate-500 dark:text-slate-400"> ({challenge.host}:{challenge.port})</span>
                         </div>
                       )}
                       <div className="mt-3 text-xs text-slate-500 dark:text-slate-400 break-all">
-                        Fingerprint: <span className="font-mono">{challenge.fingerprintSha256}</span>
+                        {t("components.systemForm.fingerprint")}: <span className="font-mono">{challenge.fingerprintSha256}</span>
                       </div>
                       <pre className="mt-3 text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
                         {`${challenge.algorithm} ${challenge.rawKey}`}
@@ -828,7 +835,7 @@ export function SystemForm({
                     disabled={testConnection.isPending}
                     className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                   >
-                    Discard
+                    {t("components.systemForm.discard")}
                   </button>
                   <button
                     type="button"
@@ -841,14 +848,14 @@ export function SystemForm({
                     disabled={testConnection.isPending}
                     className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
                   >
-                    {testConnection.isPending ? <span className="spinner spinner-sm" /> : "Approve"}
+                    {testConnection.isPending ? <span className="spinner spinner-sm" /> : t("components.systemForm.approve")}
                   </button>
                 </div>
               </div>
             ) : approvedHostKey ? (
               <>
                 <div className="text-xs text-slate-500 dark:text-slate-400 break-all">
-                  Fingerprint: <span className="font-mono">{approvedHostKeyFingerprint}</span>
+                  {t("components.systemForm.fingerprint")}: <span className="font-mono">{approvedHostKeyFingerprint}</span>
                 </div>
                 <pre className="text-xs font-mono bg-slate-900 text-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
                   {approvedHostKey}
@@ -857,12 +864,12 @@ export function SystemForm({
             ) : (
               <div className="space-y-3">
                 <div className="text-xs text-slate-500 dark:text-slate-400 break-all">
-                  Approved fingerprint: <span className="font-mono">Not approved yet</span>
+                  {t("components.systemForm.approvedFingerprint")}: <span className="font-mono">{t("components.systemForm.notApprovedYet")}</span>
                 </div>
                 <div className="rounded-lg bg-slate-900 p-3 text-xs text-slate-400">
-                  <div className="font-mono">No approved SSH host key stored.</div>
+                  <div className="font-mono">{t("components.systemForm.noApprovedSshHostKeyStored")}</div>
                   <div className="mt-2">
-                    Fetch the current host key to review and approve it here. Test Connection becomes available after host-key approval is complete.
+                    {t("components.systemForm.fetchCurrentHostKeyDescription")}
                   </div>
                 </div>
               </div>
@@ -871,15 +878,15 @@ export function SystemForm({
         )}
 
         <div>
-          <label className={labelClass}>Sudo Password (optional)</label>
+          <label className={labelClass}>{t("components.systemForm.sudoPasswordOptional")}</label>
           <input
             type="password"
             value={sudoPassword}
             onChange={(e) => setSudoPassword(e.target.value)}
             className={inputClass}
-            placeholder={sourceSystemId ? "(from source system)" : initial ? "(unchanged — defaults to SSH password)" : "Defaults to SSH password"}
+            placeholder={sourceSystemId ? t("components.systemForm.fromSourceSystem") : initial ? t("components.systemForm.unchangedDefaultsToSshPassword") : t("components.systemForm.defaultsToSshPassword")}
           />
-          <p className="text-xs text-slate-400 mt-1">Only needed if the sudo password differs from the SSH credential password</p>
+          <p className="text-xs text-slate-400 mt-1">{t("components.systemForm.sudoPasswordHelp")}</p>
         </div>
 
         <label className="flex items-start gap-3 text-sm cursor-pointer">
@@ -891,10 +898,10 @@ export function SystemForm({
           />
           <span className="min-w-0">
             <span className="block text-slate-700 dark:text-slate-200">
-              Hide from Dashboard
+              {t("components.systemForm.hideFromDashboard")}
             </span>
             <span className="block text-xs text-slate-400 mt-0.5">
-              Keeps this system available in Systems, but hides it from the dashboard, notifications, and Upgrade All.
+              {t("components.systemForm.hideFromDashboardDescription")}
             </span>
           </span>
         </label>
@@ -959,10 +966,10 @@ export function SystemForm({
                         />
                         <span className="min-w-0">
                           <span className="block text-slate-700 dark:text-slate-200">
-                            Auto-hide kept-back packages
+                            {t("components.systemForm.autoHideKeptBackPackages")}
                           </span>
                           <span className="block text-xs text-slate-400 mt-0.5">
-                            Automatically move kept-back APT updates into the hidden-updates list after refreshes.
+                            {t("components.systemForm.autoHideKeptBackPackagesDescription")}
                           </span>
                         </span>
                       </label>
@@ -985,10 +992,10 @@ export function SystemForm({
                         />
                         <span className="min-w-0">
                           <span className="block text-slate-700 dark:text-slate-200">
-                            Refresh metadata during checks
+                            {t("components.systemForm.refreshMetadataDuringChecks")}
                           </span>
                           <span className="block text-xs text-slate-400 mt-0.5">
-                            Uses `dnf check-update --refresh` to force a metadata refresh during update checks.
+                            {t("components.systemForm.refreshMetadataDuringChecksDescription")}
                           </span>
                         </span>
                       </label>
@@ -1098,10 +1105,10 @@ export function SystemForm({
                       />
                       <span className="min-w-0">
                         <span className="block text-slate-700 dark:text-slate-200">
-                          Refresh package databases during checks
+                          {t("components.systemForm.refreshPackageDatabasesDuringChecks")}
                         </span>
                         <span className="block text-xs text-slate-400 mt-0.5">
-                          Disabling this skips the `pacman -Sy` refresh step and uses locally cached sync data only.
+                          {t("components.systemForm.refreshPackageDatabasesDuringChecksDescription")}
                         </span>
                       </span>
                     </label>
@@ -1121,10 +1128,10 @@ export function SystemForm({
                       />
                       <span className="min-w-0">
                         <span className="block text-slate-700 dark:text-slate-200">
-                          Refresh package indexes during checks
+                          {t("components.systemForm.refreshPackageIndexesDuringChecks")}
                         </span>
                         <span className="block text-xs text-slate-400 mt-0.5">
-                          Disabling this skips `apk update` during checks and only lists updates from the current local index state.
+                          {t("components.systemForm.refreshPackageIndexesDuringChecksDescription")}
                         </span>
                       </span>
                     </label>
@@ -1144,10 +1151,10 @@ export function SystemForm({
                       />
                       <span className="min-w-0">
                         <span className="block text-slate-700 dark:text-slate-200">
-                          Refresh appstream data during checks
+                          {t("components.systemForm.refreshAppstreamDataDuringChecks")}
                         </span>
                         <span className="block text-xs text-slate-400 mt-0.5">
-                          Disabling this skips the appstream refresh step and only checks for updates with current local metadata.
+                          {t("components.systemForm.refreshAppstreamDataDuringChecksDescription")}
                         </span>
                       </span>
                     </label>
@@ -1221,7 +1228,7 @@ export function SystemForm({
               <div id="system-script-overrides" className="space-y-4">
                 <div className="rounded-lg border border-border p-3 space-y-3">
                   <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                    System Operations
+                    {t("components.systemForm.systemOperations")}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {systemScriptOperations.map((operation) => {
@@ -1235,10 +1242,10 @@ export function SystemForm({
                             onChange={(e) => setScriptOverride(operation, null, e.target.value)}
                             className={inputClass}
                           >
-                            <option value="">Standard</option>
+                            <option value="">{t("common.standard")}</option>
                             {options.map((script) => (
                               <option key={script.id} value={script.id}>
-                                {script.name}{script.readonly ? " (built-in)" : ""}
+                                {script.name}{script.readonly ? ` (${t("pages.scripts.builtIn2")})` : ""}
                               </option>
                             ))}
                           </select>
@@ -1266,10 +1273,10 @@ export function SystemForm({
                               onChange={(e) => setScriptOverride(operation, manager, e.target.value)}
                               className={inputClass}
                             >
-                              <option value="">Standard</option>
+                              <option value="">{t("common.standard")}</option>
                               {options.map((script) => (
                                 <option key={script.id} value={script.id}>
-                                  {script.name}{script.readonly ? " (built-in)" : ""}
+                                  {script.name}{script.readonly ? ` (${t("pages.scripts.builtIn2")})` : ""}
                                 </option>
                               ))}
                             </select>
@@ -1307,11 +1314,11 @@ export function SystemForm({
               {testConnection.isPending ? (
                 <span className="spinner spinner-sm" />
               ) : (
-                "Test Connection"
+                t("components.systemForm.testConnection")
               )}
             </button>
             <p className="mt-1 text-xs text-slate-400">
-              Tests the connection and detects available package managers.
+              {t("components.systemForm.testConnectionDescription")}
             </p>
           </div>
 
@@ -1328,7 +1335,7 @@ export function SystemForm({
               disabled={loading || credentialId <= 0}
               className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
             >
-              {loading ? <span className="spinner spinner-sm" /> : "Save"}
+              {loading ? <span className="spinner spinner-sm" /> : t("common.save")}
             </button>
           </div>
         </div>
@@ -1337,7 +1344,7 @@ export function SystemForm({
       <Modal
         open={showCreateCredential}
         onClose={() => setShowCreateCredential(false)}
-        title="Add Credential"
+        title={t("pages.credentials.addCredential")}
         dismissible={!createCredential.isPending}
       >
         <CredentialForm
@@ -1354,9 +1361,9 @@ export function SystemForm({
           setShowUnapprovedSaveWarning(false);
           submitForm();
         }}
-        title="Save Without Host Key Approval"
-        message="SSH host-key verification is enabled, but no host key has been approved yet. You can save now, but SSH actions will require host-key approval later from this dialog."
-        confirmLabel="Save Anyway"
+        title={t("components.systemForm.saveWithoutHostKeyApproval")}
+        message={t("components.systemForm.saveWithoutHostKeyApprovalMessage")}
+        confirmLabel={t("components.systemForm.saveAnyway")}
       />
     </>
   );

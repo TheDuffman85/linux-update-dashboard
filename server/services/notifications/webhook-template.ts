@@ -1,6 +1,7 @@
 import Mustache from "mustache";
 import type { NotificationEventData } from "./types";
 import { decorateNotificationTitle, formatUpdateLine } from "./presentation";
+import { getServerTranslator } from "../i18n";
 
 const ALLOWED_TAG_RE = /^event(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*$/;
 
@@ -33,15 +34,16 @@ function jsonStringify(value: unknown): string {
 }
 
 export function buildTemplateView(event: NotificationEventData) {
+  const t = getServerTranslator();
   const decoratedTitle = decorateNotificationTitle({
     title: event.title,
     tags: event.tags,
   });
   const updatesText = event.updates
-    .map((result) => formatUpdateLine(result))
+    .map((result) => formatUpdateLine(result, t))
     .join("\n");
   const unreachableText = event.unreachable
-    .map((result) => `${result.systemName}: unreachable`)
+    .map((result) => t("server.notifications.line.unreachable", { name: result.systemName }))
     .join("\n");
   const appUpdateText = event.appUpdate
     ? [

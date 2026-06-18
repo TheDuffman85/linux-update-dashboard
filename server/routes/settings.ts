@@ -95,12 +95,19 @@ settingsRouter.put("/", async (c) => {
         ? encryptor.encrypt(strValue)
         : strValue;
 
-    db.update(settings)
-      .set({
+    db.insert(settings)
+      .values({
+        key,
         value: finalValue,
         updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
       })
-      .where(eq(settings.key, key))
+      .onConflictDoUpdate({
+        target: settings.key,
+        set: {
+          value: finalValue,
+          updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+        },
+      })
       .run();
   }
 

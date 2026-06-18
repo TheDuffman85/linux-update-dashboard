@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { PenguinLogo } from "../components/PenguinLogo";
 import { apiFetch } from "../lib/client";
+import { useI18n } from "../lib/i18n";
 
 function base64urlToBuffer(base64url: string): ArrayBuffer {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
@@ -19,6 +20,7 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
 
 export default function Login() {
   const { login, oidcEnabled, passwordLoginDisabled, passkeysEnabled, refresh } = useAuth();
+  const { t } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
@@ -32,7 +34,7 @@ export default function Login() {
     try {
       await login(username, password);
     } catch (err: unknown) {
-      setError((err as Error).message || "Login failed");
+      setError((err as Error).message || t("pages.login.loginFailed"));
     } finally {
       setLoading(false);
     }
@@ -43,7 +45,7 @@ export default function Login() {
     setLoading(true);
     try {
       if (!window.isSecureContext || !navigator.credentials) {
-        throw new Error("Passkeys require a secure context (HTTPS or localhost)");
+        throw new Error(t("pages.login.passkeysRequireASecureContextOrLocalhost"));
       }
       const options = await apiFetch<Record<string, unknown>>("/auth/webauthn/login/options", {
         method: "POST",
@@ -64,7 +66,7 @@ export default function Login() {
       })) as PublicKeyCredential;
 
       if (!credential) {
-        setError("No credential returned");
+        setError(t("pages.login.noCredentialReturned"));
         return;
       }
 
@@ -88,7 +90,7 @@ export default function Login() {
 
       await refresh();
     } catch (err: unknown) {
-      setError((err as Error).message || "Passkey authentication failed");
+      setError((err as Error).message || t("pages.login.passkeyAuthenticationFailed"));
     } finally {
       setLoading(false);
     }
@@ -101,9 +103,9 @@ export default function Login() {
           <div className="flex justify-center">
             <PenguinLogo size={48} />
           </div>
-          <h1 className="mt-3 text-xl font-semibold">Welcome back</h1>
+          <h1 className="mt-3 text-xl font-semibold">{t("pages.login.welcomeBack")}</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Sign in to your dashboard
+            {t("pages.login.signInToYourDashboard")}
           </p>
         </div>
 
@@ -117,7 +119,7 @@ export default function Login() {
           <form onSubmit={handlePasswordLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-                Username
+                {t("pages.login.username")}
               </label>
               <input
                 type="text"
@@ -129,7 +131,7 @@ export default function Login() {
             </div>
             <div>
               <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-                Password
+                {t("pages.login.password")}
               </label>
               <input
                 type="password"
@@ -144,7 +146,7 @@ export default function Login() {
               disabled={loading}
               className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
-              {loading ? <span className="spinner spinner-sm" /> : "Sign In"}
+              {loading ? <span className="spinner spinner-sm" /> : t("pages.login.signIn")}
             </button>
           </form>
         )}
@@ -157,7 +159,7 @@ export default function Login() {
                 disabled={loading}
                 className="w-full py-2 border border-border rounded-lg text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50"
               >
-                Sign In with Passkey
+                {t("pages.login.signInWithPasskey")}
               </button>
             )}
             {oidcEnabled && (
@@ -165,7 +167,7 @@ export default function Login() {
                 href="/api/auth/oidc/login"
                 className="block w-full py-2 text-center border border-border rounded-lg text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
               >
-                Continue with SSO
+                {t("pages.login.continueWithSso")}
               </a>
             )}
           </div>

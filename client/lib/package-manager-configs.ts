@@ -200,14 +200,15 @@ export function normalizePackageManagerConfigs(
 export function getUpgradeBehaviorNotes(
   managers: string[],
   configs: PackageManagerConfigs | null | undefined,
+  t?: (key: string) => string,
 ): string[] {
   const uniqueManagers = Array.from(new Set(managers));
   return uniqueManagers.flatMap((manager) => {
     if (manager === "apt" && configs?.apt?.defaultUpgradeMode === "full-upgrade") {
-      return ["APT upgrade uses full-upgrade on this system."];
+      return [t ? t("pages.systemDetail.aptUpgradeUsesFullUpgrade") : "APT upgrade uses full-upgrade on this system."];
     }
     if (manager === "dnf" && configs?.dnf?.defaultUpgradeMode === "distro-sync") {
-      return ["DNF upgrade uses distro-sync on this system."];
+      return [t ? t("pages.systemDetail.dnfUpgradeUsesDistroSync") : "DNF upgrade uses distro-sync on this system."];
     }
     return [];
   });

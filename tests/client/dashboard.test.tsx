@@ -172,7 +172,7 @@ describe("Dashboard", () => {
     expect(html).not.toContain("Upgrade All (7)");
   });
 
-  test("shows OS warnings as yellow and labels Debian LTS warnings without dates", () => {
+  test("shows OS warnings as amber and labels Debian LTS warnings without dates", () => {
     mockUseDashboardStats.mockReturnValue({
       data: {
         total: 1,
@@ -225,7 +225,7 @@ describe("Dashboard", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("text-yellow-500 dark:text-yellow-400");
+    expect(html).toContain("text-amber-600 dark:text-amber-500");
     expect(html).toContain("OS Warnings");
     expect(html).toContain("LTS");
     expect(html).not.toContain("In LTS");

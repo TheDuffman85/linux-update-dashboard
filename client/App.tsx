@@ -1,6 +1,14 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router";
 import { useAuth } from "./context/AuthContext";
+import { useToast } from "./context/ToastContext";
+import {
+  BROWSER_LANGUAGE_SETTING,
+  LANGUAGE_SETTING_KEY,
+  getLanguageLabel,
+  useI18n,
+} from "./lib/i18n";
+import { useUpdateSettings } from "./lib/settings";
 
 const Login = lazy(() => import("./pages/Login"));
 const Setup = lazy(() => import("./pages/Setup"));
@@ -26,9 +34,10 @@ function PageLoader({ message }: { message?: string }) {
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, setupRequired, backendUnavailable } = useAuth();
+  const { t } = useI18n();
 
   if (loading) {
-    return <PageLoader message={backendUnavailable ? "Reconnecting to backend..." : undefined} />;
+    return <PageLoader message={backendUnavailable ? t("app.reconnectingToBackend") : undefined} />;
   }
 
   if (setupRequired) return <Navigate to="/setup" replace />;
@@ -37,15 +46,96 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+const LANGUAGE_PROMPT_STORAGE_KEY = "ludash.languagePermanentPromptDismissed";
+
+function hasDismissedLanguagePrompt(): boolean {
+  try {
+    return localStorage.getItem(LANGUAGE_PROMPT_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function dismissLanguagePrompt(): void {
+  try {
+    localStorage.setItem(LANGUAGE_PROMPT_STORAGE_KEY, "true");
+  } catch {
+    // Ignore storage failures; the prompt is best-effort.
+  }
+}
+
+function PermanentLanguagePrompt() {
+  const { user, loading, setupRequired } = useAuth();
+  const { preference, browserLanguage, t } = useI18n();
+  const { addToast } = useToast();
+  const updateSettings = useUpdateSettings();
+
+  useEffect(() => {
+    if (
+      loading ||
+      setupRequired ||
+      !user ||
+      preference !== BROWSER_LANGUAGE_SETTING ||
+      browserLanguage === "en" ||
+      hasDismissedLanguagePrompt()
+    ) {
+      return;
+    }
+
+    dismissLanguagePrompt();
+    const languageLabel = getLanguageLabel(browserLanguage);
+    addToast(
+      t("app.languagePrompt.message", { language: languageLabel }),
+      "info",
+      {
+        durationMs: null,
+        actions: [
+          {
+            label: t("app.languagePrompt.useLanguage", { language: languageLabel }),
+            variant: "primary",
+            onClick: () => {
+              updateSettings.mutate(
+                { [LANGUAGE_SETTING_KEY]: browserLanguage },
+                {
+                  onSuccess: () => addToast(t("app.languagePrompt.saved"), "success"),
+                  onError: (err) => addToast(err.message, "danger"),
+                },
+              );
+            },
+          },
+          {
+            label: t("app.languagePrompt.noThanks"),
+            onClick: dismissLanguagePrompt,
+          },
+        ],
+        onClose: dismissLanguagePrompt,
+      },
+    );
+  }, [
+    addToast,
+    browserLanguage,
+    loading,
+    preference,
+    setupRequired,
+    t,
+    updateSettings,
+    user,
+  ]);
+
+  return null;
+}
+
 export default function App() {
   const { loading, setupRequired, user, backendUnavailable } = useAuth();
+  const { t } = useI18n();
 
   if (loading) {
-    return <PageLoader message={backendUnavailable ? "Reconnecting to backend..." : undefined} />;
+    return <PageLoader message={backendUnavailable ? t("app.reconnectingToBackend") : undefined} />;
   }
 
   return (
     <Suspense fallback={<PageLoader />}>
+      <PermanentLanguagePrompt />
       <Routes>
         <Route
           path="/login"

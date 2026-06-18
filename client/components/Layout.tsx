@@ -3,6 +3,7 @@ import { Sidebar } from "./Sidebar";
 import { Toast } from "./Toast";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
+import { useI18n } from "../lib/i18n";
 
 type LayoutWidth = "default" | "wide" | "full";
 
@@ -20,6 +21,7 @@ export function Layout({ children, title, actions, contentWidth = "wide" }: {
 }) {
   const { toasts, removeToast } = useToast();
   const { upgradingCount } = useUpgrade();
+  const { t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -45,8 +47,13 @@ export function Layout({ children, title, actions, contentWidth = "wide" }: {
             {upgradingCount > 0 && (
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs font-medium pulse-upgrade shrink-0">
                 <span className="spinner spinner-sm !w-3 !h-3 !border-blue-600 dark:!border-blue-400 !border-t-transparent" />
-                <span className="hidden sm:inline">Upgrading {upgradingCount} system{upgradingCount !== 1 ? "s" : ""}...</span>
-                <span className="sm:hidden">Upgrading...</span>
+                <span className="hidden sm:inline">
+                  {t("components.layout.upgradingCountSystemlabel", {
+                    count: upgradingCount,
+                    systemLabel: upgradingCount === 1 ? t("components.layout.system") : t("components.layout.systems"),
+                  })}
+                </span>
+                <span className="sm:hidden">{t("components.layout.upgrading")}</span>
               </div>
             )}
             {actions && <div className="flex items-center gap-2 flex-wrap ml-auto shrink-0">{actions}</div>}
@@ -62,6 +69,7 @@ export function Layout({ children, title, actions, contentWidth = "wide" }: {
             key={t.id}
             message={t.message}
             type={t.type}
+            actions={t.actions}
             onClose={() => removeToast(t.id)}
           />
         ))}

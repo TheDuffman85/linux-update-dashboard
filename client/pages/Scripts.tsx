@@ -34,6 +34,7 @@ import {
   getLegacyCustomConfigKey,
   type CustomPackageManagerConfigEntry,
 } from "../lib/package-manager-configs";
+import { useI18n } from "../lib/i18n";
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -46,6 +47,18 @@ const OPERATION_LABELS: Record<ScriptOperation, string> = {
   upgrade_selected: "Upgrade selected",
   system_info: "System info",
   reboot: "Reboot",
+};
+const OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
+  detect: "pages.scripts.operation.detect",
+  check_updates: "pages.scripts.operation.checkUpdates",
+  list_installed_packages: "pages.scripts.operation.listInstalledPackages",
+  repair_issue: "pages.scripts.operation.repairIssue",
+  autoremove: "pages.scripts.operation.autoremove",
+  upgrade_all: "pages.scripts.operation.upgradeAll",
+  full_upgrade_all: "pages.scripts.operation.fullUpgrade",
+  upgrade_selected: "pages.scripts.operation.upgradeSelected",
+  system_info: "pages.scripts.operation.systemInfo",
+  reboot: "pages.scripts.operation.reboot",
 };
 const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
   {
@@ -190,29 +203,32 @@ const BUILTIN_PACKAGE_MANAGER_LABELS: Record<string, string> = {
   flatpak: "Flatpak",
   snap: "Snap",
 };
-const PACKAGE_MANAGER_CONFIG_KEYS: Record<string, Array<{ key: string; description: string }>> = {
+const PACKAGE_MANAGER_CONFIG_KEYS: Record<
+  string,
+  Array<{ key: string; descriptionKey: string; description: string }>
+> = {
   apt: [
-    { key: "defaultUpgradeMode", description: "upgrade or full-upgrade" },
-    { key: "autoHideKeptBackUpdates", description: "true when kept-back updates are auto-hidden" },
+    { key: "defaultUpgradeMode", descriptionKey: "pages.scripts.configDescription.defaultUpgradeModeApt", description: "upgrade or full-upgrade" },
+    { key: "autoHideKeptBackUpdates", descriptionKey: "pages.scripts.configDescription.autoHideKeptBackUpdates", description: "true when kept-back updates are auto-hidden" },
   ],
   dnf: [
-    { key: "defaultUpgradeMode", description: "upgrade or distro-sync" },
-    { key: "refreshMetadataOnCheck", description: "true when checks refresh metadata" },
-    { key: "autoAcceptNewSigningKeysOnCheck", description: "true when checks may import new signing keys" },
-    { key: "autoAcceptEulaOnUpgrade", description: "true when upgrades prepend ACCEPT_EULA=Y" },
+    { key: "defaultUpgradeMode", descriptionKey: "pages.scripts.configDescription.defaultUpgradeModeDnf", description: "upgrade or distro-sync" },
+    { key: "refreshMetadataOnCheck", descriptionKey: "pages.scripts.configDescription.refreshMetadataOnCheck", description: "true when checks refresh metadata" },
+    { key: "autoAcceptNewSigningKeysOnCheck", descriptionKey: "pages.scripts.configDescription.autoAcceptNewSigningKeysOnCheck", description: "true when checks may import new signing keys" },
+    { key: "autoAcceptEulaOnUpgrade", descriptionKey: "pages.scripts.configDescription.autoAcceptEulaOnUpgrade", description: "true when upgrades prepend ACCEPT_EULA=Y" },
   ],
   yum: [
-    { key: "autoAcceptNewSigningKeysOnCheck", description: "true when checks may import new signing keys" },
-    { key: "autoAcceptEulaOnUpgrade", description: "true when upgrades prepend ACCEPT_EULA=Y" },
+    { key: "autoAcceptNewSigningKeysOnCheck", descriptionKey: "pages.scripts.configDescription.autoAcceptNewSigningKeysOnCheck", description: "true when checks may import new signing keys" },
+    { key: "autoAcceptEulaOnUpgrade", descriptionKey: "pages.scripts.configDescription.autoAcceptEulaOnUpgrade", description: "true when upgrades prepend ACCEPT_EULA=Y" },
   ],
   pacman: [
-    { key: "refreshDatabasesOnCheck", description: "true unless database refresh is disabled" },
+    { key: "refreshDatabasesOnCheck", descriptionKey: "pages.scripts.configDescription.refreshDatabasesOnCheck", description: "true unless database refresh is disabled" },
   ],
   apk: [
-    { key: "refreshIndexesOnCheck", description: "true unless index refresh is disabled" },
+    { key: "refreshIndexesOnCheck", descriptionKey: "pages.scripts.configDescription.refreshIndexesOnCheck", description: "true unless index refresh is disabled" },
   ],
   flatpak: [
-    { key: "refreshAppstreamOnCheck", description: "true unless appstream refresh is disabled" },
+    { key: "refreshAppstreamOnCheck", descriptionKey: "pages.scripts.configDescription.refreshAppstreamOnCheck", description: "true unless appstream refresh is disabled" },
   ],
 };
 const BUILTIN_PACKAGE_MANAGER_CONFIG_KEY_NAMES = new Map(
@@ -239,10 +255,32 @@ const SYSTEM_INFO_FIELDS = [
   "installedKernels",
 ] as const;
 
+const STEP_BADGE_LABEL_KEYS: Record<string, string> = {
+  "detection output": "pages.scripts.stepBadge.detectionOutput",
+  "inventory parser input": "pages.scripts.stepBadge.inventoryParserInput",
+  "not used": "pages.scripts.stepBadge.notUsed",
+  "parsed output": "pages.scripts.stepBadge.parsedOutput",
+  "parser input": "pages.scripts.stepBadge.parserInput",
+  "reboot command": "pages.scripts.stepBadge.rebootCommand",
+  "reboot guard": "pages.scripts.stepBadge.rebootGuard",
+  "streamed only": "pages.scripts.stepBadge.streamedOnly",
+  "system fields": "pages.scripts.stepBadge.systemFields",
+};
+
+const PLACEHOLDER_DESCRIPTION_KEYS: Record<string, string> = {
+  "{{manager}}": "pages.scripts.placeholder.manager",
+  "{{package}}": "pages.scripts.placeholder.package",
+  "{{packages}}": "pages.scripts.placeholder.packages",
+  "{{quotedPackage}}": "pages.scripts.placeholder.quotedPackage",
+  "{{quotedPackages}}": "pages.scripts.placeholder.quotedPackages",
+  "{{sudo:COMMAND}}": "pages.scripts.placeholder.sudoCommand",
+};
+
 const inputClass =
   "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
 const labelClass = "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
 const PACKAGE_MANAGERS_PANEL_STORAGE_KEY = "scripts.packageManagersPanelOpen";
+type Translate = ReturnType<typeof useI18n>["t"];
 
 function getExamplesRepositoryUrl(): string | null {
   if (typeof __APP_REPO_URL__ !== "string" || !__APP_REPO_URL__) return null;
@@ -265,7 +303,7 @@ type ManagedPackageManager = PackageManagerDraft & {
   operations: ScriptOperation[];
 };
 
-function emptyScript(): ScriptDefinition {
+function emptyScript(t?: Translate): ScriptDefinition {
   return {
     id: "",
     readonly: false,
@@ -275,7 +313,7 @@ function emptyScript(): ScriptDefinition {
     operation: "detect",
     pkgManager: "apt",
     isDefault: false,
-    steps: [{ label: "Run command", command: "" }],
+    steps: [{ label: t?.("pages.scripts.defaultStepLabel") ?? "Run command", command: "" }],
     parserConfig: null,
     systemInfoConfig: null,
     sourceScriptId: null,
@@ -317,28 +355,29 @@ function normalizeConfigEntriesForManager(
 function validateConfigEntries(
   entries: CustomPackageManagerConfigEntry[],
   currentManagerName: string | null,
+  t: Translate,
 ): string | null {
   const seen = new Set<string>();
   const keyPattern = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
   for (const entry of entries) {
     if (!keyPattern.test(entry.key)) {
-      return "Custom config keys must start with a letter and use only letters, numbers, underscores, or dashes.";
+      return t("pages.scripts.error.configKeyPattern");
     }
     if (currentManagerName && BUILTIN_PACKAGE_MANAGER_CONFIG_KEY_NAMES.get(currentManagerName)?.includes(entry.key)) {
-      return `${entry.key} collides with a built-in ${currentManagerName} config key.`;
+      return t("pages.scripts.error.configKeyCollides", { key: entry.key, manager: currentManagerName });
     }
-    if (seen.has(entry.key)) return `Duplicate custom config key: ${entry.key}`;
+    if (seen.has(entry.key)) return t("pages.scripts.error.duplicateConfigKey", { key: entry.key });
     seen.add(entry.key);
   }
   return null;
 }
 
-function copyScriptDraft(script: ScriptDefinition): ScriptDefinition {
+function copyScriptDraft(script: ScriptDefinition, t: Translate): ScriptDefinition {
   return {
     ...script,
     id: "",
     readonly: false,
-    name: `${script.name} (Copy)`,
+    name: t("pages.scripts.nameCopy", { name: script.name }),
     steps: script.steps.map((step) => ({ ...step })),
     parserConfig: script.parserConfig ? { ...script.parserConfig } : null,
     systemInfoConfig: script.systemInfoConfig
@@ -367,21 +406,26 @@ function scriptUsesSudo(script: ScriptDefinition): boolean {
   return script.steps.some((step) => commandUsesSudo(step.command));
 }
 
-function formatUsageOperation(usage: ScriptUsage): string {
+function formatUsageOperation(usage: ScriptUsage, t: Translate): string {
   const [manager, operation] = usage.operationKey.split("/");
-  const operationLabel = OPERATION_LABELS[(operation || usage.operationKey) as ScriptOperation] ?? usage.operationKey;
+  const operationKey = OPERATION_LABEL_KEYS[(operation || usage.operationKey) as ScriptOperation];
+  const operationLabel = operationKey
+    ? t(operationKey)
+    : OPERATION_LABELS[(operation || usage.operationKey) as ScriptOperation] ?? usage.operationKey;
   return manager && manager !== "system" ? `${manager} · ${operationLabel}` : operationLabel;
 }
 
-function formatUsageSummary(usages: ScriptUsage[]): string {
-  if (usages.length === 0) return "Not assigned to any system";
+function formatUsageSummary(usages: ScriptUsage[], t: Translate): string {
+  if (usages.length === 0) return t("pages.scripts.notAssignedToAnySystem");
   const names = usages.map((usage) => usage.systemName);
   const visible = names.slice(0, 3).join(", ");
-  const extra = names.length > 3 ? ` and ${names.length - 3} more` : "";
-  return `Assigned to ${visible}${extra}`;
+  const extra = names.length > 3 ? t("pages.scripts.andCountMore", { count: names.length - 3 }) : "";
+  return t("pages.scripts.assignedToNames", { names: `${visible}${extra}` });
 }
 
 function UsageDetails({ usages }: { usages: ScriptUsage[] }) {
+  const { t } = useI18n();
+
   return (
     <div className="space-y-2">
       {usages.map((usage) => (
@@ -393,7 +437,7 @@ function UsageDetails({ usages }: { usages: ScriptUsage[] }) {
             {usage.systemName}
           </span>
           <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">
-            {formatUsageOperation(usage)}
+            {formatUsageOperation(usage, t)}
           </span>
         </div>
       ))}
@@ -408,11 +452,14 @@ function UsageBadge({
   usages: ScriptUsage[];
   onOpen: () => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   if (usages.length === 0) return null;
 
-  const label = usages.length === 1 ? "1 system" : `${usages.length} systems`;
-  const summary = formatUsageSummary(usages);
+  const label = usages.length === 1
+    ? t("pages.scripts.oneSystem")
+    : t("pages.scripts.countSystems", { count: usages.length });
+  const summary = formatUsageSummary(usages, t);
 
   return (
     <span
@@ -426,7 +473,7 @@ function UsageBadge({
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         className="inline-flex items-center rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 transition-colors hover:bg-green-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
-        aria-label={`${summary}. Tap to view script assignments.`}
+        aria-label={t("pages.scripts.viewScriptAssignmentsAria", { summary })}
         title={summary}
       >
         {label}
@@ -447,12 +494,12 @@ function joinExitCodes(value: number[] | undefined): string {
   return value?.join(", ") ?? "";
 }
 
-function parseExitCodes(value: string): number[] | undefined {
+function parseExitCodes(value: string, t: Translate): number[] | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   const codes = trimmed.split(",").map((part) => Number.parseInt(part.trim(), 10));
   if (codes.some((code) => !Number.isInteger(code) || code < 0)) {
-    throw new Error("Exit codes must be comma-separated non-negative integers");
+    throw new Error(t("pages.scripts.error.exitCodes"));
   }
   return codes;
 }
@@ -493,7 +540,7 @@ function ShellCodeBlock({
     <CopyableCodeBlock
       text={displayCode}
       className={`script-code max-h-64 overflow-x-auto overflow-y-auto rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 whitespace-pre-wrap break-words ${className}`}
-      successMessage="Copied script command"
+      successMessage="pages.scripts.copiedScriptCommand"
       expandable
     >
       <code dangerouslySetInnerHTML={{ __html: highlighted }} />
@@ -514,17 +561,18 @@ function ShellCommandEditor({
   onBeautify: () => void;
   beautifying?: boolean;
 }) {
+  const { t } = useI18n();
   const highlightRef = useRef<HTMLPreElement | null>(null);
   const highlighted = useMemo(() => highlightShell(value), [value]);
 
   return (
     <div>
       <div className="mb-1 flex items-center justify-between gap-3">
-        <label htmlFor={id} className={`${labelClass} mb-0`}>Command</label>
+        <label htmlFor={id} className={`${labelClass} mb-0`}>{t("pages.scripts.command")}</label>
         <div className="flex items-center gap-2">
           <CopyButton
             text={value}
-            successMessage="Copied command"
+            successMessage="pages.scripts.copiedCommand"
             className="border-border bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-700"
           />
           <button
@@ -532,14 +580,14 @@ function ShellCommandEditor({
             onClick={onBeautify}
             disabled={beautifying || !value.trim()}
             className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-700"
-            title="Beautify command"
+            title={t("pages.scripts.beautifyCommand")}
           >
             {beautifying ? <span className="spinner spinner-sm" /> : (
               <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 20l8.5-8.5m0 0L14 7l3 3-4.5 1.5zm3-14h.01M18 4h.01M20 10h.01M14 20h.01" />
               </svg>
             )}
-            Beautify
+            {t("pages.scripts.beautify")}
           </button>
         </div>
       </div>
@@ -578,6 +626,16 @@ function isGeneratedConfigPlaceholder(placeholder: PlaceholderHelpEntry): boolea
   return /^\{\{config\.[^}]+\}\}$/.test(placeholder.name);
 }
 
+function translateStepBadge(label: string, t: Translate): string {
+  const key = STEP_BADGE_LABEL_KEYS[label];
+  return key ? t(key) : label;
+}
+
+function translatePlaceholderDescription(placeholder: PlaceholderHelpEntry, t: Translate): string {
+  const key = PLACEHOLDER_DESCRIPTION_KEYS[placeholder.name];
+  return key ? t(key) : placeholder.description;
+}
+
 function ScriptReferenceSection({
   title,
   entries,
@@ -591,7 +649,10 @@ function ScriptReferenceSection({
   defaultOpen?: boolean;
   onCopy: (value: string) => void;
 }) {
-  const countLabel = entries.length === 1 ? "1 entry" : `${entries.length} entries`;
+  const { t } = useI18n();
+  const countLabel = entries.length === 1
+    ? t("pages.scripts.oneEntry")
+    : t("pages.scripts.countEntries", { count: entries.length });
   const [open, setOpen] = useState(defaultOpen);
 
   return (
@@ -641,13 +702,13 @@ function ScriptReferenceSection({
                     type="button"
                     onClick={() => onCopy(entry.token)}
                     className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 text-xs text-slate-700 transition-colors hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
-                    title={`Copy ${entry.token}`}
-                    aria-label={`Copy ${entry.token}`}
+                    title={t("pages.scripts.copyValue", { value: entry.token })}
+                    aria-label={t("pages.scripts.copyValue", { value: entry.token })}
                   >
                     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
-                    Copy
+                    {t("pages.scripts.copy")}
                   </button>
                 </div>
               ))}
@@ -683,12 +744,13 @@ function RuntimeBehaviorPanel({
   usesBuiltinParser: boolean;
   showParserConfig: boolean;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const outputDetail = showParserConfig
-    ? `Custom parser output: ${parseStepLabel}.`
+    ? t("pages.scripts.runtime.customParserOutput", { step: parseStepLabel })
     : usesBuiltinParser && profile.operation === "check_updates"
-      ? "Built-in parser chooses the required command output from the completed steps."
-      : profile.outputConsumer;
+      ? t("pages.scripts.runtime.builtinParserOutput")
+      : t(`pages.scripts.runtime.${profile.operation}.outputConsumer`);
 
   return (
     <section className="rounded-lg border border-blue-200 bg-blue-50/70 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
@@ -701,12 +763,12 @@ function RuntimeBehaviorPanel({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-              Runtime behavior
+              {t("pages.scripts.runtime.title")}
             </span>
-            <Badge variant="info" small>{profile.label}</Badge>
+            <Badge variant="info" small>{t(OPERATION_LABEL_KEYS[profile.operation])}</Badge>
           </div>
           <div className="mt-1 text-xs text-blue-700/80 dark:text-blue-200/80">
-            Steps, output, parser, and exit codes
+            {t("pages.scripts.runtime.subtitle")}
           </div>
         </div>
         <svg
@@ -721,36 +783,36 @@ function RuntimeBehaviorPanel({
       </button>
       {open && (
         <div className="border-t border-blue-200 p-3 dark:border-blue-900/50">
-          <p>{profile.purpose}</p>
+          <p>{t(`pages.scripts.runtime.${profile.operation}.purpose`)}</p>
           <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Steps
+                {t("pages.scripts.runtime.steps")}
               </div>
-              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{profile.stepBehavior}</p>
+              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{t(`pages.scripts.runtime.${profile.operation}.stepBehavior`)}</p>
             </div>
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Output
+                {t("pages.scripts.runtime.output")}
               </div>
               <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{outputDetail}</p>
             </div>
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Parser
+                {t("pages.scripts.runtime.parser")}
               </div>
-              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{profile.parserBehavior}</p>
+              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{t(`pages.scripts.runtime.${profile.operation}.parserBehavior`)}</p>
             </div>
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Exit codes
+                {t("pages.scripts.runtime.exitCodes")}
               </div>
-              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{profile.exitCodeBehavior}</p>
+              <p className="mt-1 text-blue-900/80 dark:text-blue-100/80">{t(`pages.scripts.runtime.${profile.operation}.exitCodeBehavior`)}</p>
             </div>
           </div>
           {parseStepOutOfRange && (
             <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-              The saved parser step no longer exists. Choose an existing step before saving this script.
+              {t("pages.scripts.savedParserStepNoLongerExists")}
             </div>
           )}
         </div>
@@ -782,15 +844,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseImportBundle(value: unknown): CustomPackageManagerBundle {
+function parseImportBundle(value: unknown, t: Translate): CustomPackageManagerBundle {
   if (!isRecord(value) || value.format !== "ludash.custom-package-manager.v1") {
-    throw new Error("Unsupported package manager export format");
+    throw new Error(t("pages.scripts.error.unsupportedPackageManagerExportFormat"));
   }
   if (!isRecord(value.packageManager)) {
-    throw new Error("Import file is missing package manager details");
+    throw new Error(t("pages.scripts.error.importMissingPackageManagerDetails"));
   }
   if (!Array.isArray(value.scripts)) {
-    throw new Error("Import file is missing scripts");
+    throw new Error(t("pages.scripts.error.importMissingScripts"));
   }
   return {
     ...(value as unknown as CustomPackageManagerBundle),
@@ -816,12 +878,12 @@ function buildParserConfig(input: {
   keptBackRegex: string;
   successExitCodes: string;
   updatesExitCodes: string;
-}): CustomParserConfig | null {
+}, t: Translate): CustomParserConfig | null {
   const config: CustomParserConfig = {};
   if (input.parseStep.trim()) {
     const parseStep = Number.parseInt(input.parseStep.trim(), 10);
     if (!Number.isInteger(parseStep) || parseStep < 0) {
-      throw new Error("Parse step must be a non-negative number");
+      throw new Error(t("pages.scripts.error.parseStep"));
     }
     config.parseStep = parseStep;
   }
@@ -829,8 +891,8 @@ function buildParserConfig(input: {
   if (input.installedPackageRegex.trim()) config.installedPackageRegex = input.installedPackageRegex.trim();
   if (input.securityRegex.trim()) config.securityRegex = input.securityRegex.trim();
   if (input.keptBackRegex.trim()) config.keptBackRegex = input.keptBackRegex.trim();
-  const successExitCodes = parseExitCodes(input.successExitCodes);
-  const updatesExitCodes = parseExitCodes(input.updatesExitCodes);
+  const successExitCodes = parseExitCodes(input.successExitCodes, t);
+  const updatesExitCodes = parseExitCodes(input.updatesExitCodes, t);
   if (successExitCodes) config.successExitCodes = successExitCodes;
   if (updatesExitCodes) config.updatesExitCodes = updatesExitCodes;
   return Object.keys(config).length ? config : null;
@@ -898,9 +960,14 @@ export function ScriptEditor({
   onCancel: () => void;
   busy?: boolean;
 }) {
+  const { t } = useI18n();
   const { addToast } = useToast();
   const [draft, setDraft] = useState(script);
-  const [steps, setSteps] = useState<ScriptStep[]>(script.steps.length ? script.steps : [{ label: "Run command", command: "" }]);
+  const [steps, setSteps] = useState<ScriptStep[]>(
+    script.steps.length
+      ? script.steps
+      : [{ label: t("pages.scripts.defaultStepLabel"), command: "" }],
+  );
   const [parserConfig, setParserConfig] = useState({
     parseStep: script.parserConfig?.parseStep?.toString() ?? "",
     updateRegex: script.parserConfig?.updateRegex ?? "",
@@ -938,7 +1005,7 @@ export function ScriptEditor({
     ? (PACKAGE_MANAGER_CONFIG_KEYS[selectedPackageManager] ?? []).map((entry) => ({
         id: `config.${entry.key}`,
         token: `{{config.${entry.key}}}`,
-        description: entry.description,
+        description: t(entry.descriptionKey),
       }))
     : [];
   const customConfigKeys = packageManagers
@@ -947,7 +1014,9 @@ export function ScriptEditor({
       id: `config.${entry.key}`,
       token: `{{config.${entry.key}}}`,
       description: entry.description?.trim()
-        || (entry.defaultValue ? `Default: ${entry.defaultValue}` : "Custom config value"),
+        || (entry.defaultValue
+          ? t("pages.scripts.defaultValueInline", { value: entry.defaultValue })
+          : t("pages.scripts.customConfigValue")),
     })) ?? [];
   const configReferenceEntries = [...builtinConfigKeys, ...customConfigKeys];
   const placeholderReferenceEntries = placeholders
@@ -955,7 +1024,7 @@ export function ScriptEditor({
     .map((placeholder) => ({
       id: placeholder.name,
       token: placeholder.name,
-      description: placeholder.description,
+      description: translatePlaceholderDescription(placeholder, t),
     }));
   const showPackageManagerControls = draft.type === "package_manager";
   const showParserConfig =
@@ -978,27 +1047,29 @@ export function ScriptEditor({
     (!Number.isInteger(parsedStepNumber) || parsedStepNumber < 0 || parsedStepNumber >= steps.length);
   const parsedStepLabel = parseStepOutOfRange
     ? Number.isInteger(parsedStepNumber)
-      ? `missing step ${parsedStepNumber + 1}`
-      : "invalid parser step"
-    : steps[parsedStepIndex]?.label || `step ${parsedStepIndex + 1}`;
+      ? t("pages.scripts.missingStep", { step: parsedStepNumber + 1 })
+      : t("pages.scripts.invalidParserStep")
+    : steps[parsedStepIndex]?.label || t("pages.scripts.stepNumber", { step: parsedStepIndex + 1 });
   const parseStepSummary = showParserConfig
     ? parseStepOutOfRange
       ? parsedStepLabel
-      : `Step ${parsedStepIndex + 1}: ${parsedStepLabel}`
+      : t("pages.scripts.stepNumberWithLabel", { step: parsedStepIndex + 1, label: parsedStepLabel })
     : "";
 
   const stepBadge = (index: number): string => {
-    if (draft.operation === "detect") return index === 0 ? "detection output" : "not used";
+    if (draft.operation === "detect") return index === 0 ? t("pages.scripts.stepBadge.detectionOutput") : t("pages.scripts.stepBadge.notUsed");
     if (draft.operation === "check_updates" || draft.operation === "list_installed_packages") {
       if (showParserConfig) {
-        if (parseStepOutOfRange) return "streamed only";
-        return index === parsedStepIndex ? "parsed output" : "streamed only";
+        if (parseStepOutOfRange) return t("pages.scripts.stepBadge.streamedOnly");
+        return index === parsedStepIndex ? t("pages.scripts.stepBadge.parsedOutput") : t("pages.scripts.stepBadge.streamedOnly");
       }
-      return usesBuiltinParser ? "parser input" : operationProfile.defaultStepBadge;
+      return usesBuiltinParser
+        ? t("pages.scripts.stepBadge.parserInput")
+        : translateStepBadge(operationProfile.defaultStepBadge, t);
     }
-    if (draft.operation === "system_info") return "system fields";
-    if (draft.operation === "reboot") return index < steps.length - 1 ? "reboot guard" : "reboot command";
-    return operationProfile.defaultStepBadge;
+    if (draft.operation === "system_info") return t("pages.scripts.stepBadge.systemFields");
+    if (draft.operation === "reboot") return index < steps.length - 1 ? t("pages.scripts.stepBadge.rebootGuard") : t("pages.scripts.stepBadge.rebootCommand");
+    return translateStepBadge(operationProfile.defaultStepBadge, t);
   };
 
   useEffect(() => {
@@ -1053,7 +1124,7 @@ export function ScriptEditor({
     if (singleStepOperation) return;
     setSteps((current) => [
       ...current,
-      { label: `Step ${current.length + 1}`, command: "" },
+      { label: t("pages.scripts.stepNumber", { step: current.length + 1 }), command: "" },
     ]);
   };
 
@@ -1067,10 +1138,10 @@ export function ScriptEditor({
     setBeautifyingStep(index);
     try {
       updateStep(index, { command: await formatShellScript(command) });
-      addToast("Command beautified", "success");
+      addToast(t("pages.scripts.commandBeautified"), "success");
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Invalid shell syntax";
-      addToast(`Could not beautify command: ${detail}`, "danger");
+      const detail = error instanceof Error ? error.message : t("pages.scripts.invalidShellSyntax");
+      addToast(t("pages.scripts.couldNotBeautifyCommand", { detail }), "danger");
     } finally {
       setBeautifyingStep(null);
     }
@@ -1079,9 +1150,9 @@ export function ScriptEditor({
   const copyReference = async (value: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      addToast(`Copied ${value}`, "success");
+      addToast(t("pages.scripts.copiedValue", { value }), "success");
     } catch {
-      addToast("Could not copy to clipboard", "danger");
+      addToast(t("components.copyableCodeBlock.couldNotCopyToClipboard"), "danger");
     }
   };
 
@@ -1092,10 +1163,10 @@ export function ScriptEditor({
         command: step.command.trim(),
       }));
       if (normalizedSteps.some((step) => !step.label || !step.command)) {
-        throw new Error("Each step needs a label and command");
+        throw new Error(t("pages.scripts.error.eachStepNeedsLabelAndCommand"));
       }
       if (draft.operation === "detect" && normalizedSteps.length !== 1) {
-        throw new Error("Detection scripts use exactly one step");
+        throw new Error(t("pages.scripts.error.detectionScriptsUseOneStep"));
       }
       const pkgManager = draft.type === "package_manager"
         ? draft.pkgManager?.trim() || null
@@ -1106,7 +1177,7 @@ export function ScriptEditor({
         isDefault: draft.isDefault ?? false,
         steps: normalizedSteps,
         parserConfig: showParserConfig
-          ? buildParserConfig(parserConfig)
+          ? buildParserConfig(parserConfig, t)
           : showIssueDetectionConfig
             ? buildIssueDetectionConfig(parserConfig)
             : null,
@@ -1115,7 +1186,7 @@ export function ScriptEditor({
           : null,
       });
     } catch (error) {
-      addToast(error instanceof Error ? error.message : "Invalid script", "danger");
+      addToast(error instanceof Error ? error.message : t("pages.scripts.invalidScript"), "danger");
     }
   };
 
@@ -1126,16 +1197,16 @@ export function ScriptEditor({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
         </svg>
         <p className="min-w-0 text-sm">
-          No support will be given for custom scripts.
+          {t("pages.scripts.noSupportCustomScripts")}
         </p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Name</label>
+          <label className={labelClass}>{t("common.name")}</label>
           <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputClass} />
         </div>
         <div>
-          <label className={labelClass}>Type</label>
+          <label className={labelClass}>{t("common.type")}</label>
           <select
             value={draft.type}
             onChange={(e) => {
@@ -1149,25 +1220,25 @@ export function ScriptEditor({
             }}
             className={inputClass}
           >
-            <option value="package_manager">Package manager</option>
-            <option value="system">System</option>
+            <option value="package_manager">{t("pages.scripts.packageManager")}</option>
+            <option value="system">{t("pages.scripts.system")}</option>
           </select>
         </div>
         <div>
-          <label className={labelClass}>Operation</label>
+          <label className={labelClass}>{t("pages.scripts.operation")}</label>
           <select
             value={draft.operation}
             onChange={(e) => setDraft({ ...draft, operation: e.target.value as ScriptOperation })}
             className={inputClass}
           >
             {operationOptions.map((operation) => (
-              <option key={operation} value={operation}>{OPERATION_LABELS[operation]}</option>
+              <option key={operation} value={operation}>{t(OPERATION_LABEL_KEYS[operation])}</option>
             ))}
           </select>
         </div>
         {showPackageManagerControls && (
           <div>
-            <label className={labelClass}>Package Manager</label>
+            <label className={labelClass}>{t("pages.scripts.packageManager")}</label>
             <select
               value={draft.pkgManager ?? ""}
               onChange={(e) => {
@@ -1186,7 +1257,7 @@ export function ScriptEditor({
       </div>
 
       <div>
-        <label className={labelClass}>Description</label>
+        <label className={labelClass}>{t("pages.scripts.description")}</label>
         <textarea
           value={draft.description ?? ""}
           onChange={(e) => setDraft({ ...draft, description: e.target.value })}
@@ -1204,37 +1275,37 @@ export function ScriptEditor({
 
       {showPackageManagerControls && (
         <ScriptReferenceSection
-          title="Config Keys"
+          title={t("pages.scripts.configKeys")}
           entries={configReferenceEntries}
-          emptyMessage="No config keys are defined for this package manager yet."
+          emptyMessage={t("pages.scripts.noConfigKeysForPackageManager")}
           onCopy={copyReference}
         />
       )}
 
       <ScriptReferenceSection
-        title="Placeholders"
+        title={t("pages.scripts.placeholders")}
         entries={placeholderReferenceEntries}
-        emptyMessage="No script placeholders are available."
+        emptyMessage={t("pages.scripts.noScriptPlaceholdersAvailable")}
         onCopy={copyReference}
       />
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <label className={labelClass}>Steps</label>
+          <label className={labelClass}>{t("pages.scripts.steps")}</label>
           <button
             type="button"
             onClick={addStep}
             disabled={singleStepOperation}
             className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 transition-colors text-lg leading-none"
-            title={singleStepOperation ? "Detection scripts use one step" : "Add step"}
-            aria-label="Add step"
+            title={singleStepOperation ? t("pages.scripts.detectionScriptsUseOneStep") : t("pages.scripts.addStep")}
+            aria-label={t("pages.scripts.addStep")}
           >
             +
           </button>
         </div>
         {singleStepOperation && (
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Detection scripts use one command. It must exit with 0 and print found when the package manager is available.
+            {t("pages.scripts.detectionScriptsUseOneCommand")}
           </p>
         )}
         <div ref={stepsListRef} className="space-y-3">
@@ -1246,8 +1317,8 @@ export function ScriptEditor({
                   className={`step-drag-handle mt-7 shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
                     steps.length > 1 ? "cursor-grab hover:bg-slate-100 dark:hover:bg-slate-800" : "cursor-not-allowed opacity-40"
                   }`}
-                  title="Drag to reorder"
-                  aria-label={`Drag to reorder step ${index + 1}`}
+                  title={t("pages.scripts.dragToReorder")}
+                  aria-label={t("pages.scripts.dragToReorderStep", { step: index + 1 })}
                   disabled={steps.length <= 1}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1257,7 +1328,7 @@ export function ScriptEditor({
                 <div className="min-w-0 flex-1 space-y-3">
                   <div>
                     <div className="mb-1 flex flex-wrap items-center gap-2">
-                      <label className={`${labelClass} mb-0`}>Step {index + 1} Label</label>
+                      <label className={`${labelClass} mb-0`}>{t("pages.scripts.stepLabel", { step: index + 1 })}</label>
                       <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                         {stepBadge(index)}
                       </span>
@@ -1281,8 +1352,8 @@ export function ScriptEditor({
                   onClick={() => removeStep(index)}
                   disabled={steps.length <= 1}
                   className="mt-7 inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-lg leading-none"
-                  title="Remove step"
-                  aria-label={`Remove step ${index + 1}`}
+                  title={t("pages.scripts.removeStep")}
+                  aria-label={t("pages.scripts.removeStepNumber", { step: index + 1 })}
                 >
                   -
                 </button>
@@ -1294,53 +1365,58 @@ export function ScriptEditor({
 
       {draft.type === "package_manager" && draft.operation === "check_updates" && usesBuiltinParser && (
         <div className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3 text-sm text-slate-500 dark:text-slate-400">
-          {selectedPackageManager.toUpperCase()} update output is parsed by the built-in parser. Custom parser rules are only needed for custom package managers.
+          {t("pages.scripts.builtinParserNotice", { manager: selectedPackageManager.toUpperCase() })}
         </div>
       )}
 
       {showParserConfig && (
         <details className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-200">
-            Advanced parser rules
+            {t("pages.scripts.advancedParserRules")}
           </summary>
           <div className="mt-4 space-y-4">
             <p className="text-sm text-slate-500 dark:text-slate-400">
               {draft.operation === "list_installed_packages"
-                ? "Use named regex groups to turn the selected step output into installed-package rows. Required groups are packageName and currentVersion."
-                : "Use named regex groups to turn the selected step output into update rows. Required groups are packageName and newVersion; other step output stays in activity history."}
+                ? t("pages.scripts.installedPackageParserDescription")
+                : t("pages.scripts.updateParserDescription")}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className={labelClass}>Output to Parse</label>
+                <label className={labelClass}>{t("pages.scripts.outputToParse")}</label>
                 <select
                   value={parserConfig.parseStep}
                   onChange={(e) => setParserConfig({ ...parserConfig, parseStep: e.target.value })}
                   className={inputClass}
                 >
                   <option value="">
-                    Last step ({steps.at(-1)?.label || `Step ${steps.length}`})
+                    {t("pages.scripts.lastStep", {
+                      label: steps.at(-1)?.label || t("pages.scripts.stepNumber", { step: steps.length }),
+                    })}
                   </option>
                   {steps.map((step, index) => (
                     <option key={`${index}-${step.label}`} value={index.toString()}>
-                      Step {index + 1}: {step.label || `Step ${index + 1}`}
+                      {t("pages.scripts.stepNumberWithLabel", {
+                        step: index + 1,
+                        label: step.label || t("pages.scripts.stepNumber", { step: index + 1 }),
+                      })}
                     </option>
                   ))}
                   {parseStepOutOfRange && (
                     <option value={parserConfig.parseStep}>
                       {Number.isInteger(parsedStepNumber)
-                        ? `Missing step ${parsedStepNumber + 1}`
-                        : "Invalid parser step"}
+                        ? t("pages.scripts.missingStep", { step: parsedStepNumber + 1 })
+                        : t("pages.scripts.invalidParserStep")}
                     </option>
                   )}
                 </select>
                 {parseStepOutOfRange && (
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-                    The saved parser step is outside the current step list.
+                    {t("pages.scripts.savedParserStepOutsideCurrentList")}
                   </p>
                 )}
               </div>
               <div>
-                <label className={labelClass}>Successful Exit Codes</label>
+                <label className={labelClass}>{t("pages.scripts.successfulExitCodes")}</label>
                 <input
                   value={parserConfig.successExitCodes}
                   onChange={(e) => setParserConfig({ ...parserConfig, successExitCodes: e.target.value })}
@@ -1350,7 +1426,7 @@ export function ScriptEditor({
               </div>
               {draft.operation === "list_installed_packages" ? (
                 <div className="md:col-span-2">
-                  <label className={labelClass}>Installed Package Line Regex</label>
+                  <label className={labelClass}>{t("pages.scripts.installedPackageLineRegex")}</label>
                   <textarea
                     value={parserConfig.installedPackageRegex}
                     onChange={(e) => setParserConfig({ ...parserConfig, installedPackageRegex: e.target.value })}
@@ -1361,7 +1437,7 @@ export function ScriptEditor({
               ) : (
                 <>
                   <div className="md:col-span-2">
-                    <label className={labelClass}>Update Line Regex</label>
+                    <label className={labelClass}>{t("pages.scripts.updateLineRegex")}</label>
                     <textarea
                       value={parserConfig.updateRegex}
                       onChange={(e) => setParserConfig({ ...parserConfig, updateRegex: e.target.value })}
@@ -1370,7 +1446,7 @@ export function ScriptEditor({
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Security Marker Regex</label>
+                    <label className={labelClass}>{t("pages.scripts.securityMarkerRegex")}</label>
                     <input
                       value={parserConfig.securityRegex}
                       onChange={(e) => setParserConfig({ ...parserConfig, securityRegex: e.target.value })}
@@ -1379,7 +1455,7 @@ export function ScriptEditor({
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Kept-Back Marker Regex</label>
+                    <label className={labelClass}>{t("pages.scripts.keptBackMarkerRegex")}</label>
                     <input
                       value={parserConfig.keptBackRegex}
                       onChange={(e) => setParserConfig({ ...parserConfig, keptBackRegex: e.target.value })}
@@ -1388,7 +1464,7 @@ export function ScriptEditor({
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Updates-Available Exit Codes</label>
+                    <label className={labelClass}>{t("pages.scripts.updatesAvailableExitCodes")}</label>
                     <input
                       value={parserConfig.updatesExitCodes}
                       onChange={(e) => setParserConfig({ ...parserConfig, updatesExitCodes: e.target.value })}
@@ -1406,26 +1482,26 @@ export function ScriptEditor({
       {showSystemInfoConfig && (
         <details className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-200">
-            Advanced system-info mapping
+            {t("pages.scripts.advancedSystemInfoMapping")}
           </summary>
           <div className="mt-4 space-y-4">
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Use the built-in parser for copied standard scripts, or map custom output section names into dashboard system fields.
+              {t("pages.scripts.systemInfoMappingDescription")}
             </p>
             <div>
-              <label className={labelClass}>Parser Mode</label>
+              <label className={labelClass}>{t("pages.scripts.parserMode")}</label>
               <select
                 value={systemInfoMode}
                 onChange={(e) => setSystemInfoMode(e.target.value as "builtin" | "sectioned")}
                 className={inputClass}
               >
-                <option value="builtin">Built-in dashboard parser</option>
-                <option value="sectioned">Custom section mapping</option>
+                <option value="builtin">{t("pages.scripts.parserMode.builtin")}</option>
+                <option value="sectioned">{t("pages.scripts.parserMode.sectioned")}</option>
               </select>
             </div>
             {systemInfoMode === "builtin" ? (
               <div className="rounded-lg border border-border p-3 text-sm text-slate-500 dark:text-slate-400">
-                This script will use the same OS, Proxmox/Raspberry Pi, uptime, kernel, and reboot-required parsing logic as the built-in system-info script.
+                {t("pages.scripts.builtinSystemInfoParserDescription")}
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1446,7 +1522,7 @@ export function ScriptEditor({
                   </div>
                 ))}
                 <div className="md:col-span-2">
-                  <label className={labelClass}>Reboot Required Regex</label>
+                  <label className={labelClass}>{t("pages.scripts.rebootRequiredRegex")}</label>
                   <input
                     value={rebootRequiredRegex}
                     onChange={(e) => setRebootRequiredRegex(e.target.value)}
@@ -1463,14 +1539,14 @@ export function ScriptEditor({
       {showIssueDetectionConfig && (
         <details className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-200">
-            Issue Detection
+            {t("pages.scripts.issueDetection")}
           </summary>
           <div className="mt-4 space-y-4">
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Match check output that should show a package-manager warning and enable this repair action.
+              {t("pages.scripts.issueDetectionDescription")}
             </p>
             <div>
-              <label className={labelClass}>Issue Regex</label>
+              <label className={labelClass}>{t("pages.scripts.issueRegex")}</label>
               <textarea
                 value={parserConfig.issueRegex}
                 onChange={(e) => setParserConfig({ ...parserConfig, issueRegex: e.target.value })}
@@ -1480,21 +1556,23 @@ export function ScriptEditor({
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
-                <label className={labelClass}>Issue Title</label>
+                <label className={labelClass}>{t("pages.scripts.issueTitle")}</label>
                 <input
                   value={parserConfig.issueTitle}
                   onChange={(e) => setParserConfig({ ...parserConfig, issueTitle: e.target.value })}
                   className={inputClass}
-                  placeholder={`${selectedPackageManager || "Package manager"} needs repair`}
+                  placeholder={t("pages.scripts.packageManagerNeedsRepair", {
+                    manager: selectedPackageManager || t("pages.scripts.packageManager"),
+                  })}
                 />
               </div>
               <div>
-                <label className={labelClass}>Issue Message</label>
+                <label className={labelClass}>{t("pages.scripts.issueMessage")}</label>
                 <input
                   value={parserConfig.issueMessage}
                   onChange={(e) => setParserConfig({ ...parserConfig, issueMessage: e.target.value })}
                   className={inputClass}
-                  placeholder="Run this repair action, then refresh updates."
+                  placeholder={t("pages.scripts.runRepairThenRefresh")}
                 />
               </div>
             </div>
@@ -1504,10 +1582,10 @@ export function ScriptEditor({
 
       <div className="flex justify-end gap-3">
         <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="button" disabled={busy} onClick={save} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-          {busy ? <span className="spinner spinner-sm" /> : "Save"}
+          {busy ? <span className="spinner spinner-sm" /> : t("common.save")}
         </button>
       </div>
     </div>
@@ -1523,7 +1601,7 @@ export function PackageManagerEditor({
   onClearImport,
   importBundle,
   importFileName,
-  saveLabel = "Save",
+  saveLabel,
   busy,
   importing,
   editing,
@@ -1543,6 +1621,8 @@ export function PackageManagerEditor({
   editing?: boolean;
   importKeyExists?: boolean;
 }) {
+  const { t } = useI18n();
+  const effectiveSaveLabel = saveLabel ?? t("common.save");
   const importOperations = importBundle
     ? Array.from(new Set(importBundle.scripts.map((script) => script.operation)))
         .sort((a, b) => PACKAGE_MANAGER_OPERATIONS.indexOf(a) - PACKAGE_MANAGER_OPERATIONS.indexOf(b))
@@ -1578,12 +1658,12 @@ export function PackageManagerEditor({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
         </svg>
         <p className="min-w-0 text-sm">
-          No support will be given for custom package managers.
+          {t("pages.scripts.noSupportCustomPackageManagers")}
         </p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Manager Key</label>
+          <label className={labelClass}>{t("pages.scripts.managerKey")}</label>
           <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
@@ -1593,17 +1673,17 @@ export function PackageManagerEditor({
           />
           {editing && (
             <p className="mt-1 text-xs text-slate-400">
-              Keys are used by scripts and systems, so rename by creating a new manager.
+              {t("pages.scripts.managerKeysRenameGuidance")}
             </p>
           )}
           {importKeyExists && (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-              This manager key already exists. Choose a different key.
+              {t("pages.scripts.managerKeyAlreadyExists")}
             </p>
           )}
         </div>
         <div>
-          <label className={labelClass}>Display Label</label>
+          <label className={labelClass}>{t("pages.scripts.displayLabel")}</label>
           <input
             value={draft.label}
             onChange={(e) => setDraft({ ...draft, label: e.target.value })}
@@ -1617,7 +1697,7 @@ export function PackageManagerEditor({
         <div className="rounded-lg border border-dashed border-border bg-slate-50/70 p-3 dark:bg-slate-900/30">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              The examples folder contains various custom package manager examples.
+              {t("pages.scripts.examplesFolderDescription")}
               {examplesUrl ? (
                 <>
                   {" "}
@@ -1625,9 +1705,9 @@ export function PackageManagerEditor({
                     href={examplesUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="font-medium text-blue-600 hover:underline dark:text-blue-300"
+                  className="font-medium text-blue-600 hover:underline dark:text-blue-300"
                   >
-                    View examples on GitHub
+                    {t("pages.scripts.viewExamplesOnGithub")}
                   </a>
                   .
                 </>
@@ -1639,7 +1719,7 @@ export function PackageManagerEditor({
               disabled={importing}
               className="w-full shrink-0 rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-slate-50 disabled:opacity-50 dark:hover:bg-slate-700 sm:w-auto"
             >
-              Import File
+              {t("pages.scripts.importFile")}
             </button>
           </div>
         </div>
@@ -1649,7 +1729,7 @@ export function PackageManagerEditor({
           <div className="mb-2 flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Import Preview
+                {t("pages.scripts.importPreview")}
               </div>
               {importFileName && (
                 <div className="mt-1 truncate text-xs text-blue-700/80 dark:text-blue-200/80">
@@ -1662,8 +1742,8 @@ export function PackageManagerEditor({
                 type="button"
                 onClick={onClearImport}
                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-red-500 transition-colors hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-950/40"
-                title="Unload import file"
-                aria-label="Unload import file"
+                title={t("pages.scripts.unloadImportFile")}
+                aria-label={t("pages.scripts.unloadImportFile")}
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -1674,13 +1754,13 @@ export function PackageManagerEditor({
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Scripts
+                {t("pages.scripts.scripts")}
               </div>
               <div className="mt-1">{importBundle.scripts.length}</div>
             </div>
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Operations
+                {t("pages.scripts.operations")}
               </div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {importOperations.length ? (
@@ -1688,19 +1768,19 @@ export function PackageManagerEditor({
                     <span
                       key={operation}
                       className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300"
-                      title={OPERATION_LABELS[operation] ?? operation}
+                      title={OPERATION_LABEL_KEYS[operation] ? t(OPERATION_LABEL_KEYS[operation]) : operation}
                     >
-                      {OPERATION_LABELS[operation] ?? operation}
+                      {OPERATION_LABEL_KEYS[operation] ? t(OPERATION_LABEL_KEYS[operation]) : operation}
                     </span>
                   ))
                 ) : (
-                  <span>None</span>
+                  <span>{t("pages.scripts.none")}</span>
                 )}
               </div>
             </div>
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
-                Config Entries
+                {t("pages.scripts.configEntries")}
               </div>
               <div className="mt-1">{importBundle.packageManager.configEntries.length}</div>
             </div>
@@ -1711,15 +1791,15 @@ export function PackageManagerEditor({
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Custom Config
+              {t("pages.scripts.customConfig")}
             </div>
           </div>
           <button
             type="button"
             onClick={addConfigEntry}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-lg leading-none transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
-            title="Add config entry"
-            aria-label="Add config entry"
+            title={t("pages.scripts.addConfigEntry")}
+            aria-label={t("pages.scripts.addConfigEntry")}
           >
             +
           </button>
@@ -1729,7 +1809,7 @@ export function PackageManagerEditor({
             {draft.configEntries.map((entry, index) => (
               <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-border bg-white p-3 dark:bg-slate-900 md:grid-cols-[1fr_1fr_1fr_auto]">
                 <div>
-                  <label className={labelClass}>Key</label>
+                  <label className={labelClass}>{t("pages.scripts.key")}</label>
                   <input
                     value={entry.key}
                     onChange={(e) => updateConfigEntry(index, { key: e.target.value })}
@@ -1738,7 +1818,7 @@ export function PackageManagerEditor({
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Default Value</label>
+                  <label className={labelClass}>{t("pages.scripts.defaultValue")}</label>
                   <input
                     value={entry.defaultValue}
                     onChange={(e) => updateConfigEntry(index, { defaultValue: e.target.value })}
@@ -1747,12 +1827,12 @@ export function PackageManagerEditor({
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Description</label>
+                  <label className={labelClass}>{t("pages.scripts.description")}</label>
                   <input
                     value={entry.description ?? ""}
                     onChange={(e) => updateConfigEntry(index, { description: e.target.value })}
                     className={inputClass}
-                    placeholder="Optional"
+                    placeholder={t("pages.scripts.optional")}
                   />
                 </div>
                 <div className="flex items-end">
@@ -1760,8 +1840,8 @@ export function PackageManagerEditor({
                     type="button"
                     onClick={() => removeConfigEntry(index)}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-red-500 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
-                    title="Remove config entry"
-                    aria-label="Remove config entry"
+                    title={t("pages.scripts.removeConfigEntry")}
+                    aria-label={t("pages.scripts.removeConfigEntry")}
                   >
                     -
                   </button>
@@ -1771,16 +1851,16 @@ export function PackageManagerEditor({
           </div>
         ) : (
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            No custom config entries yet.
+            {t("pages.scripts.noCustomConfigEntriesYet")}
           </p>
         )}
       </div>
       <div className="grid grid-cols-2 gap-3 sm:flex sm:justify-end">
         <button type="button" onClick={onCancel} className="w-full px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto">
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="button" disabled={busy || importKeyExists} onClick={onSave} className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 sm:w-auto">
-          {busy ? <span className="spinner spinner-sm" /> : saveLabel}
+          {busy ? <span className="spinner spinner-sm" /> : effectiveSaveLabel}
         </button>
       </div>
     </div>
@@ -1802,6 +1882,7 @@ function PackageManagersPanel({
   onExportManager: (manager: ManagedPackageManager) => void;
   onDeleteManager: (manager: ManagedPackageManager) => void;
 }) {
+  const { t } = useI18n();
   const customCount = managers.filter((manager) => !manager.builtin).length;
   const totalScripts = managers.reduce((sum, manager) => sum + manager.scriptCount, 0);
 
@@ -1815,10 +1896,14 @@ function PackageManagersPanel({
       >
         <div>
           <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Package Managers
+            {t("pages.scripts.packageManagers")}
           </h2>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            {managers.length} managers · {customCount} custom · {totalScripts} scripts
+            {t("pages.scripts.packageManagersSummary", {
+              managers: managers.length,
+              custom: customCount,
+              scripts: totalScripts,
+            })}
           </p>
         </div>
         <svg
@@ -1835,7 +1920,7 @@ function PackageManagersPanel({
       {open && (
         <div className="border-t border-border px-4 pb-4 pt-3">
           <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
-            Built-ins can be extended with custom config entries; custom managers can also be labeled.
+            {t("pages.scripts.packageManagersDescription")}
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
             {managers.map((manager) => (
@@ -1852,18 +1937,22 @@ function PackageManagersPanel({
                     </div>
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       <Badge variant={manager.builtin ? "muted" : "info"} small>
-                        {manager.builtin ? "built-in" : "custom"}
+                        {manager.builtin ? t("pages.scripts.builtIn2") : t("pages.scripts.custom2")}
                       </Badge>
                       {!manager.registered && (
                         <Badge variant="warning" small>
-                          script-only
+                          {t("pages.scripts.scriptOnly")}
                         </Badge>
                       )}
                       <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600 dark:bg-slate-900 dark:text-slate-300">
                         {manager.name}
                       </code>
                       <span className="text-xs text-slate-500 dark:text-slate-400">
-                        {manager.scriptCount} scripts · {manager.operations.length} ops · {manager.configEntries.length} configs
+                        {t("pages.scripts.managerStats", {
+                          scripts: manager.scriptCount,
+                          ops: manager.operations.length,
+                          configs: manager.configEntries.length,
+                        })}
                       </span>
                     </div>
                   </div>
@@ -1873,8 +1962,8 @@ function PackageManagersPanel({
                         type="button"
                         onClick={() => onEditManager(manager)}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        title="Edit package manager"
-                        aria-label={`Edit ${manager.label}`}
+                        title={t("pages.scripts.editPackageManager")}
+                        aria-label={t("pages.scripts.editName", { name: manager.label })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -1886,8 +1975,8 @@ function PackageManagersPanel({
                             type="button"
                             onClick={() => onExportManager(manager)}
                             className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                            title="Export package manager"
-                            aria-label={`Export ${manager.label}`}
+                            title={t("pages.scripts.exportPackageManager")}
+                            aria-label={t("pages.scripts.exportName", { name: manager.label })}
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v10m0 0l-4-4m4 4l4-4M5 20h14" />
@@ -1897,8 +1986,8 @@ function PackageManagersPanel({
                             type="button"
                             onClick={() => onDeleteManager(manager)}
                             className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                            title="Delete package manager"
-                            aria-label={`Delete ${manager.label}`}
+                            title={t("pages.scripts.deletePackageManager")}
+                            aria-label={t("pages.scripts.deleteName", { name: manager.label })}
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -1921,9 +2010,9 @@ function PackageManagersPanel({
                             ? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
                             : "bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-600"
                         }`}
-                        title={OPERATION_LABELS[operation]}
+                        title={t(OPERATION_LABEL_KEYS[operation])}
                       >
-                        {OPERATION_LABELS[operation]}
+                        {t(OPERATION_LABEL_KEYS[operation])}
                       </span>
                     );
                   })}
@@ -1947,6 +2036,7 @@ export default function Scripts() {
   const deletePackageManager = useDeletePackageManager();
   const importPackageManagerBundle = useImportPackageManagerBundle();
   const { addToast } = useToast();
+  const { t } = useI18n();
   const [typeFilter, setTypeFilter] = useState<"all" | ScriptType>("all");
   const [sourceFilter, setSourceFilter] = useState<"all" | "builtin" | "custom">("all");
   const [managerFilter, setManagerFilter] = useState("all");
@@ -2068,7 +2158,7 @@ export default function Scripts() {
     const callbacks = {
       onSuccess: () => {
         setEditing(null);
-        addToast("Script saved", "success");
+        addToast(t("pages.scripts.scriptSaved"), "success");
       },
       onError: (err: Error) => addToast(err.message, "danger"),
     };
@@ -2085,7 +2175,7 @@ export default function Scripts() {
       { ...script, isDefault: !(script.isDefault ?? false) },
       {
         onSuccess: () => {
-          addToast(script.isDefault ? "Script default cleared" : "Script set as default", "success");
+          addToast(script.isDefault ? t("pages.scripts.scriptDefaultCleared") : t("pages.scripts.scriptSetAsDefault"), "success");
         },
         onError: (err: Error) => addToast(err.message, "danger"),
         onSettled: () => setDefaultingScriptId(null),
@@ -2102,7 +2192,9 @@ export default function Scripts() {
       managedPackageManagers.some((manager) => manager.name === managerName)
     ) {
       addToast(
-        `Package manager key "${managerName}" already exists. Choose a different key.`,
+        t("pages.scripts.packageManagerKeyKeyAlreadyExistsChooseA", {
+          key: managerName,
+        }),
         "danger",
       );
       return;
@@ -2114,6 +2206,7 @@ export default function Scripts() {
     const configEntryError = validateConfigEntries(
       configEntries,
       editingPackageManager?.name ?? (packageManagerImportBundle ? managerName : null),
+      t,
     );
     if (configEntryError) {
       addToast(configEntryError, "danger");
@@ -2148,7 +2241,10 @@ export default function Scripts() {
           setPackageManagersOpen(true);
           setManagerFilter(result.manager.name);
           addToast(
-            `Package manager imported: ${result.createdScripts} scripts created, ${result.updatedScripts} updated`,
+            t("pages.scripts.packageManagerImportedCreatedScriptsCreatedUpdatedUpdated", {
+              created: result.createdScripts,
+              updated: result.updatedScripts,
+            }),
             "success",
           );
         },
@@ -2163,7 +2259,7 @@ export default function Scripts() {
         setPackageManagerDraft(emptyPackageManager());
         setPackageManagerImportBundle(null);
         setPackageManagerImportFileName(null);
-        addToast("Package manager saved", "success");
+        addToast(t("pages.scripts.packageManagerSaved"), "success");
       },
       onError: (err: Error) => addToast(err.message, "danger"),
     };
@@ -2202,9 +2298,9 @@ export default function Scripts() {
     try {
       const bundle = await exportPackageManagerBundle(manager.name);
       downloadJsonFile(`${bundle.packageManager.name}-package-manager.json`, bundle);
-      addToast("Package manager exported", "success");
+      addToast(t("pages.scripts.packageManagerExported"), "success");
     } catch (error) {
-      addToast(error instanceof Error ? error.message : "Failed to export package manager", "danger");
+      addToast(error instanceof Error ? error.message : t("pages.scripts.failedToExportPackageManager"), "danger");
     }
   };
 
@@ -2214,7 +2310,7 @@ export default function Scripts() {
     if (!file) return;
 
     try {
-      const bundle = parseImportBundle(JSON.parse(await file.text()));
+      const bundle = parseImportBundle(JSON.parse(await file.text()), t);
       const importedManagerName = bundle.packageManager.name.trim().toLowerCase();
       setEditingPackageManager(null);
       setPackageManagerDraft({
@@ -2233,20 +2329,20 @@ export default function Scripts() {
       setPackageManagerImportFileName(file.name);
       setShowPackageManager(true);
     } catch (error) {
-      addToast(error instanceof Error ? error.message : "Invalid package manager export file", "danger");
+      addToast(error instanceof Error ? error.message : t("pages.scripts.invalidPackageManagerExportFile"), "danger");
     }
   };
 
   const createScriptForManager = (manager: ManagedPackageManager) => {
     setEditing({
-      ...emptyScript(),
+      ...emptyScript(t),
       pkgManager: manager.name,
-      name: `${manager.label} script`,
+      name: t("pages.scripts.nameScript", { name: manager.label }),
     });
   };
 
   const handleCopy = async (script: ScriptDefinition) => {
-    const draft = copyScriptDraft(script);
+    const draft = copyScriptDraft(script, t);
     setCopyingScriptId(script.id);
     try {
       draft.steps = await Promise.all(
@@ -2260,8 +2356,8 @@ export default function Scripts() {
     } catch (error) {
       addToast(
         error instanceof Error
-          ? `Copied script without beautifying: ${error.message}`
-          : "Copied script without beautifying",
+          ? t("pages.scripts.copiedScriptWithoutBeautifyingError", { error: error.message })
+          : t("pages.scripts.copiedScriptWithoutBeautifying"),
         "info",
       );
     } finally {
@@ -2272,7 +2368,7 @@ export default function Scripts() {
 
   return (
     <Layout
-      title="Scripts"
+      title={t("pages.scripts.scripts")}
       actions={
         <>
           <input
@@ -2283,10 +2379,10 @@ export default function Scripts() {
             onChange={handleImportPackageManager}
           />
           <button onClick={openPackageManagerModal} className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
-            New Package Manager
+            {t("pages.scripts.newPackageManager")}
           </button>
-          <button onClick={() => setEditing(emptyScript())} className="px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white">
-            New Script
+          <button onClick={() => setEditing(emptyScript(t))} className="px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white">
+            {t("pages.scripts.newScript")}
           </button>
         </>
       }
@@ -2309,7 +2405,7 @@ export default function Scripts() {
 
           <div className="flex flex-wrap gap-2">
             <select value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className={inputClass + " max-w-52"}>
-              <option value="all">All managers</option>
+              <option value="all">{t("pages.scripts.allManagers")}</option>
               {managedPackageManagers.map((manager) => (
                 <option key={manager.name} value={manager.name}>
                   {manager.label}
@@ -2317,21 +2413,21 @@ export default function Scripts() {
               ))}
             </select>
             <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)} className={inputClass + " max-w-52"}>
-              <option value="all">All types</option>
-              <option value="package_manager">Package manager</option>
-              <option value="system">System</option>
+              <option value="all">{t("pages.scripts.allTypes")}</option>
+              <option value="package_manager">{t("pages.scripts.packageManager")}</option>
+              <option value="system">{t("pages.scripts.system")}</option>
             </select>
             <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as typeof sourceFilter)} className={inputClass + " max-w-52"}>
-              <option value="all">All sources</option>
-              <option value="builtin">Built-in</option>
-              <option value="custom">Custom</option>
+              <option value="all">{t("pages.scripts.allSources")}</option>
+              <option value="builtin">{t("pages.scripts.builtIn")}</option>
+              <option value="custom">{t("pages.scripts.custom")}</option>
             </select>
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {scripts.length === 0 && (
               <div className="xl:col-span-2 rounded-lg border border-border p-6 text-sm text-slate-500 dark:text-slate-400">
-                <div>No scripts match these filters.</div>
+                <div>{t("pages.scripts.noScriptsMatchTheseFilters")}</div>
                 {sourceFilter === "custom" && (
                   <button
                     type="button"
@@ -2340,12 +2436,12 @@ export default function Scripts() {
                       if (manager) {
                         createScriptForManager(manager);
                       } else {
-                        setEditing(emptyScript());
+                        setEditing(emptyScript(t));
                       }
                     }}
                     className="mt-3 px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200"
                   >
-                    New Script
+                    {t("pages.scripts.newScript")}
                   </button>
                 )}
               </div>
@@ -2356,8 +2452,8 @@ export default function Scripts() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-sm font-semibold truncate">{script.name}</h2>
-                      <Badge variant={script.readonly ? "muted" : "info"} small>{script.readonly ? "built-in" : "custom"}</Badge>
-                      {script.isDefault ? <Badge variant="success" small>default</Badge> : null}
+                      <Badge variant={script.readonly ? "muted" : "info"} small>{script.readonly ? t("pages.scripts.builtIn2") : t("pages.scripts.custom2")}</Badge>
+                      {script.isDefault ? <Badge variant="success" small>{t("pages.scripts.default")}</Badge> : null}
                       {script.pkgManager ? <Badge variant="muted" small>{script.pkgManager}</Badge> : null}
                       {scriptUsesSudo(script) ? <Badge variant="warning" small>sudo</Badge> : null}
                       <UsageBadge
@@ -2366,7 +2462,7 @@ export default function Scripts() {
                       />
                     </div>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {OPERATION_LABELS[script.operation]} · {script.description || "No description"}
+                      {t(OPERATION_LABEL_KEYS[script.operation])} · {script.description || t("pages.scripts.noDescription")}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2">
@@ -2380,8 +2476,8 @@ export default function Scripts() {
                             ? "text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20"
                             : "text-slate-400 hover:bg-slate-100 hover:text-amber-500 dark:hover:bg-slate-700"
                         }`}
-                        title={script.isDefault ? "Clear default script" : "Set as default script"}
-                        aria-label={script.isDefault ? `Clear ${script.name} as default` : `Set ${script.name} as default`}
+                        title={script.isDefault ? t("pages.scripts.clearDefaultScript") : t("pages.scripts.setAsDefaultScript")}
+                        aria-label={script.isDefault ? t("pages.scripts.clearNameAsDefault", { name: script.name }) : t("pages.scripts.setNameAsDefault", { name: script.name })}
                         aria-pressed={script.isDefault ?? false}
                       >
                         {defaultingScriptId === script.id ? (
@@ -2409,7 +2505,7 @@ export default function Scripts() {
                       onClick={() => handleCopy(script)}
                       disabled={copyingScriptId === script.id}
                       className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-wait transition-colors"
-                      title="Copy script"
+                      title={t("pages.scripts.copyScript")}
                     >
                       {copyingScriptId === script.id ? (
                         <span className="spinner spinner-sm" />
@@ -2424,7 +2520,7 @@ export default function Scripts() {
                         <button
                           onClick={() => setEditing(script)}
                           className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                          title="Edit script"
+                          title={t("pages.scripts.editScript")}
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -2433,7 +2529,7 @@ export default function Scripts() {
                         <button
                           onClick={() => setDeleteTarget(script)}
                           className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                          title="Delete script"
+                          title={t("pages.scripts.deleteScript")}
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -2457,7 +2553,7 @@ export default function Scripts() {
         </div>
       )}
 
-      <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? "Edit Script" : "New Script"} dismissible={!createScript.isPending && !updateScript.isPending}>
+      <Modal open={editing !== null} onClose={() => setEditing(null)} title={editing?.id ? t("pages.scripts.editScript2") : t("pages.scripts.newScript")} dismissible={!createScript.isPending && !updateScript.isPending}>
         {editing && (
           <ScriptEditor
             script={editing}
@@ -2474,12 +2570,12 @@ export default function Scripts() {
       <Modal
         open={usageTarget !== null}
         onClose={() => setUsageTarget(null)}
-        title={`${usageTarget?.name ?? "Script"} assignments`}
+        title={t("pages.scripts.nameAssignments", { name: usageTarget?.name ?? t("pages.scripts.script") })}
       >
         {usageTarget && (
           <div>
             <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">
-              {formatUsageSummary(usageTarget.usages ?? [])}
+              {formatUsageSummary(usageTarget.usages ?? [], t)}
             </p>
             <UsageDetails usages={usageTarget.usages ?? []} />
           </div>
@@ -2494,7 +2590,7 @@ export default function Scripts() {
           setPackageManagerImportBundle(null);
           setPackageManagerImportFileName(null);
         }}
-        title={editingPackageManager ? "Edit Package Manager" : "New Package Manager"}
+        title={editingPackageManager ? t("pages.scripts.editPackageManager") : t("pages.scripts.newPackageManager")}
         dismissible={!createPackageManager.isPending && !updatePackageManager.isPending && !importPackageManagerBundle.isPending}
       >
         <PackageManagerEditor
@@ -2518,7 +2614,7 @@ export default function Scripts() {
           }}
           busy={createPackageManager.isPending || updatePackageManager.isPending || importPackageManagerBundle.isPending}
           importing={importPackageManagerBundle.isPending}
-          saveLabel={packageManagerImportBundle ? "Import" : "Save"}
+          saveLabel={packageManagerImportBundle ? t("pages.scripts.import") : t("pages.scripts.save")}
           editing={editingPackageManager !== null}
           importKeyExists={packageManagerImportKeyExists}
         />
@@ -2532,18 +2628,23 @@ export default function Scripts() {
           deleteScript.mutate(deleteTarget.id, {
             onSuccess: () => {
               setDeleteTarget(null);
-              addToast("Script deleted", "success");
+              addToast(t("pages.scripts.scriptDeleted"), "success");
             },
             onError: (err) => addToast(err.message, "danger"),
           });
         }}
-        title="Delete Script"
+        title={t("pages.scripts.deleteScript2")}
         message={
           deleteTarget && (deleteTarget.usages ?? []).length > 0
-            ? `Delete ${deleteTarget.name}? ${formatUsageSummary(deleteTarget.usages ?? [])}. It cannot be deleted until those systems use another script.`
-            : `Delete ${deleteTarget?.name ?? "this script"}? This action cannot be undone.`
+            ? t("pages.scripts.deleteNameSummaryItCannotBeDeletedUntil", {
+                name: deleteTarget.name,
+                summary: formatUsageSummary(deleteTarget.usages ?? [], t),
+              })
+            : t("pages.scripts.deleteNameThisActionCannotBeUndone", {
+                name: deleteTarget?.name ?? t("pages.scripts.thisScript"),
+              })
         }
-        confirmLabel="Delete"
+        confirmLabel={t("pages.scripts.delete")}
         danger
       />
 
@@ -2563,18 +2664,18 @@ export default function Scripts() {
               if (managerFilter === deleteManagerTarget.name) setManagerFilter("all");
               setDeleteManagerTarget(null);
               setDeleteManagerScripts(false);
-              addToast("Package manager deleted", "success");
+              addToast(t("pages.scripts.packageManagerDeleted"), "success");
             },
             onError: (err) => addToast(err.message, "danger"),
           });
         }}
-        title="Delete Package Manager"
-        message={`Delete ${deleteManagerTarget?.label ?? "this package manager"}?`}
-        confirmLabel="Delete"
+        title={t("pages.scripts.deletePackageManager")}
+        message={t("pages.scripts.deleteName", { name: deleteManagerTarget?.label ?? t("pages.scripts.thisPackageManager") })}
+        confirmLabel={t("pages.scripts.delete")}
         danger
       >
         <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">
-          This package manager can only be deleted when it is disabled or no longer detected on every system.
+          {t("pages.scripts.packageManagerDeleteRequirement")}
         </p>
         {deleteManagerTarget?.scriptCount ? (
           <label className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50/70 p-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-100">
@@ -2586,16 +2687,21 @@ export default function Scripts() {
             />
             <span>
               <span className="block font-medium">
-                Also delete {deleteManagerTarget.scriptCount} {deleteManagerTarget.scriptCount === 1 ? "script" : "scripts"}
+                {t("pages.scripts.alsoDeleteCountScripts", {
+                  count: deleteManagerTarget.scriptCount,
+                  scriptLabel: deleteManagerTarget.scriptCount === 1
+                    ? t("pages.scripts.scriptLower")
+                    : t("pages.scripts.scriptsLower"),
+                })}
               </span>
               <span className="mt-1 block text-xs text-red-700 dark:text-red-200">
-                Deletion will be blocked if any of these scripts are assigned to active systems.
+                {t("pages.scripts.deleteScriptsBlockedIfAssigned")}
               </span>
             </span>
           </label>
         ) : (
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            This package manager has no scripts.
+            {t("pages.scripts.packageManagerHasNoScripts")}
           </p>
         )}
       </ConfirmDialog>

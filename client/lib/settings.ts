@@ -7,10 +7,11 @@ export type SettingsResponse = {
   numericSettingRules: NumericSettingRules;
 };
 
-export function useSettingsResponse() {
+export function useSettingsResponse(enabled = true) {
   return useQuery({
     queryKey: ["settings"],
     queryFn: () => apiFetch<SettingsResponse>("/settings"),
+    enabled,
   });
 }
 

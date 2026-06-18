@@ -1,5 +1,6 @@
 import { Cron } from "croner";
-import cronstrue from "cronstrue";
+import cronstrue from "cronstrue/i18n";
+import type { SupportedLanguage } from "./i18n";
 
 export interface CronPreview {
   description: string;
@@ -10,10 +11,16 @@ export interface CronPreviewError {
   error: string;
 }
 
+export function getCronLocale(language: SupportedLanguage): string {
+  if (language === "hi") return "en";
+  return language === "zh" ? "zh_CN" : language;
+}
+
 export function getCronPreview(
   expression: string,
   startFrom: Date = new Date(),
   runCount = 3,
+  language: SupportedLanguage = "en",
 ): CronPreview | CronPreviewError {
   const cronExpression = expression.trim();
   if (!cronExpression) {
@@ -26,6 +33,7 @@ export function getCronPreview(
     const description = cronstrue.toString(cronExpression, {
       verbose: true,
       use24HourTimeFormat: true,
+      locale: getCronLocale(language),
     });
 
     return { description, nextRuns };

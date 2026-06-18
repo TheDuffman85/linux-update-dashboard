@@ -19,6 +19,7 @@ import { sanitizeOutput } from "../utils/sanitize";
 import { getAppUpdateStatus } from "./app-update-service";
 import { requestNotificationRuntimeAppUpdateSync } from "./notification-runtime-events";
 import { migrateLegacyMqttDeviceName } from "./notifications/mqtt-shared";
+import { getServerTranslator } from "./i18n";
 import * as scheduleService from "./schedule-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
@@ -362,9 +363,12 @@ export function reorderNotifications(notificationIds: number[]): void {
 
 function buildTestPayload(name?: string): NotificationPayload {
   const sentAt = nowIso();
+  const t = getServerTranslator();
   const event: NotificationEventData = {
-    title: "Test Notification",
-    body: `This is a test notification from Linux Update Dashboard.${name ? `\nChannel: ${name}` : ""}`,
+    title: t("server.notifications.test.title"),
+    body: name
+      ? t("server.notifications.test.bodyWithChannel", { name })
+      : t("server.notifications.test.body"),
     priority: "default",
     tags: ["white_check_mark"],
     sentAt,
@@ -1183,6 +1187,7 @@ function buildBatchPayload(
   unreachableResults: CheckResult[],
   appUpdate: AppUpdateEvent | null = null,
 ): NotificationPayload {
+  const t = getServerTranslator();
   const totalUpdates = updateResults.reduce((sum, result) => sum + result.updateCount, 0);
   const totalSecurity = updateResults.reduce((sum, result) => sum + result.securityCount, 0);
   const totalKeptBack = updateResults.reduce((sum, result) => sum + result.keptBackCount, 0);
@@ -1193,13 +1198,18 @@ function buildBatchPayload(
   const tags: string[] = [];
 
   if (updateResults.length > 0) {
-    title = `${totalUpdates} update${totalUpdates !== 1 ? "s" : ""} available`;
+    title = t(
+      totalUpdates === 1
+        ? "server.notifications.title.updates.one"
+        : "server.notifications.title.updates.many",
+      { count: totalUpdates },
+    );
     const titleDetails: string[] = [];
     if (totalSecurity > 0) {
-      titleDetails.push(`${totalSecurity} security`);
+      titleDetails.push(t("server.notifications.updateCount.security", { count: totalSecurity }));
     }
     if (totalKeptBack > 0) {
-      titleDetails.push(`${totalKeptBack} kept back`);
+      titleDetails.push(t("server.notifications.updateCount.keptBack", { count: totalKeptBack }));
     }
     if (hasSpecialUpdateCounts(totalSecurity, totalKeptBack)) {
       tags.push("warning");
@@ -1212,18 +1222,18 @@ function buildBatchPayload(
     }
 
     body = updateResults
-      .map((result) => formatUpdateLine(result))
+      .map((result) => formatUpdateLine(result, t))
       .join("\n");
   }
 
   if (unreachableResults.length > 0) {
     tags.push("skull");
     const lines = unreachableResults
-      .map((result) => `${result.systemName}: unreachable`)
+      .map((result) => t("server.notifications.line.unreachable", { name: result.systemName }))
       .join("\n");
     if (body) body += "\n\n";
     body += lines;
-    if (!title) title = "System(s) unreachable";
+    if (!title) title = t("server.notifications.title.unreachable");
   }
 
   if (appUpdate) {
@@ -1231,13 +1241,13 @@ function buildBatchPayload(
     const prefix = appUpdate.currentBranch === "dev" ? "dev-" : "v";
     const currentVersion = appUpdate.currentVersion
       ? `${prefix}${appUpdate.currentVersion.replace(/^dev-/, "")}`
-      : "current build";
+      : t("server.notifications.currentBuild");
     const remoteVersion = `${prefix}${appUpdate.remoteVersion.replace(/^dev-/, "")}`;
     const lines = [`Linux Update Dashboard: ${currentVersion} -> ${remoteVersion}`];
 
     if (body) body += "\n\n";
     body += lines.join("\n");
-    if (!title) title = "Application update available";
+    if (!title) title = t("server.notifications.title.appUpdate");
   }
 
   const event: NotificationEventData = {
