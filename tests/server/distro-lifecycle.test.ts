@@ -36,16 +36,31 @@ describe("resolveOsLifecycle", () => {
     expect(lifecycle.osLifecycleDismissedKey).toBe("debian:10:2024-06-30:eol");
   });
 
-  test("marks Debian releases in LTS as support-ended warnings instead of EOL", () => {
+  test("marks Debian releases with security support ending soon", () => {
     const lifecycle = resolveOsLifecycle(
       { osId: "debian", osVersion: "12" },
       { now: new Date("2026-06-16T12:00:00Z"), warningDays: 180 },
     );
 
-    expect(lifecycle.osLifecycleStatus).toBe("support_ended");
-    expect(lifecycle.osLifecycleSupportEndDate).toBe("2026-06-10");
+    expect(lifecycle.osLifecycleStatus).toBe("support_ending");
+    expect(lifecycle.osLifecycleSupportEndDate).toBe("2026-07-11");
+    expect(lifecycle.osLifecycleDaysUntilSupportEnd).toBe(25);
     expect(lifecycle.osLifecycleEolDate).toBe("2028-06-30");
-    expect(lifecycle.osLifecycleDismissedKey).toBe("debian:12:2028-06-30:support_ended");
+    expect(lifecycle.osLifecycleLabel).toBe("Debian 12 security support ends in 25 days; LTS until 2028-06-30");
+    expect(lifecycle.osLifecycleDismissedKey).toBe("debian:12:2028-06-30:support_ending");
+  });
+
+  test("uses the Debian security support date for supported releases with later LTS EOL", () => {
+    const lifecycle = resolveOsLifecycle(
+      { osId: "debian", osVersion: "13" },
+      { now: new Date("2026-06-16T12:00:00Z"), warningDays: 180 },
+    );
+
+    expect(lifecycle.osLifecycleStatus).toBe("supported");
+    expect(lifecycle.osLifecycleSupportEndDate).toBe("2028-08-09");
+    expect(lifecycle.osLifecycleEolDate).toBe("2030-06-30");
+    expect(lifecycle.osLifecycleLabel).toBe("Debian 13 security support until 2028-08-09; LTS until 2030-06-30");
+    expect(lifecycle.osLifecycleDismissedKey).toBeNull();
   });
 
   test("tracks dismissal by exact warning key", () => {
@@ -53,7 +68,7 @@ describe("resolveOsLifecycle", () => {
       {
         osId: "debian",
         osVersion: "12",
-        osLifecycleDismissedKey: "debian:12:2028-06-30:support_ended",
+        osLifecycleDismissedKey: "debian:12:2028-06-30:support_ending",
       },
       { now: new Date("2026-06-16T12:00:00Z"), warningDays: 180 },
     );
@@ -67,8 +82,8 @@ describe("resolveOsLifecycle", () => {
       { now: new Date("2026-06-16T12:00:00Z"), warningDays: 30 },
     );
 
-    expect(lifecycle.osLifecycleStatus).toBe("support_ended");
-    expect(lifecycle.osLifecycleSupportEndDate).toBe("2026-06-10");
+    expect(lifecycle.osLifecycleStatus).toBe("support_ending");
+    expect(lifecycle.osLifecycleSupportEndDate).toBe("2026-07-11");
     expect(lifecycle.osLifecycleEolDate).toBe("2028-06-30");
   });
 

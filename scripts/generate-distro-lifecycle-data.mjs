@@ -8,7 +8,7 @@ const CUSTOM_CATALOG_FILE = process.env.LUDASH_EOL_CATALOG_FILE?.trim();
 
 const PRODUCTS = [
   { key: "ubuntu", product: "ubuntu", label: "Ubuntu", cycle: "majorMinor" },
-  { key: "debian", product: "debian", label: "Debian", cycle: "major", supportField: "eol", eolField: "extendedSupport" },
+  { key: "debian", product: "debian", label: "Debian", cycle: "major", supportField: "eol", eolField: "extendedSupport", supportLabel: "security support", finalSupportLabel: "LTS" },
   { key: "fedora", product: "fedora", label: "Fedora", cycle: "major" },
   { key: "rhel", product: "rhel", label: "Red Hat Enterprise Linux", cycle: "major", supportField: "support" },
   { key: "rocky", product: "rocky-linux", label: "Rocky Linux", cycle: "major", supportField: "support" },
@@ -93,7 +93,12 @@ function buildProductCatalog(product, rows) {
   }
 
   entries.sort(compareCyclesDesc);
-  return { label: product.label, entries };
+  return {
+    label: product.label,
+    ...(product.supportLabel ? { supportLabel: product.supportLabel } : {}),
+    ...(product.finalSupportLabel ? { finalSupportLabel: product.finalSupportLabel } : {}),
+    entries,
+  };
 }
 
 async function loadCatalogFile(path) {

@@ -1,6 +1,6 @@
 {
   "source": "https://endoflife.date/api",
-  "generatedAt": "2026-06-16T21:16:00.788Z",
+  "generatedAt": "2026-06-18T09:57:54.188Z",
   "catalog": {
     "ubuntu": {
       "label": "Ubuntu",
@@ -185,6 +185,8 @@
     },
     "debian": {
       "label": "Debian",
+      "supportLabel": "security support",
+      "finalSupportLabel": "LTS",
       "entries": [
         {
           "cycle": "13",
@@ -194,7 +196,7 @@
         {
           "cycle": "12",
           "eol": "2028-06-30",
-          "supportEnd": "2026-06-10"
+          "supportEnd": "2026-07-11"
         },
         {
           "cycle": "11",

@@ -362,7 +362,7 @@ If you use `LUDASH_ENCRYPTION_KEY_FILE`, do not also set `LUDASH_ENCRYPTION_KEY`
 
 Linux Update Dashboard records OS identity fields from `/etc/os-release` during system refreshes and compares them with a bundled distribution lifecycle catalog. The dashboard shows OS lifecycle warnings when a release is close to end of life, fully end of life, or in a reduced support phase such as Debian LTS after regular Debian Security Support has ended.
 
-These warnings appear on the dashboard, systems list, and system detail page. The detail page also shows an **EOL** field in the system information card. The warning window is configurable from **Settings > Lifecycle Warnings**; the default is **180 days**.
+These warnings appear on the dashboard, systems list, and system detail page. The detail page also shows a **Lifecycle** field in the system information card. The warning window is configurable from **Settings > Lifecycle Warnings**; the default is **180 days**.
 
 Lifecycle data is generated at build time:
 
@@ -388,10 +388,12 @@ The custom JSON file uses the same shape as `server/default-distro-lifecycle-cat
 {
   "debian": {
     "label": "Debian",
+    "supportLabel": "security support",
+    "finalSupportLabel": "LTS",
     "entries": [
       {
         "cycle": "12",
-        "supportEnd": "2026-06-10",
+        "supportEnd": "2026-07-11",
         "eol": "2028-06-30"
       }
     ]
@@ -399,7 +401,7 @@ The custom JSON file uses the same shape as `server/default-distro-lifecycle-cat
 }
 ```
 
-Catalog keys are the normalized product keys used by the resolver: `ubuntu`, `debian`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Each entry needs a `cycle` and an `eol` value. `eol` can be an ISO date (`YYYY-MM-DD`) or `false` for releases without a known final EOL date. `supportEnd` is optional and represents the end of regular support before final EOL; when present, the dashboard treats the release as warning-worthy but not fully EOL until `eol`.
+Catalog keys are the normalized product keys used by the resolver: `ubuntu`, `debian`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Each entry needs a `cycle` and an `eol` value. `eol` can be an ISO date (`YYYY-MM-DD`) or `false` for releases without a known final EOL date. `supportEnd` is optional and represents the end of regular support before final EOL; when present, the dashboard treats the release as warning-worthy but not fully EOL until `eol`. Product-level `supportLabel` and `finalSupportLabel` are optional wording hints for distributions whose regular-support and final-support phases have specific names.
 
 If you edit `server/generated/distro-lifecycle-data.json` directly, keep in mind that `pnpm run build` regenerates it. Use `LUDASH_EOL_CATALOG_FILE` for repeatable custom data.
 

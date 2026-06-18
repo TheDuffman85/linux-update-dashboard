@@ -36,6 +36,8 @@ interface LifecycleEntry {
 
 interface ProductCatalog {
   label: string;
+  supportLabel?: string;
+  finalSupportLabel?: string;
   entries: readonly LifecycleEntry[];
 }
 
@@ -117,6 +119,14 @@ function unknownResult(): OsLifecycleInfo {
   };
 }
 
+function getSupportLabel(product: ProductCatalog): string {
+  return product.supportLabel ?? "regular support";
+}
+
+function getFinalSupportLabel(product: ProductCatalog): string {
+  return product.finalSupportLabel ?? "EOL";
+}
+
 export function resolveOsLifecycle(
   input: OsLifecycleInput,
   options: { warningDays?: number; now?: Date } = {},
@@ -149,6 +159,9 @@ export function resolveOsLifecycle(
   const daysUntilSupportEnd = entry.supportEnd
     ? Math.ceil((parseDateUtc(entry.supportEnd) - getTodayUtc(now)) / DAY_MS)
     : null;
+  const supportLabel = getSupportLabel(product);
+  const finalSupportLabel = getFinalSupportLabel(product);
+  const hasNamedFinalSupport = !!product.finalSupportLabel;
   const status: OsLifecycleStatus = daysUntilEol <= 0
     ? "eol"
     : daysUntilSupportEnd !== null && daysUntilSupportEnd <= 0
@@ -159,6 +172,11 @@ export function resolveOsLifecycle(
           ? "support_ending"
           : "supported";
   const dismissedKey = buildDismissedKey(productKey, cycle, entry.eol, status);
+  const supportedLabel = entry.supportEnd
+    ? hasNamedFinalSupport
+      ? `${product.label} ${cycle} ${supportLabel} until ${entry.supportEnd}; ${finalSupportLabel} until ${entry.eol}`
+      : `${product.label} ${cycle} ${supportLabel} until ${entry.supportEnd}; ${finalSupportLabel} ${entry.eol}`
+    : `${product.label} ${cycle} supported until ${entry.eol}`;
 
   return {
     osLifecycleStatus: status,
@@ -170,14 +188,14 @@ export function resolveOsLifecycle(
       status === "eol"
         ? `${product.label} ${cycle} is EOL`
         : status === "support_ended"
-          ? `${product.label} ${cycle} security support ended; LTS ends ${entry.eol}`
+          ? hasNamedFinalSupport
+            ? `${product.label} ${cycle} is in ${finalSupportLabel} until ${entry.eol}`
+            : `${product.label} ${cycle} ${supportLabel} ended; ${finalSupportLabel} ${entry.eol}`
           : status === "support_ending"
-            ? `${product.label} ${cycle} security support ends in ${daysUntilSupportEnd} day${daysUntilSupportEnd === 1 ? "" : "s"}`
+            ? `${product.label} ${cycle} ${supportLabel} ends in ${daysUntilSupportEnd} day${daysUntilSupportEnd === 1 ? "" : "s"}${hasNamedFinalSupport ? `; ${finalSupportLabel} until ${entry.eol}` : ""}`
         : status === "approaching_eol"
           ? `${product.label} ${cycle} reaches EOL in ${daysUntilEol} day${daysUntilEol === 1 ? "" : "s"}`
-          : entry.supportEnd
-            ? `${product.label} ${cycle} security support until ${entry.supportEnd}`
-            : `${product.label} ${cycle} supported until ${entry.eol}`,
+          : supportedLabel,
     osLifecycleDismissedKey: dismissedKey,
     osLifecycleBannerDismissed: !!dismissedKey && input.osLifecycleDismissedKey === dismissedKey,
   };

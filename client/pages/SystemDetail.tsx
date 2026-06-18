@@ -74,29 +74,44 @@ function InfoCard({ title, items }: { title: string; items: { label: string; val
   );
 }
 
-function formatOsLifecycleField(system: {
+export function formatOsLifecycleField(system: {
   osLifecycleStatus: string;
   osLifecycleEolDate: string | null;
   osLifecycleDaysUntilEol: number | null;
   osLifecycleSupportEndDate: string | null;
   osLifecycleDaysUntilSupportEnd: number | null;
+  osLifecycleLabel: string;
 }): string {
+  const usesLtsWording = /\bLTS\b/.test(system.osLifecycleLabel);
   if (system.osLifecycleStatus === "unknown") return "Unknown";
   if (system.osLifecycleStatus === "eol") {
     return system.osLifecycleEolDate ? `EOL on ${system.osLifecycleEolDate}` : "EOL";
   }
   if (system.osLifecycleStatus === "support_ended") {
-    return system.osLifecycleEolDate ? `LTS until ${system.osLifecycleEolDate}` : "Support ended";
+    if (usesLtsWording && system.osLifecycleEolDate) return `LTS until ${system.osLifecycleEolDate}`;
+    return system.osLifecycleEolDate ? `EOL on ${system.osLifecycleEolDate}` : "Regular support ended";
   }
   if (system.osLifecycleStatus === "support_ending") {
-    return typeof system.osLifecycleDaysUntilSupportEnd === "number"
-      ? `Security support ends in ${system.osLifecycleDaysUntilSupportEnd} days`
+    if (system.osLifecycleSupportEndDate && typeof system.osLifecycleDaysUntilSupportEnd === "number") {
+      return `Security support ends ${system.osLifecycleSupportEndDate} (${system.osLifecycleDaysUntilSupportEnd}d)`;
+    }
+    return system.osLifecycleSupportEndDate
+      ? `Security support ends ${system.osLifecycleSupportEndDate}`
       : "Security support ending";
   }
   if (system.osLifecycleStatus === "approaching_eol") {
-    return typeof system.osLifecycleDaysUntilEol === "number"
-      ? `EOL in ${system.osLifecycleDaysUntilEol} days`
-      : "EOL soon";
+    if (system.osLifecycleEolDate && typeof system.osLifecycleDaysUntilEol === "number") {
+      return `EOL ${system.osLifecycleEolDate} (${system.osLifecycleDaysUntilEol}d)`;
+    }
+    return system.osLifecycleEolDate ? `EOL on ${system.osLifecycleEolDate}` : "EOL soon";
+  }
+  if (system.osLifecycleSupportEndDate && system.osLifecycleEolDate) {
+    return usesLtsWording
+      ? `Security support until ${system.osLifecycleSupportEndDate}; LTS until ${system.osLifecycleEolDate}`
+      : `Regular support until ${system.osLifecycleSupportEndDate}; EOL ${system.osLifecycleEolDate}`;
+  }
+  if (system.osLifecycleSupportEndDate) {
+    return `Security support until ${system.osLifecycleSupportEndDate}`;
   }
   return system.osLifecycleEolDate ? `Supported until ${system.osLifecycleEolDate}` : "Supported";
 }
@@ -786,7 +801,7 @@ export function OsLifecycleWarningBanner({
     : status === "support_ended"
       ? `${systemName} is running a distribution release whose regular security support ended${supportEndDate ? ` on ${supportEndDate}` : ""}${eolDate ? `; LTS runs until ${eolDate}` : ""}.`
       : status === "support_ending"
-        ? `${systemName} is running a distribution release whose regular security support ends${supportEndDate ? ` on ${supportEndDate}` : ""}${typeof daysUntilSupportEnd === "number" ? `, in ${daysUntilSupportEnd} day${daysUntilSupportEnd === 1 ? "" : "s"}` : ""}.`
+        ? `${systemName} is running a distribution release whose regular security support ends${supportEndDate ? ` on ${supportEndDate}` : ""}${typeof daysUntilSupportEnd === "number" ? `, in ${daysUntilSupportEnd} day${daysUntilSupportEnd === 1 ? "" : "s"}` : ""}${/\bLTS\b/.test(label) && eolDate ? `; LTS runs until ${eolDate}` : ""}.`
         : `${systemName} is running a distribution release that reaches end of life${eolDate ? ` on ${eolDate}` : ""}${typeof daysUntilEol === "number" ? `, in ${daysUntilEol} day${daysUntilEol === 1 ? "" : "s"}` : ""}.`;
 
   return (
@@ -2083,7 +2098,7 @@ export default function SystemDetail() {
       : dedupedOperationNoticeState;
   const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
-  const dotColor = getSystemStatusDotClass(updateState);
+  const dotColor = getSystemStatusDotClass(updateState, system);
   const hasSelectedPackages = packageSelectionState.selectedCount > 0;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
     .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
@@ -2489,7 +2504,7 @@ export default function SystemDetail() {
           items={[
             { label: "OS", value: system.osName },
             { label: "Version", value: system.osVersion },
-            { label: "EOL", value: formatOsLifecycleField(system) },
+            { label: "Lifecycle", value: formatOsLifecycleField(system) },
             { label: "Kernel", value: system.kernel },
             { label: "Architecture", value: system.arch },
             {

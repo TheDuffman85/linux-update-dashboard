@@ -30,24 +30,27 @@ function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   return nextItems;
 }
 
-function getLifecycleBadge(system: Pick<System, "osLifecycleStatus" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd">): { label: string; variant: "warning" | "danger" } | null {
+function hasLtsLifecycleLabel(system: Pick<System, "osLifecycleLabel">): boolean {
+  return /\bLTS\b/.test(system.osLifecycleLabel);
+}
+
+function getLifecycleBadge(system: Pick<System, "osLifecycleStatus" | "osLifecycleLabel">): { label: string; variant: "warning" | "danger" } | null {
   if (system.osLifecycleStatus === "eol") return { label: "EOL", variant: "danger" };
   if (system.osLifecycleStatus === "support_ended") {
-    return { label: "support ended", variant: "warning" };
+    return {
+      label: hasLtsLifecycleLabel(system) ? "LTS" : "regular support ended",
+      variant: "warning",
+    };
   }
   if (system.osLifecycleStatus === "support_ending") {
     return {
-      label: typeof system.osLifecycleDaysUntilSupportEnd === "number"
-        ? `support ends in ${system.osLifecycleDaysUntilSupportEnd}d`
-        : "support ending",
+      label: "security support ending soon",
       variant: "warning",
     };
   }
   if (system.osLifecycleStatus === "approaching_eol") {
     return {
-      label: typeof system.osLifecycleDaysUntilEol === "number"
-        ? `EOL in ${system.osLifecycleDaysUntilEol}d`
-        : "EOL soon",
+      label: "EOL soon",
       variant: "warning",
     };
   }

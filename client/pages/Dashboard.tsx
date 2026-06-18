@@ -248,24 +248,26 @@ function getStatsGridClass(stats: { needsReboot: number; lifecycleWarnings: numb
       : "lg:grid-cols-6";
 }
 
-function getLifecycleWarningLabel(system: Pick<System, "osLifecycleStatus" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd">): string {
+function hasLtsLifecycleLabel(system: Pick<System, "osLifecycleLabel">): boolean {
+  return /\bLTS\b/.test(system.osLifecycleLabel);
+}
+
+function getLifecycleWarningLabel(system: Pick<System, "osLifecycleStatus" | "osLifecycleLabel">): string {
   if (system.osLifecycleStatus === "eol") return "EOL";
-  if (system.osLifecycleStatus === "support_ended") return "Support ended";
-  if (system.osLifecycleStatus === "support_ending") {
-    return typeof system.osLifecycleDaysUntilSupportEnd === "number"
-      ? `Support ends in ${system.osLifecycleDaysUntilSupportEnd}d`
-      : "Support ending";
+  if (system.osLifecycleStatus === "support_ended") {
+    if (hasLtsLifecycleLabel(system)) return "LTS";
+    return "Regular support ended";
   }
-  if (typeof system.osLifecycleDaysUntilEol === "number") {
-    return `EOL in ${system.osLifecycleDaysUntilEol}d`;
+  if (system.osLifecycleStatus === "support_ending") {
+    return "Security support ending soon";
   }
   return "EOL soon";
 }
 
-function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "osLifecycleStatus" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd" | "osLifecycleLabel" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
+function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "osLifecycleStatus" | "osLifecycleEolDate" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd" | "osLifecycleLabel" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const maintaining = updateState === "maintaining";
-  const dotColor = getSystemStatusDotClass(updateState);
+  const dotColor = getSystemStatusDotClass(updateState, system);
 
   return (
     <Link
@@ -1148,7 +1150,7 @@ export default function Dashboard() {
             <StatCard label="Needs Reboot" value={stats.needsReboot} color="text-amber-500" />
           )}
           {stats.lifecycleWarnings > 0 && (
-            <StatCard label="OS Warnings" value={stats.lifecycleWarnings} color="text-red-600" />
+            <StatCard label="OS Warnings" value={stats.lifecycleWarnings} color="text-yellow-500 dark:text-yellow-400" />
           )}
         </div>
       )}
