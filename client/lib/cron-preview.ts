@@ -13,6 +13,7 @@ export interface CronPreviewError {
 
 export function getCronLocale(language: SupportedLanguage): string {
   if (language === "hi") return "en";
+  if (language === "pt") return "pt_BR";
   return language === "zh" ? "zh_CN" : language;
 }
 

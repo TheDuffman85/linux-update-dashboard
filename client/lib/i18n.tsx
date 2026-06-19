@@ -16,6 +16,8 @@ import en from "../locales/en.json";
 import es from "../locales/es.json";
 import fr from "../locales/fr.json";
 import hi from "../locales/hi.json";
+import ja from "../locales/ja.json";
+import pt from "../locales/pt.json";
 import ru from "../locales/ru.json";
 import zh from "../locales/zh.json";
 
@@ -28,6 +30,8 @@ export const SUPPORTED_LANGUAGES = [
   { code: "de", label: "Deutsch" },
   { code: "fr", label: "Français" },
   { code: "hi", label: "हिन्दी" },
+  { code: "ja", label: "日本語" },
+  { code: "pt", label: "Português" },
   { code: "es", label: "Español" },
   { code: "ru", label: "Русский" },
   { code: "zh", label: "中文" },
@@ -56,6 +60,12 @@ export const i18nResources = {
   },
   hi: {
     translation: hi,
+  },
+  ja: {
+    translation: ja,
+  },
+  pt: {
+    translation: pt,
   },
   ru: {
     translation: ru,
