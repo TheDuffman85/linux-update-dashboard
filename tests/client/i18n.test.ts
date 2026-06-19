@@ -30,6 +30,8 @@ describe("i18n language resolution", () => {
     expect(normalizeLanguagePreference("ar-EG")).toBe("ar");
     expect(normalizeLanguagePreference("fr-FR")).toBe("fr");
     expect(normalizeLanguagePreference("hi-IN")).toBe("hi");
+    expect(normalizeLanguagePreference("ja-JP")).toBe("ja");
+    expect(normalizeLanguagePreference("pt-BR")).toBe("pt");
     expect(normalizeLanguagePreference("zh_CN")).toBe("zh");
   });
 
@@ -48,6 +50,14 @@ describe("i18n language resolution", () => {
     expect(i18nResources.de.translation["pages.settings.settings"]).toBe("Einstellungen");
     expect(i18nResources.fr.translation["pages.settings.settings"]).toBe("Paramètres");
     expect(i18nResources.hi.translation["pages.settings.settings"]).toBe("सेटिंग्स");
+    expect(i18nResources.ja.translation["pages.settings.settings"]).toBe("設定");
+    expect(i18nResources.ja.translation["pages.systemDetail.activity.checkedForUpdates"])
+      .toBe("更新を確認しました");
+    expect(i18nResources.ja.translation["pages.systemDetail.countUpdatesFound"])
+      .toBe("{count} 件の更新が見つかりました");
+    expect(i18nResources.ja.translation["pages.systemDetail.completedInDuration"])
+      .toBe("{duration} で完了");
+    expect(i18nResources.pt.translation["pages.settings.settings"]).toBe("Configurações");
     expect(i18nResources.es.translation["pages.settings.settings"]).toBe("Ajustes");
     expect(i18nResources.ru.translation["pages.settings.settings"]).toBe("Настройки");
     expect(i18nResources.zh.translation["pages.settings.settings"]).toBe("设置");
