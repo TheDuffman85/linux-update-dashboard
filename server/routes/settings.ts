@@ -12,6 +12,7 @@ import {
   syncSSHManagerWithSettings,
 } from "../services/settings-service";
 import type { SessionData } from "../auth/session";
+import { getConfiguredTimeZone } from "../time-zone";
 
 type AuthEnv = {
   Variables: {
@@ -40,6 +41,7 @@ settingsRouter.get("/", (c) => {
   return c.json({
     settings: settingsMap,
     numericSettingRules: getNumericSettingRules(),
+    timeZone: getConfiguredTimeZone(),
   });
 });
 

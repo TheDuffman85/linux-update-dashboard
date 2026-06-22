@@ -5,6 +5,7 @@ import type { NumericSettingRules } from "./settings-validation";
 export type SettingsResponse = {
   settings: Record<string, string>;
   numericSettingRules: NumericSettingRules;
+  timeZone: string | null;
 };
 
 export function useSettingsResponse(enabled = true) {

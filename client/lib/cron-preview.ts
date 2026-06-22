@@ -22,6 +22,8 @@ export function getCronPreview(
   startFrom: Date = new Date(),
   runCount = 3,
   language: SupportedLanguage = "en",
+  timeZone: string | null = null,
+  use24HourTimeFormat = true,
 ): CronPreview | CronPreviewError {
   const cronExpression = expression.trim();
   if (!cronExpression) {
@@ -29,11 +31,11 @@ export function getCronPreview(
   }
 
   try {
-    const cron = new Cron(cronExpression);
+    const cron = new Cron(cronExpression, timeZone ? { timezone: timeZone } : undefined);
     const nextRuns = cron.nextRuns(runCount, startFrom);
     const description = cronstrue.toString(cronExpression, {
       verbose: true,
-      use24HourTimeFormat: true,
+      use24HourTimeFormat,
       locale: getCronLocale(language),
     });
 

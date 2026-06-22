@@ -27,6 +27,11 @@ import {
   type TranslationValues,
   useI18n,
 } from "../lib/i18n";
+import {
+  BROWSER_TIME_FORMAT_SETTING,
+  TIME_FORMAT_SETTING_KEY,
+  useDateTime,
+} from "../lib/date-time";
 
 function SettingSection({
   title,
@@ -49,6 +54,7 @@ export default function Settings() {
   const { addToast } = useToast();
   const { hasPassword, refresh: refreshAuth } = useAuth();
   const { browserLanguage, t } = useI18n();
+  const { browserTimeFormat, formatDate } = useDateTime();
 
   const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
   const deletePasskey = useDeletePasskey();
@@ -265,6 +271,30 @@ export default function Settings() {
               {t("pages.settings.usesYourBrowserPreferredLanguageByDefaultAnd")}
             </p>
           </div>
+          <div>
+            <label className={labelClass}>{t("pages.settings.timeFormat")}</label>
+            <select
+              value={form[TIME_FORMAT_SETTING_KEY] || BROWSER_TIME_FORMAT_SETTING}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  [TIME_FORMAT_SETTING_KEY]: e.target.value,
+                })
+              }
+              className={inputClass}
+            >
+              <option value={BROWSER_TIME_FORMAT_SETTING}>
+                {t("pages.settings.browserDefaultTimeFormat", {
+                  format: t(`pages.settings.timeFormat.${browserTimeFormat}`),
+                })}
+              </option>
+              <option value="12h">{t("pages.settings.timeFormat.12h")}</option>
+              <option value="24h">{t("pages.settings.timeFormat.24h")}</option>
+            </select>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              {t("pages.settings.usesYourBrowserPreferredTimeFormatByDefault")}
+            </p>
+          </div>
         </div>
         <button
           onClick={() =>
@@ -272,6 +302,7 @@ export default function Settings() {
               "activity_history_limit",
               "distro_eol_warning_days",
               LANGUAGE_SETTING_KEY,
+              TIME_FORMAT_SETTING_KEY,
             ])
           }
           disabled={updateSettings.isPending}
@@ -521,7 +552,7 @@ export default function Settings() {
                     )}
                     <span className="ml-3 text-xs text-slate-500 shrink-0">
                       {t("pages.settings.added")}{" "}
-                      {new Date(pk.createdAt + "Z").toLocaleDateString()}
+                      {formatDate(new Date(pk.createdAt + "Z"))}
                     </span>
                   </div>
                   <button
@@ -771,7 +802,7 @@ export default function Settings() {
                     ) : tk.expiresAt ? (
                       <span className="ml-2 text-xs text-slate-500 shrink-0">
                         {t("pages.settings.expires")}{" "}
-                        {new Date(tk.expiresAt + "Z").toLocaleDateString()}
+                        {formatDate(new Date(tk.expiresAt + "Z"))}
                       </span>
                     ) : (
                       <span className="ml-2 text-xs text-slate-500 shrink-0">
@@ -780,7 +811,7 @@ export default function Settings() {
                     )}
                     <span className="ml-2 text-xs text-slate-500 shrink-0">
                       {t("pages.settings.created")}{" "}
-                      {new Date(tk.createdAt + "Z").toLocaleDateString()}
+                      {formatDate(new Date(tk.createdAt + "Z"))}
                     </span>
                   </div>
                   <button

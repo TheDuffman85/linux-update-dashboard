@@ -1,4 +1,5 @@
 import { Cron } from "croner";
+import { getConfiguredTimeZone } from "../time-zone";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { systems } from "../db/schema";
@@ -265,6 +266,7 @@ function startRuntime(options: { startupRefresh: boolean }): void {
   const refreshSchedules = scheduleService.listEnabledSchedulesByType("refresh");
   const updateSchedules = scheduleService.listEnabledSchedulesByType("update");
   const notificationSchedules = scheduleService.listEnabledSchedulesByType("notification_digest");
+  const timeZone = getConfiguredTimeZone() ?? undefined;
 
   logger.info("Schedule runtime configured", {
     refreshSchedules: refreshSchedules.length,
@@ -276,7 +278,7 @@ function startRuntime(options: { startupRefresh: boolean }): void {
     if (!isRefreshConfig(schedule.config)) continue;
     try {
       scheduleCrons.push(
-        new Cron(schedule.config.cron, () => {
+        new Cron(schedule.config.cron, { timezone: timeZone }, () => {
           void runRefreshSchedule(schedule, generation);
         }),
       );
@@ -293,7 +295,7 @@ function startRuntime(options: { startupRefresh: boolean }): void {
     if (!isUpdateConfig(schedule.config)) continue;
     try {
       scheduleCrons.push(
-        new Cron(schedule.config.cron, () => {
+        new Cron(schedule.config.cron, { timezone: timeZone }, () => {
           void runUpdateSchedule(schedule, generation);
         }),
       );
@@ -310,7 +312,7 @@ function startRuntime(options: { startupRefresh: boolean }): void {
     if (!isNotificationScheduleConfig(schedule.config)) continue;
     try {
       scheduleCrons.push(
-        new Cron(schedule.config.cron, () => {
+        new Cron(schedule.config.cron, { timezone: timeZone }, () => {
           void runNotificationSchedule(schedule, generation);
         }),
       );

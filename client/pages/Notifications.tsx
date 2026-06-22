@@ -39,6 +39,7 @@ import {
 import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
 import { useToast } from "../context/ToastContext";
 import { useI18n } from "../lib/i18n";
+import { useDateTime } from "../lib/date-time";
 
 const inputClass =
   "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
@@ -592,15 +593,21 @@ function finalizeWebhookConfig(current: WebhookConfig, initial?: WebhookConfig):
   };
 }
 
-function formatTimestamp(value: string | null | undefined): string {
+function formatTimestamp(
+  value: string | null | undefined,
+  formatDateTime: (value: Date | string | number) => string,
+): string {
   if (!value) return "";
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  return Number.isNaN(parsed.getTime()) ? value : formatDateTime(parsed);
 }
 
-function describeDelivery(channel: NotificationChannel): string | null {
+function describeDelivery(
+  channel: NotificationChannel,
+  formatDateTime: (value: Date | string | number) => string,
+): string | null {
   if (!channel.lastDeliveryStatus) return null;
-  const when = formatTimestamp(channel.lastDeliveryAt);
+  const when = formatTimestamp(channel.lastDeliveryAt, formatDateTime);
   const code = channel.lastDeliveryCode ? ` (${channel.lastDeliveryCode})` : "";
   const message = channel.lastDeliveryMessage ? ` - ${channel.lastDeliveryMessage}` : "";
   return `${channel.lastDeliveryStatus}${code}${when ? ` at ${when}` : ""}${message}`;
@@ -739,6 +746,7 @@ function NotificationForm({
   loading: boolean;
 }) {
   const { t } = useI18n();
+  const { formatDateTime } = useDateTime();
   const { data: systemsList } = useVisibleSystems();
   const { data: schedules } = useSchedules();
   const createSchedule = useCreateSchedule();
@@ -1639,7 +1647,7 @@ function NotificationForm({
                   </a>
                   {telegramLinkExpiresAt && (
                     <p className={mutedTextClass}>
-                      {t("pages.notifications.telegram.expires", { value: formatTimestamp(telegramLinkExpiresAt) })}
+                      {t("pages.notifications.telegram.expires", { value: formatTimestamp(telegramLinkExpiresAt, formatDateTime) })}
                     </p>
                   )}
                 </div>
@@ -1689,13 +1697,13 @@ function NotificationForm({
                   <p className={mutedTextClass}>{t("pages.notifications.telegram.tokenId", { id: initialTelegram.commandApiTokenId })}</p>
                 ) : null}
                 {persistedTelegramCommandsEnabled && initialTelegram.commandTokenCreatedAt ? (
-                  <p className={mutedTextClass}>{t("pages.notifications.telegram.created", { value: formatTimestamp(initialTelegram.commandTokenCreatedAt) })}</p>
+                  <p className={mutedTextClass}>{t("pages.notifications.telegram.created", { value: formatTimestamp(initialTelegram.commandTokenCreatedAt, formatDateTime) })}</p>
                 ) : null}
                 {persistedTelegramCommandsEnabled && initialTelegram.commandTokenLastUsedAt ? (
-                  <p className={mutedTextClass}>{t("pages.notifications.telegram.lastUsed", { value: formatTimestamp(initialTelegram.commandTokenLastUsedAt) })}</p>
+                  <p className={mutedTextClass}>{t("pages.notifications.telegram.lastUsed", { value: formatTimestamp(initialTelegram.commandTokenLastUsedAt, formatDateTime) })}</p>
                 ) : null}
                 {persistedTelegramCommandsEnabled && initialTelegram.commandTokenExpiresAt ? (
-                  <p className={mutedTextClass}>{t("pages.notifications.telegram.expires", { value: formatTimestamp(initialTelegram.commandTokenExpiresAt) })}</p>
+                  <p className={mutedTextClass}>{t("pages.notifications.telegram.expires", { value: formatTimestamp(initialTelegram.commandTokenExpiresAt, formatDateTime) })}</p>
                 ) : null}
                 {!persistedTelegramCommandsEnabled && (
                   <p className={mutedTextClass}>
@@ -2025,6 +2033,7 @@ export default function Notifications() {
   const testNotification = useTestNotification();
   const { addToast } = useToast();
   const { t } = useI18n();
+  const { formatDateTime } = useDateTime();
   const [showForm, setShowForm] = useState(false);
   const [duplicateChannel, setDuplicateChannel] = useState<NotificationChannel | null>(null);
   const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
@@ -2272,10 +2281,10 @@ export default function Notifications() {
                       </span>
                       <div className="min-w-0">
                         <div className="truncate font-medium">{channel.name}</div>
-                        {describeDelivery(channel) && (
+                        {describeDelivery(channel, formatDateTime) && (
                           <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
                             {t("pages.notifications.lastDeliveryDelivery", {
-                              delivery: describeDelivery(channel) ?? "",
+                              delivery: describeDelivery(channel, formatDateTime) ?? "",
                             })}
                           </div>
                         )}
