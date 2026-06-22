@@ -1,6 +1,7 @@
 import { eq, and, asc, inArray } from "drizzle-orm";
 import { createHash } from "crypto";
 import { Cron } from "croner";
+import { getConfiguredTimeZone } from "../time-zone";
 import { getDb } from "../db";
 import { notificationDeliveredUpdates, notifications, systems } from "../db/schema";
 import {
@@ -1053,7 +1054,8 @@ function appendPendingAppUpdate(
 function shouldSendNow(cronExpr: string, lastSentAt: string | null): boolean {
   try {
     const ref = lastSentAt ? new Date(lastSentAt) : new Date(0);
-    const cron = new Cron(cronExpr);
+    const timeZone = getConfiguredTimeZone() ?? undefined;
+    const cron = new Cron(cronExpr, { timezone: timeZone });
     const next = cron.nextRun(ref);
     if (!next) return false;
     return new Date() >= next;

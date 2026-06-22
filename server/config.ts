@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import { randomBytes } from "crypto";
 import { resolveRequiredSecretEnv, resolveSecretEnv } from "./env-secrets";
 import { parseLogLevel } from "./logger";
+import { getConfiguredTimeZone } from "./time-zone";
 
 export interface Config {
   dbPath: string;
@@ -18,6 +19,7 @@ export interface Config {
   minScheduleIntervalMinutes: number;
   baseUrl: string;
   trustProxy: boolean;
+  timeZone: string | null;
 }
 
 export function hasConfiguredBaseUrl(): boolean {
@@ -100,6 +102,7 @@ function loadConfig(): Config {
     ),
     baseUrl: process.env.LUDASH_BASE_URL || "http://localhost:3001",
     trustProxy: process.env.LUDASH_TRUST_PROXY === "true",
+    timeZone: getConfiguredTimeZone(),
   };
 }
 

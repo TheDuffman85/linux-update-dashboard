@@ -4,7 +4,12 @@ export function parseTimestamp(timestamp: string): Date {
 
 type TranslateTime = (key: string, values?: Record<string, string | number>) => string;
 
-export function formatTimeAgo(timestamp: string, t?: TranslateTime, locale?: string): string {
+export function formatTimeAgo(
+  timestamp: string,
+  t?: TranslateTime,
+  locale?: string,
+  dateTimeOptions: Intl.DateTimeFormatOptions = {},
+): string {
   const date = parseTimestamp(timestamp);
   const diffMs = Date.now() - date.getTime();
   const minutes = Math.floor(diffMs / 60000);
@@ -23,10 +28,15 @@ export function formatTimeAgo(timestamp: string, t?: TranslateTime, locale?: str
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    ...dateTimeOptions,
   });
 }
 
-export function formatExactDateTime(timestamp: string, locale?: string): string {
+export function formatExactDateTime(
+  timestamp: string,
+  locale?: string,
+  dateTimeOptions: Intl.DateTimeFormatOptions = {},
+): string {
   return parseTimestamp(timestamp).toLocaleString(locale, {
     year: "numeric",
     month: "short",
@@ -35,6 +45,7 @@ export function formatExactDateTime(timestamp: string, locale?: string): string 
     minute: "2-digit",
     second: "2-digit",
     timeZoneName: "short",
+    ...dateTimeOptions,
   });
 }
 

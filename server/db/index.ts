@@ -86,6 +86,11 @@ const DEFAULT_SETTINGS = [
     value: "browser",
     description: "UI language preference; browser uses the client browser language when available",
   },
+  {
+    key: "time_format",
+    value: "browser",
+    description: "UI time format preference; browser uses the client browser preference",
+  },
 ];
 
 const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";

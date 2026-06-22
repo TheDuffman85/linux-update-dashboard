@@ -23,6 +23,7 @@ import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
 import { getCronPreview } from "../lib/cron-preview";
 import { useToast } from "../context/ToastContext";
 import { useI18n } from "../lib/i18n";
+import { useDateTime } from "../lib/date-time";
 
 const inputClass =
   "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
@@ -70,11 +71,15 @@ function moveSchedule<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   return nextItems;
 }
 
-function formatDate(value: string | null, t: Translate): string {
+function formatDate(
+  value: string | null,
+  t: Translate,
+  formatDateTime: (value: Date | string | number) => string,
+): string {
   if (!value) return t("pages.schedules.never");
   const parsed = new Date(value.includes("T") ? value : `${value}Z`);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
+  return formatDateTime(parsed);
 }
 
 function getCronMinimumIntervalMs(cronExpression: string): number | null {
@@ -109,8 +114,14 @@ function truncateScheduleName(value: string): string {
   return `${value.slice(0, MAX_SCHEDULE_NAME_LENGTH - 3).trimEnd()}...`;
 }
 
-function generateScheduleName(type: ScheduleType, cron: string, language: ReturnType<typeof useI18n>["language"]): string | null {
-  const preview = getCronPreview(cron, new Date(), 3, language);
+function generateScheduleName(
+  type: ScheduleType,
+  cron: string,
+  language: ReturnType<typeof useI18n>["language"],
+  timeZone: string | null,
+  use24HourTimeFormat: boolean,
+): string | null {
+  const preview = getCronPreview(cron, new Date(), 3, language, timeZone, use24HourTimeFormat);
   if ("error" in preview) return null;
   return truncateScheduleName(`${TYPE_LABELS[type]} - ${preview.description}`);
 }
@@ -123,10 +134,11 @@ function describeCronExpression(
   cron: string,
   t: Translate,
   language: ReturnType<typeof useI18n>["language"],
+  use24HourTimeFormat: boolean,
 ): string {
   const preset = CRON_PRESETS.find((item) => item.value === cron);
   if (preset) return t(preset.labelKey);
-  const preview = getCronPreview(cron, new Date(), 0, language);
+  const preview = getCronPreview(cron, new Date(), 0, language, null, use24HourTimeFormat);
   return "error" in preview ? cron : preview.description;
 }
 
@@ -134,6 +146,7 @@ function describeSchedule(
   schedule: Schedule,
   t: Translate,
   language: ReturnType<typeof useI18n>["language"],
+  use24HourTimeFormat: boolean,
 ): string {
   if (schedule.type === "refresh" && isRefreshConfig(schedule.config)) {
     const config = schedule.config;
@@ -142,17 +155,17 @@ function describeSchedule(
         ? t("pages.schedules.noCacheReuse")
         : t("pages.schedules.hoursCache", { hours: config.cacheDurationHours });
     return t("pages.schedules.descriptionWithCache", {
-      schedule: describeCronExpression(config.cron, t, language),
+      schedule: describeCronExpression(config.cron, t, language, use24HourTimeFormat),
       cache,
     });
   }
 
   if (schedule.type === "update" && isUpdateConfig(schedule.config)) {
-    return describeCronExpression(schedule.config.cron, t, language);
+    return describeCronExpression(schedule.config.cron, t, language, use24HourTimeFormat);
   }
 
   if (schedule.type === "notification_digest" && isNotificationScheduleConfig(schedule.config)) {
-    return describeCronExpression(schedule.config.cron, t, language);
+    return describeCronExpression(schedule.config.cron, t, language, use24HourTimeFormat);
   }
 
   return t("pages.schedules.invalidConfig");
@@ -181,14 +194,19 @@ function ScheduleCronPreview({
   className?: string;
 }) {
   const { language, t } = useI18n();
-  const preview = useMemo(() => getCronPreview(cron, new Date(), 3, language), [cron, language]);
+  const { browserTimeFormat, formatDateTime, timeFormat, timeZone } = useDateTime();
+  const resolvedTimeFormat = timeFormat === "browser" ? browserTimeFormat : timeFormat;
+  const preview = useMemo(
+    () => getCronPreview(cron, new Date(), 3, language, timeZone, resolvedTimeFormat === "24h"),
+    [cron, language, resolvedTimeFormat, timeZone],
+  );
 
   if (!cron.trim()) return null;
 
   if ("error" in preview) return null;
 
   const nextRuns = preview.nextRuns.map((date) =>
-    date.toLocaleString(undefined, {
+    formatDateTime(date, {
       weekday: "short",
       month: "short",
       day: "numeric",
@@ -264,6 +282,8 @@ function ScheduleForm({
   loading?: boolean;
 }) {
   const { language, t } = useI18n();
+  const { browserTimeFormat, timeFormat, timeZone } = useDateTime();
+  const resolvedTimeFormat = timeFormat === "browser" ? browserTimeFormat : timeFormat;
   const { data: systemsList } = useVisibleSystems();
   const { data: notificationsList } = useNotifications();
   const initialType = initial?.type ?? "refresh";
@@ -328,7 +348,13 @@ function ScheduleForm({
 
   const handleGenerateName = () => {
     setError("");
-    const generatedName = generateScheduleName(type, activeCron, language);
+    const generatedName = generateScheduleName(
+      type,
+      activeCron,
+      language,
+      timeZone,
+      resolvedTimeFormat === "24h",
+    );
     if (!generatedName) {
       setError(t("pages.schedules.enterValidCronBeforeGeneratingName"));
       return;
@@ -363,7 +389,17 @@ function ScheduleForm({
       setError(t("pages.schedules.cronExpressionIsRequired"));
       return;
     }
-    if ("error" in getCronPreview(config.cron, new Date(), 3, language)) {
+    if (
+      "error" in
+      getCronPreview(
+        config.cron,
+        new Date(),
+        3,
+        language,
+        timeZone,
+        resolvedTimeFormat === "24h",
+      )
+    ) {
       setError(t("pages.schedules.cronExpressionIsInvalid"));
       return;
     }
@@ -590,6 +626,8 @@ export default function Schedules() {
   const reorderSchedules = useReorderSchedules();
   const { addToast } = useToast();
   const { language, t } = useI18n();
+  const { browserTimeFormat, formatDateTime, timeFormat } = useDateTime();
+  const resolvedTimeFormat = timeFormat === "browser" ? browserTimeFormat : timeFormat;
   const [showForm, setShowForm] = useState(false);
   const [duplicateSchedule, setDuplicateSchedule] = useState<Schedule | null>(null);
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
@@ -819,7 +857,7 @@ export default function Schedules() {
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
                     <div>
-                      <div>{describeSchedule(schedule, t, language)}</div>
+                      <div>{describeSchedule(schedule, t, language, resolvedTimeFormat === "24h")}</div>
                       {(() => {
                         const cron = getScheduleCron(schedule);
                         return cron ? <ScheduleMinimumWarning cron={cron} /> : null;
@@ -834,7 +872,7 @@ export default function Schedules() {
                           : t("pages.schedules.none")}
                       </span>
                       <span className="text-slate-500 dark:text-slate-400">
-                        {formatDate(schedule.lastRunAt, t)}
+                        {formatDate(schedule.lastRunAt, t, formatDateTime)}
                       </span>
                     </div>
                   </td>

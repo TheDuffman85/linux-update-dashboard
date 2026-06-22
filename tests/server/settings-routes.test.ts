@@ -72,6 +72,7 @@ describe("settings routes", () => {
   test("persists newly introduced settings that do not already have a row", async () => {
     const db = getDb();
     db.delete(settings).where(eq(settings.key, "language")).run();
+    db.delete(settings).where(eq(settings.key, "time_format")).run();
 
     const app = new Hono();
     app.use("/api/settings/*", async (c, next) => {
@@ -83,13 +84,16 @@ describe("settings routes", () => {
     const res = await app.request("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ language: "de" }),
+      body: JSON.stringify({ language: "de", time_format: "24h" }),
     });
 
     expect(res.status).toBe(200);
     expect(
       db.select({ value: settings.value }).from(settings).where(eq(settings.key, "language")).get()?.value,
     ).toBe("de");
+    expect(
+      db.select({ value: settings.value }).from(settings).where(eq(settings.key, "time_format")).get()?.value,
+    ).toBe("24h");
   });
 
   test("returns configured timeout bounds with settings", async () => {
@@ -130,6 +134,29 @@ describe("settings routes", () => {
       else process.env.LUDASH_MAX_SSH_TIMEOUT = previousSshMax;
       if (previousCmdMax === undefined) delete process.env.LUDASH_MAX_CMD_TIMEOUT;
       else process.env.LUDASH_MAX_CMD_TIMEOUT = previousCmdMax;
+    }
+  });
+
+  test("returns the server timezone with settings", async () => {
+    const previousTimeZone = process.env.TZ;
+    process.env.TZ = "Europe/Berlin";
+
+    try {
+      const app = new Hono();
+      app.use("/api/settings/*", async (c, next) => {
+        c.set("user", { userId: 1, username: "admin", isAdmin: true });
+        await next();
+      });
+      app.route("/api/settings", settingsRoutes);
+
+      const res = await app.request("/api/settings");
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.timeZone).toBe("Europe/Berlin");
+    } finally {
+      if (previousTimeZone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimeZone;
     }
   });
 
