@@ -2,9 +2,10 @@
   "name": "linux-update-dashboard",
   "version": "0.1.0",
   "type": "module",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.9.0",
   "engines": {
-    "node": "24.15.0"
+    "node": "24.18.0",
+    "pnpm": "11.9.0"
   },
   "scripts": {
     "dev": "APP_VERSION=dev-$(date -u +'%Y%m%d%H%M'); VITE_APP_VERSION=\"$APP_VERSION\" LUDASH_APP_VERSION=\"$APP_VERSION\" pnpm run dev:server & VITE_APP_VERSION=\"$APP_VERSION\" LUDASH_APP_VERSION=\"$APP_VERSION\" pnpm run dev:client",

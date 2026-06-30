@@ -28,9 +28,9 @@ configure_pnpm() {
     fi
 
     log "Error: 'pnpm' is not installed and 'corepack' is not available."
-    log "Install pnpm 10.33.0 or activate it with Corepack:"
+    log "Install pnpm 11.9.0 or activate it with Corepack:"
     log "  corepack enable"
-    log "  corepack prepare pnpm@10.33.0 --activate"
+    log "  corepack prepare pnpm@11.9.0 --activate"
     exit 1
 }
 
@@ -157,7 +157,7 @@ fi
 # Check for Node.js and pnpm
 if ! command -v node &> /dev/null; then
     log "Error: 'node' is not installed."
-    log "Please install Node.js 24.15.0 to run this application locally."
+    log "Please install Node.js 24.18.0 to run this application locally."
     log "Alternatively, use Docker to run the containerized application."
     exit 1
 fi

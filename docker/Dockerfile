@@ -1,17 +1,17 @@
-ARG NODE_VERSION=24.15.0
+ARG NODE_VERSION=24.18.0
 FROM node:${NODE_VERSION}-trixie-slim AS base
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade libc6 libc-bin \
     && rm -rf /var/lib/apt/lists/*
-RUN npm install --global pnpm@10.33.0
+RUN npm install --global pnpm@11.9.0
 
 # Install dependencies
 FROM base AS deps
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Build client
