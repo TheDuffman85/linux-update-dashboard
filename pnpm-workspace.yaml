@@ -1,4 +1,5 @@
 allowBuilds:
   better-sqlite3: true
+  cpu-features: true
   esbuild: true
   ssh2: true
