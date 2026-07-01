@@ -53,7 +53,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/ssh2": "^1.15.0",
     "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.0.3",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-router": "^7.16.0",
