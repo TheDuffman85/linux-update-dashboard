@@ -20,7 +20,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.0",
+    "@hono/node-server": "2.0.6",
     "@simplewebauthn/server": "^13.3.0",
     "@types/sortablejs": "^1.15.9",
     "bcryptjs": "3.0.3",
