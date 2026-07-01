@@ -3,3 +3,5 @@ allowBuilds:
   cpu-features: true
   esbuild: true
   ssh2: true
+minimumReleaseAgeExclude:
+  - '@types/node@26.1.0'
