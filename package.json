@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
-    "@tanstack/react-query": "^5.101.0",
+    "@tanstack/react-query": "^5.101.2",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "^24.12.4",
     "@types/nodemailer": "^8.0.0",
