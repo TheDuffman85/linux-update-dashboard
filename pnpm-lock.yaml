@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: 2.0.0
-        version: 2.0.0(hono@4.12.15)
+        version: 2.0.0(hono@4.12.27)
       '@simplewebauthn/server':
         specifier: ^13.3.0
         version: 13.3.0
@@ -36,8 +36,8 @@ importers:
         specifier: ^11.11.1
         version: 11.11.1
       hono:
-        specifier: ^4.12.15
-        version: 4.12.15
+        specifier: ^4.12.27
+        version: 4.12.27
       i18next:
         specifier: ^26.3.1
         version: 26.3.1(typescript@6.0.3)
@@ -1129,8 +1129,8 @@ packages:
     resolution: {integrity: sha512-Xwwo44whKBVCYoliBQwaPvtd/2tYFkRQtXDWj1nackaV2JPXx3L0+Jvd8/qCJ2p+ML0/XVkJ2q+Mr+UVdpJK5w==}
     engines: {node: '>=12.0.0'}
 
-  hono@4.12.15:
-    resolution: {integrity: sha512-qM0jDhFEaCBb4TxoW7f53Qrpv9RBiayUHo0S52JudprkhvpjIrGoU1mnnr29Fvd1U335ZFPZQY1wlkqgfGXyLg==}
+  hono@4.12.27:
+    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
     engines: {node: '>=16.9.0'}
 
   html-parse-stringify@3.0.1:
@@ -1296,8 +1296,8 @@ packages:
   nan@2.26.2:
     resolution: {integrity: sha512-0tTvBTYkt3tdGw22nrAy50x7gpbGCCFH3AFcyS5WiUu7Eu4vWlri1woE6qHBSfy11vksDqkiwjOnlR7WV8G1Hw==}
 
-  nanoid@3.3.11:
-    resolution: {integrity: sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==}
+  nanoid@3.3.15:
+    resolution: {integrity: sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
@@ -1888,9 +1888,9 @@ snapshots:
 
   '@hexagon/base64@1.1.28': {}
 
-  '@hono/node-server@2.0.0(hono@4.12.15)':
+  '@hono/node-server@2.0.0(hono@4.12.27)':
     dependencies:
-      hono: 4.12.15
+      hono: 4.12.27
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -2555,7 +2555,7 @@ snapshots:
 
   highlight.js@11.11.1: {}
 
-  hono@4.12.15: {}
+  hono@4.12.27: {}
 
   html-parse-stringify@3.0.1:
     dependencies:
@@ -2699,7 +2699,7 @@ snapshots:
   nan@2.26.2:
     optional: true
 
-  nanoid@3.3.11: {}
+  nanoid@3.3.15: {}
 
   napi-build-utils@2.0.0: {}
 
@@ -2755,7 +2755,7 @@ snapshots:
 
   postcss@8.5.10:
     dependencies:
-      nanoid: 3.3.11
+      nanoid: 3.3.15
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
