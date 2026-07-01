@@ -41,7 +41,7 @@
     "react-i18next": "^17.0.8",
     "sortablejs": "^1.15.7",
     "ssh2": "^1.16.0",
-    "ws": "^8.20.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
