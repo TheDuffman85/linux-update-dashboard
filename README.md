@@ -79,6 +79,22 @@ A self-hosted web app for managing Linux package updates across multiple servers
 > [!IMPORTANT]
 > **HTTPS is recommended.** Plain HTTP works for basic local dashboard use, but browsers restrict secure-context features such as passkeys/WebAuthn and clipboard actions. Behind a reverse proxy, set `LUDASH_BASE_URL` to the public `https://...` URL and enable `LUDASH_TRUST_PROXY=true`.
 
+## Related Projects
+
+<table>
+  <tr>
+    <td width="80" align="center" valign="middle">
+      <a href="https://github.com/TheDuffman85/crowdsec-web-ui">
+        <img src="https://raw.githubusercontent.com/TheDuffman85/crowdsec-web-ui/main/client/public/logo.svg" alt="CrowdSec Web UI Logo" width="56" />
+      </a>
+    </td>
+    <td valign="middle">
+      <a href="https://github.com/TheDuffman85/crowdsec-web-ui"><strong>CrowdSec Web UI</strong></a><br />
+      A self-hosted web dashboard for CrowdSec to review alerts, manage decisions, configure notifications, and optionally view runtime metrics.
+    </td>
+  </tr>
+</table>
+
 ## Quick Start
 
 Prerequisites:
