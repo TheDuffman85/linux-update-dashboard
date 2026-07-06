@@ -520,4 +520,4 @@ Contributions for corrections, more natural wording, and new languages are welco
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=TheDuffman85/linux-update-dashboard&type=Date)](https://star-history.com/#TheDuffman85/linux-update-dashboard&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=TheDuffman85/linux-update-dashboard&type=date&legend=top-left&sealed_token=hsM5iehhuIgZct4apBouaoNlJfMtMPOHDMswSPq_Z2UCqQ_STymmzRdualR-pS_9cMQUtJRpVYTzOFTX_AsDXodHvJP8faYD2-zBf5_43jpZsaIp0xDOU3260-IZt216pEgQL4spbk6H2umAm8xELXshOr6dB5o2UUcf88eh0L2j034aPBl4AmDAB328)](https://www.star-history.com/?type=date&repos=TheDuffman85%2Flinux-update-dashboard)
