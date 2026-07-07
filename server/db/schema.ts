@@ -14,6 +14,8 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash"),
   totpSecret: text("totp_secret"),
   totpEnabled: integer("totp_enabled").notNull().default(0),
+  lastTotpStep: integer("last_totp_step"),
+  sessionVersion: integer("session_version").notNull().default(0),
   isAdmin: integer("is_admin").notNull().default(0),
   createdAt: text("created_at")
     .notNull()
@@ -49,88 +51,87 @@ export const credentials = sqliteTable("credentials", {
     .default(sql`(datetime('now'))`),
 });
 
-export const systems = sqliteTable(
-  "systems",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    sortOrder: integer("sort_order").notNull().default(0),
-    name: text("name").notNull(),
-    hostname: text("hostname").notNull(),
-    port: integer("port").notNull().default(22),
-    credentialId: integer("credential_id").references(() => credentials.id, {
+export const systems = sqliteTable("systems", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  name: text("name").notNull(),
+  hostname: text("hostname").notNull(),
+  port: integer("port").notNull().default(22),
+  credentialId: integer("credential_id").references(() => credentials.id, {
+    onDelete: "restrict",
+  }),
+  proxyJumpSystemId: integer("proxy_jump_system_id").references(
+    (): AnySQLiteColumn => systems.id,
+    {
       onDelete: "restrict",
-    }),
-    proxyJumpSystemId: integer("proxy_jump_system_id").references(
-      (): AnySQLiteColumn => systems.id,
-      {
-        onDelete: "restrict",
-      }
-    ),
-    authType: text("auth_type").notNull().default("password"),
-    username: text("username").notNull(),
-    encryptedPassword: text("encrypted_password"),
-    encryptedPrivateKey: text("encrypted_private_key"),
-    encryptedKeyPassphrase: text("encrypted_key_passphrase"),
-    encryptedSudoPassword: text("encrypted_sudo_password"),
-    hostKeyVerificationEnabled: integer("host_key_verification_enabled")
-      .notNull()
-      .default(1),
-    trustedHostKey: text("trusted_host_key"),
-    trustedHostKeyAlgorithm: text("trusted_host_key_algorithm"),
-    trustedHostKeyFingerprintSha256: text("trusted_host_key_fingerprint_sha256"),
-    hostKeyTrustedAt: text("host_key_trusted_at"),
-    pkgManager: text("pkg_manager"),
-    detectedPkgManagers: text("detected_pkg_managers"),
-    disabledPkgManagers: text("disabled_pkg_managers"),
-    pkgManagerConfigs: text("pkg_manager_configs"),
-    autoHideKeptBackUpdates: integer("auto_hide_kept_back_updates")
-      .notNull()
-      .default(0),
-    osId: text("os_id"),
-    osIdLike: text("os_id_like"),
-    osName: text("os_name"),
-    osVersion: text("os_version"),
-    osVersionCodename: text("os_version_codename"),
-    kernel: text("kernel"),
-    hostnameRemote: text("hostname_remote"),
-    uptime: text("uptime"),
-    uptimeSeconds: real("uptime_seconds"),
-    arch: text("arch"),
-    cpuCores: text("cpu_cores"),
-    memory: text("memory"),
-    disk: text("disk"),
-    bootId: text("boot_id"),
-    rebootDismissedBootId: text("reboot_dismissed_boot_id"),
-    rebootDismissedUptimeSeconds: real("reboot_dismissed_uptime_seconds"),
-    rebootDismissedAt: text("reboot_dismissed_at"),
-    osLifecycleDismissedKey: text("os_lifecycle_dismissed_key"),
-    osLifecycleDismissedAt: text("os_lifecycle_dismissed_at"),
-    rootUserBannerDismissed: integer("root_user_banner_dismissed")
-      .notNull()
-      .default(0),
-    rootUserBannerDismissedHostKeyFingerprintSha256: text("root_user_banner_dismissed_host_key_fingerprint_sha256"),
-    excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
-      .notNull()
-      .default(0),
-    upgradeGroupId: integer("upgrade_group_id").references(
-      (): AnySQLiteColumn => upgradeGroups.id,
-      { onDelete: "set null" }
-    ),
-    upgradeOrder: integer("upgrade_order").notNull().default(1),
-    hidden: integer("hidden").notNull().default(0),
-    needsReboot: integer("needs_reboot").notNull().default(0),
-    systemInfoUpdatedAt: text("system_info_updated_at"),
-    isReachable: integer("is_reachable").notNull().default(0),
-    lastSeenAt: text("last_seen_at"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
-    lastNotifiedHash: text("last_notified_hash"),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
-  }
-);
+    },
+  ),
+  authType: text("auth_type").notNull().default("password"),
+  username: text("username").notNull(),
+  encryptedPassword: text("encrypted_password"),
+  encryptedPrivateKey: text("encrypted_private_key"),
+  encryptedKeyPassphrase: text("encrypted_key_passphrase"),
+  encryptedSudoPassword: text("encrypted_sudo_password"),
+  hostKeyVerificationEnabled: integer("host_key_verification_enabled")
+    .notNull()
+    .default(1),
+  trustedHostKey: text("trusted_host_key"),
+  trustedHostKeyAlgorithm: text("trusted_host_key_algorithm"),
+  trustedHostKeyFingerprintSha256: text("trusted_host_key_fingerprint_sha256"),
+  hostKeyTrustedAt: text("host_key_trusted_at"),
+  pkgManager: text("pkg_manager"),
+  detectedPkgManagers: text("detected_pkg_managers"),
+  disabledPkgManagers: text("disabled_pkg_managers"),
+  pkgManagerConfigs: text("pkg_manager_configs"),
+  autoHideKeptBackUpdates: integer("auto_hide_kept_back_updates")
+    .notNull()
+    .default(0),
+  osId: text("os_id"),
+  osIdLike: text("os_id_like"),
+  osName: text("os_name"),
+  osVersion: text("os_version"),
+  osVersionCodename: text("os_version_codename"),
+  kernel: text("kernel"),
+  hostnameRemote: text("hostname_remote"),
+  uptime: text("uptime"),
+  uptimeSeconds: real("uptime_seconds"),
+  arch: text("arch"),
+  cpuCores: text("cpu_cores"),
+  memory: text("memory"),
+  disk: text("disk"),
+  bootId: text("boot_id"),
+  rebootDismissedBootId: text("reboot_dismissed_boot_id"),
+  rebootDismissedUptimeSeconds: real("reboot_dismissed_uptime_seconds"),
+  rebootDismissedAt: text("reboot_dismissed_at"),
+  osLifecycleDismissedKey: text("os_lifecycle_dismissed_key"),
+  osLifecycleDismissedAt: text("os_lifecycle_dismissed_at"),
+  rootUserBannerDismissed: integer("root_user_banner_dismissed")
+    .notNull()
+    .default(0),
+  rootUserBannerDismissedHostKeyFingerprintSha256: text(
+    "root_user_banner_dismissed_host_key_fingerprint_sha256",
+  ),
+  excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
+    .notNull()
+    .default(0),
+  upgradeGroupId: integer("upgrade_group_id").references(
+    (): AnySQLiteColumn => upgradeGroups.id,
+    { onDelete: "set null" },
+  ),
+  upgradeOrder: integer("upgrade_order").notNull().default(1),
+  hidden: integer("hidden").notNull().default(0),
+  needsReboot: integer("needs_reboot").notNull().default(0),
+  systemInfoUpdatedAt: text("system_info_updated_at"),
+  isReachable: integer("is_reachable").notNull().default(0),
+  lastSeenAt: text("last_seen_at"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  lastNotifiedHash: text("last_notified_hash"),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
 
 export const upgradeGroups = sqliteTable("upgrade_groups", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -163,9 +164,7 @@ export const updateCache = sqliteTable(
       .notNull()
       .default(sql`(datetime('now'))`),
   },
-  (table) => [
-    unique().on(table.systemId, table.pkgManager, table.packageName),
-  ]
+  (table) => [unique().on(table.systemId, table.pkgManager, table.packageName)],
 );
 
 export const installedPackageCache = sqliteTable(
@@ -191,7 +190,7 @@ export const installedPackageCache = sqliteTable(
       table.packageName,
       table.architecture,
     ),
-  ]
+  ],
 );
 
 export const hiddenUpdates = sqliteTable(
@@ -228,7 +227,7 @@ export const hiddenUpdates = sqliteTable(
       table.packageName,
       table.newVersion,
     ),
-  ]
+  ],
 );
 
 export const packageManagerIssues = sqliteTable(
@@ -261,9 +260,7 @@ export const packageManagerIssues = sqliteTable(
       .notNull()
       .default(sql`(datetime('now'))`),
   },
-  (table) => [
-    unique().on(table.systemId, table.pkgManager, table.issueKey),
-  ]
+  (table) => [unique().on(table.systemId, table.pkgManager, table.issueKey)],
 );
 
 export const updateHistory = sqliteTable("update_history", {
@@ -304,14 +301,18 @@ export const upgradeBatchItems = sqliteTable("upgrade_batch_items", {
   systemId: integer("system_id")
     .notNull()
     .references(() => systems.id, { onDelete: "cascade" }),
-  groupId: integer("group_id").references(() => upgradeGroups.id, { onDelete: "set null" }),
+  groupId: integer("group_id").references(() => upgradeGroups.id, {
+    onDelete: "set null",
+  }),
   groupSortOrder: integer("group_sort_order").notNull().default(0),
   systemSortOrder: integer("system_sort_order").notNull().default(0),
   defaultUpgradeModeOverride: text("default_upgrade_mode_override"),
   status: text("status").notNull().default("queued"),
   command: text("command"),
   pkgManager: text("pkg_manager").notNull().default("system"),
-  historyId: integer("history_id").references(() => updateHistory.id, { onDelete: "set null" }),
+  historyId: integer("history_id").references(() => updateHistory.id, {
+    onDelete: "set null",
+  }),
   currentPkgManager: text("current_pkg_manager"),
   currentCommand: text("current_command"),
   remotePid: integer("remote_pid"),
@@ -377,7 +378,9 @@ export const customScripts = sqliteTable("custom_scripts", {
   type: text("type").notNull(),
   operation: text("operation").notNull(),
   pkgManager: text("pkg_manager"),
-  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  isDefault: integer("is_default", { mode: "boolean" })
+    .notNull()
+    .default(false),
   steps: text("steps").notNull(),
   parserConfig: text("parser_config"),
   systemInfoConfig: text("system_info_config"),
@@ -406,9 +409,7 @@ export const systemScriptOverrides = sqliteTable(
       .notNull()
       .default(sql`(datetime('now'))`),
   },
-  (table) => [
-    unique().on(table.systemId, table.operationKey),
-  ],
+  (table) => [unique().on(table.systemId, table.operationKey)],
 );
 
 export const apiTokens = sqliteTable("api_tokens", {
@@ -432,9 +433,7 @@ export const notifications = sqliteTable("notifications", {
   name: text("name").notNull(),
   type: text("type").notNull(),
   enabled: integer("enabled").notNull().default(1),
-  notifyOn: text("notify_on")
-    .notNull()
-    .default('["updates","appUpdates"]'),
+  notifyOn: text("notify_on").notNull().default('["updates","appUpdates"]'),
   systemIds: text("system_ids"),
   config: text("config").notNull(),
   schedule: text("schedule"),
@@ -478,5 +477,5 @@ export const notificationDeliveredUpdates = sqliteTable(
       table.packageName,
       table.newVersion,
     ),
-  ]
+  ],
 );

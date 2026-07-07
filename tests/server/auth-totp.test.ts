@@ -13,8 +13,14 @@ import { initSession } from "../../server/auth/session";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { config } from "../../server/config";
 
-function cookiePair(header: string | null): string {
-  return header?.split(";")[0] ?? "";
+function cookiePair(header: string | null, name = "ludash_session"): string {
+  return (
+    header
+      ?.split(/,(?=\s*ludash_)/)
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${name}=`))
+      ?.split(";")[0] ?? ""
+  );
 }
 
 const incoming = {
@@ -44,36 +50,80 @@ describe("auth TOTP routes", () => {
   });
 
   test("requires a valid authenticator code after TOTP is enabled", async () => {
-    const setupRes = await app.request("/api/auth/setup", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "admin", password: "Password1" }),
-    }, { incoming });
+    const setupRes = await app.request(
+      "/api/auth/setup",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "admin", password: "Password1" }),
+      },
+      { incoming },
+    );
     expect(setupRes.status).toBe(200);
     const sessionCookie = cookiePair(setupRes.headers.get("set-cookie"));
 
-    const totpSetupRes = await app.request("/api/auth/totp/setup", {
-      method: "POST",
-      headers: { cookie: sessionCookie },
-    }, { incoming });
+    const totpSetupRes = await app.request(
+      "/api/auth/totp/setup",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: sessionCookie,
+        },
+      },
+      { incoming },
+    );
     expect(totpSetupRes.status).toBe(200);
-    const totpSetupBody = await totpSetupRes.json() as {
+    const totpSetupBody = (await totpSetupRes.json()) as {
       secret: string;
       otpauthUrl: string;
     };
     expect(totpSetupBody.otpauthUrl).toContain("otpauth://totp/");
-    const totpCookie = cookiePair(totpSetupRes.headers.get("set-cookie"));
+    const totpCookie = cookiePair(
+      totpSetupRes.headers.get("set-cookie"),
+      "ludash_totp_setup",
+    );
+
+    const malformedEnableRes = await app.request(
+      "/api/auth/totp/enable",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: `${sessionCookie}; ${totpCookie}`,
+        },
+        body: JSON.stringify({ code: "abcdef" }),
+      },
+      { incoming },
+    );
+    expect(malformedEnableRes.status).toBe(400);
 
     const code = await generate({ secret: totpSetupBody.secret });
-    const enableRes = await app.request("/api/auth/totp/enable", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie: `${sessionCookie}; ${totpCookie}`,
+    const enableRes = await app.request(
+      "/api/auth/totp/enable",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: `${sessionCookie}; ${totpCookie}`,
+        },
+        body: JSON.stringify({ code }),
       },
-      body: JSON.stringify({ code }),
-    }, { incoming });
+      { incoming },
+    );
     expect(enableRes.status).toBe(200);
+    const enabledSessionCookie = cookiePair(
+      enableRes.headers.get("set-cookie"),
+    );
+
+    const oldSessionRes = await app.request(
+      "/api/auth/me",
+      {
+        headers: { cookie: sessionCookie },
+      },
+      { incoming },
+    );
+    expect(oldSessionRes.status).toBe(401);
 
     const storedUser = getDb()
       .select()
@@ -82,47 +132,90 @@ describe("auth TOTP routes", () => {
       .get();
     expect(storedUser?.totpEnabled).toBe(1);
     expect(storedUser?.totpSecret).toBeTruthy();
-    expect(getEncryptor().decrypt(storedUser!.totpSecret!)).toBe(totpSetupBody.secret);
+    expect(getEncryptor().decrypt(storedUser!.totpSecret!)).toBe(
+      totpSetupBody.secret,
+    );
 
-    const missingTotpRes = await app.request("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "admin", password: "Password1" }),
-    }, { incoming });
+    const setupAgainRes = await app.request(
+      "/api/auth/totp/setup",
+      {
+        method: "POST",
+        headers: { cookie: enabledSessionCookie },
+      },
+      { incoming },
+    );
+    expect(setupAgainRes.status).toBe(400);
+
+    const missingTotpRes = await app.request(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "admin", password: "Password1" }),
+      },
+      { incoming },
+    );
     expect(missingTotpRes.status).toBe(401);
     expect(await missingTotpRes.json()).toMatchObject({ requiresTotp: true });
 
-    const badTotpRes = await app.request("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "admin",
-        password: "Password1",
-        totpCode: "000000",
-      }),
-    }, { incoming });
+    const badTotpRes = await app.request(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username: "admin",
+          password: "Password1",
+          totpCode: "000000",
+        }),
+      },
+      { incoming },
+    );
     expect(badTotpRes.status).toBe(401);
     expect(await badTotpRes.json()).toMatchObject({ requiresTotp: true });
 
-    const loginRes = await app.request("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "admin",
-        password: "Password1",
-        totpCode: code,
-      }),
-    }, { incoming });
+    const loginRes = await app.request(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username: "admin",
+          password: "Password1",
+          totpCode: code,
+        }),
+      },
+      { incoming },
+    );
     expect(loginRes.status).toBe(200);
 
-    const disableRes = await app.request("/api/auth/totp", {
-      method: "DELETE",
-      headers: {
-        "content-type": "application/json",
-        cookie: sessionCookie,
+    const replayLoginRes = await app.request(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username: "admin",
+          password: "Password1",
+          totpCode: code,
+        }),
       },
-      body: JSON.stringify({ currentPassword: "Password1" }),
-    }, { incoming });
+      { incoming },
+    );
+    expect(replayLoginRes.status).toBe(401);
+
+    const disableRes = await app.request(
+      "/api/auth/totp",
+      {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          cookie: enabledSessionCookie,
+        },
+        body: JSON.stringify({ currentPassword: "Password1" }),
+      },
+      { incoming },
+    );
     expect(disableRes.status).toBe(200);
 
     const disabledUser = getDb()
@@ -135,11 +228,15 @@ describe("auth TOTP routes", () => {
   });
 
   test("rejects bearer token access to TOTP management routes", async () => {
-    const setupRes = await app.request("/api/auth/setup", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "admin", password: "Password1" }),
-    }, { incoming });
+    const setupRes = await app.request(
+      "/api/auth/setup",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "admin", password: "Password1" }),
+      },
+      { incoming },
+    );
     expect(setupRes.status).toBe(200);
     const sessionCookie = cookiePair(setupRes.headers.get("set-cookie"));
 
@@ -148,15 +245,22 @@ describe("auth TOTP routes", () => {
       ["POST", "/api/auth/totp/enable"],
       ["DELETE", "/api/auth/totp"],
     ] as const) {
-      const res = await app.request(path, {
-        method,
-        headers: {
-          "content-type": "application/json",
-          authorization: "Bearer ludash_test_token",
-          cookie: sessionCookie,
+      const res = await app.request(
+        path,
+        {
+          method,
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer ludash_test_token",
+            cookie: sessionCookie,
+          },
+          body:
+            method === "POST"
+              ? JSON.stringify({ code: "123456" })
+              : JSON.stringify({ currentPassword: "Password1" }),
         },
-        body: method === "POST" ? JSON.stringify({ code: "123456" }) : JSON.stringify({ currentPassword: "Password1" }),
-      }, { incoming });
+        { incoming },
+      );
       expect(res.status, `${method} ${path}`).toBe(403);
       expect(await res.json()).toMatchObject({
         error: "API tokens cannot access management endpoints",
