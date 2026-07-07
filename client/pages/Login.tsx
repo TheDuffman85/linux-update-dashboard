@@ -30,10 +30,18 @@ export default function Login() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handlePasswordLogin = async (e: React.FormEvent) => {
+  const handlePasswordLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
     setNotice("");
+
+    if (!e.currentTarget.checkValidity()) {
+      const invalidInput = e.currentTarget.querySelector<HTMLInputElement>("input:invalid");
+      setError(invalidInput?.validationMessage || t("pages.login.loginFailed"));
+      invalidInput?.focus();
+      return;
+    }
+
     setLoading(true);
     try {
       await login(username, password, requiresTotp ? totpCode : undefined);
@@ -136,18 +144,24 @@ export default function Login() {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
+          <div
+            role="alert"
+            className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm"
+          >
             {error}
           </div>
         )}
         {notice && !error && (
-          <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm">
+          <div
+            role="status"
+            className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm"
+          >
             {notice}
           </div>
         )}
 
         {!passwordLoginDisabled && (
-          <form onSubmit={handlePasswordLogin} className="space-y-4">
+          <form onSubmit={handlePasswordLogin} noValidate className="space-y-4">
             {!requiresTotp ? (
               <>
                 <div>
