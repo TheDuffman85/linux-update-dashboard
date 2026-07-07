@@ -47,6 +47,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Allow auth routes and static files without auth
   if (
     path.startsWith("/api/auth") ||
+    (path === "/api/settings/public" && c.req.method === "GET") ||
     path.startsWith("/assets") ||
     path === "/favicon.ico"
   ) {

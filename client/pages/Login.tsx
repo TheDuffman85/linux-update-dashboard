@@ -41,11 +41,17 @@ export default function Login() {
       if (err instanceof ApiError && err.details.requiresTotp === true) {
         setRequiresTotp(true);
         if (!requiresTotp) {
-          setNotice(err.message || t("pages.login.authenticatorCodeRequired"));
+          setNotice(t("pages.login.authenticatorCodeRequired"));
           return;
         }
+        setError(t("pages.login.invalidAuthenticatorCode"));
+        return;
       }
-      setError((err as Error).message || t("pages.login.loginFailed"));
+      setError(
+        err instanceof ApiError
+          ? t("pages.login.loginFailed")
+          : (err as Error).message || t("pages.login.loginFailed"),
+      );
     } finally {
       setLoading(false);
     }

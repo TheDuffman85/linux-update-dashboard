@@ -1145,6 +1145,7 @@
   "pages.notifications.webhook.bodyMode.json": "JSON",
   "pages.login.authenticatorCode": "Код аутентификатора",
   "pages.login.authenticatorCodeRequired": "Требуется код аутентификатора",
+  "pages.login.invalidAuthenticatorCode": "Неверный код аутентификатора",
   "pages.login.change": "Изменить",
   "pages.login.signingInAs": "Вход как",
   "pages.settings.authenticatorCode": "Код аутентификатора",

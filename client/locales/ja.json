@@ -1145,6 +1145,7 @@
   "pages.notifications.webhook.bodyMode.json": "JSON",
   "pages.login.authenticatorCode": "認証コード",
   "pages.login.authenticatorCodeRequired": "認証コードが必要です",
+  "pages.login.invalidAuthenticatorCode": "認証コードが無効です",
   "pages.login.change": "変更",
   "pages.login.signingInAs": "サインイン中のユーザー",
   "pages.settings.authenticatorCode": "認証コード",

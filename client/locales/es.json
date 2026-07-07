@@ -1145,6 +1145,7 @@
   "pages.notifications.webhook.bodyMode.json": "JSON",
   "pages.login.authenticatorCode": "Código de autenticación",
   "pages.login.authenticatorCodeRequired": "Se requiere código de autenticación",
+  "pages.login.invalidAuthenticatorCode": "Código de autenticación no válido",
   "pages.login.change": "Cambiar",
   "pages.login.signingInAs": "Iniciando sesión como",
   "pages.settings.authenticatorCode": "Código de autenticación",

@@ -21,8 +21,30 @@ type AuthEnv = {
 };
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
+const PUBLIC_SETTING_KEYS = ["language"] as const;
 
 const settingsRouter = new Hono<AuthEnv>();
+
+settingsRouter.get("/public", (c) => {
+  const db = getDb();
+  const publicSettings: Record<(typeof PUBLIC_SETTING_KEYS)[number], string> = {
+    language: "browser",
+  };
+
+  const rows = db
+    .select({ key: settings.key, value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, "language"))
+    .all();
+
+  for (const row of rows) {
+    if (PUBLIC_SETTING_KEYS.includes(row.key as (typeof PUBLIC_SETTING_KEYS)[number])) {
+      publicSettings[row.key as (typeof PUBLIC_SETTING_KEYS)[number]] = row.value;
+    }
+  }
+
+  return c.json({ settings: publicSettings });
+});
 
 // Get all settings
 settingsRouter.get("/", (c) => {

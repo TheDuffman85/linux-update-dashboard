@@ -1145,6 +1145,7 @@
   "pages.notifications.webhook.bodyMode.json": "JSON",
   "pages.login.authenticatorCode": "ऑथेंटिकेटर कोड",
   "pages.login.authenticatorCodeRequired": "ऑथेंटिकेटर कोड आवश्यक है",
+  "pages.login.invalidAuthenticatorCode": "ऑथेंटिकेटर कोड अमान्य है",
   "pages.login.change": "बदलें",
   "pages.login.signingInAs": "इस रूप में साइन इन कर रहे हैं",
   "pages.settings.authenticatorCode": "ऑथेंटिकेटर कोड",

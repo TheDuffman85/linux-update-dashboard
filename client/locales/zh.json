@@ -1145,6 +1145,7 @@
   "pages.notifications.webhook.bodyMode.json": "JSON",
   "pages.login.authenticatorCode": "身份验证器代码",
   "pages.login.authenticatorCodeRequired": "需要身份验证器代码",
+  "pages.login.invalidAuthenticatorCode": "身份验证器代码无效",
   "pages.login.change": "更改",
   "pages.login.signingInAs": "正在以此身份登录",
   "pages.settings.authenticatorCode": "身份验证器代码",

@@ -1145,6 +1145,7 @@
   "pages.notifications.webhook.bodyMode.json": "JSON",
   "pages.login.authenticatorCode": "رمز المصادقة",
   "pages.login.authenticatorCodeRequired": "رمز المصادقة مطلوب",
+  "pages.login.invalidAuthenticatorCode": "رمز المصادقة غير صالح",
   "pages.login.change": "تغيير",
   "pages.login.signingInAs": "تسجيل الدخول باسم",
   "pages.settings.authenticatorCode": "رمز المصادقة",
