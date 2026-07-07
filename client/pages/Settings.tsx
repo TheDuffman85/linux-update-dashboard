@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import QRCode from "qrcode";
 import { Layout } from "../components/Layout";
 import { useSettingsResponse, useUpdateSettings } from "../lib/settings";
 import { validatePassword, validateRequiredText } from "../lib/form-validation";
@@ -9,8 +10,18 @@ import {
   type NumericSettingKey,
   type NumericSettingRules,
 } from "../lib/settings-validation";
-import { usePasskeys, useDeletePasskey, useRegisterPasskey, useRenamePasskey } from "../lib/passkeys";
-import { useApiTokens, useCreateApiToken, useRenameApiToken, useDeleteApiToken } from "../lib/api-tokens";
+import {
+  usePasskeys,
+  useDeletePasskey,
+  useRegisterPasskey,
+  useRenamePasskey,
+} from "../lib/passkeys";
+import {
+  useApiTokens,
+  useCreateApiToken,
+  useRenameApiToken,
+  useDeleteApiToken,
+} from "../lib/api-tokens";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { useToast } from "../context/ToastContext";
@@ -52,7 +63,7 @@ export default function Settings() {
   const { data: settingsResponse, isLoading } = useSettingsResponse();
   const updateSettings = useUpdateSettings();
   const { addToast } = useToast();
-  const { hasPassword, refresh: refreshAuth } = useAuth();
+  const { hasPassword, totpEnabled, refresh: refreshAuth } = useAuth();
   const { browserLanguage, t } = useI18n();
   const { browserTimeFormat, formatDate } = useDateTime();
 
@@ -70,7 +81,9 @@ export default function Settings() {
   const createApiToken = useCreateApiToken();
   const renameApiToken = useRenameApiToken();
   const deleteApiToken = useDeleteApiToken();
-  const [tokenDeleteTarget, setTokenDeleteTarget] = useState<number | null>(null);
+  const [tokenDeleteTarget, setTokenDeleteTarget] = useState<number | null>(
+    null,
+  );
   const [tokenEditingId, setTokenEditingId] = useState<number | null>(null);
   const [tokenEditingName, setTokenEditingName] = useState("");
   const [showTokenForm, setShowTokenForm] = useState(false);
@@ -85,9 +98,19 @@ export default function Settings() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwError, setPwError] = useState("");
   const [pwLoading, setPwLoading] = useState(false);
+  const [totpModalOpen, setTotpModalOpen] = useState(false);
+  const [totpLoading, setTotpLoading] = useState(false);
+  const [totpSaving, setTotpSaving] = useState(false);
+  const [totpSecret, setTotpSecret] = useState("");
+  const [totpOtpAuthUrl, setTotpOtpAuthUrl] = useState("");
+  const [totpQrDataUrl, setTotpQrDataUrl] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [totpDisablePassword, setTotpDisablePassword] = useState("");
 
   const [form, setForm] = useState<Record<string, string>>({});
-  const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
+  const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>(
+    {},
+  );
   const numericSettingRules: NumericSettingRules = {
     ...NUMERIC_SETTING_RULES,
     ...(settingsResponse?.numericSettingRules ?? {}),
@@ -107,6 +130,35 @@ export default function Settings() {
       setForm(cleanedForm);
     }
   }, [settingsResponse]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!totpOtpAuthUrl) {
+      setTotpQrDataUrl("");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void QRCode.toDataURL(totpOtpAuthUrl, {
+      width: 256,
+      margin: 1,
+      color: {
+        dark: "#0f172a",
+        light: "#ffffff",
+      },
+    })
+      .then((dataUrl) => {
+        if (!cancelled) setTotpQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setTotpQrDataUrl("");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [totpOtpAuthUrl]);
 
   const setNumericField = (key: NumericSettingKey, value: string) => {
     setForm((prev) => ({
@@ -138,7 +190,9 @@ export default function Settings() {
         ? (key: string, values?: TranslationValues) =>
             translateForLanguage(
               resolveLanguagePreference(
-                normalizeLanguagePreference(normalizedData[LANGUAGE_SETTING_KEY]),
+                normalizeLanguagePreference(
+                  normalizedData[LANGUAGE_SETTING_KEY],
+                ),
               ),
               key,
               values,
@@ -149,9 +203,12 @@ export default function Settings() {
       onSuccess: (res) => {
         if (res.oidcError) {
           addToast(
-            toastT("pages.settings.settingsSavedButOidcConfigurationFailedError", {
-              error: res.oidcError,
-            }),
+            toastT(
+              "pages.settings.settingsSavedButOidcConfigurationFailedError",
+              {
+                error: res.oidcError,
+              },
+            ),
             "danger",
           );
         } else {
@@ -185,10 +242,101 @@ export default function Settings() {
       setNewPassword("");
       setConfirmPassword("");
     } catch (err: unknown) {
-      setPwError((err as Error).message || t("pages.settings.failedToChangePassword"));
+      setPwError(
+        (err as Error).message || t("pages.settings.failedToChangePassword"),
+      );
     } finally {
       setPwLoading(false);
     }
+  };
+
+  const openTotpModal = async () => {
+    setTotpModalOpen(true);
+    setTotpCode("");
+    setTotpDisablePassword("");
+    setTotpSecret("");
+    setTotpOtpAuthUrl("");
+    setTotpQrDataUrl("");
+
+    if (!totpEnabled) {
+      await startTotpSetup();
+    }
+  };
+
+  const startTotpSetup = async () => {
+    setTotpLoading(true);
+    try {
+      const payload = await apiFetch<{ secret: string; otpauthUrl: string }>(
+        "/auth/totp/setup",
+        { method: "POST" },
+      );
+      setTotpSecret(payload.secret);
+      setTotpOtpAuthUrl(payload.otpauthUrl);
+    } catch (err: unknown) {
+      setTotpModalOpen(false);
+      addToast(
+        (err as Error).message || t("pages.settings.failedToStartTotpSetup"),
+        "danger",
+      );
+    } finally {
+      setTotpLoading(false);
+    }
+  };
+
+  const closeTotpModal = () => {
+    if (totpSaving) return;
+    setTotpModalOpen(false);
+  };
+
+  const enableTotp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!totpSecret) {
+      return;
+    }
+    setTotpSaving(true);
+    try {
+      await apiFetch("/auth/totp/enable", {
+        method: "POST",
+        body: JSON.stringify({ code: totpCode }),
+      });
+      addToast(t("pages.settings.totpEnabled"), "success");
+      setTotpModalOpen(false);
+      await refreshAuth();
+    } catch (err: unknown) {
+      addToast(
+        (err as Error).message || t("pages.settings.failedToEnableTotp"),
+        "danger",
+      );
+    } finally {
+      setTotpSaving(false);
+    }
+  };
+
+  const disableTotp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpSaving(true);
+    try {
+      await apiFetch("/auth/totp", {
+        method: "DELETE",
+        body: JSON.stringify({ currentPassword: totpDisablePassword }),
+      });
+      addToast(t("pages.settings.totpDisabled"), "success");
+      setTotpModalOpen(false);
+      await refreshAuth();
+    } catch (err: unknown) {
+      addToast(
+        (err as Error).message || t("pages.settings.failedToDisableTotp"),
+        "danger",
+      );
+    } finally {
+      setTotpSaving(false);
+    }
+  };
+
+  const copyTotpSecret = async () => {
+    if (!navigator.clipboard || !totpSecret) return;
+    await navigator.clipboard.writeText(totpSecret);
+    addToast(t("pages.settings.copied"), "success");
   };
 
   const inputClass =
@@ -211,7 +359,9 @@ export default function Settings() {
       <SettingSection title={t("pages.settings.general")}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
           <div>
-            <label className={labelClass}>{t("pages.settings.activityHistory")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.activityHistory")}
+            </label>
             <input
               type="number"
               min={numericSettingRules.activity_history_limit.min}
@@ -228,7 +378,9 @@ export default function Settings() {
             </p>
           </div>
           <div>
-            <label className={labelClass}>{t("pages.settings.eolWarningWindowDays")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.eolWarningWindowDays")}
+            </label>
             <input
               type="number"
               min={numericSettingRules.distro_eol_warning_days.min}
@@ -272,9 +424,13 @@ export default function Settings() {
             </p>
           </div>
           <div>
-            <label className={labelClass}>{t("pages.settings.timeFormat")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.timeFormat")}
+            </label>
             <select
-              value={form[TIME_FORMAT_SETTING_KEY] || BROWSER_TIME_FORMAT_SETTING}
+              value={
+                form[TIME_FORMAT_SETTING_KEY] || BROWSER_TIME_FORMAT_SETTING
+              }
               onChange={(e) =>
                 setForm({
                   ...form,
@@ -316,7 +472,9 @@ export default function Settings() {
       <SettingSection title={t("pages.settings.ssh")}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className={labelClass}>{t("pages.settings.connectionTimeoutS")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.connectionTimeoutS")}
+            </label>
             <input
               type="number"
               value={form.ssh_timeout_seconds || "30"}
@@ -328,7 +486,9 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>{t("pages.settings.commandTimeoutS")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.commandTimeoutS")}
+            </label>
             <input
               type="number"
               value={form.cmd_timeout_seconds || "120"}
@@ -340,7 +500,9 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>{t("pages.settings.concurrentConnections")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.concurrentConnections")}
+            </label>
             <input
               type="number"
               value={form.concurrent_connections || "5"}
@@ -366,7 +528,9 @@ export default function Settings() {
               className="mt-0.5 rounded border-border"
             />
             <span>
-              <span className="block text-sm">{t("pages.settings.leastPrivilegeRootUserCheck")}</span>
+              <span className="block text-sm">
+                {t("pages.settings.leastPrivilegeRootUserCheck")}
+              </span>
               <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
                 {t("pages.settings.showANoticeWhenASystemConnectsAs")}
               </span>
@@ -398,21 +562,34 @@ export default function Settings() {
           const canDisable = hasAlternativeAuth;
           return (
             <>
-              <label className={`flex items-center gap-2 ${canDisable ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+              <label
+                className={`flex items-center gap-2 ${canDisable ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+              >
                 <input
                   type="checkbox"
                   checked={form.disable_password_login === "true"}
                   onChange={(e) =>
-                    setForm({ ...form, disable_password_login: e.target.checked ? "true" : "false" })
+                    setForm({
+                      ...form,
+                      disable_password_login: e.target.checked
+                        ? "true"
+                        : "false",
+                    })
                   }
-                  disabled={!canDisable && form.disable_password_login !== "true"}
+                  disabled={
+                    !canDisable && form.disable_password_login !== "true"
+                  }
                   className="rounded border-border"
                 />
-                <span className="text-sm">{t("pages.settings.disablePasswordLogin")}</span>
+                <span className="text-sm">
+                  {t("pages.settings.disablePasswordLogin")}
+                </span>
               </label>
               {!canDisable ? (
                 <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                  {t("pages.settings.registerAPasskeyOrConfigureSsoBeforeDisabling")}
+                  {t(
+                    "pages.settings.registerAPasskeyOrConfigureSsoBeforeDisabling",
+                  )}
                 </p>
               ) : (
                 <p className="mt-1 text-xs text-slate-400">
@@ -436,15 +613,22 @@ export default function Settings() {
         {hasPassword && (
           <>
             <hr className="my-6 border-border" />
-            <h3 className="text-sm font-semibold mb-4">{t("pages.settings.changePassword")}</h3>
-            <form onSubmit={handleChangePassword} className="space-y-4 max-w-sm">
+            <h3 className="text-sm font-semibold mb-4">
+              {t("pages.settings.changePassword")}
+            </h3>
+            <form
+              onSubmit={handleChangePassword}
+              className="space-y-4 max-w-sm"
+            >
               {pwError && (
                 <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
                   {pwError}
                 </div>
               )}
               <div>
-                <label className={labelClass}>{t("pages.settings.currentPassword")}</label>
+                <label className={labelClass}>
+                  {t("pages.settings.currentPassword")}
+                </label>
                 <input
                   type="password"
                   value={currentPassword}
@@ -454,7 +638,9 @@ export default function Settings() {
                 />
               </div>
               <div>
-                <label className={labelClass}>{t("pages.settings.newPassword")}</label>
+                <label className={labelClass}>
+                  {t("pages.settings.newPassword")}
+                </label>
                 <input
                   type="password"
                   value={newPassword}
@@ -464,11 +650,15 @@ export default function Settings() {
                   className={inputClass}
                 />
                 <p className="mt-1 text-xs text-slate-400">
-                  {t("pages.settings.minimumCharactersMustIncludeUppercaseLowercaseAndA")}
+                  {t(
+                    "pages.settings.minimumCharactersMustIncludeUppercaseLowercaseAndA",
+                  )}
                 </p>
               </div>
               <div>
-                <label className={labelClass}>{t("pages.settings.confirmNewPassword")}</label>
+                <label className={labelClass}>
+                  {t("pages.settings.confirmNewPassword")}
+                </label>
                 <input
                   type="password"
                   value={confirmPassword}
@@ -482,9 +672,183 @@ export default function Settings() {
                 disabled={pwLoading}
                 className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
               >
-                {pwLoading ? <span className="spinner spinner-sm" /> : t("pages.settings.changePassword")}
+                {pwLoading ? (
+                  <span className="spinner spinner-sm" />
+                ) : (
+                  t("pages.settings.changePassword")
+                )}
               </button>
             </form>
+
+            <hr className="my-6 border-border" />
+            <h3 className="text-sm font-semibold mb-2">
+              {t("pages.settings.twoFactorAuthentication")}
+            </h3>
+            <p className="max-w-lg text-sm text-slate-500 dark:text-slate-400">
+              {totpEnabled
+                ? t("pages.settings.totpEnabledDescription")
+                : t("pages.settings.totpDisabledDescription")}
+            </p>
+            <button
+              type="button"
+              onClick={() => void openTotpModal()}
+              className={`mt-4 px-4 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50 ${
+                totpEnabled
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              {totpEnabled
+                ? t("pages.settings.disableTotp")
+                : t("pages.settings.enableTotp")}
+            </button>
+
+            <Modal
+              open={totpModalOpen}
+              onClose={closeTotpModal}
+              title={
+                totpEnabled
+                  ? t("pages.settings.disableTotp")
+                  : t("pages.settings.enableTotp")
+              }
+              dismissible={!totpSaving}
+            >
+              {totpEnabled ? (
+                <form onSubmit={disableTotp} className="space-y-4">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {t("pages.settings.disableTotpDescription")}
+                  </p>
+                  <div>
+                    <label className={labelClass}>
+                      {t("pages.settings.currentPassword")}
+                    </label>
+                    <input
+                      type="password"
+                      value={totpDisablePassword}
+                      onChange={(e) => setTotpDisablePassword(e.target.value)}
+                      required
+                      autoComplete="current-password"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeTotpModal}
+                      disabled={totpSaving}
+                      className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                    >
+                      {t("pages.settings.cancel")}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={totpSaving || !totpDisablePassword}
+                      className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50"
+                    >
+                      {totpSaving ? (
+                        <span className="spinner spinner-sm" />
+                      ) : (
+                        t("pages.settings.disableTotp")
+                      )}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={enableTotp} className="space-y-4">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {t("pages.settings.setupTotpDescription")}
+                  </p>
+                  {totpLoading ? (
+                    <div className="flex justify-center py-8">
+                      <span className="spinner !w-6 !h-6 text-blue-500" />
+                    </div>
+                  ) : totpSecret ? (
+                    <>
+                      <div className="flex flex-col items-center gap-3">
+                        {totpQrDataUrl ? (
+                          <img
+                            src={totpQrDataUrl}
+                            alt={t("pages.settings.totpQrAlt")}
+                            className="w-full max-w-64 rounded-lg border border-border bg-white p-3"
+                          />
+                        ) : (
+                          <div className="flex h-64 w-full max-w-64 items-center justify-center rounded-lg border border-border bg-slate-50 text-sm text-slate-500 dark:bg-slate-900">
+                            {t("pages.settings.generatingQrCode")}
+                          </div>
+                        )}
+                        {totpOtpAuthUrl && (
+                          <a
+                            href={totpOtpAuthUrl}
+                            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-border px-4 py-2 text-center text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
+                          >
+                            {t("pages.settings.openAuthenticatorApp")}
+                          </a>
+                        )}
+                      </div>
+                      <div>
+                        <label className={labelClass}>
+                          {t("pages.settings.manualTotpSecret")}
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            value={totpSecret}
+                            readOnly
+                            className={`${inputClass} font-mono`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void copyTotpSecret()}
+                            disabled={!totpSecret}
+                            className="shrink-0 px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                          >
+                            {t("pages.settings.copy")}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className={labelClass}>
+                          {t("pages.settings.authenticatorCode")}
+                        </label>
+                        <input
+                          value={totpCode}
+                          onChange={(e) => setTotpCode(e.target.value)}
+                          required
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          pattern="[0-9 ]*"
+                          className={inputClass}
+                        />
+                      </div>
+                    </>
+                  ) : null}
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeTotpModal}
+                      disabled={totpSaving}
+                      className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                    >
+                      {t("pages.settings.cancel")}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={
+                        totpLoading || totpSaving || !totpSecret || !totpCode.trim()
+                      }
+                      className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                    >
+                      {totpSaving || totpLoading ? (
+                        <span className="spinner spinner-sm" />
+                      ) : totpSecret ? (
+                        t("pages.settings.verifyAndEnableTotp")
+                      ) : (
+                        t("pages.settings.enableTotp")
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </Modal>
           </>
         )}
       </SettingSection>
@@ -520,9 +884,18 @@ export default function Settings() {
                             renamePasskey.mutate(
                               { id: pk.id, name: trimmed },
                               {
-                                onSuccess: () => addToast(t("pages.settings.passkeyRenamed"), "success"),
-                                onError: (err) => addToast(err.message || t("pages.settings.failedToRename"), "danger"),
-                              }
+                                onSuccess: () =>
+                                  addToast(
+                                    t("pages.settings.passkeyRenamed"),
+                                    "success",
+                                  ),
+                                onError: (err) =>
+                                  addToast(
+                                    err.message ||
+                                      t("pages.settings.failedToRename"),
+                                    "danger",
+                                  ),
+                              },
                             );
                           }
                           setEditingId(null);
@@ -563,8 +936,18 @@ export default function Settings() {
                       name: pk.name || pk.credentialId.slice(0, 16),
                     })}
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -572,7 +955,9 @@ export default function Settings() {
             </div>
           ) : (
             <p className="text-sm text-slate-500 mb-4">
-              {t("pages.settings.noPasskeysRegisteredAddOneToEnablePasswordless")}
+              {t(
+                "pages.settings.noPasskeysRegisteredAddOneToEnablePasswordless",
+              )}
             </p>
           )}
 
@@ -586,12 +971,19 @@ export default function Settings() {
                   if (e.key === "Enter") {
                     registerPasskey.mutate(newPasskeyName.trim() || undefined, {
                       onSuccess: () => {
-                        addToast(t("pages.settings.passkeyRegisteredSuccessfully"), "success");
+                        addToast(
+                          t("pages.settings.passkeyRegisteredSuccessfully"),
+                          "success",
+                        );
                         setShowNamePrompt(false);
                         setNewPasskeyName("");
                       },
                       onError: (err) =>
-                        addToast(err.message || t("pages.settings.failedToRegisterPasskey"), "danger"),
+                        addToast(
+                          err.message ||
+                            t("pages.settings.failedToRegisterPasskey"),
+                          "danger",
+                        ),
                     });
                   }
                   if (e.key === "Escape") {
@@ -607,12 +999,19 @@ export default function Settings() {
                 onClick={() => {
                   registerPasskey.mutate(newPasskeyName.trim() || undefined, {
                     onSuccess: () => {
-                      addToast(t("pages.settings.passkeyRegisteredSuccessfully"), "success");
+                      addToast(
+                        t("pages.settings.passkeyRegisteredSuccessfully"),
+                        "success",
+                      );
                       setShowNamePrompt(false);
                       setNewPasskeyName("");
                     },
                     onError: (err) =>
-                      addToast(err.message || t("pages.settings.failedToRegisterPasskey"), "danger"),
+                      addToast(
+                        err.message ||
+                          t("pages.settings.failedToRegisterPasskey"),
+                        "danger",
+                      ),
                   });
                 }}
                 disabled={registerPasskey.isPending}
@@ -657,7 +1056,7 @@ export default function Settings() {
                   onError: (err) => {
                     addToast(
                       err.message || t("pages.settings.failedToRemovePasskey"),
-                      "danger"
+                      "danger",
                     );
                     setDeleteTarget(null);
                   },
@@ -677,7 +1076,9 @@ export default function Settings() {
       <SettingSection title={t("pages.settings.oidcSso")}>
         <div className="space-y-4">
           <div>
-            <label className={labelClass}>{t("pages.settings.issuerUrl")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.issuerUrl")}
+            </label>
             <input
               type="url"
               value={form.oidc_issuer || ""}
@@ -700,7 +1101,9 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>{t("pages.settings.clientSecret")}</label>
+            <label className={labelClass}>
+              {t("pages.settings.clientSecret")}
+            </label>
             <input
               type="password"
               value={form.oidc_client_secret || ""}
@@ -708,7 +1111,11 @@ export default function Settings() {
                 setForm({ ...form, oidc_client_secret: e.target.value })
               }
               className={inputClass}
-              placeholder={storedSecrets.oidc_client_secret && !form.oidc_client_secret ? t("pages.settings.unchanged") : ""}
+              placeholder={
+                storedSecrets.oidc_client_secret && !form.oidc_client_secret
+                  ? t("pages.settings.unchanged")
+                  : ""
+              }
             />
           </div>
         </div>
@@ -760,9 +1167,18 @@ export default function Settings() {
                             renameApiToken.mutate(
                               { id: tk.id, name: trimmed },
                               {
-                                onSuccess: () => addToast(t("pages.settings.tokenRenamed"), "success"),
-                                onError: (err) => addToast(err.message || t("pages.settings.failedToRename"), "danger"),
-                              }
+                                onSuccess: () =>
+                                  addToast(
+                                    t("pages.settings.tokenRenamed"),
+                                    "success",
+                                  ),
+                                onError: (err) =>
+                                  addToast(
+                                    err.message ||
+                                      t("pages.settings.failedToRename"),
+                                    "danger",
+                                  ),
+                              },
                             );
                           }
                           setTokenEditingId(null);
@@ -784,16 +1200,22 @@ export default function Settings() {
                         title={t("pages.settings.clickToRename")}
                       >
                         {tk.name || (
-                          <span className="italic text-slate-400">{t("pages.settings.unnamedToken")}</span>
+                          <span className="italic text-slate-400">
+                            {t("pages.settings.unnamedToken")}
+                          </span>
                         )}
                       </button>
                     )}
-                    <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${
-                      tk.readOnly
-                        ? "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
-                        : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                    }`}>
-                      {tk.readOnly ? t("pages.settings.readOnly") : t("pages.settings.readWrite")}
+                    <span
+                      className={`ml-2 text-xs px-1.5 py-0.5 rounded ${
+                        tk.readOnly
+                          ? "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                          : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                      }`}
+                    >
+                      {tk.readOnly
+                        ? t("pages.settings.readOnly")
+                        : t("pages.settings.readWrite")}
                     </span>
                     {isExpired ? (
                       <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">
@@ -822,8 +1244,18 @@ export default function Settings() {
                       name: tk.name ?? "",
                     })}
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -839,7 +1271,9 @@ export default function Settings() {
         {showTokenForm ? (
           <div className="flex items-end gap-2 flex-wrap">
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">{t("pages.settings.name")}</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                {t("pages.settings.name")}
+              </label>
               <input
                 autoFocus
                 value={newTokenName}
@@ -850,18 +1284,26 @@ export default function Settings() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">{t("pages.settings.permission")}</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                {t("pages.settings.permission")}
+              </label>
               <select
                 value={newTokenReadOnly ? "readonly" : "readwrite"}
-                onChange={(e) => setNewTokenReadOnly(e.target.value === "readonly")}
+                onChange={(e) =>
+                  setNewTokenReadOnly(e.target.value === "readonly")
+                }
                 className="px-3 py-2 text-sm rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="readonly">{t("pages.settings.readOnly")}</option>
-                <option value="readwrite">{t("pages.settings.readWrite2")}</option>
+                <option value="readwrite">
+                  {t("pages.settings.readWrite2")}
+                </option>
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">{t("pages.settings.validFor")}</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                {t("pages.settings.validFor")}
+              </label>
               <select
                 value={newTokenExpiry}
                 onChange={(e) => setNewTokenExpiry(e.target.value)}
@@ -892,8 +1334,11 @@ export default function Settings() {
                       setNewTokenReadOnly(true);
                     },
                     onError: (err) =>
-                      addToast(err.message || t("pages.settings.failedToCreateToken"), "danger"),
-                  }
+                      addToast(
+                        err.message || t("pages.settings.failedToCreateToken"),
+                        "danger",
+                      ),
+                  },
                 );
               }}
               disabled={createApiToken.isPending}
@@ -951,7 +1396,9 @@ export default function Settings() {
               }}
               className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shrink-0"
             >
-              {tokenCopied ? t("pages.settings.copied") : t("pages.settings.copy")}
+              {tokenCopied
+                ? t("pages.settings.copied")
+                : t("pages.settings.copy")}
             </button>
           </div>
           <div className="flex justify-end">
@@ -976,7 +1423,10 @@ export default function Settings() {
                   setTokenDeleteTarget(null);
                 },
                 onError: (err) => {
-                  addToast(err.message || t("pages.settings.failedToRevokeToken"), "danger");
+                  addToast(
+                    err.message || t("pages.settings.failedToRevokeToken"),
+                    "danger",
+                  );
                   setTokenDeleteTarget(null);
                 },
               });
@@ -989,7 +1439,6 @@ export default function Settings() {
           loading={deleteApiToken.isPending}
         />
       </SettingSection>
-
     </Layout>
   );
 }

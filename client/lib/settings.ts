@@ -8,10 +8,24 @@ export type SettingsResponse = {
   timeZone: string | null;
 };
 
+export type PublicSettingsResponse = {
+  settings: {
+    language: string;
+  };
+};
+
 export function useSettingsResponse(enabled = true) {
   return useQuery({
     queryKey: ["settings"],
     queryFn: () => apiFetch<SettingsResponse>("/settings"),
+    enabled,
+  });
+}
+
+export function usePublicSettingsResponse(enabled = true) {
+  return useQuery({
+    queryKey: ["settings", "public"],
+    queryFn: () => apiFetch<PublicSettingsResponse>("/settings/public"),
     enabled,
   });
 }

@@ -14,11 +14,12 @@ export interface AuthState {
   passwordLoginDisabled: boolean;
   passkeysEnabled: boolean;
   hasPassword: boolean;
+  totpEnabled: boolean;
   backendUnavailable: boolean;
 }
 
 interface AuthContextType extends AuthState {
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, totpCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   setup: (username: string, password: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -47,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     passwordLoginDisabled: false,
     passkeysEnabled: false,
     hasPassword: false,
+    totpEnabled: false,
     backendUnavailable: false,
   });
   const retryTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -62,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         passwordLoginDisabled: boolean;
         passkeysEnabled: boolean;
         hasPassword: boolean;
+        totpEnabled: boolean;
       }>("/auth/status");
 
       setState({
@@ -72,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         passwordLoginDisabled: data.passwordLoginDisabled,
         passkeysEnabled: data.passkeysEnabled,
         hasPassword: data.hasPassword,
+        totpEnabled: data.totpEnabled,
         backendUnavailable: false,
       });
     } catch (error) {
@@ -97,10 +101,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(retryTimer.current);
   }, [refresh]);
 
-  const login = async (username: string, password: string) => {
+  const login = async (username: string, password: string, totpCode?: string) => {
     await apiFetch("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, totpCode }),
     });
     await refresh();
   };

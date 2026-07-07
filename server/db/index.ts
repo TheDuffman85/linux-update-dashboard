@@ -1,6 +1,9 @@
 import BetterSqlite3 from "better-sqlite3";
 import cronstrue from "cronstrue";
-import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import {
+  drizzle,
+  type BetterSQLite3Database,
+} from "drizzle-orm/better-sqlite3";
 import { eq, sql } from "drizzle-orm";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
@@ -24,22 +27,26 @@ const DEFAULT_SETTINGS = [
   {
     key: "cache_duration_hours",
     value: "12",
-    description: "How long to reuse update check results before they are considered stale (hours, 0 disables cache reuse)",
+    description:
+      "How long to reuse update check results before they are considered stale (hours, 0 disables cache reuse)",
   },
   {
     key: "check_interval_minutes",
     value: "15",
-    description: "How often the scheduler scans for systems with expired cached results (minutes)",
+    description:
+      "How often the scheduler scans for systems with expired cached results (minutes)",
   },
   {
     key: "activity_history_limit",
     value: "20",
-    description: "How many recent activity history entries to keep per system; older entries are deleted and the same limit is shown in the UI",
+    description:
+      "How many recent activity history entries to keep per system; older entries are deleted and the same limit is shown in the UI",
   },
   {
     key: "distro_eol_warning_days",
     value: "180",
-    description: "How many days before a distribution end-of-life date to show warnings",
+    description:
+      "How many days before a distribution end-of-life date to show warnings",
   },
   {
     key: "concurrent_connections",
@@ -59,7 +66,8 @@ const DEFAULT_SETTINGS = [
   {
     key: "enable_root_user_check",
     value: "true",
-    description: "Show least-privilege guidance when a system connects over SSH as root",
+    description:
+      "Show least-privilege guidance when a system connects over SSH as root",
   },
   {
     key: "oidc_issuer",
@@ -84,20 +92,25 @@ const DEFAULT_SETTINGS = [
   {
     key: "language",
     value: "browser",
-    description: "UI language preference; browser uses the client browser language when available",
+    description:
+      "UI language preference; browser uses the client browser language when available",
   },
   {
     key: "time_format",
     value: "browser",
-    description: "UI time format preference; browser uses the client browser preference",
+    description:
+      "UI time format preference; browser uses the client browser preference",
   },
 ];
 
 const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";
-const NOTIFICATION_SCHEDULE_MIGRATION_KEY = "notification_digest_schedules_migrated";
+const NOTIFICATION_SCHEDULE_MIGRATION_KEY =
+  "notification_digest_schedules_migrated";
 const MAX_SCHEDULE_NAME_LENGTH = 100;
 
-export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schema> {
+export function initDatabase(
+  dbPath: string,
+): BetterSQLite3Database<typeof schema> {
   mkdirSync(dirname(dbPath), { recursive: true });
 
   _sqlite = new BetterSqlite3(dbPath);
@@ -111,6 +124,10 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT,
+    totp_secret TEXT,
+    totp_enabled INTEGER NOT NULL DEFAULT 0,
+    last_totp_step INTEGER,
+    session_version INTEGER NOT NULL DEFAULT 0,
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -420,12 +437,41 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   )`);
 
   try {
-    _db.run(sql`ALTER TABLE custom_package_managers ADD COLUMN config_entries TEXT`);
+    _db.run(sql`ALTER TABLE users ADD COLUMN totp_secret TEXT`);
   } catch {
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE custom_scripts ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN last_totp_step INTEGER`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(
+      sql`ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0`,
+    );
+  } catch {
+    // Column already exists
+  }
+
+  try {
+    _db.run(
+      sql`ALTER TABLE custom_package_managers ADD COLUMN config_entries TEXT`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(
+      sql`ALTER TABLE custom_scripts ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -469,41 +515,63 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN credential_id INTEGER REFERENCES credentials(id) ON DELETE RESTRICT`,
+    );
   } catch {
     // Column already exists
   }
   const systemColumns = _sqlite
     .prepare("PRAGMA table_info(systems)")
     .all() as Array<{ name?: string }>;
-  const hasProxyJumpSystemId = systemColumns.some((column) => column.name === "proxy_jump_system_id");
-  const hasHostKeyVerificationEnabled = systemColumns.some((column) => column.name === "host_key_verification_enabled");
-  const hasTrustedHostKey = systemColumns.some((column) => column.name === "trusted_host_key");
-  const hasTrustedHostKeyAlgorithm = systemColumns.some((column) => column.name === "trusted_host_key_algorithm");
-  const hasTrustedHostKeyFingerprintSha256 = systemColumns.some((column) => column.name === "trusted_host_key_fingerprint_sha256");
-  const hasHostKeyTrustedAt = systemColumns.some((column) => column.name === "host_key_trusted_at");
+  const hasProxyJumpSystemId = systemColumns.some(
+    (column) => column.name === "proxy_jump_system_id",
+  );
+  const hasHostKeyVerificationEnabled = systemColumns.some(
+    (column) => column.name === "host_key_verification_enabled",
+  );
+  const hasTrustedHostKey = systemColumns.some(
+    (column) => column.name === "trusted_host_key",
+  );
+  const hasTrustedHostKeyAlgorithm = systemColumns.some(
+    (column) => column.name === "trusted_host_key_algorithm",
+  );
+  const hasTrustedHostKeyFingerprintSha256 = systemColumns.some(
+    (column) => column.name === "trusted_host_key_fingerprint_sha256",
+  );
+  const hasHostKeyTrustedAt = systemColumns.some(
+    (column) => column.name === "host_key_trusted_at",
+  );
   const hasIgnoreKeptBackPackages = systemColumns.some(
-    (column) => column.name === "ignore_kept_back_packages"
+    (column) => column.name === "ignore_kept_back_packages",
   );
   const hasAutoHideKeptBackUpdates = systemColumns.some(
-    (column) => column.name === "auto_hide_kept_back_updates"
+    (column) => column.name === "auto_hide_kept_back_updates",
   );
 
   if (!hasProxyJumpSystemId) {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN proxy_jump_system_id INTEGER REFERENCES systems(id) ON DELETE RESTRICT`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN proxy_jump_system_id INTEGER REFERENCES systems(id) ON DELETE RESTRICT`,
+    );
   }
   if (!hasHostKeyVerificationEnabled) {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN host_key_verification_enabled INTEGER NOT NULL DEFAULT 1`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN host_key_verification_enabled INTEGER NOT NULL DEFAULT 1`,
+    );
     _db.run(sql`UPDATE systems SET host_key_verification_enabled = 0`);
   }
   if (!hasTrustedHostKey) {
     _db.run(sql`ALTER TABLE systems ADD COLUMN trusted_host_key TEXT`);
   }
   if (!hasTrustedHostKeyAlgorithm) {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN trusted_host_key_algorithm TEXT`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN trusted_host_key_algorithm TEXT`,
+    );
   }
   if (!hasTrustedHostKeyFingerprintSha256) {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN trusted_host_key_fingerprint_sha256 TEXT`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN trusted_host_key_fingerprint_sha256 TEXT`,
+    );
   }
   if (!hasHostKeyTrustedAt) {
     _db.run(sql`ALTER TABLE systems ADD COLUMN host_key_trusted_at TEXT`);
@@ -579,7 +647,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -589,7 +659,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN is_reachable INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN is_reachable INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -608,7 +680,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
 
   // Migration: add reboot required tracking column
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN needs_reboot INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN needs_reboot INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -623,7 +697,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN reboot_dismissed_uptime_seconds REAL`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN reboot_dismissed_uptime_seconds REAL`,
+    );
   } catch {
     // Column already exists
   }
@@ -633,7 +709,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN os_lifecycle_dismissed_key TEXT`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN os_lifecycle_dismissed_key TEXT`,
+    );
   } catch {
     // Column already exists
   }
@@ -643,12 +721,16 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT`,
+    );
   } catch {
     // Column already exists
   }
@@ -669,12 +751,16 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_app_version_notified TEXT`);
+    _db.run(
+      sql`ALTER TABLE notifications ADD COLUMN last_app_version_notified TEXT`,
+    );
   } catch {
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_status TEXT`);
+    _db.run(
+      sql`ALTER TABLE notifications ADD COLUMN last_delivery_status TEXT`,
+    );
   } catch {
     // Column already exists
   }
@@ -684,23 +770,31 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_code INTEGER`);
+    _db.run(
+      sql`ALTER TABLE notifications ADD COLUMN last_delivery_code INTEGER`,
+    );
   } catch {
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE notifications ADD COLUMN last_delivery_message TEXT`);
+    _db.run(
+      sql`ALTER TABLE notifications ADD COLUMN last_delivery_message TEXT`,
+    );
   } catch {
     // Column already exists
   }
 
   try {
-    _db.run(sql`ALTER TABLE update_cache ADD COLUMN is_kept_back INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE update_cache ADD COLUMN is_kept_back INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE hidden_updates ADD COLUMN is_kept_back INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE hidden_updates ADD COLUMN is_kept_back INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -714,7 +808,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
 
   // Migration: add persisted credential ordering
   try {
-    _db.run(sql`ALTER TABLE credentials ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE credentials ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -742,7 +838,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
 
   // Migration: add exclude from upgrade-all flag
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -752,23 +850,32 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN upgrade_order INTEGER NOT NULL DEFAULT 1`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN upgrade_order INTEGER NOT NULL DEFAULT 1`,
+    );
   } catch {
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
 
   // Migration: add persisted system ordering
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
-  migrateSystemsTableShape(hasIgnoreKeptBackPackages, hasAutoHideKeptBackUpdates);
+  migrateSystemsTableShape(
+    hasIgnoreKeptBackPackages,
+    hasAutoHideKeptBackUpdates,
+  );
   _db.run(sql`
     WITH ordered AS (
       SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) - 1 AS row_num
@@ -793,7 +900,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
 
   // Migration: add persisted notification ordering
   try {
-    _db.run(sql`ALTER TABLE notifications ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE notifications ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -825,7 +934,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
 
   // Migration: add schedule runtime columns
   try {
-    _db.run(sql`ALTER TABLE schedules ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+    _db.run(
+      sql`ALTER TABLE schedules ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }
@@ -882,7 +993,9 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
       )`);
 
   // Cleanup: remove obsolete settings
-  _db.run(sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap', 'auto_hide_kept_back_updates')`);
+  _db.run(
+    sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap', 'auto_hide_kept_back_updates')`,
+  );
 
   migrateCustomPackageManagerConfigKeys();
   migrateLegacyAptAutoHideIntoPackageManagerConfigs();
@@ -895,7 +1008,7 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
   // Seed default settings
   for (const s of DEFAULT_SETTINGS) {
     _db.run(
-      sql`INSERT OR IGNORE INTO settings (key, value, description) VALUES (${s.key}, ${s.value}, ${s.description})`
+      sql`INSERT OR IGNORE INTO settings (key, value, description) VALUES (${s.key}, ${s.value}, ${s.description})`,
     );
   }
 
@@ -933,7 +1046,10 @@ function legacyIntervalMinutesToCron(intervalMinutes: number): string {
     return `0 */${hours} * * *`;
   }
 
-  const roundedHours = Math.min(23, Math.max(1, Math.round(intervalMinutes / 60)));
+  const roundedHours = Math.min(
+    23,
+    Math.max(1, Math.round(intervalMinutes / 60)),
+  );
   return `0 */${roundedHours} * * *`;
 }
 
@@ -954,7 +1070,9 @@ function generateMigratedNotificationScheduleName(cron: string): string {
   }
 }
 
-function migrateRefreshScheduleSettings(db: BetterSQLite3Database<typeof schema>): void {
+function migrateRefreshScheduleSettings(
+  db: BetterSQLite3Database<typeof schema>,
+): void {
   const marker = db
     .select({ value: schema.settings.value })
     .from(schema.settings)
@@ -965,9 +1083,13 @@ function migrateRefreshScheduleSettings(db: BetterSQLite3Database<typeof schema>
   const rows = db
     .select({ key: schema.settings.key, value: schema.settings.value })
     .from(schema.settings)
-    .where(sql`${schema.settings.key} IN ('check_interval_minutes', 'cache_duration_hours')`)
+    .where(
+      sql`${schema.settings.key} IN ('check_interval_minutes', 'cache_duration_hours')`,
+    )
     .all();
-  const legacySettings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  const legacySettings = Object.fromEntries(
+    rows.map((row) => [row.key, row.value]),
+  );
   const intervalMinutes = normalizeLegacyInteger(
     legacySettings.check_interval_minutes,
     5,
@@ -980,41 +1102,51 @@ function migrateRefreshScheduleSettings(db: BetterSQLite3Database<typeof schema>
     168,
     12,
   );
-  const existingCount = (db.all(sql`SELECT COUNT(*) as count FROM schedules`)[0] as { count?: number } | undefined)?.count ?? 0;
+  const existingCount =
+    (
+      db.all(sql`SELECT COUNT(*) as count FROM schedules`)[0] as
+        { count?: number } | undefined
+    )?.count ?? 0;
 
   if (existingCount === 0) {
-    db.insert(schema.schedules).values({
-      sortOrder: 0,
-      name: "Default refresh",
-      type: "refresh",
-      enabled: 1,
-      systemIds: null,
-      config: JSON.stringify({
-        cron: legacyIntervalMinutesToCron(intervalMinutes),
-        cacheDurationHours,
-      }),
-    }).run();
+    db.insert(schema.schedules)
+      .values({
+        sortOrder: 0,
+        name: "Default refresh",
+        type: "refresh",
+        enabled: 1,
+        systemIds: null,
+        config: JSON.stringify({
+          cron: legacyIntervalMinutesToCron(intervalMinutes),
+          cacheDurationHours,
+        }),
+      })
+      .run();
   }
 
-  db.insert(schema.settings).values({
-    key: SCHEDULE_REFRESH_MIGRATION_KEY,
-    value: "true",
-    description: "Refresh settings were migrated to the schedules table",
-  }).run();
+  db.insert(schema.settings)
+    .values({
+      key: SCHEDULE_REFRESH_MIGRATION_KEY,
+      value: "true",
+      description: "Refresh settings were migrated to the schedules table",
+    })
+    .run();
 }
 
 function parseScheduleConfigJson(value: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
+      ? (parsed as Record<string, unknown>)
       : {};
   } catch {
     return {};
   }
 }
 
-function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>): void {
+function migrateNotificationSchedules(
+  db: BetterSQLite3Database<typeof schema>,
+): void {
   const marker = db
     .select({ value: schema.settings.value })
     .from(schema.settings)
@@ -1056,7 +1188,9 @@ function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>):
     const cron = typeof config.cron === "string" ? config.cron.trim() : "";
     if (!cron || schedulesByCron.has(cron)) continue;
     const ids = Array.isArray(config.notificationIds)
-      ? config.notificationIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+      ? config.notificationIds
+          .map(Number)
+          .filter((id) => Number.isInteger(id) && id > 0)
       : [];
     schedulesByCron.set(cron, {
       id: schedule.id,
@@ -1066,7 +1200,11 @@ function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>):
   }
 
   let nextSortOrder =
-    (db.all(sql`SELECT COALESCE(MAX(sort_order), -1) as value FROM schedules`)[0] as { value?: number } | undefined)?.value ?? -1;
+    (
+      db.all(
+        sql`SELECT COALESCE(MAX(sort_order), -1) as value FROM schedules`,
+      )[0] as { value?: number } | undefined
+    )?.value ?? -1;
 
   for (const channel of legacyChannels) {
     const cron = channel.schedule?.trim();
@@ -1075,14 +1213,18 @@ function migrateNotificationSchedules(db: BetterSQLite3Database<typeof schema>):
     let target = schedulesByCron.get(cron);
     if (!target) {
       nextSortOrder += 1;
-      const inserted = db.insert(schema.schedules).values({
-        sortOrder: nextSortOrder,
-        name: generateMigratedNotificationScheduleName(cron),
-        type: "notification_digest",
-        enabled: 1,
-        systemIds: null,
-        config: JSON.stringify({ cron, notificationIds: [channel.id] }),
-      }).returning({ id: schema.schedules.id }).get();
+      const inserted = db
+        .insert(schema.schedules)
+        .values({
+          sortOrder: nextSortOrder,
+          name: generateMigratedNotificationScheduleName(cron),
+          type: "notification_digest",
+          enabled: 1,
+          systemIds: null,
+          config: JSON.stringify({ cron, notificationIds: [channel.id] }),
+        })
+        .returning({ id: schema.schedules.id })
+        .get();
       target = {
         id: inserted.id,
         cron,
@@ -1138,7 +1280,8 @@ function migrateLegacyAptAutoHideIntoPackageManagerConfigs(): void {
     );
     const serialized = serializePackageManagerConfigs(merged);
     if (!serialized || serialized === row.pkgManagerConfigs) continue;
-    _db.update(schema.systems)
+    _db
+      .update(schema.systems)
       .set({ pkgManagerConfigs: serialized })
       .where(eq(schema.systems.id, row.id))
       .run();
@@ -1174,9 +1317,12 @@ function migrateCustomPackageManagerConfigKeys(): void {
       parseJson<unknown>(row.configEntries, []),
     );
     definitions.push({ name: row.name, configEntries });
-    const serialized = configEntries.length ? JSON.stringify(configEntries) : null;
+    const serialized = configEntries.length
+      ? JSON.stringify(configEntries)
+      : null;
     if (serialized === row.configEntries) continue;
-    _db.update(schema.customPackageManagers)
+    _db
+      .update(schema.customPackageManagers)
       .set({ configEntries: serialized })
       .where(eq(schema.customPackageManagers.id, row.id))
       .run();
@@ -1191,15 +1337,18 @@ function migrateCustomPackageManagerConfigKeys(): void {
     .all();
 
   for (const row of systemsRows) {
-    const normalized = parsePackageManagerConfigs(row.pkgManagerConfigs, definitions);
+    const normalized = parsePackageManagerConfigs(
+      row.pkgManagerConfigs,
+      definitions,
+    );
     const serialized = serializePackageManagerConfigs(normalized, definitions);
     if (serialized === row.pkgManagerConfigs) continue;
-    _db.update(schema.systems)
+    _db
+      .update(schema.systems)
       .set({ pkgManagerConfigs: serialized })
       .where(eq(schema.systems.id, row.id))
       .run();
   }
-
 }
 
 function migrateSystemsTableShape(
@@ -1209,11 +1358,15 @@ function migrateSystemsTableShape(
   if (!_sqlite) return;
 
   const tableDefinition = _sqlite
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'systems'")
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'systems'",
+    )
     .get() as { sql?: string } | null;
   const hasLegacyConstraint =
     typeof tableDefinition?.sql === "string" &&
-    /UNIQUE\s*\(\s*hostname\s*,\s*port\s*,\s*username\s*\)/i.test(tableDefinition.sql);
+    /UNIQUE\s*\(\s*hostname\s*,\s*port\s*,\s*username\s*\)/i.test(
+      tableDefinition.sql,
+    );
 
   if (hasLegacyConstraint || hasIgnoreKeptBackPackages) {
     rebuildSystemsTable(_sqlite, {
@@ -1224,7 +1377,7 @@ function migrateSystemsTableShape(
 
   _sqlite.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS ${SYSTEMS_CONNECTION_UNIQUE_INDEX}
-     ON systems (hostname, port, username, COALESCE(proxy_jump_system_id, 0))`
+     ON systems (hostname, port, username, COALESCE(proxy_jump_system_id, 0))`,
   );
 }
 
@@ -1419,7 +1572,7 @@ function rebuildSystemsTable(
     sqlite.exec(systemsTableSql);
     sqlite.exec(
       `INSERT INTO systems__new (${insertColumns.join(", ")})
-       SELECT ${selectColumns.join(", ")} FROM systems`
+       SELECT ${selectColumns.join(", ")} FROM systems`,
     );
     sqlite.exec("DROP TABLE systems");
     sqlite.exec("ALTER TABLE systems__new RENAME TO systems");
@@ -1434,7 +1587,9 @@ function rebuildSystemsTable(
   }
 }
 
-function migrateNotificationSettings(db: BetterSQLite3Database<typeof schema>): void {
+function migrateNotificationSettings(
+  db: BetterSQLite3Database<typeof schema>,
+): void {
   // Check if there are already rows in the notifications table
   const existing = db.run(sql`SELECT COUNT(*) as count FROM notifications`);
   // If notifications table already has data, skip migration
@@ -1459,7 +1614,9 @@ function migrateNotificationSettings(db: BetterSQLite3Database<typeof schema>): 
   let methods: string[] = [];
   try {
     methods = JSON.parse(s.notification_methods || "[]");
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   const notifyOn: string[] = [];
   if (s.notify_on_updates !== "false") notifyOn.push("updates");
@@ -1469,11 +1626,12 @@ function migrateNotificationSettings(db: BetterSQLite3Database<typeof schema>): 
 
   // Migrate email config if it was configured
   if (methods.includes("email") && s.smtp_host) {
-    const smtpTlsMode = s.smtp_secure === "false"
-      ? "plain"
-      : (s.smtp_port || "587") === "465"
-        ? "tls"
-        : "starttls";
+    const smtpTlsMode =
+      s.smtp_secure === "false"
+        ? "plain"
+        : (s.smtp_port || "587") === "465"
+          ? "tls"
+          : "starttls";
     const config = JSON.stringify({
       smtpHost: s.smtp_host || "",
       smtpPort: s.smtp_port || "587",
@@ -1500,9 +1658,14 @@ function migrateNotificationSettings(db: BetterSQLite3Database<typeof schema>): 
   }
 }
 
-function migrateLegacyEmailNotificationConfigs(db: BetterSQLite3Database<typeof schema>): void {
+function migrateLegacyEmailNotificationConfigs(
+  db: BetterSQLite3Database<typeof schema>,
+): void {
   const rows = db
-    .select({ id: schema.notifications.id, config: schema.notifications.config })
+    .select({
+      id: schema.notifications.id,
+      config: schema.notifications.config,
+    })
     .from(schema.notifications)
     .where(eq(schema.notifications.type, "email"))
     .all();
@@ -1518,16 +1681,24 @@ function migrateLegacyEmailNotificationConfigs(db: BetterSQLite3Database<typeof 
     }
 
     let changed = false;
-    const smtpPort = typeof parsed.smtpPort === "string" && parsed.smtpPort ? parsed.smtpPort : "587";
+    const smtpPort =
+      typeof parsed.smtpPort === "string" && parsed.smtpPort
+        ? parsed.smtpPort
+        : "587";
     const currentTlsMode = parsed.smtpTlsMode;
 
-    if (currentTlsMode !== "plain" && currentTlsMode !== "starttls" && currentTlsMode !== "tls") {
+    if (
+      currentTlsMode !== "plain" &&
+      currentTlsMode !== "starttls" &&
+      currentTlsMode !== "tls"
+    ) {
       const legacySecure = parsed.smtpSecure;
-      parsed.smtpTlsMode = legacySecure === "false"
-        ? "plain"
-        : smtpPort === "465"
-          ? "tls"
-          : "starttls";
+      parsed.smtpTlsMode =
+        legacySecure === "false"
+          ? "plain"
+          : smtpPort === "465"
+            ? "tls"
+            : "starttls";
       changed = true;
     }
 
@@ -1536,7 +1707,10 @@ function migrateLegacyEmailNotificationConfigs(db: BetterSQLite3Database<typeof 
       changed = true;
     }
 
-    if (parsed.allowInsecureTls !== "true" && parsed.allowInsecureTls !== "false") {
+    if (
+      parsed.allowInsecureTls !== "true" &&
+      parsed.allowInsecureTls !== "false"
+    ) {
       parsed.allowInsecureTls = "false";
       changed = true;
     }
@@ -1550,7 +1724,9 @@ function migrateLegacyEmailNotificationConfigs(db: BetterSQLite3Database<typeof 
   }
 }
 
-function migrateLegacyCredentials(db: BetterSQLite3Database<typeof schema>): void {
+function migrateLegacyCredentials(
+  db: BetterSQLite3Database<typeof schema>,
+): void {
   const systemRows = db.select().from(schema.systems).all();
   for (const system of systemRows) {
     if (system.credentialId) continue;
@@ -1567,17 +1743,23 @@ function migrateLegacyCredentials(db: BetterSQLite3Database<typeof schema>): voi
       kind = "sshKey";
       payload.privateKey = normalizeSecretValue(system.encryptedPrivateKey);
       if (system.encryptedKeyPassphrase) {
-        payload.passphrase = normalizeSecretValue(system.encryptedKeyPassphrase);
+        payload.passphrase = normalizeSecretValue(
+          system.encryptedKeyPassphrase,
+        );
       }
     }
 
     if (!kind) continue;
 
-    const result = db.insert(schema.credentials).values({
-      name: `Migrated SSH credential: ${system.name}`,
-      kind,
-      payload: JSON.stringify(payload),
-    }).returning({ id: schema.credentials.id }).get();
+    const result = db
+      .insert(schema.credentials)
+      .values({
+        name: `Migrated SSH credential: ${system.name}`,
+        kind,
+        payload: JSON.stringify(payload),
+      })
+      .returning({ id: schema.credentials.id })
+      .get();
 
     db.update(schema.systems)
       .set({
@@ -1638,7 +1820,8 @@ function migrateCredentialsTable(): void {
   _sqlite.exec("PRAGMA foreign_keys=ON");
 }
 
-const NOTIFICATION_UPDATE_DEDUPE_MIGRATION_KEY = "notification_update_dedupe_migrated";
+const NOTIFICATION_UPDATE_DEDUPE_MIGRATION_KEY =
+  "notification_update_dedupe_migrated";
 
 interface DeliveredUpdateSeed {
   systemId: number;
@@ -1651,7 +1834,9 @@ function parseNotifyOnForMigration(raw: string | null): string[] {
   if (!raw) return ["updates", "appUpdates"];
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(String) : ["updates", "appUpdates"];
+    return Array.isArray(parsed)
+      ? parsed.map(String)
+      : ["updates", "appUpdates"];
   } catch {
     return ["updates", "appUpdates"];
   }
@@ -1669,7 +1854,10 @@ function parseSystemIdsForMigration(raw: string | null): number[] | null {
 }
 
 function deliveredUpdateSeedKey(
-  update: Pick<DeliveredUpdateSeed, "systemId" | "pkgManager" | "packageName" | "newVersion">,
+  update: Pick<
+    DeliveredUpdateSeed,
+    "systemId" | "pkgManager" | "packageName" | "newVersion"
+  >,
 ): string {
   return `${update.systemId}\u0000${update.pkgManager}\u0000${update.packageName}\u0000${update.newVersion}`;
 }
@@ -1700,7 +1888,9 @@ function buildVisibleDeliveredUpdatesBySystem(
   for (const row of hiddenRows) {
     if (row.active !== 1 || !visibleSystemSet.has(row.systemId)) continue;
     const keys = hiddenKeysBySystem.get(row.systemId) ?? new Set<string>();
-    keys.add(`${row.pkgManager}\u0000${row.packageName}\u0000${row.newVersion}`);
+    keys.add(
+      `${row.pkgManager}\u0000${row.packageName}\u0000${row.newVersion}`,
+    );
     hiddenKeysBySystem.set(row.systemId, keys);
   }
 
@@ -1787,14 +1977,14 @@ function migrateNotificationUpdateDedupeState(
     : "NULL AS pending_events";
   const notificationRows = _sqlite
     .prepare(
-      `SELECT id, ${notifyOnExpr}, ${systemIdsExpr}, ${pendingEventsExpr} FROM notifications`
+      `SELECT id, ${notifyOnExpr}, ${systemIdsExpr}, ${pendingEventsExpr} FROM notifications`,
     )
     .all() as Array<{
-      id: number;
-      notify_on: string | null;
-      system_ids: string | null;
-      pending_events: string | null;
-    }>;
+    id: number;
+    notify_on: string | null;
+    system_ids: string | null;
+    pending_events: string | null;
+  }>;
 
   for (const row of notificationRows) {
     if (!parseNotifyOnForMigration(row.notify_on).includes("updates")) {
@@ -1802,7 +1992,9 @@ function migrateNotificationUpdateDedupeState(
     }
 
     const scopedSystemIds = parseSystemIdsForMigration(row.system_ids);
-    const deliveredRows: Array<typeof schema.notificationDeliveredUpdates.$inferInsert> = [];
+    const deliveredRows: Array<
+      typeof schema.notificationDeliveredUpdates.$inferInsert
+    > = [];
     const deliveredKeys = new Set<string>();
     const candidateSystemIds =
       scopedSystemIds === null

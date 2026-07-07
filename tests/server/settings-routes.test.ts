@@ -7,6 +7,7 @@ import { randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { settings, systems, updateHistory } from "../../server/db/schema";
+import { authMiddleware } from "../../server/middleware/auth";
 import settingsRoutes from "../../server/routes/settings";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { getSSHManager, initSSHManager } from "../../server/ssh/connection";
@@ -23,6 +24,23 @@ describe("settings routes", () => {
   afterEach(() => {
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("returns only public settings without requiring an authenticated user", async () => {
+    const db = getDb();
+    db.update(settings).set({ value: "de" }).where(eq(settings.key, "language")).run();
+    db.update(settings).set({ value: "super-secret" }).where(eq(settings.key, "oidc_client_secret")).run();
+
+    const app = new Hono();
+    app.use("/api/*", authMiddleware);
+    app.route("/api/settings", settingsRoutes);
+
+    const res = await app.request("/api/settings/public");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ settings: { language: "de" } });
+    expect(JSON.stringify(body)).not.toContain("super-secret");
   });
 
   test("normalizes bounded numeric settings before storing them", async () => {

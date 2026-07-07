@@ -9,7 +9,7 @@ import {
 import i18next from "i18next";
 import { initReactI18next, useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
-import { useSettingsResponse } from "./settings";
+import { usePublicSettingsResponse, useSettingsResponse } from "./settings";
 import ar from "../locales/ar.json";
 import de from "../locales/de.json";
 import en from "../locales/en.json";
@@ -170,11 +170,13 @@ const fallbackI18n: I18nContextValue = {
 const I18nContext = createContext<I18nContextValue>(fallbackI18n);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { loading, user } = useAuth();
   const { data: settingsResponse } = useSettingsResponse(Boolean(user));
+  const { data: publicSettingsResponse } = usePublicSettingsResponse(!loading && !user);
   const { t: translate, i18n } = useTranslation();
   const preference = normalizeLanguagePreference(
-    settingsResponse?.settings[LANGUAGE_SETTING_KEY],
+    settingsResponse?.settings[LANGUAGE_SETTING_KEY] ??
+      publicSettingsResponse?.settings[LANGUAGE_SETTING_KEY],
   );
   const browserLanguage = getBrowserLanguage();
   const language = resolveLanguagePreference(preference);
