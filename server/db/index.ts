@@ -111,6 +111,8 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT,
+    totp_secret TEXT,
+    totp_enabled INTEGER NOT NULL DEFAULT 0,
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -418,6 +420,17 @@ export function initDatabase(dbPath: string): BetterSQLite3Database<typeof schem
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(system_id, operation_key)
   )`);
+
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN totp_secret TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
 
   try {
     _db.run(sql`ALTER TABLE custom_package_managers ADD COLUMN config_entries TEXT`);

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import QRCode from "qrcode";
 import { Layout } from "../components/Layout";
 import { useSettingsResponse, useUpdateSettings } from "../lib/settings";
 import { validatePassword, validateRequiredText } from "../lib/form-validation";
@@ -52,7 +53,7 @@ export default function Settings() {
   const { data: settingsResponse, isLoading } = useSettingsResponse();
   const updateSettings = useUpdateSettings();
   const { addToast } = useToast();
-  const { hasPassword, refresh: refreshAuth } = useAuth();
+  const { hasPassword, totpEnabled, refresh: refreshAuth } = useAuth();
   const { browserLanguage, t } = useI18n();
   const { browserTimeFormat, formatDate } = useDateTime();
 
@@ -85,6 +86,14 @@ export default function Settings() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwError, setPwError] = useState("");
   const [pwLoading, setPwLoading] = useState(false);
+  const [totpModalOpen, setTotpModalOpen] = useState(false);
+  const [totpLoading, setTotpLoading] = useState(false);
+  const [totpSaving, setTotpSaving] = useState(false);
+  const [totpSecret, setTotpSecret] = useState("");
+  const [totpOtpAuthUrl, setTotpOtpAuthUrl] = useState("");
+  const [totpQrDataUrl, setTotpQrDataUrl] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [totpDisablePassword, setTotpDisablePassword] = useState("");
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
@@ -107,6 +116,33 @@ export default function Settings() {
       setForm(cleanedForm);
     }
   }, [settingsResponse]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!totpOtpAuthUrl) {
+      setTotpQrDataUrl("");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void QRCode.toDataURL(totpOtpAuthUrl, {
+      width: 256,
+      margin: 1,
+      color: {
+        dark: "#0f172a",
+        light: "#ffffff",
+      },
+    }).then((dataUrl) => {
+      if (!cancelled) setTotpQrDataUrl(dataUrl);
+    }).catch(() => {
+      if (!cancelled) setTotpQrDataUrl("");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [totpOtpAuthUrl]);
 
   const setNumericField = (key: NumericSettingKey, value: string) => {
     setForm((prev) => ({
@@ -189,6 +225,79 @@ export default function Settings() {
     } finally {
       setPwLoading(false);
     }
+  };
+
+  const openTotpModal = async () => {
+    setTotpModalOpen(true);
+    setTotpCode("");
+    setTotpDisablePassword("");
+    setTotpSecret("");
+    setTotpOtpAuthUrl("");
+    setTotpQrDataUrl("");
+
+    if (totpEnabled) return;
+
+    setTotpLoading(true);
+    try {
+      const payload = await apiFetch<{ secret: string; otpauthUrl: string }>(
+        "/auth/totp/setup",
+        { method: "POST" },
+      );
+      setTotpSecret(payload.secret);
+      setTotpOtpAuthUrl(payload.otpauthUrl);
+    } catch (err: unknown) {
+      setTotpModalOpen(false);
+      addToast((err as Error).message || t("pages.settings.failedToStartTotpSetup"), "danger");
+    } finally {
+      setTotpLoading(false);
+    }
+  };
+
+  const closeTotpModal = () => {
+    if (totpSaving) return;
+    setTotpModalOpen(false);
+  };
+
+  const enableTotp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpSaving(true);
+    try {
+      await apiFetch("/auth/totp/enable", {
+        method: "POST",
+        body: JSON.stringify({ code: totpCode }),
+      });
+      addToast(t("pages.settings.totpEnabled"), "success");
+      setTotpModalOpen(false);
+      await refreshAuth();
+    } catch (err: unknown) {
+      addToast((err as Error).message || t("pages.settings.failedToEnableTotp"), "danger");
+    } finally {
+      setTotpSaving(false);
+    }
+  };
+
+  const disableTotp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpSaving(true);
+    try {
+      await apiFetch("/auth/totp", {
+        method: "DELETE",
+        body: JSON.stringify({ currentPassword: totpDisablePassword }),
+      });
+      addToast(t("pages.settings.totpDisabled"), "success");
+      setTotpModalOpen(false);
+      await refreshAuth();
+    } catch (err: unknown) {
+      addToast((err as Error).message || t("pages.settings.failedToDisableTotp"), "danger");
+    } finally {
+      setTotpSaving(false);
+    }
+  };
+
+  const copyTotpSecret = async () => {
+    if (!navigator.clipboard || !totpSecret) return;
+    await navigator.clipboard.writeText(totpSecret);
+    addToast(t("pages.settings.copied"), "success");
   };
 
   const inputClass =
@@ -485,6 +594,150 @@ export default function Settings() {
                 {pwLoading ? <span className="spinner spinner-sm" /> : t("pages.settings.changePassword")}
               </button>
             </form>
+
+            <hr className="my-6 border-border" />
+            <h3 className="text-sm font-semibold mb-2">{t("pages.settings.twoFactorAuthentication")}</h3>
+            <p className="max-w-lg text-sm text-slate-500 dark:text-slate-400">
+              {totpEnabled
+                ? t("pages.settings.totpEnabledDescription")
+                : t("pages.settings.totpDisabledDescription")}
+            </p>
+            <button
+              type="button"
+              onClick={() => void openTotpModal()}
+              className={`mt-4 px-4 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50 ${
+                totpEnabled
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              {totpEnabled ? t("pages.settings.disableTotp") : t("pages.settings.enableTotp")}
+            </button>
+
+            <Modal
+              open={totpModalOpen}
+              onClose={closeTotpModal}
+              title={totpEnabled ? t("pages.settings.disableTotp") : t("pages.settings.enableTotp")}
+              dismissible={!totpSaving}
+            >
+              {totpEnabled ? (
+                <form onSubmit={disableTotp} className="space-y-4">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {t("pages.settings.disableTotpDescription")}
+                  </p>
+                  <div>
+                    <label className={labelClass}>{t("pages.settings.currentPassword")}</label>
+                    <input
+                      type="password"
+                      value={totpDisablePassword}
+                      onChange={(e) => setTotpDisablePassword(e.target.value)}
+                      required
+                      autoComplete="current-password"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeTotpModal}
+                      disabled={totpSaving}
+                      className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                    >
+                      {t("pages.settings.cancel")}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={totpSaving || !totpDisablePassword}
+                      className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50"
+                    >
+                      {totpSaving ? <span className="spinner spinner-sm" /> : t("pages.settings.disableTotp")}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={enableTotp} className="space-y-4">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {t("pages.settings.setupTotpDescription")}
+                  </p>
+                  {totpLoading ? (
+                    <div className="flex justify-center py-8">
+                      <span className="spinner !w-6 !h-6 text-blue-500" />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-col items-center gap-3">
+                        {totpQrDataUrl ? (
+                          <img
+                            src={totpQrDataUrl}
+                            alt={t("pages.settings.totpQrAlt")}
+                            className="w-full max-w-64 rounded-lg border border-border bg-white p-3"
+                          />
+                        ) : (
+                          <div className="flex h-64 w-full max-w-64 items-center justify-center rounded-lg border border-border bg-slate-50 text-sm text-slate-500 dark:bg-slate-900">
+                            {t("pages.settings.generatingQrCode")}
+                          </div>
+                        )}
+                        {totpOtpAuthUrl && (
+                          <a
+                            href={totpOtpAuthUrl}
+                            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-border px-4 py-2 text-center text-sm font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
+                          >
+                            {t("pages.settings.openAuthenticatorApp")}
+                          </a>
+                        )}
+                      </div>
+                      <div>
+                        <label className={labelClass}>{t("pages.settings.manualTotpSecret")}</label>
+                        <div className="flex gap-2">
+                          <input
+                            value={totpSecret}
+                            readOnly
+                            className={`${inputClass} font-mono`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void copyTotpSecret()}
+                            disabled={!totpSecret}
+                            className="shrink-0 px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                          >
+                            {t("pages.settings.copy")}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className={labelClass}>{t("pages.settings.authenticatorCode")}</label>
+                        <input
+                          value={totpCode}
+                          onChange={(e) => setTotpCode(e.target.value)}
+                          required
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          pattern="[0-9 ]*"
+                          className={inputClass}
+                        />
+                      </div>
+                    </>
+                  )}
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeTotpModal}
+                      disabled={totpSaving}
+                      className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                    >
+                      {t("pages.settings.cancel")}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={totpLoading || totpSaving || !totpCode.trim()}
+                      className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                    >
+                      {totpSaving ? <span className="spinner spinner-sm" /> : t("pages.settings.verifyAndEnableTotp")}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </Modal>
           </>
         )}
       </SettingSection>

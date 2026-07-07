@@ -21,7 +21,8 @@ function methodIsUnsafe(method?: string): boolean {
 export class ApiError extends Error {
   constructor(
     public status: number,
-    message: string
+    message: string,
+    public details: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -50,7 +51,13 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.error || body.message || `Request failed: ${res.status}`);
+    throw new ApiError(
+      res.status,
+      body.error || body.message || `Request failed: ${res.status}`,
+      body && typeof body === "object" && !Array.isArray(body)
+        ? body as Record<string, unknown>
+        : {},
+    );
   }
 
   return res.json();

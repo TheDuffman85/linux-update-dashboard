@@ -40,6 +40,9 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | POST | `/api/auth/logout` | Clear the current session. |
 | GET | `/api/auth/me` | Current user info. |
 | POST | `/api/auth/change-password` | Change the current user's password. |
+| POST | `/api/auth/totp/setup` | Start TOTP setup for the password-authenticated user. |
+| POST | `/api/auth/totp/enable` | Verify a TOTP code and enable authenticator-code sign-in. |
+| DELETE | `/api/auth/totp` | Disable TOTP after confirming the current password. |
 | POST | `/api/auth/webauthn/register/options` | Start passkey registration. |
 | POST | `/api/auth/webauthn/register/verify` | Complete passkey registration. |
 | POST | `/api/auth/webauthn/login/options` | Start passkey login. |

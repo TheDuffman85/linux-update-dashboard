@@ -1,10 +1,14 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { createHmac, timingSafeEqual } from "crypto";
 import { eq, count as countFn } from "drizzle-orm";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { generateSecret, generateURI, verify } from "otplib";
 import { getDb } from "../db";
 import { users, webauthnCredentials, settings } from "../db/schema";
 import { hashPassword, verifyPassword } from "../auth/password";
+import { config } from "../config";
+import { getEncryptor } from "../security";
 import {
   createSession,
   getSession,
@@ -18,6 +22,8 @@ import { getKnownPublicOrigin, getTrustedPublicOrigin, isTrustedReturnOrigin, re
 
 // Pre-computed dummy hash for timing-safe login (L1)
 const DUMMY_HASH = await hashPassword("timing-safe-dummy-password-pad");
+const TOTP_SETUP_COOKIE = "ludash_totp_setup";
+const TOTP_EPOCH_TOLERANCE_SECONDS = 30;
 
 function validatePassword(password: string): string | null {
   if (password.length < 8) return "Password must be at least 8 characters";
@@ -31,6 +37,52 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function isBearerTokenRequest(c: Context): boolean {
+  return c.req.header("authorization")?.startsWith("Bearer ") === true;
+}
+
+function normalizeTotpCode(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
+function signShortValue(value: string): string {
+  const signature = createHmac("sha256", config.secretKey)
+    .update(value)
+    .digest("base64url");
+  return `${value}.${signature}`;
+}
+
+function verifyShortValue(token: string | undefined): string | null {
+  if (!token) return null;
+  const separatorIndex = token.lastIndexOf(".");
+  if (separatorIndex <= 0) return null;
+
+  const value = token.slice(0, separatorIndex);
+  const signature = token.slice(separatorIndex + 1);
+  const expectedSignature = createHmac("sha256", config.secretKey)
+    .update(value)
+    .digest("base64url");
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (
+    signatureBuffer.length !== expectedBuffer.length ||
+    !timingSafeEqual(signatureBuffer, expectedBuffer)
+  ) {
+    return null;
+  }
+  return value;
+}
+
+async function verifyTotpCode(code: string, encryptedSecret: string): Promise<boolean> {
+  const secret = getEncryptor().decrypt(encryptedSecret);
+  const result = await verify({
+    token: code,
+    secret,
+    epochTolerance: TOTP_EPOCH_TOLERANCE_SECONDS,
+  });
+  return result.valid;
 }
 
 /** Derive WebAuthn origin and rpId from the incoming request headers. */
@@ -67,13 +119,15 @@ auth.get("/status", async (c) => {
   const passkeysEnabled = (passkeyCount?.count ?? 0) > 0;
 
   let hasPassword = false;
+  let totpEnabled = false;
   if (session) {
     const user = db
-      .select({ passwordHash: users.passwordHash })
+      .select({ passwordHash: users.passwordHash, totpEnabled: users.totpEnabled })
       .from(users)
       .where(eq(users.id, session.userId))
       .get();
     hasPassword = !!user?.passwordHash;
+    totpEnabled = user?.totpEnabled === 1;
   }
 
   return c.json({
@@ -84,6 +138,7 @@ auth.get("/status", async (c) => {
     passwordLoginDisabled,
     passkeysEnabled,
     hasPassword,
+    totpEnabled,
   });
 });
 
@@ -117,7 +172,7 @@ auth.post("/setup", rateLimit(3, 60_000), async (c) => {
     .returning({ id: users.id })
     .get();
 
-  await createSession(c, user.id, username);
+  await createSession(c, user.id, username, "password");
   return c.json({ status: "ok", userId: user.id });
 });
 
@@ -140,6 +195,9 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
 
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";
+  const totpCode = typeof body.totpCode === "string"
+    ? normalizeTotpCode(body.totpCode)
+    : "";
   if (!username.trim() || !password) {
     return c.json({ error: "Username and password required" }, 400);
   }
@@ -159,7 +217,17 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
     return c.json({ error: "Invalid credentials" }, 401);
   }
 
-  await createSession(c, user!.id, user!.username);
+  if (user!.totpEnabled === 1 && user!.totpSecret) {
+    if (!totpCode) {
+      return c.json({ error: "Authenticator code required", requiresTotp: true }, 401);
+    }
+    const validTotp = await verifyTotpCode(totpCode, user!.totpSecret);
+    if (!validTotp) {
+      return c.json({ error: "Invalid authenticator code", requiresTotp: true }, 401);
+    }
+  }
+
+  await createSession(c, user!.id, user!.username, "password");
   return c.json({ status: "ok", user: { id: user!.id, username: user!.username } });
 });
 
@@ -167,6 +235,137 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
 auth.post("/logout", async (c) => {
   clearSession(c);
   return c.json({ status: "ok" });
+});
+
+// --- TOTP ---
+auth.post("/totp/setup", async (c) => {
+  if (isBearerTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot access management endpoints" }, 403);
+  }
+  const session = await getSession(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  if (session.authMethod !== "password") {
+    return c.json({ error: "Log in with your password before setting up TOTP" }, 403);
+  }
+
+  const db = getDb();
+  const user = db
+    .select()
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .get();
+  if (!user?.passwordHash) {
+    return c.json({ error: "No password set for this account" }, 400);
+  }
+  if (user.totpEnabled === 1) {
+    return c.json({ error: "TOTP is already enabled for this account" }, 400);
+  }
+
+  const secret = generateSecret();
+  const otpauthUrl = generateURI({
+    issuer: "Linux Update Dashboard",
+    label: user.username,
+    secret,
+  });
+
+  setCookie(c, TOTP_SETUP_COOKIE, signShortValue(secret), {
+    maxAge: 300,
+    httpOnly: true,
+    sameSite: "Strict",
+    secure: new URL(config.baseUrl).protocol === "https:",
+    path: "/",
+  });
+
+  return c.json({ secret, otpauthUrl });
+});
+
+auth.post("/totp/enable", rateLimit(5, 60_000), async (c) => {
+  if (isBearerTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot access management endpoints" }, 403);
+  }
+  const session = await getSession(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  if (session.authMethod !== "password") {
+    return c.json({ error: "Log in with your password before setting up TOTP" }, 403);
+  }
+
+  const body = asObject(await c.req.json().catch(() => null));
+  const code = typeof body?.code === "string" ? normalizeTotpCode(body.code) : "";
+  if (!code) return c.json({ error: "Authenticator code required" }, 400);
+
+  const secret = verifyShortValue(getCookie(c, TOTP_SETUP_COOKIE));
+  if (!secret) {
+    return c.json({ error: "TOTP setup expired. Start setup again." }, 400);
+  }
+
+  const result = await verify({
+    token: code,
+    secret,
+    epochTolerance: TOTP_EPOCH_TOLERANCE_SECONDS,
+  });
+  if (!result.valid) {
+    return c.json({ error: "Invalid authenticator code" }, 400);
+  }
+
+  const db = getDb();
+  const user = db
+    .select()
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .get();
+  if (!user?.passwordHash) {
+    return c.json({ error: "No password set for this account" }, 400);
+  }
+
+  db.update(users)
+    .set({ totpSecret: getEncryptor().encrypt(secret), totpEnabled: 1 })
+    .where(eq(users.id, session.userId))
+    .run();
+  deleteCookie(c, TOTP_SETUP_COOKIE, { path: "/" });
+
+  return c.json({ status: "ok", totpEnabled: true });
+});
+
+auth.delete("/totp", rateLimit(5, 60_000), async (c) => {
+  if (isBearerTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot access management endpoints" }, 403);
+  }
+  const session = await getSession(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  if (session.authMethod !== "password") {
+    return c.json({ error: "Log in with your password before disabling TOTP" }, 403);
+  }
+
+  const body = asObject(await c.req.json().catch(() => null));
+  const currentPassword = typeof body?.currentPassword === "string"
+    ? body.currentPassword
+    : "";
+  if (!currentPassword) {
+    return c.json({ error: "Current password required" }, 400);
+  }
+
+  const db = getDb();
+  const user = db
+    .select()
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .get();
+  if (!user?.passwordHash) {
+    return c.json({ error: "No password set for this account" }, 400);
+  }
+  if (user.totpEnabled !== 1 || !user.totpSecret) {
+    return c.json({ error: "TOTP is not enabled for this account" }, 400);
+  }
+  if (!await verifyPassword(currentPassword, user.passwordHash)) {
+    return c.json({ error: "Current password is incorrect" }, 401);
+  }
+
+  db.update(users)
+    .set({ totpSecret: null, totpEnabled: 0 })
+    .where(eq(users.id, session.userId))
+    .run();
+
+  return c.json({ status: "ok", totpEnabled: false });
 });
 
 // --- Current user ---
@@ -397,7 +596,7 @@ auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
       .where(eq(webauthnCredentials.id, credRow.id))
       .run();
 
-    await createSession(c, user.id, user.username);
+    await createSession(c, user.id, user.username, "passkey");
     deleteCookie(c, "webauthn_challenge", { path: "/" });
     return c.json({
       status: "ok",
@@ -524,7 +723,7 @@ auth.get("/oidc/callback", async (c) => {
       user = inserted;
     }
 
-    await createSession(c, user.id, user.username);
+    await createSession(c, user.id, user.username, "oidc");
     deleteCookie(c, "oidc_state", { path: "/" });
     deleteCookie(c, "oidc_nonce", { path: "/" });
     deleteCookie(c, "oidc_redirect_uri", { path: "/" });

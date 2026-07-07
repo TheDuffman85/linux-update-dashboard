@@ -38,8 +38,13 @@ export const csrfMiddleware = createMiddleware(async (c, next) => {
     return next();
   }
 
-  // Bearer token requests are stateless — no CSRF risk.
-  if (c.req.header("authorization")?.startsWith("Bearer ")) {
+  // Bearer token requests are stateless — no CSRF risk. Auth routes still
+  // use cookies for browser sessions, so do not let a bearer header bypass
+  // CSRF there.
+  if (
+    !c.req.path.startsWith("/api/auth") &&
+    c.req.header("authorization")?.startsWith("Bearer ")
+  ) {
     return next();
   }
 

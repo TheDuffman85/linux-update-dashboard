@@ -39,7 +39,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, ordered upgrade groups, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
-- **Authentication:** password login, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
+- **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
 - **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, version/build info, and Docker-ready production packaging.
 
@@ -252,7 +252,9 @@ For secret-backed settings, do not set both `VAR` and `VAR_FILE`; startup fails 
 
 ## Authentication and API
 
-Linux Update Dashboard supports password login, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless passkeys or SSO are configured to prevent lockout.
+Linux Update Dashboard supports password login, TOTP authenticator codes, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, TOTP secrets are encrypted at rest, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless passkeys or SSO are configured to prevent lockout.
+
+TOTP can be enabled from **Settings > Password** after signing in with the account password. Once enabled, password sign-ins require a current authenticator app code.
 
 For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oidc/callback`. Set `LUDASH_BASE_URL` before configuring OIDC so callback and origin validation match the public URL.
 

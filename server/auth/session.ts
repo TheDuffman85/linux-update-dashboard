@@ -17,6 +17,7 @@ export function initSession(secretKey: string): void {
 export interface SessionData {
   userId: number;
   username: string;
+  authMethod?: "password" | "passkey" | "oidc";
 }
 
 function isSecureContext(): boolean {
@@ -30,11 +31,12 @@ function isSecureContext(): boolean {
 export async function createSession(
   c: Context,
   userId: number,
-  username: string
+  username: string,
+  authMethod: SessionData["authMethod"] = "password"
 ): Promise<void> {
   if (!_secret) throw new Error("Session not initialized");
 
-  const token = await new SignJWT({ userId, username })
+  const token = await new SignJWT({ userId, username, authMethod })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime(`${SESSION_LIFETIME}s`)
     .setIssuedAt()
@@ -60,6 +62,7 @@ export async function getSession(c: Context): Promise<SessionData | null> {
     return {
       userId: payload.userId as number,
       username: payload.username as string,
+      authMethod: payload.authMethod as SessionData["authMethod"],
     };
   } catch {
     return null;
@@ -87,6 +90,7 @@ export async function refreshSessionIfNeeded(c: Context): Promise<boolean> {
         c,
         payload.userId as number,
         payload.username as string,
+        payload.authMethod as SessionData["authMethod"],
       );
       return true;
     }

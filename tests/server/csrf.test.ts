@@ -7,6 +7,7 @@ function createApp() {
   app.use("/api/*", csrfMiddleware);
   app.get("/api/ping", (c) => c.json({ ok: true }));
   app.post("/api/mutate", (c) => c.json({ ok: true }));
+  app.post("/api/auth/mutate", (c) => c.json({ ok: true }));
   return app;
 }
 
@@ -38,6 +39,17 @@ describe("csrfMiddleware", () => {
       },
     });
     expect(res.status).toBe(200);
+  });
+
+  test("bearer header does not bypass CSRF on auth routes", async () => {
+    const app = createApp();
+    const res = await app.request("/api/auth/mutate", {
+      method: "POST",
+      headers: { Authorization: "Bearer ludash_token" },
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("CSRF token");
   });
 
   test("websocket upgrade request is bypassed by csrf middleware", async () => {

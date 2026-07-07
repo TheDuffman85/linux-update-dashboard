@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { PenguinLogo } from "../components/PenguinLogo";
-import { apiFetch } from "../lib/client";
+import { ApiError, apiFetch } from "../lib/client";
 import { useI18n } from "../lib/i18n";
 
 function base64urlToBuffer(base64url: string): ArrayBuffer {
@@ -23,25 +23,45 @@ export default function Login() {
   const { t } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [requiresTotp, setRequiresTotp] = useState(false);
 
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setNotice("");
     setLoading(true);
     try {
-      await login(username, password);
+      await login(username, password, requiresTotp ? totpCode : undefined);
     } catch (err: unknown) {
+      if (err instanceof ApiError && err.details.requiresTotp === true) {
+        setRequiresTotp(true);
+        if (!requiresTotp) {
+          setNotice(err.message || t("pages.login.authenticatorCodeRequired"));
+          return;
+        }
+      }
       setError((err as Error).message || t("pages.login.loginFailed"));
     } finally {
       setLoading(false);
     }
   };
 
+  const resetTotpPrompt = () => {
+    setRequiresTotp(false);
+    setPassword("");
+    setTotpCode("");
+    setError("");
+    setNotice("");
+  };
+
   const handlePasskeyLogin = async () => {
     setError("");
+    setNotice("");
     setLoading(true);
     try {
       if (!window.isSecureContext || !navigator.credentials) {
@@ -114,33 +134,77 @@ export default function Login() {
             {error}
           </div>
         )}
+        {notice && !error && (
+          <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm">
+            {notice}
+          </div>
+        )}
 
         {!passwordLoginDisabled && (
           <form onSubmit={handlePasswordLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-                {t("pages.login.username")}
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
-                {t("pages.login.password")}
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
+            {!requiresTotp ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
+                    {t("pages.login.username")}
+                  </label>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    autoComplete="username"
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
+                    {t("pages.login.password")}
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    autoComplete="current-password"
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-border bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      {t("pages.login.signingInAs")}
+                    </p>
+                    <p className="truncate text-sm font-medium">{username}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={resetTotpPrompt}
+                    disabled={loading}
+                    className="shrink-0 rounded px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-slate-800"
+                  >
+                    {t("pages.login.change")}
+                  </button>
+                </div>
+                <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">
+                  {t("pages.login.authenticatorCode")}
+                </label>
+                <input
+                  type="text"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  required
+                  autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9 ]*"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                />
+              </div>
+            )}
             <button
               type="submit"
               disabled={loading}
@@ -151,7 +215,7 @@ export default function Login() {
           </form>
         )}
 
-        {(passkeysEnabled || oidcEnabled) && (
+        {!requiresTotp && (passkeysEnabled || oidcEnabled) && (
           <div className={`${passwordLoginDisabled ? "" : "mt-4"} space-y-2`}>
             {passkeysEnabled && (
               <button
