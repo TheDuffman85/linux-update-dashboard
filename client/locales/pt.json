@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "Continuar com SSO",
   "pages.login.loginFailed": "Falha no login",
   "pages.login.noCredentialReturned": "Nenhuma credencial retornada",
+  "pages.login.oidcOnlyPasskey": "Esta chave de acesso pertence a uma conta apenas com SSO. Entre usando SSO.",
   "pages.login.passkeyAuthenticationFailed": "Falha na autenticação por chave de acesso",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "Chaves de acesso exigem um contexto seguro (HTTPS ou localhost)",
   "pages.login.password": "Senha",

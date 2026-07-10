@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "Продолжить с SSO",
   "pages.login.loginFailed": "Вход не удался",
   "pages.login.noCredentialReturned": "Учетные данные не возвращены",
+  "pages.login.oidcOnlyPasskey": "Этот ключ доступа принадлежит учетной записи только с SSO. Войдите через SSO.",
   "pages.login.passkeyAuthenticationFailed": "Аутентификация passkey не удалась",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "Passkey требуют безопасного контекста (HTTPS или localhost)",
   "pages.login.password": "Пароль",

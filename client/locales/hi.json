@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "SSO के साथ जारी रखें",
   "pages.login.loginFailed": "लॉगिन विफल",
   "pages.login.noCredentialReturned": "कोई क्रेडेंशियल वापस नहीं मिला",
+  "pages.login.oidcOnlyPasskey": "यह पासकी केवल SSO वाले खाते से जुड़ी है। इसके बजाय SSO से साइन इन करें।",
   "pages.login.passkeyAuthenticationFailed": "पासकी प्रमाणीकरण विफल",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "पासकी के लिए सुरक्षित संदर्भ (HTTPS या localhost) चाहिए",
   "pages.login.password": "पासवर्ड",

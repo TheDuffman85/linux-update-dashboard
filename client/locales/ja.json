@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "SSO で続行",
   "pages.login.loginFailed": "ログインに失敗しました",
   "pages.login.noCredentialReturned": "認証情報が返されませんでした",
+  "pages.login.oidcOnlyPasskey": "このパスキーは SSO 専用アカウントに属しています。代わりに SSO でサインインしてください。",
   "pages.login.passkeyAuthenticationFailed": "パスキー認証に失敗しました",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "パスキーには安全なコンテキスト (HTTPS または localhost) が必要です",
   "pages.login.password": "パスワード",

@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "المتابعة باستخدام SSO",
   "pages.login.loginFailed": "فشل تسجيل الدخول",
   "pages.login.noCredentialReturned": "لم يتم إرجاع بيانات اعتماد",
+  "pages.login.oidcOnlyPasskey": "ينتمي مفتاح المرور هذا إلى حساب يستخدم تسجيل الدخول الموحّد فقط. سجّل الدخول عبر SSO بدلاً من ذلك.",
   "pages.login.passkeyAuthenticationFailed": "فشلت مصادقة مفتاح المرور",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "تتطلب مفاتيح المرور سياقا آمنا (HTTPS أو localhost)",
   "pages.login.password": "كلمة المرور",

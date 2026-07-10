@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "Continuer avec SSO",
   "pages.login.loginFailed": "Connexion échouée",
   "pages.login.noCredentialReturned": "Aucun identifiant retourné",
+  "pages.login.oidcOnlyPasskey": "Cette clé d’accès appartient à un compte utilisant uniquement le SSO. Connectez-vous avec le SSO.",
   "pages.login.passkeyAuthenticationFailed": "Authentification par passkey échouée",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "Les passkeys nécessitent un contexte sécurisé (HTTPS ou localhost)",
   "pages.login.password": "Mot de passe",

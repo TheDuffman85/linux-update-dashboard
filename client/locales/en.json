@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "Continue with SSO",
   "pages.login.loginFailed": "Login failed",
   "pages.login.noCredentialReturned": "No credential returned",
+  "pages.login.oidcOnlyPasskey": "This passkey belongs to an SSO-only account. Sign in with SSO instead.",
   "pages.login.passkeyAuthenticationFailed": "Passkey authentication failed",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "Passkeys require a secure context (HTTPS or localhost)",
   "pages.login.password": "Password",

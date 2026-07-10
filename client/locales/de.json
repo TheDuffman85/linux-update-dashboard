@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "Mit SSO fortfahren",
   "pages.login.loginFailed": "Anmeldung fehlgeschlagen",
   "pages.login.noCredentialReturned": "Keine Anmeldedaten zurückgegeben",
+  "pages.login.oidcOnlyPasskey": "Dieser Passkey gehört zu einem Konto, das nur SSO verwendet. Melden Sie sich stattdessen per SSO an.",
   "pages.login.passkeyAuthenticationFailed": "Passkey-Authentifizierung fehlgeschlagen",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "Passkeys erfordern einen sicheren Kontext (HTTPS oder localhost)",
   "pages.login.password": "Passwort",

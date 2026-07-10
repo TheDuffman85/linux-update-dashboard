@@ -243,6 +243,7 @@
   "pages.login.continueWithSso": "使用 SSO 继续",
   "pages.login.loginFailed": "登录失败",
   "pages.login.noCredentialReturned": "未返回凭据",
+  "pages.login.oidcOnlyPasskey": "此通行密钥属于仅使用 SSO 的帐户。请改用 SSO 登录。",
   "pages.login.passkeyAuthenticationFailed": "Passkey 认证失败",
   "pages.login.passkeysRequireASecureContextOrLocalhost": "Passkey 需要安全上下文（HTTPS 或 localhost）",
   "pages.login.password": "密码",
