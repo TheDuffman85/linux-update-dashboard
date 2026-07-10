@@ -128,6 +128,9 @@ export function initDatabase(
     totp_enabled INTEGER NOT NULL DEFAULT 0,
     last_totp_step INTEGER,
     session_version INTEGER NOT NULL DEFAULT 0,
+    auth_provider TEXT NOT NULL DEFAULT 'password',
+    oidc_issuer TEXT,
+    oidc_subject TEXT,
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -460,6 +463,28 @@ export function initDatabase(
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(
+      sql`ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'password'`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN oidc_issuer TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN oidc_subject TEXT`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity_idx
+    ON users(oidc_issuer, oidc_subject)
+    WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL
+  `);
 
   try {
     _db.run(

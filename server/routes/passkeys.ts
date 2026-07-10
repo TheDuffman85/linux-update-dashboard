@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
 import { getDb } from "../db";
-import { webauthnCredentials } from "../db/schema";
+import { users, webauthnCredentials } from "../db/schema";
 import type { SessionData } from "../auth/session";
 
 type AuthEnv = {
@@ -12,9 +12,28 @@ type AuthEnv = {
 
 const passkeys = new Hono<AuthEnv>();
 
+passkeys.use("*", async (c, next) => {
+  const session = c.get("user");
+  const user = getDb()
+    .select({
+      authProvider: users.authProvider,
+      passwordHash: users.passwordHash,
+    })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .get();
+  if (user?.authProvider === "oidc" && !user.passwordHash) {
+    return c.json(
+      { error: "Passkeys are unavailable for OIDC-only accounts" },
+      403,
+    );
+  }
+  return next();
+});
+
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 
@@ -68,8 +87,8 @@ passkeys.patch("/:id", async (c) => {
     .where(
       and(
         eq(webauthnCredentials.id, id),
-        eq(webauthnCredentials.userId, user.userId)
-      )
+        eq(webauthnCredentials.userId, user.userId),
+      ),
     )
     .get();
 
@@ -82,8 +101,8 @@ passkeys.patch("/:id", async (c) => {
     .where(
       and(
         eq(webauthnCredentials.id, id),
-        eq(webauthnCredentials.userId, user.userId)
-      )
+        eq(webauthnCredentials.userId, user.userId),
+      ),
     )
     .run();
 
@@ -103,8 +122,8 @@ passkeys.delete("/:id", (c) => {
     .where(
       and(
         eq(webauthnCredentials.id, id),
-        eq(webauthnCredentials.userId, user.userId)
-      )
+        eq(webauthnCredentials.userId, user.userId),
+      ),
     )
     .get();
 
@@ -116,8 +135,8 @@ passkeys.delete("/:id", (c) => {
     .where(
       and(
         eq(webauthnCredentials.id, id),
-        eq(webauthnCredentials.userId, user.userId)
-      )
+        eq(webauthnCredentials.userId, user.userId),
+      ),
     )
     .run();
 

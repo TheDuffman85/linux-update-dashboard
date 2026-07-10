@@ -90,7 +90,11 @@ function getHeaderOrigin(c: Context): URL | null {
 
 function pickProto(c: Context): string {
   if (config.trustProxy) {
-    const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+    const proto = c.req
+      .header("x-forwarded-proto")
+      ?.split(",")[0]
+      ?.trim()
+      .toLowerCase();
     if (proto === "https" || proto === "http") return `${proto}:`;
   }
 
@@ -115,8 +119,14 @@ export function rememberTrustedPublicOrigin(value: string): boolean {
   const parsed = parseOrigin(value);
   if (!parsed) return false;
 
-  const current = lastTrustedPublicOrigin ? parseOrigin(lastTrustedPublicOrigin) : null;
-  if (current && !isLoopbackHost(current.hostname) && isLoopbackHost(parsed.hostname)) {
+  const current = lastTrustedPublicOrigin
+    ? parseOrigin(lastTrustedPublicOrigin)
+    : null;
+  if (
+    current &&
+    !isLoopbackHost(current.hostname) &&
+    isLoopbackHost(parsed.hostname)
+  ) {
     return false;
   }
 
@@ -130,6 +140,31 @@ export function getKnownPublicOrigin(): string {
   return lastTrustedPublicOrigin || getCanonicalOrigin().origin;
 }
 
+/**
+ * Return the origin that a browser used to reach this request. Forwarded
+ * headers are considered only when the deployment explicitly trusts its
+ * reverse proxy.
+ */
+export function getPublicRequestOrigin(c: Context): string {
+  if (hasConfiguredBaseUrl()) return getCanonicalOrigin().origin;
+
+  const host = pickHost(c);
+  if (host) {
+    const origin = parseOrigin(`${pickProto(c)}//${host}`);
+    if (origin) return origin.origin;
+  }
+
+  try {
+    return new URL(c.req.url).origin;
+  } catch {
+    return getCanonicalOrigin().origin;
+  }
+}
+
+export function isSecureRequest(c: Context): boolean {
+  return getPublicRequestOrigin(c).startsWith("https://");
+}
+
 export function getTrustedPublicOrigin(c: Context): string {
   // Prefer host/proto derived from the current request.
   // This is resilient for OIDC callback requests where Referer can be absent
@@ -140,8 +175,10 @@ export function getTrustedPublicOrigin(c: Context): string {
 
   if (hasConfiguredBaseUrl()) {
     // Strict: only accept if it matches the configured base URL.
-    if (requestOrigin && isTrustedOriginUrl(requestOrigin)) return requestOrigin.origin;
-    if (headerOrigin && isTrustedOriginUrl(headerOrigin)) return headerOrigin.origin;
+    if (requestOrigin && isTrustedOriginUrl(requestOrigin))
+      return requestOrigin.origin;
+    if (headerOrigin && isTrustedOriginUrl(headerOrigin))
+      return headerOrigin.origin;
     return getCanonicalOrigin().origin;
   }
 
@@ -151,7 +188,10 @@ export function getTrustedPublicOrigin(c: Context): string {
   //   referers that point to the IdP host.
   if (headerOrigin) {
     if (!requestOrigin) return headerOrigin.origin;
-    if (normalizeHost(headerOrigin.hostname) === normalizeHost(requestOrigin.hostname)) {
+    if (
+      normalizeHost(headerOrigin.hostname) ===
+      normalizeHost(requestOrigin.hostname)
+    ) {
       return headerOrigin.origin;
     }
   }
@@ -170,15 +210,15 @@ export function isTrustedReturnOrigin(value: string): boolean {
 }
 
 export function getClientIp(c: Context): string | null {
-  const directIp = getConnInfo(c).remote.address;
-  if (directIp) return directIp.trim();
-
   if (config.trustProxy) {
     const forwarded =
       c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
       c.req.header("x-real-ip")?.trim();
     if (forwarded) return forwarded;
   }
+
+  const directIp = getConnInfo(c).remote.address;
+  if (directIp) return directIp.trim();
 
   return null;
 }
@@ -191,7 +231,10 @@ export function isLoopbackRequest(c: Context): boolean {
 
 function isPrivateOrReservedIPv4(address: string): boolean {
   const octets = address.split(".").map((part) => Number(part));
-  if (octets.length !== 4 || octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)) {
+  if (
+    octets.length !== 4 ||
+    octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)
+  ) {
     return true;
   }
 
@@ -215,9 +258,16 @@ function isPrivateOrReservedIPv4(address: string): boolean {
 
 function isPrivateOrReservedIPv6(address: string): boolean {
   const lower = address.toLowerCase();
-  if (lower === "::" || lower === "::1" || lower === "0:0:0:0:0:0:0:1") return true;
+  if (lower === "::" || lower === "::1" || lower === "0:0:0:0:0:0:0:1")
+    return true;
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA
-  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // link-local
+  if (
+    lower.startsWith("fe8") ||
+    lower.startsWith("fe9") ||
+    lower.startsWith("fea") ||
+    lower.startsWith("feb")
+  )
+    return true; // link-local
   if (lower.startsWith("ff")) return true; // multicast
   if (lower.startsWith("2001:db8:")) return true; // documentation
   if (lower.startsWith("::ffff:")) {
@@ -236,7 +286,9 @@ export function isPrivateOrReservedIp(address: string): boolean {
   return true;
 }
 
-export async function isSafeOutboundUrl(rawUrl: string): Promise<{ safe: boolean; reason?: string }> {
+export async function isSafeOutboundUrl(
+  rawUrl: string,
+): Promise<{ safe: boolean; reason?: string }> {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -255,12 +307,18 @@ export async function isSafeOutboundUrl(rawUrl: string): Promise<{ safe: boolean
     return { safe: false, reason: "URL must not point to loopback addresses" };
   }
   if (hostname === "metadata.google.internal") {
-    return { safe: false, reason: "URL must not point to internal metadata services" };
+    return {
+      safe: false,
+      reason: "URL must not point to internal metadata services",
+    };
   }
 
   if (isIP(hostname)) {
     if (isPrivateOrReservedIp(hostname)) {
-      return { safe: false, reason: "URL must not point to private or reserved IP addresses" };
+      return {
+        safe: false,
+        reason: "URL must not point to private or reserved IP addresses",
+      };
     }
     return { safe: true };
   }
@@ -268,11 +326,17 @@ export async function isSafeOutboundUrl(rawUrl: string): Promise<{ safe: boolean
   try {
     const records = await lookup(hostname, { all: true, verbatim: true });
     if (!records.length) {
-      return { safe: false, reason: "Hostname did not resolve to an IP address" };
+      return {
+        safe: false,
+        reason: "Hostname did not resolve to an IP address",
+      };
     }
     for (const record of records) {
       if (isPrivateOrReservedIp(record.address)) {
-        return { safe: false, reason: "URL hostname resolves to private or reserved IP addresses" };
+        return {
+          safe: false,
+          reason: "URL hostname resolves to private or reserved IP addresses",
+        };
       }
     }
   } catch {

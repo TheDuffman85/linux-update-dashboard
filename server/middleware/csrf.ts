@@ -1,18 +1,10 @@
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { config } from "../config";
+import { isSecureRequest } from "../request-security";
 
 const CSRF_COOKIE = "ludash_csrf";
 const CSRF_HEADER = "x-csrf-token";
-
-function isSecureContext(): boolean {
-  try {
-    return new URL(config.baseUrl).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
 
 function ensureToken(c: Context): string | null {
   return getCookie(c, CSRF_COOKIE) ?? null;
@@ -22,7 +14,7 @@ function setToken(c: Parameters<typeof setCookie>[0], token: string): void {
   setCookie(c, CSRF_COOKIE, token, {
     httpOnly: false,
     sameSite: "Lax",
-    secure: isSecureContext(),
+    secure: isSecureRequest(c),
     maxAge: 86400 * 30,
     path: "/",
   });

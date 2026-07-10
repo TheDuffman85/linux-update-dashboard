@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { createHmac, timingSafeEqual } from "crypto";
-import { eq, count as countFn, sql } from "drizzle-orm";
+import { createHash, createHmac, timingSafeEqual } from "crypto";
+import { and, eq, count as countFn, sql } from "drizzle-orm";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { generateSecret, generateURI, verify } from "otplib";
 import { getDb } from "../db";
@@ -21,6 +21,7 @@ import { rateLimit } from "../middleware/rate-limit";
 import {
   getKnownPublicOrigin,
   getTrustedPublicOrigin,
+  isSecureRequest,
   isTrustedReturnOrigin,
   rememberTrustedPublicOrigin,
 } from "../request-security";
@@ -31,6 +32,88 @@ const TOTP_SETUP_COOKIE = "ludash_totp_setup";
 const TOTP_EPOCH_TOLERANCE_SECONDS = 30;
 const TOTP_SETUP_MAX_AGE_SECONDS = 300;
 const TOTP_CODE_PATTERN = /^\d{6}$/;
+const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_RATE_LIMIT_BLOCK_MS = 15 * 60 * 1000;
+const PASSWORD_MAX_FAILURES = 10;
+const TOTP_MAX_FAILURES = 5;
+const MAX_AUTH_FAILURE_BUCKETS = 10_000;
+const MAX_CONCURRENT_PASSWORD_VERIFICATIONS = 8;
+
+interface AuthFailureBucket {
+  failures: number;
+  firstFailureAt: number;
+  blockedUntil: number;
+}
+
+const passwordFailureBuckets = new Map<string, AuthFailureBucket>();
+const totpFailureBuckets = new Map<string, AuthFailureBucket>();
+let activePasswordVerifications = 0;
+
+function getAccountAttemptKey(username: string): string {
+  return username.trim().toLowerCase().slice(0, 254);
+}
+
+function pruneAuthFailureBuckets(
+  buckets: Map<string, AuthFailureBucket>,
+  now = Date.now(),
+): void {
+  for (const [key, bucket] of buckets) {
+    if (
+      bucket.blockedUntil <= now &&
+      now - bucket.firstFailureAt > AUTH_RATE_LIMIT_WINDOW_MS
+    ) {
+      buckets.delete(key);
+    }
+  }
+  while (buckets.size >= MAX_AUTH_FAILURE_BUCKETS) {
+    const oldestUnblocked = Array.from(buckets).find(
+      ([, bucket]) => bucket.blockedUntil <= now,
+    )?.[0];
+    if (!oldestUnblocked) break;
+    buckets.delete(oldestUnblocked);
+  }
+}
+
+function getAuthThrottleRetryAfter(
+  buckets: Map<string, AuthFailureBucket>,
+  key: string,
+  now = Date.now(),
+): number | null {
+  const bucket = buckets.get(key);
+  if (!bucket || bucket.blockedUntil <= now) return null;
+  return Math.max(1, Math.ceil((bucket.blockedUntil - now) / 1000));
+}
+
+function recordAuthFailure(
+  buckets: Map<string, AuthFailureBucket>,
+  key: string,
+  maxFailures: number,
+  now = Date.now(),
+): void {
+  pruneAuthFailureBuckets(buckets, now);
+  const current = buckets.get(key);
+  if (!current && buckets.size >= MAX_AUTH_FAILURE_BUCKETS) return;
+  const bucket =
+    current && now - current.firstFailureAt <= AUTH_RATE_LIMIT_WINDOW_MS
+      ? current
+      : { failures: 0, firstFailureAt: now, blockedUntil: 0 };
+  bucket.failures += 1;
+  if (bucket.failures >= maxFailures)
+    bucket.blockedUntil = now + AUTH_RATE_LIMIT_BLOCK_MS;
+  buckets.set(key, bucket);
+}
+
+function clearAuthFailures(
+  buckets: Map<string, AuthFailureBucket>,
+  key: string,
+): void {
+  buckets.delete(key);
+}
+
+function authThrottleResponse(c: Context, retryAfter: number) {
+  c.header("Retry-After", String(retryAfter));
+  return c.json({ error: "Too many authentication attempts" }, 429);
+}
 
 function validatePassword(password: string): string | null {
   if (password.length < 8) return "Password must be at least 8 characters";
@@ -50,6 +133,81 @@ function asObject(value: unknown): Record<string, unknown> | null {
 
 function isBearerTokenRequest(c: Context): boolean {
   return c.req.header("authorization")?.startsWith("Bearer ") === true;
+}
+
+function isOidcOnlyAccount(
+  user: { authProvider: string; passwordHash: string | null } | null,
+): boolean {
+  return Boolean(user && user.authProvider === "oidc" && !user.passwordHash);
+}
+
+function upsertOidcUser(params: {
+  username: string;
+  issuer: string;
+  subject: string;
+}) {
+  const db = getDb();
+  let user = db
+    .select()
+    .from(users)
+    .where(
+      and(
+        eq(users.oidcIssuer, params.issuer),
+        eq(users.oidcSubject, params.subject),
+      ),
+    )
+    .get();
+
+  // Older versions keyed OIDC users by username only. Claim only passwordless
+  // rows so an IdP username can never take over a local account.
+  if (!user) {
+    const legacy = db
+      .select()
+      .from(users)
+      .where(eq(users.username, params.username))
+      .get();
+    if (legacy && !legacy.passwordHash && !legacy.oidcSubject) user = legacy;
+  }
+
+  const usernameOwner = db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.username, params.username))
+    .get();
+  const identitySuffix = createHash("sha256")
+    .update(`${params.issuer}\n${params.subject}`, "utf8")
+    .digest("hex")
+    .slice(0, 12);
+  const storedUsername =
+    !usernameOwner || usernameOwner.id === user?.id
+      ? params.username
+      : `${params.username.slice(0, 236)}#oidc-${identitySuffix}`;
+
+  if (!user) {
+    return db
+      .insert(users)
+      .values({
+        username: storedUsername,
+        isAdmin: 0,
+        authProvider: "oidc",
+        oidcIssuer: params.issuer,
+        oidcSubject: params.subject,
+      })
+      .returning()
+      .get();
+  }
+
+  db.update(users)
+    .set({
+      username: storedUsername,
+      authProvider: "oidc",
+      oidcIssuer: params.issuer,
+      oidcSubject: params.subject,
+      sessionVersion: user.sessionVersion + 1,
+    })
+    .where(eq(users.id, user.id))
+    .run();
+  return db.select().from(users).where(eq(users.id, user.id)).get()!;
 }
 
 function normalizeTotpCode(value: string): string {
@@ -183,22 +341,29 @@ auth.get("/status", async (c) => {
   const passkeyCount = db
     .select({ count: countFn() })
     .from(webauthnCredentials)
+    .innerJoin(users, eq(users.id, webauthnCredentials.userId))
+    .where(
+      sql`(${users.authProvider} != 'oidc' OR ${users.passwordHash} IS NOT NULL)`,
+    )
     .get();
   const passkeysEnabled = (passkeyCount?.count ?? 0) > 0;
 
   let hasPassword = false;
   let totpEnabled = false;
+  let passkeysAvailable = false;
   if (session) {
     const user = db
       .select({
         passwordHash: users.passwordHash,
         totpEnabled: users.totpEnabled,
+        authProvider: users.authProvider,
       })
       .from(users)
       .where(eq(users.id, session.userId))
       .get();
     hasPassword = !!user?.passwordHash;
     totpEnabled = user?.totpEnabled === 1;
+    passkeysAvailable = !isOidcOnlyAccount(user ?? null);
   }
 
   return c.json({
@@ -210,6 +375,7 @@ auth.get("/status", async (c) => {
     passkeysEnabled,
     hasPassword,
     totpEnabled,
+    passkeysAvailable,
   });
 });
 
@@ -228,6 +394,9 @@ auth.post("/setup", rateLimit(3, 60_000), async (c) => {
 
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";
+  if (username.length > 128 || password.length > 1024) {
+    return c.json({ error: "Username or password is too long" }, 400);
+  }
   if (!username.trim() || !password) {
     return c.json({ error: "Username and password required" }, 400);
   }
@@ -268,8 +437,22 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
   const password = typeof body.password === "string" ? body.password : "";
   const totpCode =
     typeof body.totpCode === "string" ? normalizeTotpCode(body.totpCode) : "";
+  if (username.length > 254 || password.length > 1024) {
+    return c.json({ error: "Invalid credentials" }, 401);
+  }
   if (!username.trim() || !password) {
     return c.json({ error: "Username and password required" }, 400);
+  }
+
+  const accountAttemptKey = getAccountAttemptKey(username);
+  const accountRetryAfter = getAuthThrottleRetryAfter(
+    passwordFailureBuckets,
+    accountAttemptKey,
+  );
+  if (accountRetryAfter !== null)
+    return authThrottleResponse(c, accountRetryAfter);
+  if (activePasswordVerifications >= MAX_CONCURRENT_PASSWORD_VERIFICATIONS) {
+    return authThrottleResponse(c, 1);
   }
 
   const user = db
@@ -279,15 +462,33 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
     .get();
 
   // Always run password verification to prevent timing-based user enumeration
-  const valid = user?.passwordHash
-    ? await verifyPassword(password, user.passwordHash)
-    : await verifyPassword(password, DUMMY_HASH).then(() => false);
-
-  if (!valid) {
-    return c.json({ error: "Invalid credentials" }, 401);
+  let valid = false;
+  activePasswordVerifications += 1;
+  try {
+    valid = user?.passwordHash
+      ? await verifyPassword(password, user.passwordHash)
+      : await verifyPassword(password, DUMMY_HASH).then(() => false);
+  } finally {
+    activePasswordVerifications -= 1;
   }
 
+  if (!valid) {
+    recordAuthFailure(
+      passwordFailureBuckets,
+      accountAttemptKey,
+      PASSWORD_MAX_FAILURES,
+    );
+    return c.json({ error: "Invalid credentials" }, 401);
+  }
+  clearAuthFailures(passwordFailureBuckets, accountAttemptKey);
+
   if (user!.totpEnabled === 1 && user!.totpSecret) {
+    const totpAttemptKey = String(user!.id);
+    const totpRetryAfter = getAuthThrottleRetryAfter(
+      totpFailureBuckets,
+      totpAttemptKey,
+    );
+    if (totpRetryAfter !== null) return authThrottleResponse(c, totpRetryAfter);
     if (!totpCode) {
       return c.json(
         { error: "Authenticator code required", requiresTotp: true },
@@ -300,11 +501,13 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
       user!.lastTotpStep,
     );
     if (!timeStep || !markTotpStepUsed(user!.id, timeStep)) {
+      recordAuthFailure(totpFailureBuckets, totpAttemptKey, TOTP_MAX_FAILURES);
       return c.json(
         { error: "Invalid authenticator code", requiresTotp: true },
         401,
       );
     }
+    clearAuthFailures(totpFailureBuckets, totpAttemptKey);
   }
 
   await createSession(c, user!.id, user!.username, "password");
@@ -370,7 +573,7 @@ auth.post("/totp/setup", rateLimit(5, 60_000), async (c) => {
       maxAge: TOTP_SETUP_MAX_AGE_SECONDS,
       httpOnly: true,
       sameSite: "Strict",
-      secure: new URL(config.baseUrl).protocol === "https:",
+      secure: isSecureRequest(c),
       path: "/",
     },
   );
@@ -525,6 +728,9 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
     typeof body.currentPassword === "string" ? body.currentPassword : "";
   const newPassword =
     typeof body.newPassword === "string" ? body.newPassword : "";
+  if (currentPassword.length > 1024 || newPassword.length > 1024) {
+    return c.json({ error: "Password is too long" }, 400);
+  }
   if (!currentPassword || !newPassword) {
     return c.json({ error: "Current and new password required" }, 400);
   }
@@ -552,9 +758,11 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
 
   const newHash = await hashPassword(newPassword);
   db.update(users)
-    .set({ passwordHash: newHash })
+    .set({ passwordHash: newHash, sessionVersion: user.sessionVersion + 1 })
     .where(eq(users.id, session.userId))
     .run();
+
+  await createSession(c, user.id, user.username, "password");
 
   return c.json({ status: "ok" });
 });
@@ -565,6 +773,20 @@ auth.post("/webauthn/register/options", async (c) => {
   if (!session) return c.json({ error: "Not authenticated" }, 401);
 
   const db = getDb();
+  const account = db
+    .select({
+      authProvider: users.authProvider,
+      passwordHash: users.passwordHash,
+    })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .get();
+  if (isOidcOnlyAccount(account ?? null)) {
+    return c.json(
+      { error: "Passkeys cannot be registered for OIDC-only accounts" },
+      403,
+    );
+  }
   const existing = db
     .select({ credentialId: webauthnCredentials.credentialId })
     .from(webauthnCredentials)
@@ -582,6 +804,7 @@ auth.post("/webauthn/register/options", async (c) => {
   setCookie(c, "webauthn_challenge", options.challenge, {
     httpOnly: true,
     sameSite: "Strict",
+    secure: isSecureRequest(c),
     maxAge: 300,
     path: "/",
   });
@@ -592,6 +815,21 @@ auth.post("/webauthn/register/options", async (c) => {
 auth.post("/webauthn/register/verify", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
+
+  const account = getDb()
+    .select({
+      authProvider: users.authProvider,
+      passwordHash: users.passwordHash,
+    })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .get();
+  if (isOidcOnlyAccount(account ?? null)) {
+    return c.json(
+      { error: "Passkeys cannot be registered for OIDC-only accounts" },
+      403,
+    );
+  }
 
   const body = await c.req.json();
   const challenge = getCookie(c, "webauthn_challenge");
@@ -665,6 +903,7 @@ auth.post("/webauthn/login/options", async (c) => {
   setCookie(c, "webauthn_challenge", options.challenge, {
     httpOnly: true,
     sameSite: "Strict",
+    secure: isSecureRequest(c),
     maxAge: 300,
     path: "/",
   });
@@ -705,6 +944,15 @@ auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
     .get();
   if (!user) {
     return c.json({ error: "User not found" }, 400);
+  }
+  if (isOidcOnlyAccount(user)) {
+    return c.json(
+      {
+        error:
+          "This passkey belongs to an OIDC-only account. Sign in with SSO instead.",
+      },
+      403,
+    );
   }
 
   try {
@@ -775,18 +1023,21 @@ auth.get("/oidc/login", async (c) => {
   setCookie(c, "oidc_state", state, {
     httpOnly: true,
     sameSite: "Lax",
+    secure: isSecureRequest(c),
     maxAge: 300,
     path: "/",
   });
   setCookie(c, "oidc_nonce", nonce, {
     httpOnly: true,
     sameSite: "Lax",
+    secure: isSecureRequest(c),
     maxAge: 300,
     path: "/",
   });
   setCookie(c, "oidc_redirect_uri", redirectUri, {
     httpOnly: true,
     sameSite: "Lax",
+    secure: isSecureRequest(c),
     maxAge: 300,
     path: "/",
   });
@@ -794,6 +1045,7 @@ auth.get("/oidc/login", async (c) => {
     setCookie(c, "oidc_return_origin", returnOrigin, {
       httpOnly: true,
       sameSite: "Lax",
+      secure: isSecureRequest(c),
       maxAge: 300,
       path: "/",
     });
@@ -843,21 +1095,7 @@ auth.get("/oidc/callback", async (c) => {
       return c.json({ error: "OIDC authentication failed" }, 400);
     }
 
-    const db = getDb();
-    let user = db
-      .select()
-      .from(users)
-      .where(eq(users.username, result.username))
-      .get();
-
-    if (!user) {
-      const inserted = db
-        .insert(users)
-        .values({ username: result.username, isAdmin: 0 })
-        .returning()
-        .get();
-      user = inserted;
-    }
+    const user = upsertOidcUser(result);
 
     await createSession(c, user.id, user.username, "oidc");
     deleteCookie(c, "oidc_state", { path: "/" });

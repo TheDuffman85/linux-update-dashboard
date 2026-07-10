@@ -6,9 +6,11 @@ let _clientId = "";
 
 /** Readable error messages for openid-client error codes */
 const OIDC_ERROR_HINTS: Record<string, string> = {
-  OAUTH_RESPONSE_IS_NOT_CONFORM: "The issuer returned an unexpected HTTP response. Check that the issuer URL points to a valid OIDC provider.",
+  OAUTH_RESPONSE_IS_NOT_CONFORM:
+    "The issuer returned an unexpected HTTP response. Check that the issuer URL points to a valid OIDC provider.",
   OAUTH_INVALID_RESPONSE: "The issuer returned an invalid discovery document.",
-  ERR_JWT_CLAIM_VALIDATION_FAILED: "JWT claim validation failed — check client ID and issuer configuration.",
+  ERR_JWT_CLAIM_VALIDATION_FAILED:
+    "JWT claim validation failed — check client ID and issuer configuration.",
 };
 
 export async function configureOidc(
@@ -27,7 +29,7 @@ export async function configureOidc(
     _config = await client.discovery(
       new URL(issuer),
       clientId,
-      clientSecret || undefined
+      clientSecret || undefined,
     );
     _clientId = clientId;
     _configured = true;
@@ -37,7 +39,9 @@ export async function configureOidc(
     _configured = false;
     const code: string = e?.code || "UNKNOWN";
     const msg: string = e?.message || String(e);
-    const hint = OIDC_ERROR_HINTS[code] || "Verify the issuer URL is correct and the provider is reachable.";
+    const hint =
+      OIDC_ERROR_HINTS[code] ||
+      "Verify the issuer URL is correct and the provider is reachable.";
     const detail = `Failed to configure OIDC: ${msg}\n  Code: ${code}\n  Issuer URL: ${issuer}\n  Discovery endpoint: ${discoveryUrl}\n  ${hint}`;
     console.error(detail);
     return `${msg} — ${hint}`;
@@ -48,7 +52,11 @@ export function isConfigured(): boolean {
   return _configured;
 }
 
-export function getAuthorizationUrl(state: string, nonce: string, redirectUri: string): string {
+export function getAuthorizationUrl(
+  state: string,
+  nonce: string,
+  redirectUri: string,
+): string {
   if (!_config) throw new Error("OIDC not configured");
 
   const params = new URLSearchParams({
@@ -60,8 +68,7 @@ export function getAuthorizationUrl(state: string, nonce: string, redirectUri: s
     nonce,
   });
 
-  const authEndpoint =
-    _config.serverMetadata().authorization_endpoint;
+  const authEndpoint = _config.serverMetadata().authorization_endpoint;
   if (!authEndpoint) throw new Error("No authorization endpoint");
 
   return `${authEndpoint}?${params.toString()}`;
@@ -71,7 +78,12 @@ export async function handleCallback(
   currentUrl: URL,
   expectedNonce?: string,
   expectedState?: string,
-): Promise<{ username: string; email?: string } | null> {
+): Promise<{
+  username: string;
+  email?: string;
+  issuer: string;
+  subject: string;
+} | null> {
   if (!_config) throw new Error("OIDC not configured");
 
   try {
@@ -83,14 +95,24 @@ export async function handleCallback(
     const claims = tokens.claims();
     if (!claims) return null;
 
-    const username =
+    const issuer = typeof claims.iss === "string" ? claims.iss : "";
+    const subject = typeof claims.sub === "string" ? claims.sub : "";
+    if (!issuer || !subject) return null;
+
+    const username = (
       (claims.preferred_username as string) ||
       (claims.email as string) ||
-      (claims.sub as string);
+      subject
+    )
+      .trim()
+      .slice(0, 254);
+    if (!username) return null;
 
     return {
       username,
       email: claims.email as string | undefined,
+      issuer,
+      subject,
     };
   } catch (e: any) {
     const code = e?.code || "UNKNOWN";

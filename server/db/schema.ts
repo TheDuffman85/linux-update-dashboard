@@ -16,6 +16,9 @@ export const users = sqliteTable("users", {
   totpEnabled: integer("totp_enabled").notNull().default(0),
   lastTotpStep: integer("last_totp_step"),
   sessionVersion: integer("session_version").notNull().default(0),
+  authProvider: text("auth_provider").notNull().default("password"),
+  oidcIssuer: text("oidc_issuer"),
+  oidcSubject: text("oidc_subject"),
   isAdmin: integer("is_admin").notNull().default(0),
   createdAt: text("created_at")
     .notNull()

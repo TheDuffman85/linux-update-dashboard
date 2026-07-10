@@ -145,6 +145,8 @@ docker run -d \
 
 Set `LUDASH_BASE_URL` to the URL users and integrations actually use. Behind a reverse proxy, set the public HTTPS URL and add `LUDASH_TRUST_PROXY=true`.
 
+The API applies a Content Security Policy, limits request bodies to 1 MiB, rejects cross-origin browser mutations, and returns sensitive API responses with `private, no-store`. Command-line clients that do not send browser `Origin` or `Sec-Fetch-Site` headers remain supported. Configure HSTS at the TLS-terminating proxy when appropriate; the application does not set it itself.
+
 ### Docker Compose
 
 ```yaml

@@ -1,10 +1,16 @@
 import { Hono } from "hono";
+import crypto from "crypto";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { upgradeWebSocket } from "@hono/node-server";
 import { authMiddleware } from "./middleware/auth";
 import { csrfMiddleware } from "./middleware/csrf";
-import { getTrustedPublicOrigin, rememberTrustedPublicOrigin } from "./request-security";
+import {
+  getPublicRequestOrigin,
+  getTrustedPublicOrigin,
+  rememberTrustedPublicOrigin,
+} from "./request-security";
 import * as outputStream from "./services/output-stream";
 import * as notificationRuntime from "./services/notification-runtime";
 import authRoutes from "./routes/auth";
@@ -22,13 +28,23 @@ import scriptsRoutes from "./routes/scripts";
 export function createApp() {
   const app = new Hono();
 
-  // Security headers
+  // Security headers and cache controls for sensitive API responses.
   app.use("*", async (c, next) => {
+    const nonce = crypto.randomBytes(16).toString("base64");
     await next();
     c.header("X-Content-Type-Options", "nosniff");
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
     c.header("X-Permitted-Cross-Domain-Policies", "none");
+    c.header(
+      "Content-Security-Policy",
+      `default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:`,
+    );
+    if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
+      c.header("Cache-Control", "private, no-store");
+      c.header("Pragma", "no-cache");
+      c.header("Expires", "0");
+    }
   });
 
   // CORS for development (Vite dev server on different port)
@@ -39,7 +55,7 @@ export function createApp() {
         origin: "http://localhost:5173",
         credentials: true,
         allowHeaders: ["Content-Type", "X-CSRF-Token"],
-      })
+      }),
     );
   }
 
@@ -50,6 +66,36 @@ export function createApp() {
       void notificationRuntime.syncAppUpdateState();
     }
     await next();
+  });
+
+  app.use(
+    "/api/*",
+    bodyLimit({
+      maxSize: 1024 * 1024,
+      onError: (c) => c.json({ error: "Request body is too large" }, 413),
+    }),
+  );
+
+  // Cookies use SameSite and CSRF tokens, but also reject cross-site browser
+  // mutations before they reach an authenticated handler. Non-browser clients
+  // without Origin/Sec-Fetch-Site remain supported.
+  app.use("/api/*", async (c, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
+    if (c.req.header("sec-fetch-site") === "cross-site") {
+      return c.json({ error: "Cross-origin request rejected" }, 403);
+    }
+
+    const origin = c.req.header("origin");
+    if (origin) {
+      try {
+        if (new URL(origin).origin !== getPublicRequestOrigin(c)) {
+          return c.json({ error: "Cross-origin request rejected" }, 403);
+        }
+      } catch {
+        return c.json({ error: "Cross-origin request rejected" }, 403);
+      }
+    }
+    return next();
   });
 
   // CSRF protection for all API routes (safe methods are exempt)
@@ -77,8 +123,14 @@ export function createApp() {
 
   // Expose the canonical logo URL in every environment for external consumers
   // such as Home Assistant entity pictures.
-  app.get("/assets/logo.svg", serveStatic({ root: "./", path: "assets/logo.svg" }));
-  app.get("/assets/logo.png", serveStatic({ root: "./", path: "assets/logo.png" }));
+  app.get(
+    "/assets/logo.svg",
+    serveStatic({ root: "./", path: "assets/logo.svg" }),
+  );
+  app.get(
+    "/assets/logo.png",
+    serveStatic({ root: "./", path: "assets/logo.png" }),
+  );
 
   // WebSocket route for live command output streaming
   // Auth is enforced by authMiddleware on the HTTP GET before upgrade.
@@ -91,7 +143,9 @@ export function createApp() {
       return {
         onOpen(_evt, ws) {
           if (isNaN(systemId)) {
-            ws.send(JSON.stringify({ type: "error", message: "Invalid system ID" }));
+            ws.send(
+              JSON.stringify({ type: "error", message: "Invalid system ID" }),
+            );
             ws.close(4002, "Invalid system ID");
             return;
           }
@@ -105,7 +159,7 @@ export function createApp() {
           }
         },
       };
-    })
+    }),
   );
 
   // In production, serve built SPA files

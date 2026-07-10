@@ -63,7 +63,12 @@ export default function Settings() {
   const { data: settingsResponse, isLoading } = useSettingsResponse();
   const updateSettings = useUpdateSettings();
   const { addToast } = useToast();
-  const { hasPassword, totpEnabled, refresh: refreshAuth } = useAuth();
+  const {
+    hasPassword,
+    passkeysAvailable,
+    totpEnabled,
+    refresh: refreshAuth,
+  } = useAuth();
   const { browserLanguage, t } = useI18n();
   const { browserTimeFormat, formatDate } = useDateTime();
 
@@ -833,7 +838,10 @@ export default function Settings() {
                     <button
                       type="submit"
                       disabled={
-                        totpLoading || totpSaving || !totpSecret || !totpCode.trim()
+                        totpLoading ||
+                        totpSaving ||
+                        !totpSecret ||
+                        !totpCode.trim()
                       }
                       className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
                     >
@@ -854,7 +862,7 @@ export default function Settings() {
       </SettingSection>
 
       {/* Passkeys — only in secure contexts where WebAuthn is available */}
-      {window.isSecureContext && (
+      {window.isSecureContext && passkeysAvailable && (
         <SettingSection title={t("pages.settings.passkeys")}>
           {passkeysLoading ? (
             <div className="flex justify-center py-4">
