@@ -13,7 +13,7 @@ const contentWidthClass: Record<LayoutWidth, string> = {
   full: "max-w-none",
 };
 
-export function Layout({ children, title, actions, contentWidth = "wide" }: {
+export function Layout({ children, title, actions, contentWidth = "full" }: {
   children: ReactNode;
   title: ReactNode;
   actions?: ReactNode;

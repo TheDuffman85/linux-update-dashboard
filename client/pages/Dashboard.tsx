@@ -1116,7 +1116,6 @@ export default function Dashboard() {
   return (
     <Layout
       title={t("pages.dashboard.dashboard")}
-      contentWidth="wide"
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
