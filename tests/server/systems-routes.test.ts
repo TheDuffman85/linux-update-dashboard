@@ -1987,9 +1987,10 @@ describe("systems reorder route", () => {
     ]);
     expect(body.hiddenUpdates).toHaveLength(1);
     expect(body.hiddenUpdates[0].packageName).toBe("openssl");
+    expect(body.hiddenUpdates[0].hideReason).toBe("manual");
   });
 
-  test("enabling per-system kept-back auto-hide immediately hides cached kept-back updates", async () => {
+  test("kept-back auto-hide setting immediately reconciles cached updates", async () => {
     const db = getDb();
     const credentialId = createSystemCredential("root");
     const systemId = db.insert(systems).values({
@@ -2045,6 +2046,30 @@ describe("systems reorder route", () => {
     expect(detailBody.system.autoHideKeptBackUpdates).toBe(1);
     expect(detailBody.updates.map((row: { packageName: string }) => row.packageName)).toEqual(["normal-app"]);
     expect(detailBody.hiddenUpdates.map((row: { packageName: string }) => row.packageName)).toEqual(["keptback-app"]);
+    expect(detailBody.hiddenUpdates[0].hideReason).toBe("kept_back");
+
+    const disableRes = await app.request(`/api/systems/${systemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Kept Back Toggle",
+        hostname: "kept-back-toggle.local",
+        port: 22,
+        credentialId,
+        autoHideKeptBackUpdates: false,
+      }),
+    });
+
+    expect(disableRes.status).toBe(200);
+
+    const disabledDetailRes = await app.request(`/api/systems/${systemId}`);
+    const disabledDetailBody = await disabledDetailRes.json();
+    expect(disabledDetailBody.system.autoHideKeptBackUpdates).toBe(0);
+    expect(disabledDetailBody.updates.map((row: { packageName: string }) => row.packageName)).toEqual([
+      "keptback-app",
+      "normal-app",
+    ]);
+    expect(disabledDetailBody.hiddenUpdates).toEqual([]);
   });
 
   test("creates and deletes hidden updates through the route", async () => {
@@ -2082,6 +2107,7 @@ describe("systems reorder route", () => {
     expect(createRes.status).toBe(201);
     const createBody = await createRes.json();
     expect(createBody.hiddenUpdate.packageName).toBe("openssl");
+    expect(createBody.hiddenUpdate.hideReason).toBe("manual");
 
     const stored = db
       .select()

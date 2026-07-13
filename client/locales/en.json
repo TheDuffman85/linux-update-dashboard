@@ -908,7 +908,7 @@
   "pages.systemDetail.fullUpgrade": "Full Upgrade",
   "pages.systemDetail.fullUpgradeAllMessage": "Perform a full upgrade on {systemName}? This may install new dependencies or remove obsolete packages to complete the upgrade of all {count} packages.",
   "pages.systemDetail.fullUpgradeAllPackages": "Full Upgrade All Packages",
-  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Hidden until this exact update disappears",
+  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Manual hides last until the exact update disappears; auto-hidden updates return when no longer kept back",
   "pages.systemDetail.hiddenUpdates": "Hidden Updates",
   "pages.systemDetail.hiddenVersion": "Hidden Version",
   "pages.systemDetail.hidePackageVersion": "Hide {packageName} {version}",

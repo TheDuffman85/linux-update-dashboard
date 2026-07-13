@@ -144,6 +144,7 @@ export interface HiddenUpdate {
   repository: string | null;
   isSecurity: number;
   isKeptBack: number;
+  hideReason: "manual" | "kept_back";
   active: number;
   lastMatchedAt: string;
   inactiveSince: string | null;

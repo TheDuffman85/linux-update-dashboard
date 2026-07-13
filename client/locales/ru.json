@@ -908,7 +908,7 @@
   "pages.systemDetail.fullUpgrade": "Полное обновление",
   "pages.systemDetail.fullUpgradeAllMessage": "Выполнить полное обновление на {systemName}? Это может установить новые зависимости или удалить устаревшие пакеты, чтобы завершить обновление всех пакетов ({count}).",
   "pages.systemDetail.fullUpgradeAllPackages": "Полное обновление всех пакетов",
-  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Скрыто, пока не исчезнет именно это обновление",
+  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Скрытые вручную обновления остаются скрытыми до исчезновения точной версии; автоматически скрытые возвращаются, когда их больше не удерживают",
   "pages.systemDetail.hiddenUpdates": "Скрытые обновления",
   "pages.systemDetail.hiddenVersion": "Скрытая версия",
   "pages.systemDetail.hidePackageVersion": "Скрыть {packageName} {version}",

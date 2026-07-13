@@ -908,7 +908,7 @@
   "pages.systemDetail.fullUpgrade": "पूर्ण अपग्रेड",
   "pages.systemDetail.fullUpgradeAllMessage": "{systemName} पर पूर्ण अपग्रेड करें? यह सभी {count} पैकेजों का अपग्रेड पूरा करने के लिए नई निर्भरताएं इंस्टॉल कर सकता है या पुराने पैकेज हटा सकता है.",
   "pages.systemDetail.fullUpgradeAllPackages": "सभी पैकेजों का पूर्ण अपग्रेड",
-  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "यह exact update गायब होने तक छिपा हुआ",
+  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "मैन्युअल रूप से छिपे अपडेट सटीक संस्करण के गायब होने तक छिपे रहते हैं; अपने आप छिपे अपडेट रोके न जाने पर फिर दिखाई देते हैं",
   "pages.systemDetail.hiddenUpdates": "छिपे अपडेट",
   "pages.systemDetail.hiddenVersion": "छिपा संस्करण",
   "pages.systemDetail.hidePackageVersion": "{packageName} {version} छिपाएं",

@@ -908,7 +908,7 @@
   "pages.systemDetail.fullUpgrade": "Actualización completa",
   "pages.systemDetail.fullUpgradeAllMessage": "¿Realizar una actualización completa en {systemName}? Esto puede instalar nuevas dependencias o eliminar paquetes obsoletos para completar la actualización de los {count} paquetes.",
   "pages.systemDetail.fullUpgradeAllPackages": "Actualización completa de todos los paquetes",
-  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Oculto hasta que desaparezca esta actualización exacta",
+  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Las ocultaciones manuales duran hasta que desaparece la versión exacta; las actualizaciones ocultadas automáticamente vuelven cuando dejan de estar retenidas",
   "pages.systemDetail.hiddenUpdates": "Actualizaciones ocultas",
   "pages.systemDetail.hiddenVersion": "Versión oculta",
   "pages.systemDetail.hidePackageVersion": "Ocultar {packageName} {version}",

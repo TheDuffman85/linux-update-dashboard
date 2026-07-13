@@ -211,6 +211,9 @@ export const hiddenUpdates = sqliteTable(
     repository: text("repository"),
     isSecurity: integer("is_security").notNull().default(0),
     isKeptBack: integer("is_kept_back").notNull().default(0),
+    hideReason: text("hide_reason", { enum: ["manual", "kept_back"] })
+      .notNull()
+      .default("manual"),
     active: integer("active").notNull().default(1),
     lastMatchedAt: text("last_matched_at")
       .notNull()

@@ -221,5 +221,168 @@ describe("hidden update service", () => {
       keptBackCount: 0,
     });
     expect(listActiveHiddenUpdates(systemId).map((update) => update.packageName)).toEqual(["bash"]);
+    expect(listActiveHiddenUpdates(systemId)[0].hideReason).toBe("kept_back");
+  });
+
+  test("returns auto-hidden updates when they are no longer kept back", () => {
+    const db = getDb();
+    const systemId = createSystem();
+
+    db.update(systems)
+      .set({ autoHideKeptBackUpdates: 1 })
+      .where(eq(systems.id, systemId))
+      .run();
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "bash",
+      currentVersion: "5.1",
+      newVersion: "5.2",
+      isKeptBack: 1,
+    }).run();
+
+    autoHideCachedKeptBackUpdates(systemId);
+    expect(getVisibleCachedUpdates(systemId)).toHaveLength(0);
+
+    db.update(updateCache)
+      .set({ isKeptBack: 0 })
+      .where(eq(updateCache.systemId, systemId))
+      .run();
+    syncHiddenUpdatesForCheck(systemId, [
+      {
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+        architecture: null,
+        repository: "stable",
+        isSecurity: false,
+        isKeptBack: false,
+      },
+    ], ["apt"]);
+
+    expect(getVisibleCachedUpdates(systemId).map((update) => update.packageName)).toEqual(["bash"]);
+    expect(listActiveHiddenUpdates(systemId)).toHaveLength(0);
+
+    db.update(updateCache)
+      .set({ isKeptBack: 1 })
+      .where(eq(updateCache.systemId, systemId))
+      .run();
+    syncHiddenUpdatesForCheck(systemId, [
+      {
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+        architecture: null,
+        repository: "stable",
+        isSecurity: false,
+        isKeptBack: true,
+      },
+    ], ["apt"]);
+
+    expect(listActiveHiddenUpdates(systemId)).toHaveLength(1);
+
+    db.update(systems)
+      .set({ autoHideKeptBackUpdates: 0 })
+      .where(eq(systems.id, systemId))
+      .run();
+    syncHiddenUpdatesForCheck(systemId, [
+      {
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+        architecture: null,
+        repository: "stable",
+        isSecurity: false,
+        isKeptBack: true,
+      },
+    ], ["apt"]);
+
+    expect(listActiveHiddenUpdates(systemId)).toHaveLength(0);
+  });
+
+  test("keeps manual hides active when kept-back status changes", () => {
+    const db = getDb();
+    const systemId = createSystem();
+
+    db.update(systems)
+      .set({ autoHideKeptBackUpdates: 1 })
+      .where(eq(systems.id, systemId))
+      .run();
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "bash",
+      currentVersion: "5.1",
+      newVersion: "5.2",
+      isKeptBack: 1,
+    }).run();
+
+    createHiddenUpdate(systemId, {
+      pkgManager: "apt",
+      packageName: "bash",
+      newVersion: "5.2",
+    });
+    autoHideCachedKeptBackUpdates(systemId);
+
+    db.update(updateCache)
+      .set({ isKeptBack: 0 })
+      .where(eq(updateCache.systemId, systemId))
+      .run();
+    syncHiddenUpdatesForCheck(systemId, [
+      {
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+        architecture: null,
+        repository: "stable",
+        isSecurity: false,
+        isKeptBack: false,
+      },
+    ], ["apt"]);
+
+    const active = listActiveHiddenUpdates(systemId);
+    expect(active).toHaveLength(1);
+    expect(active[0].hideReason).toBe("manual");
+    expect(active[0].isKeptBack).toBe(0);
+  });
+
+  test("does not reconcile APT hidden rows after another manager succeeds", () => {
+    const db = getDb();
+    const systemId = createSystem();
+
+    db.update(systems)
+      .set({ autoHideKeptBackUpdates: 1 })
+      .where(eq(systems.id, systemId))
+      .run();
+    db.insert(updateCache).values({
+      systemId,
+      pkgManager: "apt",
+      packageName: "bash",
+      currentVersion: "5.1",
+      newVersion: "5.2",
+      isKeptBack: 1,
+    }).run();
+    autoHideCachedKeptBackUpdates(systemId);
+
+    syncHiddenUpdatesForCheck(systemId, [
+      {
+        pkgManager: "apt",
+        packageName: "bash",
+        currentVersion: "5.1",
+        newVersion: "5.2",
+        architecture: null,
+        repository: "stable",
+        isSecurity: false,
+        isKeptBack: false,
+      },
+    ], ["dnf"]);
+
+    const active = listActiveHiddenUpdates(systemId);
+    expect(active).toHaveLength(1);
+    expect(active[0].isKeptBack).toBe(1);
   });
 });

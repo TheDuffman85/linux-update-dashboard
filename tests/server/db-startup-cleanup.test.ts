@@ -5,7 +5,13 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { eq, sql } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { customPackageManagers, customScripts, systems, updateHistory } from "../../server/db/schema";
+import {
+  customPackageManagers,
+  customScripts,
+  hiddenUpdates,
+  systems,
+  updateHistory,
+} from "../../server/db/schema";
 import { listSystems } from "../../server/services/system-service";
 
 describe("database startup cleanup", () => {
@@ -278,6 +284,32 @@ describe("database startup cleanup", () => {
         1, 0, 1, 'boot-legacy', 1
       );
     `);
+    sqlite.exec(`
+      CREATE TABLE hidden_updates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+        pkg_manager TEXT NOT NULL,
+        package_name TEXT NOT NULL,
+        current_version TEXT,
+        new_version TEXT NOT NULL,
+        architecture TEXT,
+        repository TEXT,
+        is_security INTEGER NOT NULL DEFAULT 0,
+        is_kept_back INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        last_matched_at TEXT NOT NULL DEFAULT (datetime('now')),
+        inactive_since TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(system_id, pkg_manager, package_name, new_version)
+      );
+      INSERT INTO hidden_updates (
+        system_id, pkg_manager, package_name, current_version, new_version,
+        is_kept_back, active
+      ) VALUES (
+        1, 'apt', 'legacy-held', '1.0', '2.0', 0, 1
+      );
+    `);
     sqlite.close();
 
     initDatabase(dbPath);
@@ -285,6 +317,9 @@ describe("database startup cleanup", () => {
     const restartedSqlite = new Database(dbPath, { readonly: true });
     const columns = restartedSqlite
       .prepare("PRAGMA table_info(systems)")
+      .all() as Array<{ name?: string }>;
+    const hiddenColumns = restartedSqlite
+      .prepare("PRAGMA table_info(hidden_updates)")
       .all() as Array<{ name?: string }>;
     restartedSqlite.close();
     expect(columns.some((column) => column.name === "ignore_kept_back_packages")).toBe(false);
@@ -294,6 +329,8 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "reboot_dismissed_boot_id")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_uptime_seconds")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
+
+    expect(hiddenColumns.some((column) => column.name === "hide_reason")).toBe(true);
 
     const restarted = listSystems();
     expect(restarted).toHaveLength(1);
@@ -314,6 +351,38 @@ describe("database startup cleanup", () => {
     expect(restarted[0].rebootDismissedUptimeSeconds).toBeNull();
     expect(restarted[0].rebootDismissedAt).toBeNull();
     expect(restarted[0].isReachable).toBe(1);
+
+    const migratedHidden = getDb()
+      .select()
+      .from(hiddenUpdates)
+      .where(eq(hiddenUpdates.packageName, "legacy-held"))
+      .get();
+    expect(migratedHidden?.hideReason).toBe("kept_back");
+
+    getDb().insert(hiddenUpdates).values({
+      systemId: restarted[0].id,
+      pkgManager: "apt",
+      packageName: "manual-hide",
+      currentVersion: "1.0",
+      newVersion: "2.0",
+      hideReason: "manual",
+    }).run();
+
+    closeDatabase();
+    initDatabase(dbPath);
+
+    const hiddenAfterRestart = getDb()
+      .select({
+        packageName: hiddenUpdates.packageName,
+        hideReason: hiddenUpdates.hideReason,
+      })
+      .from(hiddenUpdates)
+      .all()
+      .sort((left, right) => left.packageName.localeCompare(right.packageName));
+    expect(hiddenAfterRestart).toEqual([
+      { packageName: "legacy-held", hideReason: "kept_back" },
+      { packageName: "manual-hide", hideReason: "manual" },
+    ]);
   });
 
   test("keeps custom package manager config keys manager-local during startup migration", () => {

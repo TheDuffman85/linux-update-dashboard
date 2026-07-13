@@ -908,7 +908,7 @@
   "pages.systemDetail.fullUpgrade": "ترقية كاملة",
   "pages.systemDetail.fullUpgradeAllMessage": "إجراء ترقية كاملة على {systemName}؟ قد يثبت هذا اعتماديات جديدة أو يزيل حزما قديمة لإكمال ترقية كل الحزم وعددها {count}.",
   "pages.systemDetail.fullUpgradeAllPackages": "ترقية كاملة لكل الحزم",
-  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "مخفي حتى يختفي هذا التحديث بالضبط",
+  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "تظل التحديثات المخفية يدويًا مخفية حتى يختفي الإصدار المحدد؛ وتعود التحديثات المخفية تلقائيًا عند توقف تأجيلها",
   "pages.systemDetail.hiddenUpdates": "التحديثات المخفية",
   "pages.systemDetail.hiddenVersion": "الإصدار المخفي",
   "pages.systemDetail.hidePackageVersion": "إخفاء {packageName} {version}",

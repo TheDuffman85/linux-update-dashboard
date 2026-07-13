@@ -1003,14 +1003,7 @@ systems.put("/:id", async (c) => {
     throw error;
   }
 
-  if (
-    body.autoHideKeptBackUpdates === true ||
-    getAptAutoHideKeptBackUpdates(
-      normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions()),
-    ) === true
-  ) {
-    hiddenUpdateService.autoHideCachedKeptBackUpdates(id);
-  }
+  hiddenUpdateService.reconcileCachedKeptBackAutoHide(id);
 
   await notificationRuntime.syncSystemState(id);
 

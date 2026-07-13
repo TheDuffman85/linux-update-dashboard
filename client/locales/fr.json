@@ -908,7 +908,7 @@
   "pages.systemDetail.fullUpgrade": "Mise à niveau complète",
   "pages.systemDetail.fullUpgradeAllMessage": "Effectuer une mise à niveau complète sur {systemName} ? Cela peut installer de nouvelles dépendances ou supprimer des paquets obsolètes afin de terminer la mise à niveau des {count} paquets.",
   "pages.systemDetail.fullUpgradeAllPackages": "Mise à niveau complète de tous les paquets",
-  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Masqué jusqu’à la disparition exacte de cette mise à jour",
+  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "Les masquages manuels durent jusqu’à la disparition de la version exacte ; les mises à jour masquées automatiquement réapparaissent lorsqu’elles ne sont plus retenues",
   "pages.systemDetail.hiddenUpdates": "Mises à jour masquées",
   "pages.systemDetail.hiddenVersion": "Version masquée",
   "pages.systemDetail.hidePackageVersion": "Masquer {packageName} {version}",

@@ -908,7 +908,7 @@
   "pages.systemDetail.fullUpgrade": "完全アップグレード",
   "pages.systemDetail.fullUpgradeAllMessage": "{systemName} で完全アップグレードを実行しますか? すべての {count} パッケージのアップグレードを完了するため、新しい依存関係をインストールしたり古いパッケージを削除したりする場合があります。",
   "pages.systemDetail.fullUpgradeAllPackages": "すべてのパッケージを完全アップグレード",
-  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "この正確な更新が消えるまで非表示",
+  "pages.systemDetail.hiddenUntilExactUpdateDisappears": "手動で非表示にした更新は同じバージョンがなくなるまで維持され、自動で非表示になった更新は保留解除後に再表示されます",
   "pages.systemDetail.hiddenUpdates": "非表示の更新",
   "pages.systemDetail.hiddenVersion": "非表示バージョン",
   "pages.systemDetail.hidePackageVersion": "非表示 {packageName} {version}",

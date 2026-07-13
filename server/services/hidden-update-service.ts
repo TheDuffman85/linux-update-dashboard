@@ -10,6 +10,7 @@ import {
 type CachedUpdateRow = typeof updateCache.$inferSelect;
 type HiddenUpdateRow = typeof hiddenUpdates.$inferSelect;
 type HiddenUpdateInsert = typeof hiddenUpdates.$inferInsert;
+export type HiddenUpdateHideReason = "manual" | "kept_back";
 
 export const HIDDEN_UPDATE_RETENTION_DAYS = 30;
 const HIDDEN_UPDATE_RETENTION_MS =
@@ -48,6 +49,7 @@ function toHiddenUpdateValues(
   systemId: number,
   update: UpdateShape,
   timestamp: string,
+  hideReason: HiddenUpdateHideReason,
 ): HiddenUpdateInsert {
   return {
     systemId,
@@ -59,6 +61,7 @@ function toHiddenUpdateValues(
     repository: update.repository ?? null,
     isSecurity: update.isSecurity ? 1 : 0,
     isKeptBack: update.isKeptBack ? 1 : 0,
+    hideReason,
     active: 1,
     lastMatchedAt: timestamp,
     inactiveSince: null,
@@ -200,6 +203,7 @@ export function getVisibleUpdateSummaries(systemIds: number[]): Map<number, {
 export function createHiddenUpdate(
   systemId: number,
   input: UpdateIdentity,
+  requestedReason: HiddenUpdateHideReason = "manual",
 ): HiddenUpdateRow | null {
   const db = getDb();
   const now = nowSql();
@@ -218,8 +222,25 @@ export function createHiddenUpdate(
 
   if (!cached) return null;
 
+  const existing = db
+    .select({ hideReason: hiddenUpdates.hideReason })
+    .from(hiddenUpdates)
+    .where(
+      and(
+        eq(hiddenUpdates.systemId, systemId),
+        eq(hiddenUpdates.pkgManager, cached.pkgManager),
+        eq(hiddenUpdates.packageName, cached.packageName),
+        eq(hiddenUpdates.newVersion, cached.newVersion),
+      ),
+    )
+    .get();
+  const hideReason: HiddenUpdateHideReason =
+    requestedReason === "manual" || existing?.hideReason === "manual"
+      ? "manual"
+      : "kept_back";
+
   db.insert(hiddenUpdates)
-    .values(toHiddenUpdateValues(systemId, cached, now))
+    .values(toHiddenUpdateValues(systemId, cached, now, hideReason))
     .onConflictDoUpdate({
       target: [
         hiddenUpdates.systemId,
@@ -233,6 +254,7 @@ export function createHiddenUpdate(
         repository: cached.repository,
         isSecurity: cached.isSecurity,
         isKeptBack: cached.isKeptBack,
+        hideReason,
         active: 1,
         lastMatchedAt: now,
         inactiveSince: null,
@@ -269,7 +291,7 @@ export function autoHideKeptBackUpdatesForCheck(
 
   for (const update of updates) {
     if (!update.isKeptBack || !checkedManagers.has(update.pkgManager)) continue;
-    createHiddenUpdate(systemId, update);
+    createHiddenUpdate(systemId, update, "kept_back");
   }
 }
 
@@ -292,8 +314,32 @@ export function autoHideCachedKeptBackUpdates(systemId: number): void {
     .all();
 
   for (const update of keptBackUpdates) {
-    createHiddenUpdate(systemId, update);
+    createHiddenUpdate(systemId, update, "kept_back");
   }
+}
+
+export function reconcileCachedKeptBackAutoHide(systemId: number): void {
+  if (shouldAutoHideKeptBackUpdates(systemId)) {
+    autoHideCachedKeptBackUpdates(systemId);
+    return;
+  }
+
+  const now = nowSql();
+  getDb()
+    .update(hiddenUpdates)
+    .set({
+      active: 0,
+      inactiveSince: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(hiddenUpdates.systemId, systemId),
+        eq(hiddenUpdates.hideReason, "kept_back"),
+        eq(hiddenUpdates.active, 1),
+      ),
+    )
+    .run();
 }
 
 export function deleteHiddenUpdate(
@@ -329,6 +375,7 @@ export function syncHiddenUpdatesForCheck(
 
   const db = getDb();
   const now = nowSql();
+  const autoHideKeptBackUpdates = shouldAutoHideKeptBackUpdates(systemId);
   const hiddenRows = db
     .select()
     .from(hiddenUpdates)
@@ -351,6 +398,21 @@ export function syncHiddenUpdatesForCheck(
   for (const row of hiddenRows) {
     const match = matchingUpdates.get(identityKey(row));
     if (match) {
+      const keepActive =
+        row.hideReason === "manual" ||
+        (autoHideKeptBackUpdates &&
+          match.pkgManager === "apt" &&
+          match.isKeptBack);
+
+      if (
+        !keepActive &&
+        row.inactiveSince &&
+        isPastRetentionWindow(row.inactiveSince)
+      ) {
+        db.delete(hiddenUpdates).where(eq(hiddenUpdates.id, row.id)).run();
+        continue;
+      }
+
       db.update(hiddenUpdates)
         .set({
           currentVersion: match.currentVersion,
@@ -358,9 +420,9 @@ export function syncHiddenUpdatesForCheck(
           repository: match.repository,
           isSecurity: match.isSecurity ? 1 : 0,
           isKeptBack: match.isKeptBack ? 1 : 0,
-          active: 1,
+          active: keepActive ? 1 : 0,
           lastMatchedAt: now,
-          inactiveSince: null,
+          inactiveSince: keepActive ? null : row.inactiveSince ?? now,
           updatedAt: now,
         })
         .where(eq(hiddenUpdates.id, row.id))
