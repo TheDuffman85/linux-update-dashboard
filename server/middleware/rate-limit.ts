@@ -6,6 +6,8 @@ interface RateLimitEntry {
 }
 
 const store = new Map<string, RateLimitEntry>();
+const MAX_RATE_LIMIT_BUCKETS = 10_000;
+let lastPruneAt = 0;
 
 // Clean up expired entries every 5 minutes
 setInterval(() => {
@@ -27,8 +29,21 @@ export function rateLimit(maxRequests: number, windowMs: number) {
     const key = `${ip}:${c.req.path}`;
     const now = Date.now();
 
+    if (now - lastPruneAt >= 30_000) {
+      for (const [storedKey, storedEntry] of store) {
+        storedEntry.timestamps = storedEntry.timestamps.filter(
+          (t) => now - t < windowMs,
+        );
+        if (storedEntry.timestamps.length === 0) store.delete(storedKey);
+      }
+      lastPruneAt = now;
+    }
+
     let entry = store.get(key);
     if (!entry) {
+      if (store.size >= MAX_RATE_LIMIT_BUCKETS) {
+        return c.json({ error: "Rate limiter is busy" }, 429);
+      }
       entry = { timestamps: [] };
       store.set(key, entry);
     }

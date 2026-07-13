@@ -2,13 +2,13 @@ import { SignJWT, jwtVerify } from "jose";
 import type { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
-import { config } from "../config";
 import { getDb } from "../db";
 import { users } from "../db/schema";
+import { isSecureRequest } from "../request-security";
 
 const SESSION_COOKIE = "ludash_session";
 const SESSION_LIFETIME = 86400 * 30; // 30 days — JWT expiration
-const COOKIE_MAX_AGE = SESSION_LIFETIME; // match JWT lifetime
+const OIDC_SESSION_LIFETIME = 86400; // OIDC role and access changes take effect within a day
 const REFRESH_AFTER = 86400; // refresh daily to keep session rolling
 
 let _secret: Uint8Array | null = null;
@@ -25,14 +25,6 @@ export interface SessionData {
   issuedAt?: number;
 }
 
-function isSecureContext(): boolean {
-  try {
-    return new URL(config.baseUrl).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 export async function createSession(
   c: Context,
   userId: number,
@@ -41,11 +33,16 @@ export async function createSession(
 ): Promise<void> {
   if (!_secret) throw new Error("Session not initialized");
   const user = getDb()
-    .select({ sessionVersion: users.sessionVersion })
+    .select({
+      sessionVersion: users.sessionVersion,
+      authProvider: users.authProvider,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .get();
   const sessionVersion = user?.sessionVersion ?? 0;
+  const lifetime =
+    authMethod === "oidc" ? OIDC_SESSION_LIFETIME : SESSION_LIFETIME;
 
   const token = await new SignJWT({
     userId,
@@ -54,15 +51,15 @@ export async function createSession(
     sessionVersion,
   })
     .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime(`${SESSION_LIFETIME}s`)
+    .setExpirationTime(`${lifetime}s`)
     .setIssuedAt()
     .sign(_secret);
 
   setCookie(c, SESSION_COOKIE, token, {
-    maxAge: COOKIE_MAX_AGE,
+    maxAge: lifetime,
     httpOnly: true,
     sameSite: "Lax",
-    secure: isSecureContext(),
+    secure: isSecureRequest(c),
     path: "/",
   });
 }
@@ -77,7 +74,11 @@ export async function getSession(c: Context): Promise<SessionData | null> {
     const { payload } = await jwtVerify(token, _secret);
     const userId = payload.userId as number;
     const user = getDb()
-      .select({ sessionVersion: users.sessionVersion })
+      .select({
+        sessionVersion: users.sessionVersion,
+        authProvider: users.authProvider,
+        passwordHash: users.passwordHash,
+      })
       .from(users)
       .where(eq(users.id, userId))
       .get();
@@ -85,11 +86,19 @@ export async function getSession(c: Context): Promise<SessionData | null> {
     const tokenSessionVersion =
       typeof payload.sessionVersion === "number" ? payload.sessionVersion : 0;
     if (tokenSessionVersion !== user.sessionVersion) return null;
+    const authMethod = payload.authMethod as SessionData["authMethod"];
+    if (authMethod === "oidc" && user.authProvider !== "oidc") return null;
+    if (
+      authMethod === "passkey" &&
+      user.authProvider === "oidc" &&
+      !user.passwordHash
+    )
+      return null;
 
     return {
       userId,
       username: payload.username as string,
-      authMethod: payload.authMethod as SessionData["authMethod"],
+      authMethod,
       sessionVersion: tokenSessionVersion,
       issuedAt: payload.iat,
     };
@@ -110,6 +119,7 @@ export async function refreshSessionIfNeeded(c: Context): Promise<boolean> {
 
   try {
     const { payload } = await jwtVerify(token, _secret);
+    if (payload.authMethod === "oidc") return false;
     const iat = payload.iat;
     if (!iat) return false;
     const userId = payload.userId as number;

@@ -1,4 +1,12 @@
-import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ApiError, apiFetch } from "../lib/client";
 
 interface User {
@@ -13,13 +21,18 @@ export interface AuthState {
   oidcEnabled: boolean;
   passwordLoginDisabled: boolean;
   passkeysEnabled: boolean;
+  passkeysAvailable: boolean;
   hasPassword: boolean;
   totpEnabled: boolean;
   backendUnavailable: boolean;
 }
 
 interface AuthContextType extends AuthState {
-  login: (username: string, password: string, totpCode?: string) => Promise<void>;
+  login: (
+    username: string,
+    password: string,
+    totpCode?: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   setup: (username: string, password: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -28,7 +41,9 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function isHardAuthRefreshFailure(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+  return (
+    error instanceof ApiError && (error.status === 401 || error.status === 403)
+  );
 }
 
 export function getRecoverableAuthRefreshState(state: AuthState): AuthState {
@@ -47,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     oidcEnabled: false,
     passwordLoginDisabled: false,
     passkeysEnabled: false,
+    passkeysAvailable: false,
     hasPassword: false,
     totpEnabled: false,
     backendUnavailable: false,
@@ -63,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         oidcEnabled: boolean;
         passwordLoginDisabled: boolean;
         passkeysEnabled: boolean;
+        passkeysAvailable: boolean;
         hasPassword: boolean;
         totpEnabled: boolean;
       }>("/auth/status");
@@ -74,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         oidcEnabled: data.oidcEnabled,
         passwordLoginDisabled: data.passwordLoginDisabled,
         passkeysEnabled: data.passkeysEnabled,
+        passkeysAvailable: data.passkeysAvailable,
         hasPassword: data.hasPassword,
         totpEnabled: data.totpEnabled,
         backendUnavailable: false,
@@ -101,7 +119,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(retryTimer.current);
   }, [refresh]);
 
-  const login = async (username: string, password: string, totpCode?: string) => {
+  const login = async (
+    username: string,
+    password: string,
+    totpCode?: string,
+  ) => {
     await apiFetch("/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password, totpCode }),

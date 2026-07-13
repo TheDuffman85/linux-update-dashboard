@@ -4,12 +4,13 @@ import {
   drizzle,
   type BetterSQLite3Database,
 } from "drizzle-orm/better-sqlite3";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
 import { getEncryptor } from "../security";
 import * as schema from "./schema";
 import {
+  getAptAutoHideKeptBackUpdates,
   mergeLegacyAutoHideKeptBackUpdates,
   normalizeCustomPackageManagerConfigEntriesForManager,
   parsePackageManagerConfigs,
@@ -106,6 +107,8 @@ const DEFAULT_SETTINGS = [
 const SCHEDULE_REFRESH_MIGRATION_KEY = "schedules_refresh_migrated";
 const NOTIFICATION_SCHEDULE_MIGRATION_KEY =
   "notification_digest_schedules_migrated";
+const HIDDEN_UPDATE_HIDE_REASON_MIGRATION_KEY =
+  "hidden_update_hide_reason_migrated";
 const MAX_SCHEDULE_NAME_LENGTH = 100;
 
 export function initDatabase(
@@ -128,6 +131,9 @@ export function initDatabase(
     totp_enabled INTEGER NOT NULL DEFAULT 0,
     last_totp_step INTEGER,
     session_version INTEGER NOT NULL DEFAULT 0,
+    auth_provider TEXT NOT NULL DEFAULT 'password',
+    oidc_issuer TEXT,
+    oidc_subject TEXT,
     is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -257,6 +263,7 @@ export function initDatabase(
     repository TEXT,
     is_security INTEGER NOT NULL DEFAULT 0,
     is_kept_back INTEGER NOT NULL DEFAULT 0,
+    hide_reason TEXT NOT NULL DEFAULT 'manual',
     active INTEGER NOT NULL DEFAULT 1,
     last_matched_at TEXT NOT NULL DEFAULT (datetime('now')),
     inactive_since TEXT,
@@ -460,6 +467,28 @@ export function initDatabase(
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(
+      sql`ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'password'`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN oidc_issuer TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN oidc_subject TEXT`);
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity_idx
+    ON users(oidc_issuer, oidc_subject)
+    WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL
+  `);
 
   try {
     _db.run(
@@ -798,6 +827,13 @@ export function initDatabase(
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(
+      sql`ALTER TABLE hidden_updates ADD COLUMN hide_reason TEXT NOT NULL DEFAULT 'manual'`,
+    );
+  } catch {
+    // Column already exists
+  }
 
   // Migration: add passkey name column
   try {
@@ -999,6 +1035,7 @@ export function initDatabase(
 
   migrateCustomPackageManagerConfigKeys();
   migrateLegacyAptAutoHideIntoPackageManagerConfigs();
+  migrateHiddenUpdateHideReasons();
 
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
@@ -1286,6 +1323,57 @@ function migrateLegacyAptAutoHideIntoPackageManagerConfigs(): void {
       .where(eq(schema.systems.id, row.id))
       .run();
   }
+}
+
+function migrateHiddenUpdateHideReasons(): void {
+  if (!_db) return;
+
+  const alreadyMigrated = _db
+    .select({ key: schema.settings.key })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, HIDDEN_UPDATE_HIDE_REASON_MIGRATION_KEY))
+    .get();
+  if (alreadyMigrated) return;
+
+  const systemRows = _db
+    .select({
+      id: schema.systems.id,
+      autoHideKeptBackUpdates: schema.systems.autoHideKeptBackUpdates,
+      pkgManagerConfigs: schema.systems.pkgManagerConfigs,
+    })
+    .from(schema.systems)
+    .all();
+
+  for (const row of systemRows) {
+    const configuredValue = getAptAutoHideKeptBackUpdates(
+      parsePackageManagerConfigs(row.pkgManagerConfigs),
+    );
+    const autoHideEnabled =
+      configuredValue ?? (row.autoHideKeptBackUpdates === 1);
+    if (!autoHideEnabled) continue;
+
+    _db
+      .update(schema.hiddenUpdates)
+      .set({ hideReason: "kept_back" })
+      .where(
+        and(
+          eq(schema.hiddenUpdates.systemId, row.id),
+          eq(schema.hiddenUpdates.pkgManager, "apt"),
+        ),
+      )
+      .run();
+  }
+
+  _db
+    .insert(schema.settings)
+    .values({
+      key: HIDDEN_UPDATE_HIDE_REASON_MIGRATION_KEY,
+      value: "true",
+      description:
+        "Existing APT hidden updates were classified by their auto-hide setting",
+    })
+    .onConflictDoNothing()
+    .run();
 }
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {

@@ -6,7 +6,8 @@ import { useI18n } from "../lib/i18n";
 
 function base64urlToBuffer(base64url: string): ArrayBuffer {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = base64.length % 4 === 0 ? "" : "=".repeat(4 - (base64.length % 4));
+  const pad =
+    base64.length % 4 === 0 ? "" : "=".repeat(4 - (base64.length % 4));
   const binary = atob(base64 + pad);
   return Uint8Array.from(binary, (c) => c.charCodeAt(0)).buffer;
 }
@@ -15,11 +16,20 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
   bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 export default function Login() {
-  const { login, oidcEnabled, passwordLoginDisabled, passkeysEnabled, refresh } = useAuth();
+  const {
+    login,
+    oidcEnabled,
+    passwordLoginDisabled,
+    passkeysEnabled,
+    refresh,
+  } = useAuth();
   const { t } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -36,7 +46,8 @@ export default function Login() {
     setNotice("");
 
     if (!e.currentTarget.checkValidity()) {
-      const invalidInput = e.currentTarget.querySelector<HTMLInputElement>("input:invalid");
+      const invalidInput =
+        e.currentTarget.querySelector<HTMLInputElement>("input:invalid");
       setError(invalidInput?.validationMessage || t("pages.login.loginFailed"));
       invalidInput?.focus();
       return;
@@ -79,17 +90,26 @@ export default function Login() {
     setLoading(true);
     try {
       if (!window.isSecureContext || !navigator.credentials) {
-        throw new Error(t("pages.login.passkeysRequireASecureContextOrLocalhost"));
+        throw new Error(
+          t("pages.login.passkeysRequireASecureContextOrLocalhost"),
+        );
       }
-      const options = await apiFetch<Record<string, unknown>>("/auth/webauthn/login/options", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
+      const options = await apiFetch<Record<string, unknown>>(
+        "/auth/webauthn/login/options",
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
 
       const publicKeyOptions = {
         ...options,
         challenge: base64urlToBuffer(options.challenge as string),
-        allowCredentials: (options.allowCredentials as Array<{ id: string; type: string; transports?: string[] }> | undefined)?.map((c) => ({
+        allowCredentials: (
+          options.allowCredentials as
+            | Array<{ id: string; type: string; transports?: string[] }>
+            | undefined
+        )?.map((c) => ({
           ...c,
           id: base64urlToBuffer(c.id),
         })),
@@ -113,7 +133,9 @@ export default function Login() {
           authenticatorData: bufferToBase64url(response.authenticatorData),
           clientDataJSON: bufferToBase64url(response.clientDataJSON),
           signature: bufferToBase64url(response.signature),
-          userHandle: response.userHandle ? bufferToBase64url(response.userHandle) : null,
+          userHandle: response.userHandle
+            ? bufferToBase64url(response.userHandle)
+            : null,
         },
       };
 
@@ -124,7 +146,18 @@ export default function Login() {
 
       await refresh();
     } catch (err: unknown) {
-      setError((err as Error).message || t("pages.login.passkeyAuthenticationFailed"));
+      if (
+        err instanceof ApiError &&
+        err.message ===
+          "This passkey belongs to an OIDC-only account. Sign in with SSO instead."
+      ) {
+        setError(t("pages.login.oidcOnlyPasskey"));
+      } else {
+        setError(
+          (err as Error).message ||
+            t("pages.login.passkeyAuthenticationFailed"),
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -137,7 +170,9 @@ export default function Login() {
           <div className="flex justify-center">
             <PenguinLogo size={48} />
           </div>
-          <h1 className="mt-3 text-xl font-semibold">{t("pages.login.welcomeBack")}</h1>
+          <h1 className="mt-3 text-xl font-semibold">
+            {t("pages.login.welcomeBack")}
+          </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             {t("pages.login.signInToYourDashboard")}
           </p>
@@ -230,14 +265,18 @@ export default function Login() {
               disabled={loading}
               className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
-              {loading ? <span className="spinner spinner-sm" /> : t("pages.login.signIn")}
+              {loading ? (
+                <span className="spinner spinner-sm" />
+              ) : (
+                t("pages.login.signIn")
+              )}
             </button>
           </form>
         )}
 
         {!requiresTotp && (passkeysEnabled || oidcEnabled) && (
           <div className={`${passwordLoginDisabled ? "" : "mt-4"} space-y-2`}>
-            {passkeysEnabled && (
+            {(passkeysEnabled || oidcEnabled) && (
               <button
                 onClick={handlePasskeyLogin}
                 disabled={loading}

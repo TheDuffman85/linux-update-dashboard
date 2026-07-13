@@ -608,6 +608,7 @@ describe("checkUpdates", () => {
       .select({
         packageName: hiddenUpdates.packageName,
         isKeptBack: hiddenUpdates.isKeptBack,
+        hideReason: hiddenUpdates.hideReason,
         active: hiddenUpdates.active,
       })
       .from(hiddenUpdates)
@@ -615,8 +616,83 @@ describe("checkUpdates", () => {
       .all();
 
     expect(hidden).toEqual([
-      { packageName: "libcamera-ipa", isKeptBack: 1, active: 1 },
+      { packageName: "libcamera-ipa", isKeptBack: 1, hideReason: "kept_back", active: 1 },
     ]);
+  });
+
+  test("returns formerly kept-back packages when a later APT check can install them", async () => {
+    const db = getDb();
+    const systemId = createAptSystem();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    let phase = 0;
+
+    db.update(systems)
+      .set({ autoHideKeptBackUpdates: 1 })
+      .where(eq(systems.id, systemId))
+      .run();
+
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (_conn: unknown, command: string) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("dpkg --audit")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt-get -o DPkg::Lock::Timeout=60 update -qq")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apt list --upgradable")) {
+        return {
+          stdout: [
+            "curl/stable 8.0 amd64 [upgradable from: 7.0]",
+            "apport/stable 2.0 amd64 [upgradable from: 1.0]",
+            "python3-apport/stable 2.0 amd64 [upgradable from: 1.0]",
+            "fwupd/stable 2.0 amd64 [upgradable from: 1.0]",
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      if (command.includes("apt-get -s -o Debug::NoLocking=1 upgrade")) {
+        return {
+          stdout: phase === 0
+            ? "Inst curl [7.0] (8.0 stable [amd64])\n"
+            : [
+                "Inst curl [7.0] (8.0 stable [amd64])",
+                "Inst apport [1.0] (2.0 stable [amd64])",
+                "Inst python3-apport [1.0] (2.0 stable [amd64])",
+              ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+
+    await checkUpdates(systemId);
+    expect(getVisibleCachedUpdates(systemId).map((entry) => entry.packageName)).toEqual(["curl"]);
+
+    phase = 1;
+    await checkUpdates(systemId);
+
+    expect(getVisibleCachedUpdates(systemId).map((entry) => entry.packageName)).toEqual([
+      "apport",
+      "curl",
+      "python3-apport",
+    ]);
+    expect(getVisibleUpdateSummary(systemId)).toEqual({
+      updateCount: 3,
+      securityCount: 0,
+      keptBackCount: 0,
+    });
+    expect(db
+      .select({ packageName: hiddenUpdates.packageName })
+      .from(hiddenUpdates)
+      .where(eq(hiddenUpdates.active, 1))
+      .all())
+      .toEqual([{ packageName: "fwupd" }]);
   });
 
   test("stores installed packages and preserves the previous snapshot when inventory refresh fails", async () => {

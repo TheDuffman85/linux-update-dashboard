@@ -33,4 +33,19 @@ describe("Login page", () => {
     expect(html).toContain("noValidate");
     expect(html).toContain("required");
   });
+
+  test("offers passkey sign-in when SSO is enabled so OIDC-only passkeys get a clear response", () => {
+    mockUseAuth.mockReturnValue({
+      login: vi.fn(),
+      refresh: vi.fn(),
+      oidcEnabled: true,
+      passwordLoginDisabled: false,
+      passkeysEnabled: false,
+    });
+    mockUseI18n.mockReturnValue({ t: (key: string) => key });
+
+    const html = renderToStaticMarkup(<Login />);
+
+    expect(html).toContain("pages.login.signInWithPasskey");
+  });
 });
