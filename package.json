@@ -37,7 +37,7 @@
     "nodemailer": "^8.0.10",
     "openid-client": "^6.8.4",
     "otplib": "^13.4.1",
-    "prettier": "^3.9.4",
+    "prettier": "^3.9.6",
     "prettier-plugin-sh": "^0.18.1",
     "qrcode": "^1.5.4",
     "react-i18next": "^17.0.8",
