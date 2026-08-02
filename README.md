@@ -33,10 +33,11 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, and custom package managers.
 - **SSH credential vault:** reusable password, key, and OpenSSH certificate credentials encrypted at rest with AES-256-GCM.
 - **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
-- **Granular maintenance:** refresh, upgrade all, grouped Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
+- **Granular maintenance:** refresh, upgrade all, dashboard-grouped Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
+- **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, and control Upgrade All execution order.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All exclusion, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
-- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, ordered upgrade groups, and schedule run history.
+- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, dashboard-controlled Upgrade All order, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
@@ -269,7 +270,7 @@ Managers are detected over SSH when testing a connection or running the first ch
 
 Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Snap does not currently expose manager-specific settings.
 
-## Scheduling and Upgrade Groups
+## Scheduling and Upgrade All ordering
 
 Schedules are managed from the **Schedules** page. Existing installs migrate to an enabled **Default refresh** schedule using the previous refresh interval and cache settings.
 
@@ -279,7 +280,7 @@ Schedules are managed from the **Schedules** page. Existing installs migrate to 
 
 Schedules use five-field cron expressions in the process timezone. Set Docker `TZ`, such as `TZ=Europe/Berlin`, for local-time scheduling. The default minimum interval is 5 minutes and can be changed with `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES`.
 
-The **Upgrade All Systems** dialog can save an ordered flow with optional groups. Systems in the same group run together; the next group starts only after the current group finishes. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
+Dashboard groups define the **Upgrade All Systems** execution order. Systems in the same dashboard group run together; the next group starts only after the current group finishes, with Ungrouped in its saved dashboard position. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
 
 Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger checks outside configured schedules. Notification channels can be assigned to multiple notification schedules.
 

@@ -70,8 +70,8 @@ export interface System {
   rootUserBannerDismissed: number;
   rootUserBannerDismissedHostKeyFingerprintSha256: string | null;
   excludeFromUpgradeAll: number;
-  upgradeGroupId: number | null;
-  upgradeOrder: number;
+  dashboardGroupId: number | null;
+  dashboardOrder: number;
   hidden: number;
   needsReboot: number;
   isReachable: number;
@@ -95,7 +95,7 @@ export interface System {
   scriptOverrides: Record<string, string>;
 }
 
-export interface UpgradeGroup {
+export interface DashboardGroup {
   id: number;
   name: string;
   sortOrder: number;
@@ -103,8 +103,8 @@ export interface UpgradeGroup {
   updatedAt: string;
 }
 
-export interface UpgradeGroupConfig {
-  groups: UpgradeGroup[];
+export interface DashboardGroupConfig {
+  groups: DashboardGroup[];
   ungroupedSortOrder: number;
 }
 
@@ -394,90 +394,74 @@ export function useReorderSystems() {
   });
 }
 
-export function useReorderSystemUpgradeOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (systemIds: number[]) =>
-      apiFetch("/systems/upgrade-order", {
-        method: "PUT",
-        body: JSON.stringify({ systemIds }),
-      }),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["systems"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-  });
-}
-
-export function useUpgradeGroups() {
+export function useDashboardGroups() {
   return useQuery({
-    queryKey: ["upgrade-groups"],
-    queryFn: () =>
-      apiFetch<UpgradeGroupConfig>("/systems/upgrade-groups"),
+    queryKey: ["dashboard-groups"],
+    queryFn: () => apiFetch<DashboardGroupConfig>("/systems/dashboard-groups"),
   });
 }
 
-function invalidateUpgradeGroupQueries(qc: ReturnType<typeof useQueryClient>) {
-  void qc.invalidateQueries({ queryKey: ["upgrade-groups"] });
+function invalidateDashboardGroupQueries(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ["dashboard-groups"] });
   void qc.invalidateQueries({ queryKey: ["systems"] });
   void qc.invalidateQueries({ queryKey: ["system"] });
   void qc.invalidateQueries({ queryKey: ["dashboard"] });
 }
 
-export function useCreateUpgradeGroup() {
+export function useCreateDashboardGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      apiFetch<{ id: number }>("/systems/upgrade-groups", {
+      apiFetch<{ id: number }>("/systems/dashboard-groups", {
         method: "POST",
         body: JSON.stringify({ name }),
       }),
-    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+    onSuccess: () => invalidateDashboardGroupQueries(qc),
   });
 }
 
-export function useUpdateUpgradeGroup() {
+export function useUpdateDashboardGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ groupId, name }: { groupId: number; name: string }) =>
-      apiFetch(`/systems/upgrade-groups/${groupId}`, {
+      apiFetch(`/systems/dashboard-groups/${groupId}`, {
         method: "PUT",
         body: JSON.stringify({ name }),
       }),
-    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+    onSuccess: () => invalidateDashboardGroupQueries(qc),
   });
 }
 
-export function useDeleteUpgradeGroup() {
+export function useDeleteDashboardGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (groupId: number) =>
-      apiFetch(`/systems/upgrade-groups/${groupId}`, { method: "DELETE" }),
-    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+      apiFetch(`/systems/dashboard-groups/${groupId}`, { method: "DELETE" }),
+    onSuccess: () => invalidateDashboardGroupQueries(qc),
   });
 }
 
-export function useReorderUpgradeGroups() {
+export function useReorderDashboardGroups() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (groupKeys: Array<number | "ungrouped">) =>
-      apiFetch("/systems/upgrade-groups/reorder", {
+      apiFetch("/systems/dashboard-groups/reorder", {
         method: "PUT",
         body: JSON.stringify({ groupKeys }),
       }),
-    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+    onSuccess: () => invalidateDashboardGroupQueries(qc),
   });
 }
 
-export function useUpdateSystemUpgradeGroups() {
+export function useUpdateSystemDashboardGroups() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (items: Array<{ systemId: number; groupId: number | null; upgradeOrder: number }>) =>
-      apiFetch("/systems/upgrade-groups/systems", {
+    mutationFn: (items: Array<{ systemId: number; groupId: number | null; dashboardOrder: number }>) =>
+      apiFetch("/systems/dashboard-groups/systems", {
         method: "PUT",
         body: JSON.stringify({ items }),
       }),
-    onSuccess: () => invalidateUpgradeGroupQueries(qc),
+    onSuccess: () => invalidateDashboardGroupQueries(qc),
   });
 }
 

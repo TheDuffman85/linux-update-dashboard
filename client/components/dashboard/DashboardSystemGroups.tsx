@@ -1,0 +1,615 @@
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
+import type { DashboardGroup, System } from "../../lib/systems";
+import { useI18n } from "../../lib/i18n";
+import { Badge } from "../Badge";
+
+const COLLAPSED_GROUPS_STORAGE_KEY = "ludash.dashboard.collapsed-groups";
+const UNGROUPED_KEY = "ungrouped";
+
+type DragItem = { kind: "system"; id: number } | { kind: "group"; id: string };
+
+type SystemPlacement = {
+  systemId: number;
+  groupId: number | null;
+  dashboardOrder: number;
+};
+
+type DashboardSection = {
+  key: string;
+  groupId: number | null;
+  name: string;
+  sortOrder: number;
+  group?: DashboardGroup;
+  systems: System[];
+};
+
+type GroupStatusBadge = {
+  key: string;
+  label: string;
+  count: number;
+  variant: "success" | "warning" | "danger";
+};
+
+function readCollapsedGroups(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY) ?? "[]",
+    );
+    return new Set(
+      Array.isArray(value)
+        ? value.filter((entry): entry is string => typeof entry === "string")
+        : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function compareSystems(a: System, b: System): number {
+  const orderA = a.dashboardOrder ?? a.sortOrder ?? 0;
+  const orderB = b.dashboardOrder ?? b.sortOrder ?? 0;
+  return orderA - orderB || a.name.localeCompare(b.name) || a.id - b.id;
+}
+
+function hasCheckIssue(system: System): boolean {
+  return system.lastCheck?.status === "failed" || system.lastCheck?.status === "warning";
+}
+
+function hasLifecycleWarning(system: System): boolean {
+  return (
+    system.osLifecycleStatus === "eol" ||
+    system.osLifecycleStatus === "approaching_eol" ||
+    system.osLifecycleStatus === "support_ending" ||
+    system.osLifecycleStatus === "support_ended"
+  );
+}
+
+function getGroupStatusBadges(systems: System[], t: (key: string) => string): GroupStatusBadge[] {
+  const checkIssues = systems.filter(hasCheckIssue).length;
+  const badges: GroupStatusBadge[] = [
+    {
+      key: "up-to-date",
+      label: t("pages.dashboard.upToDate"),
+      count: systems.filter(
+        (system) =>
+          system.updateCount === 0 &&
+          system.isReachable === 1 &&
+          !hasCheckIssue(system) &&
+          !hasLifecycleWarning(system),
+      ).length,
+      variant: "success",
+    },
+    {
+      key: "updates",
+      label: t("pages.dashboard.needUpdates"),
+      count: systems.filter(
+        (system) => system.updateCount > 0 && !hasCheckIssue(system),
+      ).length,
+      variant: "warning",
+    },
+    {
+      key: "reboot",
+      label: t("pages.dashboard.needsReboot"),
+      count: systems.filter((system) => system.needsReboot === 1).length,
+      variant: "warning",
+    },
+    {
+      key: "lifecycle",
+      label: t("pages.dashboard.osWarnings"),
+      count: systems.filter(hasLifecycleWarning).length,
+      variant: "warning",
+    },
+    {
+      key: "check-issues",
+      label: t("pages.dashboard.checkIssues"),
+      count: checkIssues,
+      variant: "warning",
+    },
+    {
+      key: "unreachable",
+      label: t("pages.dashboard.unreachable"),
+      count: systems.filter((system) => system.isReachable === -1).length,
+      variant: "danger",
+    },
+  ];
+  return badges.filter((badge) => badge.count > 0);
+}
+
+function groupKey(groupId: number | null): string {
+  return groupId === null ? UNGROUPED_KEY : String(groupId);
+}
+
+function cloneSystems(systems: System[]): System[] {
+  return systems.map((system) => ({ ...system }));
+}
+
+function applySystemOrder(
+  systems: System[],
+  orderedSections: Array<{ groupId: number | null; systems: System[] }>,
+): System[] {
+  const placements = new Map<number, SystemPlacement>();
+  orderedSections.forEach((section) => {
+    section.systems.forEach((system, index) => {
+      placements.set(system.id, {
+        systemId: system.id,
+        groupId: section.groupId,
+        dashboardOrder: index + 1,
+      });
+    });
+  });
+  return systems.map((system) => {
+    const placement = placements.get(system.id);
+    return placement
+      ? {
+          ...system,
+          dashboardGroupId: placement.groupId,
+          dashboardOrder: placement.dashboardOrder,
+        }
+      : system;
+  });
+}
+
+export function DashboardSystemGroups({
+  systems,
+  groups,
+  ungroupedSortOrder,
+  editMode,
+  onToggleEditMode,
+  onCreateGroup,
+  onRenameGroup,
+  onDeleteGroup,
+  saveGroupOrder,
+  saveSystemPlacements,
+  busy = false,
+  onError,
+  renderSystem,
+}: {
+  systems: System[];
+  groups: DashboardGroup[];
+  ungroupedSortOrder: number;
+  editMode: boolean;
+  onToggleEditMode: () => void;
+  onCreateGroup: () => void;
+  onRenameGroup: (group: DashboardGroup) => void;
+  onDeleteGroup: (group: DashboardGroup) => void;
+  saveGroupOrder: (groupKeys: Array<number | "ungrouped">) => Promise<void>;
+  saveSystemPlacements: (items: SystemPlacement[]) => Promise<void>;
+  busy?: boolean;
+  onError: (message: string) => void;
+  renderSystem: (system: System) => ReactNode;
+}) {
+  const { t } = useI18n();
+  const [localGroups, setLocalGroups] = useState<DashboardGroup[]>(groups);
+  const [localUngroupedSortOrder, setLocalUngroupedSortOrder] =
+    useState(ungroupedSortOrder);
+  const [localSystems, setLocalSystems] = useState<System[]>(systems);
+  const [collapsedGroups, setCollapsedGroups] =
+    useState<Set<string>>(readCollapsedGroups);
+  const [dragItem, setDragItem] = useState<DragItem | null>(null);
+
+  useEffect(() => setLocalGroups(groups), [groups]);
+  useEffect(() => setLocalUngroupedSortOrder(ungroupedSortOrder), [ungroupedSortOrder]);
+  useEffect(() => setLocalSystems(systems), [systems]);
+
+  const sections = useMemo(() => {
+    const knownGroupIds = new Set(localGroups.map((group) => group.id));
+    const result: DashboardSection[] = localGroups.map((group) => ({
+      key: String(group.id),
+      groupId: group.id as number | null,
+      name: group.name,
+      sortOrder: group.sortOrder,
+      group,
+      systems: localSystems
+        .filter((system) => system.dashboardGroupId === group.id)
+        .sort(compareSystems),
+    }));
+    const ungroupedSystems = localSystems
+      .filter(
+        (system) =>
+          system.dashboardGroupId === null ||
+          !knownGroupIds.has(system.dashboardGroupId),
+      )
+      .sort(compareSystems);
+    if (localGroups.length > 0 || editMode) {
+      result.push({
+        key: UNGROUPED_KEY,
+        groupId: null,
+        name: t("pages.dashboard.ungrouped"),
+        sortOrder: localUngroupedSortOrder,
+        group: undefined,
+        systems: ungroupedSystems,
+      });
+    }
+    return result.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  }, [editMode, localGroups, localSystems, localUngroupedSortOrder, t]);
+  const displayedSections = editMode
+    ? sections
+    : sections.filter((section) => section.systems.length > 0);
+  const persistCollapsedGroups = (next: Set<string>) => {
+    setCollapsedGroups(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        COLLAPSED_GROUPS_STORAGE_KEY,
+        JSON.stringify([...next]),
+      );
+    }
+  };
+
+  const toggleCollapsed = (key: string) => {
+    if (editMode) return;
+    const next = new Set(collapsedGroups);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    persistCollapsedGroups(next);
+  };
+
+  const beginDrag = (event: DragEvent, item: DragItem) => {
+    if (!editMode || busy) return;
+    setDragItem(item);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${item.kind}:${item.id}`);
+  };
+
+  const finishDrag = () => setDragItem(null);
+
+  const reorderGroups = async (targetGroupKey: string) => {
+    if (
+      busy ||
+      !dragItem ||
+      dragItem.kind !== "group" ||
+      dragItem.id === targetGroupKey
+    )
+      return;
+    const previous = sections;
+    const next = [...previous];
+    const sourceIndex = next.findIndex((section) => section.key === dragItem.id);
+    const targetIndex = next.findIndex((section) => section.key === targetGroupKey);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const [source] = next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, source);
+    const nextGroupKeys = next.map((section) => section.key);
+    setLocalGroups(
+      next.flatMap((section, sortOrder) =>
+        section.group ? [{ ...section.group, sortOrder }] : [],
+      ),
+    );
+    const nextUngroupedSortOrder = next.findIndex((section) => section.groupId === null);
+    setLocalUngroupedSortOrder(nextUngroupedSortOrder);
+    try {
+      await saveGroupOrder(
+        nextGroupKeys.map((key) => (key === UNGROUPED_KEY ? UNGROUPED_KEY : Number(key))),
+      );
+    } catch (error) {
+      setLocalGroups(groups);
+      setLocalUngroupedSortOrder(ungroupedSortOrder);
+      onError(
+        error instanceof Error
+          ? error.message
+          : t("pages.dashboard.failedToSaveGroupOrder"),
+      );
+    }
+  };
+
+  const moveSystem = async (
+    targetGroupId: number | null,
+    targetSystemId: number | null,
+    event: DragEvent,
+  ) => {
+    if (busy || !dragItem || dragItem.kind !== "system") return;
+    const sourceSystem = localSystems.find(
+      (system) => system.id === dragItem.id,
+    );
+    if (!sourceSystem || sourceSystem.id === targetSystemId) return;
+
+    const sectionByKey = new Map(
+      sections.map((section) => [
+        groupKey(section.groupId),
+        [...section.systems],
+      ]),
+    );
+    const sourceKey = groupKey(
+      sourceSystem.dashboardGroupId !== null &&
+        localGroups.some((group) => group.id === sourceSystem.dashboardGroupId)
+        ? sourceSystem.dashboardGroupId
+        : null,
+    );
+    const sourceSystems = sectionByKey.get(sourceKey);
+    const targetKey = groupKey(targetGroupId);
+    const targetSystems = sectionByKey.get(targetKey);
+    if (!sourceSystems || !targetSystems) return;
+
+    const sourceIndex = sourceSystems.findIndex(
+      (system) => system.id === sourceSystem.id,
+    );
+    if (sourceIndex >= 0) sourceSystems.splice(sourceIndex, 1);
+    const existingTargetIndex = targetSystems.findIndex(
+      (system) => system.id === sourceSystem.id,
+    );
+    if (existingTargetIndex >= 0) targetSystems.splice(existingTargetIndex, 1);
+
+    let insertIndex = targetSystems.length;
+    if (targetSystemId !== null) {
+      const targetIndex = targetSystems.findIndex(
+        (system) => system.id === targetSystemId,
+      );
+      if (targetIndex >= 0) {
+        const targetElement = event.currentTarget as HTMLElement;
+        const rect = targetElement.getBoundingClientRect();
+        insertIndex =
+          event.clientY > rect.top + rect.height / 2
+            ? targetIndex + 1
+            : targetIndex;
+      }
+    }
+    targetSystems.splice(
+      Math.min(insertIndex, targetSystems.length),
+      0,
+      sourceSystem,
+    );
+
+    const orderedSections = sections.map((section) => ({
+      groupId: section.groupId,
+      systems: sectionByKey.get(groupKey(section.groupId)) ?? [],
+    }));
+    const previous = cloneSystems(localSystems);
+    const next = applySystemOrder(localSystems, orderedSections);
+    const items = orderedSections.flatMap((section) =>
+      section.systems.map((system, index) => ({
+        systemId: system.id,
+        groupId: section.groupId,
+        dashboardOrder: index + 1,
+      })),
+    );
+    setLocalSystems(next);
+    try {
+      await saveSystemPlacements(items);
+    } catch (error) {
+      setLocalSystems(previous);
+      onError(
+        error instanceof Error
+          ? error.message
+          : t("pages.dashboard.failedToSaveSystemGroups"),
+      );
+    }
+  };
+
+  const handleDrop = (
+    event: DragEvent,
+    targetGroupId: number | null,
+    targetGroupKey: string,
+    targetSystemId: number | null = null,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busy || !dragItem) return;
+    if (dragItem.kind === "group") {
+      void reorderGroups(targetGroupKey);
+    } else if (dragItem.kind === "system") {
+      void moveSystem(targetGroupId, targetSystemId, event);
+    }
+    finishDrag();
+  };
+
+  const renderSection = (section: DashboardSection) => {
+    const isCollapsed = !editMode && collapsedGroups.has(section.key);
+    const statusBadges = getGroupStatusBadges(section.systems, t);
+    return (
+      <section
+        key={section.key}
+        data-dashboard-group-key={section.key}
+        className="rounded-xl border border-border bg-slate-50/50 p-3 dark:bg-slate-800/40"
+        onDragOver={(event) => editMode && !busy && event.preventDefault()}
+        onDrop={(event) =>
+          editMode && !busy && handleDrop(event, section.groupId, section.key)
+        }
+      >
+        <div className="mb-3 flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {editMode && (
+              <span
+                draggable
+                onDragStart={(event) =>
+                  beginDrag(event, { kind: "group", id: section.key })
+                }
+                onDragEnd={finishDrag}
+                className="cursor-grab rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                title={t("pages.dashboard.dragToReorderGroup")}
+                aria-label={t("pages.dashboard.dragToReorderGroup")}
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
+                  />
+                </svg>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => toggleCollapsed(section.key)}
+              disabled={editMode}
+              aria-expanded={!isCollapsed}
+              aria-controls={`dashboard-group-content-${section.key}`}
+              className="flex min-w-0 items-center gap-2 text-left"
+            >
+              <svg
+                className={`h-4 w-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="m6 9 6 6 6-6"
+                />
+              </svg>
+              <h2 className="truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
+                {section.name}
+              </h2>
+              <Badge variant="muted" small>
+                {section.systems.length}
+              </Badge>
+            </button>
+            {statusBadges.length > 0 && (
+              <div className="flex min-w-0 flex-wrap items-center gap-1" aria-label={t("pages.dashboard.groupStatus")}>
+                {statusBadges.map((badge) => (
+                  <Badge key={badge.key} variant={badge.variant} small>
+                    <span>{badge.label}</span>
+                    <span className="ml-1 font-semibold">{badge.count}</span>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+          {editMode && section.group && (
+            <div className="flex shrink-0 gap-1">
+              <button
+                type="button"
+                onClick={() => onRenameGroup(section.group!)}
+                disabled={busy}
+                className="rounded p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+                title={t("pages.dashboard.editGroupName")}
+                aria-label={t("pages.dashboard.editGroupName")}
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-1.4-9.4a2 2 0 1 0 2.8 2.8L11.8 15H9v-2.8l8.6-8.6Z"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteGroup(section.group!)}
+                disabled={busy}
+                className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                title={t("pages.dashboard.deleteGroup")}
+                aria-label={t("pages.dashboard.deleteGroup")}
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7 18.1 19.1A2 2 0 0 1 16.1 21H7.9a2 2 0 0 1-2-1.9L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"
+                  />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+        {!isCollapsed && (
+          <div
+            id={`dashboard-group-content-${section.key}`}
+            className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+          >
+            {section.systems.map((system) => (
+              <div
+                key={system.id}
+                data-dashboard-system-id={system.id}
+                draggable={editMode && !busy}
+                onDragStart={(event) =>
+                  beginDrag(event, { kind: "system", id: system.id })
+                }
+                onDragEnd={finishDrag}
+                onDragOver={(event) =>
+                  editMode && !busy && event.preventDefault()
+                }
+                onDrop={(event) =>
+                  editMode &&
+                  !busy &&
+                  handleDrop(event, section.groupId, section.key, system.id)
+                }
+                className={
+                  editMode
+                    ? "cursor-grab rounded-xl ring-1 ring-dashed ring-slate-300 dark:ring-slate-600"
+                    : undefined
+                }
+              >
+                {renderSystem(system)}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  };
+
+  const flatMode = localGroups.length === 0 && !editMode;
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={editMode}
+          onClick={onToggleEditMode}
+          disabled={busy}
+          className="inline-flex items-center gap-2 rounded-md px-1 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+        >
+          <span
+            className={`relative h-5 w-9 rounded-full transition-colors ${editMode ? "bg-blue-500" : "bg-slate-300 dark:bg-slate-600"}`}
+            aria-hidden="true"
+          >
+            <span
+              className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${editMode ? "translate-x-4" : ""}`}
+            />
+          </span>
+          {t("pages.dashboard.editGroups")}
+        </button>
+        {editMode && (
+          <button
+            type="button"
+            onClick={onCreateGroup}
+            disabled={busy}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            {t("pages.dashboard.addGroup")}
+          </button>
+        )}
+      </div>
+      {flatMode ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {[...localSystems].sort(compareSystems).map((system) => (
+            <div key={system.id}>{renderSystem(system)}</div>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-4">{displayedSections.map(renderSection)}</div>
+      )}
+    </div>
+  );
+}

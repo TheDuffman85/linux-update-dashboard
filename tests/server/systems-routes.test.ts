@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { apiTokens, credentials, hiddenUpdates, installedPackageCache, settings, systems, updateCache, updateHistory, upgradeGroups, users } from "../../server/db/schema";
+import { apiTokens, credentials, dashboardGroups, hiddenUpdates, installedPackageCache, settings, systems, updateCache, updateHistory, users } from "../../server/db/schema";
 import systemsRoutes from "../../server/routes/systems";
 import { authMiddleware } from "../../server/middleware/auth";
 import { hashToken } from "../../server/auth/api-token";
@@ -126,151 +126,142 @@ describe("systems reorder route", () => {
     ]);
   });
 
-  test("persists upgrade order for a modal ordered system list", async () => {
-    const db = getDb();
-    const inserted = db.insert(systems).values([
-      {
-        name: "Alpha",
-        hostname: "alpha.local",
-        port: 22,
-        authType: "password",
-        username: "root",
-      },
-      {
-        name: "Bravo",
-        hostname: "bravo.local",
-        port: 22,
-        authType: "password",
-        username: "root",
-      },
-      {
-        name: "Charlie",
-        hostname: "charlie.local",
-        port: 22,
-        authType: "password",
-        username: "root",
-      },
-    ]).returning({ id: systems.id }).all();
-
+  test("does not expose the removed Upgrade All grouping routes", async () => {
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
 
-    const res = await app.request("/api/systems/upgrade-order", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemIds: [inserted[2].id, inserted[0].id, inserted[1].id],
-      }),
-    });
-
-    expect(res.status).toBe(200);
-    const rows = db
-      .select({
-        name: systems.name,
-        upgradeOrder: systems.upgradeOrder,
-      })
-      .from(systems)
-      .all();
-    expect(Object.fromEntries(rows.map((row) => [row.name, row.upgradeOrder]))).toEqual({
-      Charlie: 1,
-      Alpha: 2,
-      Bravo: 3,
-    });
+    expect((await app.request("/api/systems/upgrade-order", { method: "PUT" })).status).toBe(400);
+    expect((await app.request("/api/systems/upgrade-groups")).status).toBe(400);
   });
 
-  test("creates, renames, reorders, and deletes upgrade groups", async () => {
+  test("creates, renames, reorders, and assigns dashboard groups", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      { name: "Alpha", hostname: "alpha.local", port: 22, authType: "password", username: "root", dashboardOrder: 1 },
+      { name: "Bravo", hostname: "bravo.local", port: 22, authType: "password", username: "root", dashboardOrder: 2 },
+    ]).returning({ id: systems.id }).all();
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
 
-    const createAlpha = await app.request("/api/systems/upgrade-groups", {
+    const createAlpha = await app.request("/api/systems/dashboard-groups", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Alpha group" }),
+      body: JSON.stringify({ name: "Production" }),
     });
-    const createBeta = await app.request("/api/systems/upgrade-groups", {
+    const createBeta = await app.request("/api/systems/dashboard-groups", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Beta group" }),
+      body: JSON.stringify({ name: "Staging" }),
     });
-
     expect(createAlpha.status).toBe(201);
     expect(createBeta.status).toBe(201);
     const alpha = await createAlpha.json() as { id: number };
     const beta = await createBeta.json() as { id: number };
-    expect(getDb().select().from(upgradeGroups).orderBy(upgradeGroups.sortOrder).all().map((group) => group.name)).toEqual([
-      "Beta group",
-      "Alpha group",
-    ]);
 
-    const rename = await app.request(`/api/systems/upgrade-groups/${alpha.id}`, {
+    const rename = await app.request(`/api/systems/dashboard-groups/${alpha.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Core" }),
     });
-    const reorder = await app.request("/api/systems/upgrade-groups/reorder", {
+    const reorder = await app.request("/api/systems/dashboard-groups/reorder", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ groupKeys: [beta.id, "ungrouped", alpha.id] }),
     });
+    const createGamma = await app.request("/api/systems/dashboard-groups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Canary" }),
+    });
+    const assign = await app.request("/api/systems/dashboard-groups/systems", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: [
+        { systemId: inserted[0].id, groupId: alpha.id, dashboardOrder: 2 },
+        { systemId: inserted[1].id, groupId: beta.id, dashboardOrder: 1 },
+      ] }),
+    });
 
     expect(rename.status).toBe(200);
     expect(reorder.status).toBe(200);
-    expect(getDb().select().from(upgradeGroups).orderBy(upgradeGroups.sortOrder).all().map((group) => group.name)).toEqual([
-      "Beta group",
-      "Core",
-    ]);
-    const list = await app.request("/api/systems/upgrade-groups");
-    const listBody = await list.json() as { ungroupedSortOrder: number };
-    expect(listBody.ungroupedSortOrder).toBe(1);
-
-    const remove = await app.request(`/api/systems/upgrade-groups/${beta.id}`, { method: "DELETE" });
-    expect(remove.status).toBe(200);
-    expect(getDb().select().from(upgradeGroups).all().map((group) => group.name)).toEqual(["Core"]);
+    expect(createGamma.status).toBe(201);
+    expect(assign.status).toBe(200);
+    expect(db.select().from(dashboardGroups).orderBy(dashboardGroups.sortOrder).all().map((group) => group.name)).toEqual(["Staging", "Canary", "Core"]);
+    const config = await app.request("/api/systems/dashboard-groups");
+    expect((await config.json() as { ungroupedSortOrder: number }).ungroupedSortOrder).toBe(2);
+    const rows = db.select({ name: systems.name, groupId: systems.dashboardGroupId, order: systems.dashboardOrder }).from(systems).all();
+    expect(Object.fromEntries(rows.map((row) => [row.name, { groupId: row.groupId, order: row.order }]))).toEqual({
+      Alpha: { groupId: alpha.id, order: 2 },
+      Bravo: { groupId: beta.id, order: 1 },
+    });
   });
 
-  test("moves systems between upgrade groups and ungrouped", async () => {
+  test("reorders Ungrouped at the beginning and end", async () => {
     const db = getDb();
-    const group = db.insert(upgradeGroups).values({ name: "Wave 1", sortOrder: 0 }).returning({ id: upgradeGroups.id }).get();
-    const inserted = db.insert(systems).values([
-      {
-        name: "Alpha",
-        hostname: "alpha.local",
-        port: 22,
-        authType: "password",
-        username: "root",
-      },
-      {
-        name: "Bravo",
-        hostname: "bravo.local",
-        port: 22,
-        authType: "password",
-        username: "root",
-      },
-    ]).returning({ id: systems.id }).all();
-
+    const groups = db.insert(dashboardGroups).values([
+      { name: "First", sortOrder: 0 },
+      { name: "Second", sortOrder: 1 },
+    ]).returning({ id: dashboardGroups.id }).all();
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);
 
-    const res = await app.request("/api/systems/upgrade-groups/systems", {
+    const beginning = await app.request("/api/systems/dashboard-groups/reorder", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        items: [
-          { systemId: inserted[0].id, groupId: group.id, upgradeOrder: 2 },
-          { systemId: inserted[1].id, groupId: null, upgradeOrder: 1 },
-        ],
-      }),
+      body: JSON.stringify({ groupKeys: ["ungrouped", groups[0].id, groups[1].id] }),
     });
+    expect(beginning.status).toBe(200);
+    expect((await (await app.request("/api/systems/dashboard-groups")).json() as { ungroupedSortOrder: number }).ungroupedSortOrder).toBe(0);
 
-    expect(res.status).toBe(200);
-    const rows = db
-      .select({ name: systems.name, upgradeGroupId: systems.upgradeGroupId, upgradeOrder: systems.upgradeOrder })
-      .from(systems)
-      .all();
-    expect(Object.fromEntries(rows.map((row) => [row.name, { groupId: row.upgradeGroupId, order: row.upgradeOrder }]))).toEqual({
-      Alpha: { groupId: group.id, order: 2 },
-      Bravo: { groupId: null, order: 1 },
+    const end = await app.request("/api/systems/dashboard-groups/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupKeys: [groups[0].id, groups[1].id, "ungrouped"] }),
     });
+    expect(end.status).toBe(200);
+    expect((await (await app.request("/api/systems/dashboard-groups")).json() as { ungroupedSortOrder: number }).ungroupedSortOrder).toBe(2);
+    expect(db.select().from(dashboardGroups).orderBy(dashboardGroups.sortOrder).all().map((group) => group.name)).toEqual(["First", "Second"]);
+  });
+
+  test("moves deleted dashboard-group systems to ungrouped and validates complete reorder", async () => {
+    const db = getDb();
+    const group = db.insert(dashboardGroups).values({ name: "Temporary", sortOrder: 0 }).returning({ id: dashboardGroups.id }).get();
+    const inserted = db.insert(systems).values([
+      { name: "Ungrouped", hostname: "ungrouped.local", port: 22, authType: "password", username: "root", dashboardOrder: 1 },
+      { name: "Grouped A", hostname: "grouped-a.local", port: 22, authType: "password", username: "root", dashboardGroupId: group.id, dashboardOrder: 2 },
+      { name: "Grouped B", hostname: "grouped-b.local", port: 22, authType: "password", username: "root", dashboardGroupId: group.id, dashboardOrder: 1 },
+    ]).returning({ id: systems.id }).all();
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const invalidReorder = await app.request("/api/systems/dashboard-groups/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupKeys: [] }),
+    });
+    const duplicateReorder = await app.request("/api/systems/dashboard-groups/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupKeys: [group.id, group.id, "ungrouped"] }),
+    });
+    const missingUngroupedReorder = await app.request("/api/systems/dashboard-groups/reorder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupKeys: [group.id] }),
+    });
+    const remove = await app.request(`/api/systems/dashboard-groups/${group.id}`, { method: "DELETE" });
+
+    expect(invalidReorder.status).toBe(400);
+    expect(duplicateReorder.status).toBe(400);
+    expect(missingUngroupedReorder.status).toBe(400);
+    expect(remove.status).toBe(200);
+    const rows = db.select({ name: systems.name, groupId: systems.dashboardGroupId, order: systems.dashboardOrder }).from(systems).orderBy(systems.dashboardOrder).all();
+    expect(rows.map((row) => ({ name: row.name, groupId: row.groupId, order: row.order }))).toEqual([
+      { name: "Ungrouped", groupId: null, order: 1 },
+      { name: "Grouped B", groupId: null, order: 2 },
+      { name: "Grouped A", groupId: null, order: 3 },
+    ]);
+    expect(inserted).toHaveLength(3);
   });
 
   test("persists upgrade mode for APT and DNF systems", async () => {

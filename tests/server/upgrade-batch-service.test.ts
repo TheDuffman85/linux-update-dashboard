@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { systems, updateCache, updateHistory, upgradeBatchItems, upgradeBatches, upgradeGroups } from "../../server/db/schema";
+import { dashboardGroups, systems, updateCache, updateHistory, upgradeBatchItems, upgradeBatches } from "../../server/db/schema";
 import { createUpgradeBatch } from "../../server/services/upgrade-batch-service";
 
 describe("upgrade batch service", () => {
@@ -22,7 +22,7 @@ describe("upgrade batch service", () => {
 
   test("persists queued items and queued activity rows", () => {
     const db = getDb();
-    const group = db.insert(upgradeGroups).values({ name: "Wave 1", sortOrder: 0 }).returning({ id: upgradeGroups.id }).get();
+    const group = db.insert(dashboardGroups).values({ name: "Wave 1", sortOrder: 0 }).returning({ id: dashboardGroups.id }).get();
     const inserted = db.insert(systems).values([
       {
         name: "Alpha",
@@ -32,8 +32,8 @@ describe("upgrade batch service", () => {
         username: "root",
         pkgManager: "apt",
         detectedPkgManagers: JSON.stringify(["apt"]),
-        upgradeGroupId: group.id,
-        upgradeOrder: 2,
+        dashboardGroupId: group.id,
+        dashboardOrder: 2,
       },
       {
         name: "Bravo",
@@ -43,7 +43,7 @@ describe("upgrade batch service", () => {
         username: "root",
         pkgManager: "apt",
         detectedPkgManagers: JSON.stringify(["apt"]),
-        upgradeOrder: 1,
+        dashboardOrder: 1,
       },
     ]).returning({ id: systems.id }).all();
     db.insert(updateCache).values([
