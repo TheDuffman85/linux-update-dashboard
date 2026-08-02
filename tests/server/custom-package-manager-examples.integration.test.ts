@@ -13,7 +13,7 @@ import { createCredential } from "../../server/services/credential-service";
 import { getInstalledPackages } from "../../server/services/installed-package-service";
 import { importCustomPackageManagerBundle, type CustomPackageManagerBundle } from "../../server/services/script-service";
 import { createSystem, getSystem } from "../../server/services/system-service";
-import { applyUpgradePackages, checkUpdates } from "../../server/services/update-service";
+import { applyUpgradeAll, checkUpdates } from "../../server/services/update-service";
 
 const runIntegration = process.env.LUDASH_RUN_DOCKER_INTEGRATION === "1";
 const integrationTest = runIntegration ? test : test.skip;
@@ -21,8 +21,10 @@ const customHost = process.env.LUDASH_CUSTOM_PM_TEST_HOST ?? "127.0.0.1";
 const customPort = Number(process.env.LUDASH_CUSTOM_PM_TEST_PORT ?? "2017");
 const examplesDir = fileURLToPath(new URL("../../examples", import.meta.url));
 
-const expectedManagers = ["npm-global", "npm-project", "pip-user", "pip-venv", "pipx"];
+const expectedManagers = ["docker-compose", "hermes-agent", "npm-global", "npm-project", "pip-user", "pip-venv", "pipx"];
 const expectedPackages = [
+  "ludash-compose-fixture",
+  "hermes-agent",
   "ludash-npm-global-fixture",
   "@ludash/npm-project-fixture",
   "ludash-pip-user-fixture",
@@ -32,7 +34,7 @@ const expectedPackages = [
 
 function loadExampleBundles(): CustomPackageManagerBundle[] {
   return readdirSync(examplesDir)
-    .filter((file) => expectedManagers.some((manager) => file === `${manager}-package-manager.json`))
+    .filter((file) => file.endsWith("-package-manager.json"))
     .sort()
     .map((file) => JSON.parse(readFileSync(join(examplesDir, file), "utf8")) as CustomPackageManagerBundle);
 }
@@ -52,8 +54,10 @@ describe("custom package manager example integration", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  integrationTest("checks and upgrades npm, pip, and pipx custom package manager examples", async () => {
-    for (const bundle of loadExampleBundles()) {
+  integrationTest("checks and installs updates for every custom package manager example", async () => {
+    const bundles = loadExampleBundles();
+    expect(bundles.map((bundle) => bundle.packageManager.name).sort()).toEqual([...expectedManagers].sort());
+    for (const bundle of bundles) {
       importCustomPackageManagerBundle(bundle);
     }
 
@@ -125,8 +129,8 @@ describe("custom package manager example integration", () => {
       expect(installedBefore.some((pkg) => pkg.pkgManager === manager)).toBe(true);
     }
 
-    const upgrade = await applyUpgradePackages(systemId, expectedPackages);
-    expect(upgrade.success).toBe(true);
+    const upgrade = await applyUpgradeAll(systemId);
+    expect(upgrade.success, upgrade.output).toBe(true);
 
     const remaining = await checkUpdates(systemId);
     expect(remaining.filter((update) => expectedManagers.includes(update.pkgManager))).toEqual([]);

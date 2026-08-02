@@ -26,4 +26,15 @@ export PIPX_HOME PIPX_BIN_DIR
 pipx uninstall ludash-pipx-fixture-app >/dev/null 2>&1 || true
 pipx install /opt/ludash-fixtures/pypi/packages/ludash_pipx_fixture_app-1.0.0-py3-none-any.whl --pip-args="--no-index --find-links /opt/ludash-fixtures/pypi/packages" >/dev/null
 
+state_dir="$HOME/.local/state/ludash-custom-package-managers"
+mkdir -p "$state_dir" "$HOME/docker-compose"
+printf '1.0.0\n' > "$state_dir/docker-compose-running-version"
+printf '1.0.0\n' > "$state_dir/docker-compose-pulled-version"
+printf '1.0.0\n' > "$state_dir/hermes-version"
+cat > "$HOME/docker-compose/compose.yaml" <<'EOF'
+services:
+  ludash-compose-fixture:
+    image: ludash/docker-compose-fixture:latest
+EOF
+
 echo "custom package manager fixtures reset"

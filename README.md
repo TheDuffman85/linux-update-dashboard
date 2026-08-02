@@ -327,6 +327,8 @@ Webhook delivery defaults to a 10-second timeout, 2 retries, and a 30-second ret
 
 The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, and reboots.
 
+Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
+
 - Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot are read-only and can be copied.
 - Custom scripts can define shell steps, operation type, parser settings, installed-package inventory parsing, and system-info section mapping.
 - Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`.
@@ -480,9 +482,23 @@ Shared credentials:
 | `ludash-test-dnf-eula-prompt` | 2014 | DNF EULA prompt fixture | Fedora 41 |
 | `ludash-test-apt-dpkg-interrupted` | 2015 | APT interrupted dpkg fixture | Debian 12 |
 | `ludash-test-ubuntu-root` | 2016 | APT root-login/full sudo fixture | Ubuntu 24.04 |
-| `ludash-test-custom-package-managers` | 2017 | npm/pip/pipx custom fixtures | Ubuntu 24.04 |
+| `ludash-test-custom-package-managers` | 2017 | All custom package-manager examples | Ubuntu 24.04 |
 
 Fixtures pin older package versions from archived or local repositories while current repos stay active, so package-manager checks report deterministic pending updates. Special fixtures cover kept-back packages, partial multi-manager failures, DNF GPG prompts, DNF EULA prompts, interrupted dpkg repair, root-login behavior, and custom package manager examples in [`examples/`](examples/).
+
+The custom package-manager container uses local npm/Python repositories and deterministic Docker Compose/Hermes command fixtures. Build it and run every example end to end with:
+
+```bash
+docker compose -f docker/test-systems/docker-compose.yml up -d --build custom-package-managers
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/custom-package-manager-examples.integration.test.ts
+```
+
+Import the JSON bundles from [`examples/`](examples/) on the dashboard's **Scripts** page. Then add the container as `localhost:2017` with `testuser` / `testpass`, disable its built-in APT manager, and run a check. Every custom example reports one update from `1.0.0` to its fixture target; **Upgrade all** installs them through the same persistent SSH workflow used for normal systems. Reset all fixtures to `1.0.0` whenever you want to repeat the test:
+
+```bash
+docker exec -u testuser ludash-test-custom-package-managers \
+  /opt/ludash-custom-package-managers/reset-fixtures.sh
+```
 
 Most test users are restricted through least-privilege sudoers allowlists in [`docker/test-systems/sudoers/`](docker/test-systems/sudoers/). Selected-package operations use reviewed argument wildcards only where a fixture needs them.
 

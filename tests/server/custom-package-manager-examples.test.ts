@@ -10,6 +10,7 @@ import {
   importCustomPackageManagerBundle,
   parseCustomInstalledPackages,
   parseCustomUpdates,
+  renderCommandTemplate,
   type CustomPackageManagerBundle,
 } from "../../server/services/script-service";
 import { validatePackageName } from "../../server/ssh/parsers/types";
@@ -40,13 +41,21 @@ describe("custom package manager examples", () => {
   test("example bundles import and their stable parser lines parse", () => {
     const bundles = loadExampleBundles();
     expect(bundles.map((bundle) => bundle.packageManager.name)).toEqual(
-      expect.arrayContaining(["npm-global", "npm-project", "pip-user", "pip-venv", "pipx"]),
+      expect.arrayContaining(["docker-compose", "npm-global", "npm-project", "pip-user", "pip-venv", "pipx"]),
     );
 
     for (const bundle of bundles) {
       const result = importCustomPackageManagerBundle(bundle);
       expect(result.manager.name).toBe(bundle.packageManager.name);
       expect(result.scripts.length).toBe(bundle.scripts.length);
+      for (const script of result.scripts) {
+        for (const step of script.steps) {
+          expect(() => renderCommandTemplate(step.command, {
+            pkgManager: bundle.packageManager.name,
+            packages: ["sample-package"],
+          })).not.toThrow();
+        }
+      }
 
       const checkScript = bundle.scripts.find((script) => script.operation === "check_updates");
       if (checkScript?.parserConfig?.updateRegex?.includes("LUDASH_UPDATE")) {
@@ -81,6 +90,19 @@ describe("custom package manager examples", () => {
         ]);
       }
     }
+
+    const dockerCompose = bundles.find((bundle) => bundle.packageManager.name === "docker-compose");
+    expect(dockerCompose?.packageManager.configEntries.map((entry) => entry.key)).toEqual([
+      "dockerCommand",
+      "projectPath",
+    ]);
+    expect(dockerCompose?.scripts.map((script) => script.operation)).toEqual(expect.arrayContaining([
+      "detect",
+      "check_updates",
+      "list_installed_packages",
+      "upgrade_all",
+      "upgrade_selected",
+    ]));
   });
 
   test("selected-package validation allows scoped npm names without allowing shell metacharacters", () => {
