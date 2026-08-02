@@ -73,6 +73,7 @@ describe("systems reorder route", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -2181,6 +2182,9 @@ describe("systems reorder route", () => {
   });
 
   test("persists lifecycle warning dismissal for the current lifecycle key", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-16T12:00:00Z"));
+
     const db = getDb();
     const systemId = db.insert(systems).values({
       name: "Debian support ending",

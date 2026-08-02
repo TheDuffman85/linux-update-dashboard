@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -19,6 +19,7 @@ describe("dashboard routes", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -200,6 +201,9 @@ describe("dashboard routes", () => {
   });
 
   test("counts lifecycle warnings separately from up to date", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-16T12:00:00Z"));
+
     const db = getDb();
     db.insert(systems).values({
       name: "Debian support ending",
