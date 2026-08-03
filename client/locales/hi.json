@@ -4,6 +4,7 @@
   "app.languagePrompt.saved": "भाषा सहेजी गई",
   "app.languagePrompt.useLanguage": "{language} इस्तेमाल करें",
   "app.reconnectingToBackend": "बैकएंड से फिर से जुड़ रहा है...",
+  "common.backToTop": "शीर्ष पर वापस जाएं",
   "common.cancel": "रद्द करें",
   "common.checking": "जांच हो रही है...",
   "common.cron.dailyAt0000": "रोज 00:00 बजे",

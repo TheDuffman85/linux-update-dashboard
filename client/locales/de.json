@@ -4,6 +4,7 @@
   "app.languagePrompt.saved": "Sprache gespeichert",
   "app.languagePrompt.useLanguage": "{language} verwenden",
   "app.reconnectingToBackend": "Verbindung zum Backend wird wiederhergestellt...",
+  "common.backToTop": "Nach oben",
   "common.cancel": "Abbrechen",
   "common.checking": "Prüfen...",
   "common.cron.dailyAt0000": "Täglich um 00:00",

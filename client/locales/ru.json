@@ -4,6 +4,7 @@
   "app.languagePrompt.saved": "Язык сохранен",
   "app.languagePrompt.useLanguage": "Использовать {language}",
   "app.reconnectingToBackend": "Повторное подключение к backend...",
+  "common.backToTop": "Наверх",
   "common.cancel": "Отмена",
   "common.checking": "Проверка...",
   "common.cron.dailyAt0000": "Ежедневно в 00:00",

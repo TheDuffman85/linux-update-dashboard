@@ -4,6 +4,7 @@
   "app.languagePrompt.saved": "言語を保存しました",
   "app.languagePrompt.useLanguage": "{language} を使用",
   "app.reconnectingToBackend": "バックエンドに再接続中...",
+  "common.backToTop": "トップへ戻る",
   "common.cancel": "キャンセル",
   "common.checking": "確認中...",
   "common.cron.dailyAt0000": "毎日 00:00",

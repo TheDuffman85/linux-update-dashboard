@@ -4,6 +4,7 @@
   "app.languagePrompt.saved": "تم حفظ اللغة",
   "app.languagePrompt.useLanguage": "استخدام {language}",
   "app.reconnectingToBackend": "جار إعادة الاتصال بالخلفية...",
+  "common.backToTop": "العودة إلى الأعلى",
   "common.cancel": "إلغاء",
   "common.checking": "جار الفحص...",
   "common.cron.dailyAt0000": "يوميا عند 00:00",

@@ -4,6 +4,7 @@
   "app.languagePrompt.saved": "语言已保存",
   "app.languagePrompt.useLanguage": "使用 {language}",
   "app.reconnectingToBackend": "正在重新连接到后端...",
+  "common.backToTop": "返回顶部",
   "common.cancel": "取消",
   "common.checking": "正在检查...",
   "common.cron.dailyAt0000": "每天 00:00",
