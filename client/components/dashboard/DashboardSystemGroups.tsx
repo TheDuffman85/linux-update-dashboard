@@ -10,6 +10,7 @@ import { useI18n } from "../../lib/i18n";
 import { Badge } from "../Badge";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "ludash.dashboard.collapsed-groups";
+const GROUP_BADGES_STORAGE_KEY = "ludash.dashboard.group-badges";
 const UNGROUPED_KEY = "ungrouped";
 
 type DragItem = { kind: "system"; id: number } | { kind: "group"; id: string };
@@ -52,9 +53,18 @@ function readCollapsedGroups(): Set<string> {
   }
 }
 
+function readGroupBadgesEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(GROUP_BADGES_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
 function compareSystems(a: System, b: System): number {
-  const orderA = a.dashboardOrder ?? a.sortOrder ?? 0;
-  const orderB = b.dashboardOrder ?? b.sortOrder ?? 0;
+  const orderA = a.dashboardOrder ?? 0;
+  const orderB = b.dashboardOrder ?? 0;
   return orderA - orderB || a.name.localeCompare(b.name) || a.id - b.id;
 }
 
@@ -192,6 +202,8 @@ export function DashboardSystemGroups({
   const [localSystems, setLocalSystems] = useState<System[]>(systems);
   const [collapsedGroups, setCollapsedGroups] =
     useState<Set<string>>(readCollapsedGroups);
+  const [groupBadgesEnabled, setGroupBadgesEnabled] =
+    useState(readGroupBadgesEnabled);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
 
   useEffect(() => setLocalGroups(groups), [groups]);
@@ -248,6 +260,18 @@ export function DashboardSystemGroups({
     if (next.has(key)) next.delete(key);
     else next.add(key);
     persistCollapsedGroups(next);
+  };
+
+  const toggleGroupBadges = () => {
+    const next = !groupBadgesEnabled;
+    setGroupBadgesEnabled(next);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(GROUP_BADGES_STORAGE_KEY, String(next));
+      } catch {
+        // The preference still applies for this session when storage is unavailable.
+      }
+    }
   };
 
   const beginDrag = (event: DragEvent, item: DragItem) => {
@@ -468,7 +492,7 @@ export function DashboardSystemGroups({
                 {section.systems.length}
               </Badge>
             </button>
-            {statusBadges.length > 0 && (
+            {groupBadgesEnabled && statusBadges.length > 0 && (
               <div className="flex min-w-0 flex-wrap items-center gap-1" aria-label={t("pages.dashboard.groupStatus")}>
                 {statusBadges.map((badge) => (
                   <Badge key={badge.key} variant={badge.variant} small>
@@ -554,10 +578,33 @@ export function DashboardSystemGroups({
                 }
                 className={
                   editMode
-                    ? "cursor-grab rounded-xl ring-1 ring-dashed ring-slate-300 dark:ring-slate-600"
+                    ? "cursor-grab rounded-xl bg-slate-100 p-1.5 ring-1 ring-dashed ring-slate-400 dark:bg-slate-900/40 dark:ring-slate-500"
                     : undefined
                 }
+                title={editMode ? t("pages.dashboard.dragToReorderSystem") : undefined}
               >
+                {editMode && (
+                  <div
+                    data-dashboard-system-drag-handle
+                    className="flex items-center justify-center gap-1.5 pb-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300"
+                  >
+                    <svg
+                      className="h-3.5 w-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
+                      />
+                    </svg>
+                    <span>{t("pages.dashboard.dragToReorderSystem")}</span>
+                  </div>
+                )}
                 {renderSystem(system)}
               </div>
             ))}
@@ -571,35 +618,106 @@ export function DashboardSystemGroups({
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={editMode}
-          onClick={onToggleEditMode}
-          disabled={busy}
-          className="inline-flex items-center gap-2 rounded-md px-1 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-        >
-          <span
-            className={`relative h-5 w-9 rounded-full transition-colors ${editMode ? "bg-blue-500" : "bg-slate-300 dark:bg-slate-600"}`}
-            aria-hidden="true"
-          >
-            <span
-              className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${editMode ? "translate-x-4" : ""}`}
-            />
-          </span>
-          {t("pages.dashboard.editGroups")}
-        </button>
+      <div
+        data-dashboard-edit-toolbar
+        className={`mb-3 flex flex-wrap items-center gap-2 transition-colors ${
+          editMode
+            ? "justify-between rounded-xl border border-blue-200 bg-blue-50/70 p-2.5 shadow-sm dark:border-blue-800/70 dark:bg-blue-950/25"
+            : "justify-end"
+        }`}
+      >
         {editMode && (
+          <div className="flex min-w-0 items-center gap-2.5 px-1">
+            <span
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300"
+              aria-hidden="true"
+            >
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M11 4H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4m-1.5-7.5a2.12 2.12 0 0 1 3 3L12 18l-4 1 1-4 9.5-9.5Z"
+                />
+              </svg>
+            </span>
+            <span className="truncate text-sm font-semibold text-blue-950 dark:text-blue-100">
+              {t("pages.dashboard.editMode")}
+            </span>
+          </div>
+        )}
+        <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+          {editMode && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={groupBadgesEnabled}
+              onClick={toggleGroupBadges}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-blue-200 bg-white/80 px-2.5 text-xs font-medium text-slate-600 transition-colors hover:bg-white dark:border-blue-800 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:bg-slate-900"
+            >
+              <span
+                className={`relative h-4 w-7 rounded-full transition-colors ${groupBadgesEnabled ? "bg-blue-600" : "bg-slate-300 dark:bg-slate-600"}`}
+                aria-hidden="true"
+              >
+                <span
+                  className={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${groupBadgesEnabled ? "translate-x-3" : ""}`}
+                />
+              </span>
+              {t("pages.dashboard.groupBadges")}
+            </button>
+          )}
+          {editMode && (
+            <button
+              type="button"
+              onClick={onCreateGroup}
+              disabled={busy}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m-7-7h14" />
+              </svg>
+              {t("pages.dashboard.addGroup")}
+            </button>
+          )}
           <button
             type="button"
-            onClick={onCreateGroup}
+            aria-pressed={editMode}
+            onClick={onToggleEditMode}
             disabled={busy}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
+            className={`inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              editMode
+                ? "h-9 bg-blue-600 px-3 text-xs text-white shadow-sm hover:bg-blue-700"
+                : "h-8 px-2 text-[11px] text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+            }`}
           >
-            {t("pages.dashboard.addGroup")}
+            <svg
+              className={editMode ? "h-4 w-4" : "h-3.5 w-3.5"}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d={editMode ? "m5 12 4 4L19 6" : "M11 4H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4m-1.5-7.5a2.12 2.12 0 0 1 3 3L12 18l-4 1 1-4 9.5-9.5Z"}
+              />
+            </svg>
+            {editMode ? t("pages.dashboard.done") : t("pages.dashboard.editMode")}
           </button>
-        )}
+        </div>
       </div>
       {flatMode ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

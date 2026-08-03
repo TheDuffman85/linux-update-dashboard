@@ -389,7 +389,6 @@ export function useReorderSystems() {
       }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["systems"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

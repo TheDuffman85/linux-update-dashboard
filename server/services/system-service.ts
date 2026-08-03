@@ -250,10 +250,9 @@ export function createDashboardGroup(name: string): number {
     );
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
     groups.forEach((group, index) => {
-      // The new group is inserted immediately before Ungrouped. Named groups
-      // that were already after Ungrouped therefore move two slots: one for
-      // the new group and one for Ungrouped's existing slot.
-      const sortOrder = index < ungroupedIndex ? index : index + 2;
+      // Prepend the new group while preserving the existing relative order,
+      // including the position of the implicit Ungrouped section.
+      const sortOrder = index < ungroupedIndex ? index + 1 : index + 2;
       tx.update(dashboardGroups)
         .set({ sortOrder, updatedAt: now })
         .where(eq(dashboardGroups.id, group.id))
@@ -272,7 +271,7 @@ export function createDashboardGroup(name: string): number {
       .run();
     return tx
       .insert(dashboardGroups)
-      .values({ name: trimmedName, sortOrder: ungroupedIndex })
+      .values({ name: trimmedName, sortOrder: 0 })
       .returning({ id: dashboardGroups.id })
       .get();
   });
@@ -308,7 +307,7 @@ export function deleteDashboardGroup(groupId: number): void {
     .select({ id: systems.id })
     .from(systems)
     .where(eq(systems.dashboardGroupId, groupId))
-    .orderBy(asc(systems.dashboardOrder), asc(systems.sortOrder), asc(systems.name), asc(systems.id))
+    .orderBy(asc(systems.dashboardOrder), asc(systems.name), asc(systems.id))
     .all();
   const ungroupedMax = db
     .select({ value: sql<number>`coalesce(max(${systems.dashboardOrder}), 0)` })

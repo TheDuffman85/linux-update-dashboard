@@ -914,7 +914,18 @@ export function initDatabase(
     // Column already exists
   }
   if (addedDashboardOrderColumn) {
-    _db.run(sql`UPDATE systems SET dashboard_order = sort_order`);
+    _db.run(sql`
+      WITH ordered AS (
+        SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) AS row_num
+        FROM systems
+      )
+      UPDATE systems
+      SET dashboard_order = (
+        SELECT row_num
+        FROM ordered
+        WHERE ordered.id = systems.id
+      )
+    `);
   }
   migrateLegacyUpgradeGroups(
     hadLegacyUpgradeGroups,

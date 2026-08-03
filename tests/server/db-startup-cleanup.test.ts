@@ -343,7 +343,7 @@ describe("database startup cleanup", () => {
     expect(restarted[0].pkgManager).toBe("apt");
     expect(restarted[0].autoHideKeptBackUpdates).toBe(1);
     expect(restarted[0].dashboardGroupId).toBeNull();
-    expect(restarted[0].dashboardOrder).toBe(0);
+    expect(restarted[0].dashboardOrder).toBe(1);
     expect(restarted[0].pkgManagerConfigs).toBe(JSON.stringify({
       apt: {
         autoHideKeptBackUpdates: true,

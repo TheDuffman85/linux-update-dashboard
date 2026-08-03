@@ -7,6 +7,7 @@ import { join } from "path";
 import { randomBytes } from "crypto";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { apiTokens, credentials, dashboardGroups, hiddenUpdates, installedPackageCache, settings, systems, updateCache, updateHistory, users } from "../../server/db/schema";
+import dashboardRoutes from "../../server/routes/dashboard";
 import systemsRoutes from "../../server/routes/systems";
 import { authMiddleware } from "../../server/middleware/auth";
 import { hashToken } from "../../server/auth/api-token";
@@ -83,6 +84,7 @@ describe("systems reorder route", () => {
     const inserted = db.insert(systems).values([
       {
         sortOrder: 0,
+        dashboardOrder: 3,
         name: "Alpha",
         hostname: "alpha.local",
         port: 22,
@@ -91,6 +93,7 @@ describe("systems reorder route", () => {
       },
       {
         sortOrder: 1,
+        dashboardOrder: 1,
         name: "Bravo",
         hostname: "bravo.local",
         port: 22,
@@ -99,6 +102,7 @@ describe("systems reorder route", () => {
       },
       {
         sortOrder: 2,
+        dashboardOrder: 2,
         name: "Charlie",
         hostname: "charlie.local",
         port: 22,
@@ -108,6 +112,7 @@ describe("systems reorder route", () => {
     ]).returning({ id: systems.id }).all();
 
     const app = new Hono();
+    app.route("/api/dashboard", dashboardRoutes);
     app.route("/api/systems", systemsRoutes);
 
     const res = await app.request("/api/systems/reorder", {
@@ -124,6 +129,21 @@ describe("systems reorder route", () => {
       "Alpha",
       "Bravo",
     ]);
+    expect(
+      db
+        .select({ name: systems.name })
+        .from(systems)
+        .orderBy(systems.dashboardOrder)
+        .all()
+        .map((system) => system.name),
+    ).toEqual(["Bravo", "Charlie", "Alpha"]);
+
+    const dashboardResponse = await app.request("/api/dashboard/systems");
+    expect(dashboardResponse.status).toBe(200);
+    expect(
+      ((await dashboardResponse.json()) as { systems: Array<{ name: string }> })
+        .systems.map((system) => system.name),
+    ).toEqual(["Bravo", "Charlie", "Alpha"]);
   });
 
   test("does not expose the removed Upgrade All grouping routes", async () => {
@@ -186,7 +206,7 @@ describe("systems reorder route", () => {
     expect(reorder.status).toBe(200);
     expect(createGamma.status).toBe(201);
     expect(assign.status).toBe(200);
-    expect(db.select().from(dashboardGroups).orderBy(dashboardGroups.sortOrder).all().map((group) => group.name)).toEqual(["Staging", "Canary", "Core"]);
+    expect(db.select().from(dashboardGroups).orderBy(dashboardGroups.sortOrder).all().map((group) => group.name)).toEqual(["Canary", "Staging", "Core"]);
     const config = await app.request("/api/systems/dashboard-groups");
     expect((await config.json() as { ungroupedSortOrder: number }).ungroupedSortOrder).toBe(2);
     const rows = db.select({ name: systems.name, groupId: systems.dashboardGroupId, order: systems.dashboardOrder }).from(systems).all();
@@ -194,6 +214,63 @@ describe("systems reorder route", () => {
       Alpha: { groupId: alpha.id, order: 2 },
       Bravo: { groupId: beta.id, order: 1 },
     });
+  });
+
+  test("reorders systems within the same dashboard group", async () => {
+    const db = getDb();
+    const group = db
+      .insert(dashboardGroups)
+      .values({ name: "Production", sortOrder: 0 })
+      .returning({ id: dashboardGroups.id })
+      .get();
+    const inserted = db
+      .insert(systems)
+      .values([
+        {
+          name: "Alpha",
+          hostname: "alpha.local",
+          port: 22,
+          authType: "password",
+          username: "root",
+          dashboardGroupId: group.id,
+          dashboardOrder: 1,
+        },
+        {
+          name: "Bravo",
+          hostname: "bravo.local",
+          port: 22,
+          authType: "password",
+          username: "root",
+          dashboardGroupId: group.id,
+          dashboardOrder: 2,
+        },
+      ])
+      .returning({ id: systems.id })
+      .all();
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const reorder = await app.request("/api/systems/dashboard-groups/systems", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: [
+          { systemId: inserted[1].id, groupId: group.id, dashboardOrder: 1 },
+          { systemId: inserted[0].id, groupId: group.id, dashboardOrder: 2 },
+        ],
+      }),
+    });
+
+    expect(reorder.status).toBe(200);
+    expect(
+      db
+        .select({ name: systems.name })
+        .from(systems)
+        .where(eq(systems.dashboardGroupId, group.id))
+        .orderBy(systems.dashboardOrder)
+        .all()
+        .map((row) => row.name),
+    ).toEqual(["Bravo", "Alpha"]);
   });
 
   test("reorders Ungrouped at the beginning and end", async () => {

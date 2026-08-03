@@ -484,6 +484,30 @@ describe("Dashboard", () => {
     expect(html.indexOf("Ungrouped")).toBeLessThan(html.indexOf("Edge"));
   });
 
+  test("does not use the Systems page order to break dashboard order ties", () => {
+    const html = renderToStaticMarkup(
+      <DashboardSystemGroups
+        systems={[
+          { id: 1, name: "Zulu", dashboardGroupId: 1, dashboardOrder: 1, sortOrder: 0 },
+          { id: 2, name: "Alpha", dashboardGroupId: 1, dashboardOrder: 1, sortOrder: 1 },
+        ] as System[]}
+        groups={[{ id: 1, name: "Primary", sortOrder: 0, createdAt: "", updatedAt: "" }]}
+        ungroupedSortOrder={1}
+        editMode={false}
+        onToggleEditMode={vi.fn()}
+        onCreateGroup={vi.fn()}
+        onRenameGroup={vi.fn()}
+        onDeleteGroup={vi.fn()}
+        saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+        saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+        onError={vi.fn()}
+        renderSystem={(system) => <span>{system.name}</span>}
+      />,
+    );
+
+    expect(html.indexOf("Alpha")).toBeLessThan(html.indexOf("Zulu"));
+  });
+
   test("shows state badges for each group including a single visible group", () => {
     const makeSystem = (id: number, name: string, overrides: Partial<System> = {}) => ({
       id,
@@ -546,5 +570,105 @@ describe("Dashboard", () => {
     );
     expect(singleGroupHtml).toContain('aria-label="Group status"');
     expect(singleGroupHtml).toContain("Need Updates");
+  });
+
+  test("uses Edit mode and exposes system ordering and badge controls while editing", () => {
+    const systems = [
+      {
+        id: 1,
+        name: "Alpha",
+        dashboardGroupId: 1,
+        dashboardOrder: 1,
+        sortOrder: 1,
+        updateCount: 1,
+        isReachable: 1,
+        needsReboot: 0,
+        lastCheck: null,
+        osLifecycleStatus: "supported",
+      },
+    ] as System[];
+    const commonProps = {
+      systems,
+      groups: [{ id: 1, name: "Primary", sortOrder: 0, createdAt: "", updatedAt: "" }],
+      ungroupedSortOrder: 1,
+      onToggleEditMode: vi.fn(),
+      onCreateGroup: vi.fn(),
+      onRenameGroup: vi.fn(),
+      onDeleteGroup: vi.fn(),
+      saveGroupOrder: vi.fn().mockResolvedValue(undefined),
+      saveSystemPlacements: vi.fn().mockResolvedValue(undefined),
+      onError: vi.fn(),
+      renderSystem: (system: System) => <span>{system.name}</span>,
+    };
+
+    const viewHtml = renderToStaticMarkup(
+      <DashboardSystemGroups {...commonProps} editMode={false} />,
+    );
+    expect(viewHtml).toContain("Edit mode");
+    expect(viewHtml).toContain("data-dashboard-edit-toolbar");
+    expect(viewHtml).toContain('aria-pressed="false"');
+    expect(viewHtml).not.toContain(">Done</button>");
+    expect(viewHtml).not.toContain("Edit groups");
+    expect(viewHtml).not.toContain("Group badges");
+
+    const editHtml = renderToStaticMarkup(
+      <DashboardSystemGroups {...commonProps} editMode />,
+    );
+    expect(editHtml).toContain("Group badges");
+    expect(editHtml).toContain('aria-pressed="true"');
+    expect(editHtml).toContain(">Done</button>");
+    expect(editHtml).toContain('title="Drag to reorder system"');
+    expect(editHtml).toContain("data-dashboard-system-drag-handle");
+    expect(editHtml).toContain(">Drag to reorder system</span>");
+    expect(editHtml).toMatch(/data-dashboard-system-id="1" draggable="true"/);
+  });
+
+  test("restores the disabled group badge preference", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: vi.fn((key: string) =>
+          key === "ludash.dashboard.group-badges" ? "false" : null,
+        ),
+        setItem: vi.fn(),
+      },
+    });
+
+    try {
+      const html = renderToStaticMarkup(
+        <DashboardSystemGroups
+          systems={[
+            {
+              id: 1,
+              name: "Alpha",
+              dashboardGroupId: 1,
+              dashboardOrder: 1,
+              sortOrder: 1,
+              updateCount: 1,
+              isReachable: 1,
+              needsReboot: 0,
+              lastCheck: null,
+              osLifecycleStatus: "supported",
+            } as System,
+          ]}
+          groups={[{ id: 1, name: "Primary", sortOrder: 0, createdAt: "", updatedAt: "" }]}
+          ungroupedSortOrder={1}
+          editMode
+          onToggleEditMode={vi.fn()}
+          onCreateGroup={vi.fn()}
+          onRenameGroup={vi.fn()}
+          onDeleteGroup={vi.fn()}
+          saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+          saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+          onError={vi.fn()}
+          renderSystem={(system) => <span>{system.name}</span>}
+        />,
+      );
+
+      expect(html).toContain("Group badges");
+      expect(html).toContain('aria-checked="false"');
+      expect(html).not.toContain('aria-label="Group status"');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
