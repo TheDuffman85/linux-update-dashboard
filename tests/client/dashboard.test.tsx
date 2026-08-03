@@ -80,7 +80,10 @@ import Dashboard, {
   isUpgradeAllSubmitDisabled,
   isUpgradePresetSelected,
 } from "../../client/pages/Dashboard";
-import { DashboardSystemGroups } from "../../client/components/dashboard/DashboardSystemGroups";
+import {
+  compareSystemsByName,
+  DashboardSystemGroups,
+} from "../../client/components/dashboard/DashboardSystemGroups";
 import type { System } from "../../client/lib/systems";
 
 function getOpeningButtonTag(html: string, text: string): string {
@@ -610,6 +613,7 @@ describe("Dashboard", () => {
     expect(viewHtml).not.toContain(">Done</button>");
     expect(viewHtml).not.toContain("Edit groups");
     expect(viewHtml).not.toContain("Group badges");
+    expect(viewHtml).not.toContain("Sort systems by name");
 
     const editHtml = renderToStaticMarkup(
       <DashboardSystemGroups {...commonProps} editMode />,
@@ -621,6 +625,23 @@ describe("Dashboard", () => {
     expect(editHtml).toContain("data-dashboard-system-drag-handle");
     expect(editHtml).toContain(">Drag to reorder system</span>");
     expect(editHtml).toMatch(/data-dashboard-system-id="1" draggable="true"/);
+    expect(editHtml).toContain('aria-label="Sort systems by name"');
+  });
+
+  test("sorts system names case-insensitively and with natural number ordering", () => {
+    const systems = [
+      { id: 1, name: "System 10" },
+      { id: 2, name: "beta" },
+      { id: 3, name: "System 2" },
+      { id: 4, name: "Alpha" },
+    ] as System[];
+
+    expect([...systems].sort(compareSystemsByName).map((system) => system.name)).toEqual([
+      "Alpha",
+      "beta",
+      "System 2",
+      "System 10",
+    ]);
   });
 
   test("restores the disabled group badge preference", () => {

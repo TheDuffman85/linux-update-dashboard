@@ -229,6 +229,7 @@
   "pages.dashboard.refreshing": "جار التحديث...",
   "pages.dashboard.renameGroup": "إعادة تسمية المجموعة",
   "pages.dashboard.save": "حفظ",
+  "pages.dashboard.sortSystemsByName": "ترتيب الأنظمة حسب الاسم",
   "pages.dashboard.system": "نظام",
   "pages.dashboard.systems": "أنظمة",
   "pages.dashboard.toggleAndSaveFullUpgradeForThisSystem": "تبديل وحفظ الترقية الكاملة لهذا النظام",

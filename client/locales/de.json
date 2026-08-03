@@ -229,6 +229,7 @@
   "pages.dashboard.refreshing": "Aktualisieren...",
   "pages.dashboard.renameGroup": "Gruppe umbenennen",
   "pages.dashboard.save": "Speichern",
+  "pages.dashboard.sortSystemsByName": "Systeme nach Name sortieren",
   "pages.dashboard.system": "System",
   "pages.dashboard.systems": "Systeme",
   "pages.dashboard.toggleAndSaveFullUpgradeForThisSystem": "Vollständiges Upgrade für dieses System umschalten und speichern",

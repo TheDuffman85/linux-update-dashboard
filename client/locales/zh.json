@@ -229,6 +229,7 @@
   "pages.dashboard.refreshing": "正在刷新...",
   "pages.dashboard.renameGroup": "重命名组",
   "pages.dashboard.save": "保存",
+  "pages.dashboard.sortSystemsByName": "按名称排序系统",
   "pages.dashboard.system": "系统",
   "pages.dashboard.systems": "系统",
   "pages.dashboard.toggleAndSaveFullUpgradeForThisSystem": "切换并保存此系统的完整升级",

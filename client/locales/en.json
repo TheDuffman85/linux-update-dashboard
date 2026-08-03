@@ -229,6 +229,7 @@
   "pages.dashboard.refreshing": "Refreshing...",
   "pages.dashboard.renameGroup": "Rename Group",
   "pages.dashboard.save": "Save",
+  "pages.dashboard.sortSystemsByName": "Sort systems by name",
   "pages.dashboard.system": "system",
   "pages.dashboard.systems": "systems",
   "pages.dashboard.toggleAndSaveFullUpgradeForThisSystem": "Toggle and save full upgrade for this system",

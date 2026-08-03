@@ -229,6 +229,7 @@
   "pages.dashboard.refreshing": "更新中...",
   "pages.dashboard.renameGroup": "グループ名を変更",
   "pages.dashboard.save": "保存",
+  "pages.dashboard.sortSystemsByName": "システムを名前順に並べ替え",
   "pages.dashboard.system": "システム",
   "pages.dashboard.systems": "システム",
   "pages.dashboard.toggleAndSaveFullUpgradeForThisSystem": "このシステムの完全アップグレードを切り替えて保存",

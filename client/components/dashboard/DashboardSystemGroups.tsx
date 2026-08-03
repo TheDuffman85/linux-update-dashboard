@@ -68,6 +68,15 @@ function compareSystems(a: System, b: System): number {
   return orderA - orderB || a.name.localeCompare(b.name) || a.id - b.id;
 }
 
+const systemNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+export function compareSystemsByName(a: System, b: System): number {
+  return systemNameCollator.compare(a.name, b.name) || a.id - b.id;
+}
+
 function hasCheckIssue(system: System): boolean {
   return system.lastCheck?.status === "failed" || system.lastCheck?.status === "warning";
 }
@@ -404,6 +413,32 @@ export function DashboardSystemGroups({
     }
   };
 
+  const sortSystemsByName = async (section: DashboardSection) => {
+    if (busy || section.systems.length < 2) return;
+    const sortedSystems = [...section.systems].sort(compareSystemsByName);
+    const items = sortedSystems.map((system, index) => ({
+      systemId: system.id,
+      groupId: section.groupId,
+      dashboardOrder: index + 1,
+    }));
+    const previous = cloneSystems(localSystems);
+    setLocalSystems(
+      applySystemOrder(localSystems, [
+        { groupId: section.groupId, systems: sortedSystems },
+      ]),
+    );
+    try {
+      await saveSystemPlacements(items);
+    } catch (error) {
+      setLocalSystems(previous);
+      onError(
+        error instanceof Error
+          ? error.message
+          : t("pages.dashboard.failedToSaveSystemGroups"),
+      );
+    }
+  };
+
   const handleDrop = (
     event: DragEvent,
     targetGroupId: number | null,
@@ -503,54 +538,70 @@ export function DashboardSystemGroups({
               </div>
             )}
           </div>
-          {editMode && section.group && (
+          {editMode && (
             <div className="flex shrink-0 gap-1">
               <button
                 type="button"
-                onClick={() => onRenameGroup(section.group!)}
-                disabled={busy}
-                className="rounded p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-                title={t("pages.dashboard.editGroupName")}
-                aria-label={t("pages.dashboard.editGroupName")}
+                onClick={() => void sortSystemsByName(section)}
+                disabled={busy || section.systems.length < 2}
+                className="rounded px-1.5 py-1 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
+                title={t("pages.dashboard.sortSystemsByName")}
+                aria-label={t("pages.dashboard.sortSystemsByName")}
               >
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-1.4-9.4a2 2 0 1 0 2.8 2.8L11.8 15H9v-2.8l8.6-8.6Z"
-                  />
-                </svg>
+                <span className="text-[10px] font-bold leading-4" aria-hidden="true">
+                  A–Z
+                </span>
               </button>
-              <button
-                type="button"
-                onClick={() => onDeleteGroup(section.group!)}
-                disabled={busy}
-                className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-                title={t("pages.dashboard.deleteGroup")}
-                aria-label={t("pages.dashboard.deleteGroup")}
-              >
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
+              {section.group && (
+                <button
+                  type="button"
+                  onClick={() => onRenameGroup(section.group!)}
+                  disabled={busy}
+                  className="rounded p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+                  title={t("pages.dashboard.editGroupName")}
+                  aria-label={t("pages.dashboard.editGroupName")}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7 18.1 19.1A2 2 0 0 1 16.1 21H7.9a2 2 0 0 1-2-1.9L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"
-                  />
-                </svg>
-              </button>
+                  <svg
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-1.4-9.4a2 2 0 1 0 2.8 2.8L11.8 15H9v-2.8l8.6-8.6Z"
+                    />
+                  </svg>
+                </button>
+              )}
+              {section.group && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteGroup(section.group!)}
+                  disabled={busy}
+                  className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                  title={t("pages.dashboard.deleteGroup")}
+                  aria-label={t("pages.dashboard.deleteGroup")}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 7 18.1 19.1A2 2 0 0 1 16.1 21H7.9a2 2 0 0 1-2-1.9L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"
+                    />
+                  </svg>
+                </button>
+              )}
             </div>
           )}
         </div>

@@ -229,6 +229,7 @@
   "pages.dashboard.refreshing": "Обновление...",
   "pages.dashboard.renameGroup": "Переименовать группу",
   "pages.dashboard.save": "Сохранить",
+  "pages.dashboard.sortSystemsByName": "Сортировать системы по имени",
   "pages.dashboard.system": "система",
   "pages.dashboard.systems": "системы",
   "pages.dashboard.toggleAndSaveFullUpgradeForThisSystem": "Переключить и сохранить полное обновление для этой системы",
