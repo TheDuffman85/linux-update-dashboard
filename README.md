@@ -525,7 +525,7 @@ Contributions for corrections, more natural wording, and new languages are welco
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=TheDuffman85/linux-update-dashboard&type=date&legend=top-left&sealed_token=hsM5iehhuIgZct4apBouaoNlJfMtMPOHDMswSPq_Z2UCqQ_STymmzRdualR-pS_9cMQUtJRpVYTzOFTX_AsDXodHvJP8faYD2-zBf5_43jpZsaIp0xDOU3260-IZt216pEgQL4spbk6H2umAm8xELXshOr6dB5o2UUcf88eh0L2j034aPBl4AmDAB328)](https://www.star-history.com/?type=date&repos=TheDuffman85%2Flinux-update-dashboard)
+[![Star History Chart](https://api.star-history.com/chart?repos=TheDuffman85/linux-update-dashboard&type=date&legend=top-left&sealed_token=_TF5KvLbI4wQCiSMtmakMuslJe18ZclYG1CFH7MmKRXntT6PIhAakxsw3f13aVeyokbsDm-evZRWm7cN7ihV_Zdq35XoCX3aggFUZ7tjUOqg_AufFZzMuQ)](https://www.star-history.com/?repos=TheDuffman85%2Flinux-update-dashboard&type=date&legend=top-left)
 
 ## Related Projects
 
