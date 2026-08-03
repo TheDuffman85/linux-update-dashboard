@@ -8,9 +8,12 @@ import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import {
   customPackageManagers,
   customScripts,
+  dashboardGroups,
   hiddenUpdates,
   systems,
   updateHistory,
+  upgradeBatchItems,
+  upgradeBatches,
 } from "../../server/db/schema";
 import { listSystems } from "../../server/services/system-service";
 
@@ -324,11 +327,13 @@ describe("database startup cleanup", () => {
     restartedSqlite.close();
     expect(columns.some((column) => column.name === "ignore_kept_back_packages")).toBe(false);
     expect(columns.some((column) => column.name === "auto_hide_kept_back_updates")).toBe(true);
-    expect(columns.some((column) => column.name === "upgrade_order")).toBe(true);
+    expect(columns.some((column) => column.name === "upgrade_order")).toBe(false);
     expect(columns.some((column) => column.name === "uptime_seconds")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_boot_id")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_uptime_seconds")).toBe(true);
     expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
+    expect(columns.some((column) => column.name === "dashboard_group_id")).toBe(true);
+    expect(columns.some((column) => column.name === "dashboard_order")).toBe(true);
 
     expect(hiddenColumns.some((column) => column.name === "hide_reason")).toBe(true);
 
@@ -337,7 +342,8 @@ describe("database startup cleanup", () => {
     expect(restarted[0].name).toBe("Legacy Debian");
     expect(restarted[0].pkgManager).toBe("apt");
     expect(restarted[0].autoHideKeptBackUpdates).toBe(1);
-    expect(restarted[0].upgradeOrder).toBe(1);
+    expect(restarted[0].dashboardGroupId).toBeNull();
+    expect(restarted[0].dashboardOrder).toBe(1);
     expect(restarted[0].pkgManagerConfigs).toBe(JSON.stringify({
       apt: {
         autoHideKeptBackUpdates: true,
@@ -383,6 +389,102 @@ describe("database startup cleanup", () => {
       { packageName: "legacy-held", hideReason: "kept_back" },
       { packageName: "manual-hide", hideReason: "manual" },
     ]);
+  });
+
+  test("migrates legacy Upgrade All groups over conflicting dashboard data", () => {
+    const db = getDb();
+    const dashboardConflict = db.insert(dashboardGroups).values({
+      id: 7,
+      name: "Dashboard layout",
+      sortOrder: 0,
+      createdAt: "2020-01-01 00:00:00",
+      updatedAt: "2020-01-02 00:00:00",
+    }).returning({ id: dashboardGroups.id }).get();
+    const system = db.insert(systems).values({
+      name: "Migrated host",
+      hostname: "migrated.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      dashboardGroupId: dashboardConflict.id,
+      dashboardOrder: 99,
+    }).returning({ id: systems.id }).get();
+    const batch = db.insert(upgradeBatches).values({ status: "queued" }).returning({ id: upgradeBatches.id }).get();
+    db.insert(upgradeBatchItems).values({
+      batchId: batch.id,
+      systemId: system.id,
+      groupId: dashboardConflict.id,
+      groupSortOrder: 0,
+      systemSortOrder: 99,
+      pkgManager: "apt",
+      status: "running",
+    }).run();
+
+    closeDatabase();
+    const sqlite = new Database(dbPath);
+    sqlite.exec(`
+      CREATE TABLE upgrade_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO upgrade_groups (id, name, sort_order, created_at, updated_at)
+      VALUES
+        (7, 'Legacy Wave', 4, '2019-03-04 05:06:07', '2019-03-05 06:07:08'),
+        (8, 'Legacy Final', 5, '2019-04-04 05:06:07', '2019-04-05 06:07:08');
+      ALTER TABLE systems ADD COLUMN upgrade_group_id INTEGER;
+      ALTER TABLE systems ADD COLUMN upgrade_order INTEGER;
+      UPDATE systems SET upgrade_group_id = 7, upgrade_order = 3 WHERE id = ${system.id};
+      INSERT INTO settings (key, value, description)
+      VALUES ('upgrade_ungrouped_sort_order', '1', 'legacy Ungrouped position');
+    `);
+    sqlite.close();
+
+    initDatabase(dbPath);
+
+    const migratedSqlite = new Database(dbPath, { readonly: true });
+    const migratedTables = migratedSqlite
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('upgrade_groups', 'dashboard_groups') ORDER BY name")
+      .all() as Array<{ name: string }>;
+    const systemColumns = migratedSqlite
+      .prepare("PRAGMA table_info(systems)")
+      .all() as Array<{ name?: string }>;
+    migratedSqlite.close();
+
+    expect(migratedTables).toEqual([{ name: "dashboard_groups" }]);
+    expect(systemColumns.some((column) => column.name === "upgrade_group_id")).toBe(false);
+    expect(systemColumns.some((column) => column.name === "upgrade_order")).toBe(false);
+
+    const migratedGroups = getDb()
+      .select()
+      .from(dashboardGroups)
+      .orderBy(dashboardGroups.sortOrder)
+      .all();
+    expect(migratedGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      sortOrder: group.sortOrder,
+      createdAt: group.createdAt,
+      updatedAt: group.updatedAt,
+    }))).toEqual([
+      { id: 7, name: "Legacy Wave", sortOrder: 4, createdAt: "2019-03-04 05:06:07", updatedAt: "2019-03-05 06:07:08" },
+      { id: 8, name: "Legacy Final", sortOrder: 5, createdAt: "2019-04-04 05:06:07", updatedAt: "2019-04-05 06:07:08" },
+    ]);
+    const migratedSystem = getDb().select().from(systems).where(eq(systems.id, system.id)).get();
+    expect(migratedSystem?.dashboardGroupId).toBe(7);
+    expect(migratedSystem?.dashboardOrder).toBe(3);
+    const migratedItem = getDb().select().from(upgradeBatchItems).where(eq(upgradeBatchItems.batchId, batch.id)).get();
+    expect(migratedItem?.groupId).toBe(7);
+    expect(migratedItem?.status).toBe("running");
+    const settingsRows = getDb().all(sql`SELECT key, value FROM settings WHERE key LIKE '%ungrouped_sort_order'`) as Array<{ key: string; value: string }>;
+    expect(settingsRows).toEqual([{ key: "dashboard_ungrouped_sort_order", value: "1" }]);
+
+    closeDatabase();
+    initDatabase(dbPath);
+    expect(getDb().select().from(dashboardGroups).all().map((group) => group.id)).toEqual([7, 8]);
+    expect(getDb().insert(dashboardGroups).values({ name: "After migration", sortOrder: 3 }).returning({ id: dashboardGroups.id }).get().id).toBe(9);
   });
 
   test("keeps custom package manager config keys manager-local during startup migration", () => {
@@ -521,13 +623,20 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "resolved_at")).toBe(true);
   });
 
-  test("adds the upgrade order column for systems", () => {
+  test("creates only dashboard grouping columns for systems", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const columns = sqlite
       .prepare("PRAGMA table_info(systems)")
       .all() as Array<{ name?: string }>;
+    const legacyTables = sqlite
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'upgrade_groups'")
+      .all() as Array<{ name?: string }>;
     sqlite.close();
 
-    expect(columns.some((column) => column.name === "upgrade_order")).toBe(true);
+    expect(columns.some((column) => column.name === "dashboard_group_id")).toBe(true);
+    expect(columns.some((column) => column.name === "dashboard_order")).toBe(true);
+    expect(columns.some((column) => column.name === "upgrade_group_id")).toBe(false);
+    expect(columns.some((column) => column.name === "upgrade_order")).toBe(false);
+    expect(legacyTables).toHaveLength(0);
   });
 });

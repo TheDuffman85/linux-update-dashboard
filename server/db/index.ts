@@ -119,6 +119,7 @@ export function initDatabase(
   _sqlite = new BetterSqlite3(dbPath);
   _sqlite.exec("PRAGMA journal_mode=WAL");
   _sqlite.exec("PRAGMA foreign_keys=ON");
+  const hadLegacyUpgradeGroups = sqliteHasTable(_sqlite, "upgrade_groups");
 
   _db = drizzle(_sqlite, { schema });
 
@@ -159,7 +160,7 @@ export function initDatabase(
   )`);
   migrateCredentialsTable();
 
-  _db.run(sql`CREATE TABLE IF NOT EXISTS upgrade_groups (
+  _db.run(sql`CREATE TABLE IF NOT EXISTS dashboard_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -205,8 +206,8 @@ export function initDatabase(
     memory TEXT,
     disk TEXT,
     exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
-    upgrade_group_id INTEGER REFERENCES upgrade_groups(id) ON DELETE SET NULL,
-    upgrade_order INTEGER NOT NULL DEFAULT 1,
+    dashboard_group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
+    dashboard_order INTEGER NOT NULL DEFAULT 0,
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
     boot_id TEXT,
@@ -320,7 +321,7 @@ export function initDatabase(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     batch_id INTEGER NOT NULL REFERENCES upgrade_batches(id) ON DELETE CASCADE,
     system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
-    group_id INTEGER REFERENCES upgrade_groups(id) ON DELETE SET NULL,
+    group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
     group_sort_order INTEGER NOT NULL DEFAULT 0,
     system_sort_order INTEGER NOT NULL DEFAULT 0,
     default_upgrade_mode_override TEXT,
@@ -881,18 +882,6 @@ export function initDatabase(
     // Column already exists
   }
   try {
-    _db.run(sql`ALTER TABLE systems ADD COLUMN upgrade_group_id INTEGER`);
-  } catch {
-    // Column already exists
-  }
-  try {
-    _db.run(
-      sql`ALTER TABLE systems ADD COLUMN upgrade_order INTEGER NOT NULL DEFAULT 1`,
-    );
-  } catch {
-    // Column already exists
-  }
-  try {
     _db.run(
       sql`ALTER TABLE systems ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
     );
@@ -908,6 +897,41 @@ export function initDatabase(
   } catch {
     // Column already exists
   }
+  try {
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN dashboard_group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL`,
+    );
+  } catch {
+    // Column already exists
+  }
+  let addedDashboardOrderColumn = false;
+  try {
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN dashboard_order INTEGER NOT NULL DEFAULT 0`,
+    );
+    addedDashboardOrderColumn = true;
+  } catch {
+    // Column already exists
+  }
+  if (addedDashboardOrderColumn) {
+    _db.run(sql`
+      WITH ordered AS (
+        SELECT id, ROW_NUMBER() OVER (ORDER BY name, id) AS row_num
+        FROM systems
+      )
+      UPDATE systems
+      SET dashboard_order = (
+        SELECT row_num
+        FROM ordered
+        WHERE ordered.id = systems.id
+      )
+    `);
+  }
+  migrateLegacyUpgradeGroups(
+    hadLegacyUpgradeGroups,
+    hasIgnoreKeptBackPackages,
+    hasAutoHideKeptBackUpdates,
+  );
   migrateSystemsTableShape(
     hasIgnoreKeptBackPackages,
     hasAutoHideKeptBackUpdates,
@@ -1469,7 +1493,117 @@ function migrateSystemsTableShape(
   );
 }
 
+function sqliteHasTable(sqlite: SqliteClient, tableName: string): boolean {
+  const row = sqlite
+    .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { present?: number } | undefined;
+  return row?.present === 1;
+}
+
+function sqliteHasColumn(sqlite: SqliteClient, tableName: string, columnName: string): boolean {
+  return (sqlite
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name?: string }>)
+    .some((column) => column.name === columnName);
+}
+
+function migrateLegacyUpgradeGroups(
+  hadLegacyUpgradeGroups: boolean,
+  hasIgnoreKeptBackPackages: boolean,
+  hasAutoHideKeptBackUpdates: boolean,
+): void {
+  if (!_sqlite || !hadLegacyUpgradeGroups) return;
+  const sqlite = _sqlite;
+  const hasLegacyGroupColumn = sqliteHasColumn(sqlite, "systems", "upgrade_group_id");
+  const hasLegacyOrderColumn = sqliteHasColumn(sqlite, "systems", "upgrade_order");
+  const oldUngroupedSortOrder = sqlite
+    .prepare("SELECT value FROM settings WHERE key = 'upgrade_ungrouped_sort_order'")
+    .get() as { value?: string } | undefined;
+
+  sqlite.exec("PRAGMA foreign_keys=OFF");
+  try {
+    sqlite.exec("BEGIN");
+    // Legacy Upgrade All grouping is authoritative if both models exist.
+    sqlite.exec("DROP TABLE dashboard_groups");
+    sqlite.exec("ALTER TABLE upgrade_groups RENAME TO dashboard_groups");
+
+    if (hasLegacyGroupColumn || hasLegacyOrderColumn) {
+      sqlite.exec(`
+        UPDATE systems
+        SET dashboard_group_id = CASE
+          WHEN ${hasLegacyGroupColumn ? "upgrade_group_id" : "NULL"} IN (SELECT id FROM dashboard_groups) THEN ${hasLegacyGroupColumn ? "upgrade_group_id" : "NULL"}
+          ELSE NULL
+        END,
+        dashboard_order = CASE
+          WHEN ${hasLegacyOrderColumn ? "upgrade_order" : "NULL"} IS NULL OR ${hasLegacyOrderColumn ? "upgrade_order" : "0"} <= 0 THEN 1
+          ELSE ${hasLegacyOrderColumn ? "upgrade_order" : "1"}
+        END
+      `);
+    }
+
+    // Rebuild even when a legacy table has no placement rows so obsolete
+    // upgrade columns are removed from the canonical systems table.
+    rebuildSystemsTableWithinTransaction(sqlite, {
+      hasIgnoreKeptBackPackages,
+      hasAutoHideKeptBackUpdates,
+    });
+
+    if (sqliteHasTable(sqlite, "upgrade_batch_items")) {
+      sqlite.exec(`
+        UPDATE upgrade_batch_items
+        SET group_id = NULL
+        WHERE group_id IS NOT NULL
+          AND group_id NOT IN (SELECT id FROM dashboard_groups)
+      `);
+    }
+    rebuildUpgradeBatchItemsWithinTransaction(sqlite);
+
+    if (oldUngroupedSortOrder?.value !== undefined) {
+      sqlite
+        .prepare(`
+          INSERT INTO settings (key, value, description)
+          VALUES ('dashboard_ungrouped_sort_order', ?, 'Sort position of the implicit Ungrouped dashboard group')
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, description = excluded.description, updated_at = datetime('now')
+        `)
+        .run(oldUngroupedSortOrder.value);
+    }
+    sqlite.exec("DELETE FROM settings WHERE key = 'upgrade_ungrouped_sort_order'");
+    sqlite.exec("COMMIT");
+  } catch (error) {
+    try {
+      sqlite.exec("ROLLBACK");
+    } catch {
+      // Preserve the original migration error.
+    }
+    throw error;
+  } finally {
+    sqlite.exec("PRAGMA foreign_keys=ON");
+  }
+}
+
 function rebuildSystemsTable(
+  sqlite: SqliteClient,
+  opts: {
+    hasIgnoreKeptBackPackages: boolean;
+    hasAutoHideKeptBackUpdates: boolean;
+  },
+): void {
+  sqlite.exec("PRAGMA foreign_keys=OFF");
+  try {
+    sqlite.exec("BEGIN");
+    rebuildSystemsTableWithinTransaction(sqlite, opts);
+    sqlite.exec("COMMIT");
+  } catch (error) {
+    try {
+      sqlite.exec("ROLLBACK");
+    } catch {}
+    throw error;
+  } finally {
+    sqlite.exec("PRAGMA foreign_keys=ON");
+  }
+}
+
+function rebuildSystemsTableWithinTransaction(
   sqlite: SqliteClient,
   opts: {
     hasIgnoreKeptBackPackages: boolean;
@@ -1515,8 +1649,8 @@ function rebuildSystemsTable(
       memory TEXT,
       disk TEXT,
       exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
-      upgrade_group_id INTEGER,
-      upgrade_order INTEGER NOT NULL DEFAULT 1,
+      dashboard_group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
+      dashboard_order INTEGER NOT NULL DEFAULT 0,
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
       boot_id TEXT,
@@ -1573,8 +1707,8 @@ function rebuildSystemsTable(
     "memory",
     "disk",
     "exclude_from_upgrade_all",
-    "upgrade_group_id",
-    "upgrade_order",
+    "dashboard_group_id",
+    "dashboard_order",
     "hidden",
     "needs_reboot",
     "boot_id",
@@ -1634,8 +1768,8 @@ function rebuildSystemsTable(
     "memory",
     "disk",
     "exclude_from_upgrade_all",
-    "upgrade_group_id",
-    "upgrade_order",
+    "dashboard_group_id",
+    "dashboard_order",
     "hidden",
     "needs_reboot",
     "boot_id",
@@ -1654,25 +1788,55 @@ function rebuildSystemsTable(
     "updated_at",
   ];
 
-  sqlite.exec("PRAGMA foreign_keys=OFF");
-  try {
-    sqlite.exec("BEGIN");
-    sqlite.exec(systemsTableSql);
-    sqlite.exec(
-      `INSERT INTO systems__new (${insertColumns.join(", ")})
-       SELECT ${selectColumns.join(", ")} FROM systems`,
-    );
-    sqlite.exec("DROP TABLE systems");
-    sqlite.exec("ALTER TABLE systems__new RENAME TO systems");
-    sqlite.exec("COMMIT");
-  } catch (error) {
-    try {
-      sqlite.exec("ROLLBACK");
-    } catch {}
-    throw error;
-  } finally {
-    sqlite.exec("PRAGMA foreign_keys=ON");
-  }
+  sqlite.exec(systemsTableSql);
+  sqlite.exec(
+    `INSERT INTO systems__new (${insertColumns.join(", ")})
+     SELECT ${selectColumns.join(", ")} FROM systems`,
+  );
+  sqlite.exec("DROP TABLE systems");
+  sqlite.exec("ALTER TABLE systems__new RENAME TO systems");
+}
+
+function rebuildUpgradeBatchItemsWithinTransaction(sqlite: SqliteClient): void {
+  if (!sqliteHasTable(sqlite, "upgrade_batch_items")) return;
+  sqlite.exec(`
+    CREATE TABLE upgrade_batch_items__new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id INTEGER NOT NULL REFERENCES upgrade_batches(id) ON DELETE CASCADE,
+      system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+      group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
+      group_sort_order INTEGER NOT NULL DEFAULT 0,
+      system_sort_order INTEGER NOT NULL DEFAULT 0,
+      default_upgrade_mode_override TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      command TEXT,
+      pkg_manager TEXT NOT NULL DEFAULT 'system',
+      history_id INTEGER REFERENCES update_history(id) ON DELETE SET NULL,
+      current_pkg_manager TEXT,
+      current_command TEXT,
+      remote_pid INTEGER,
+      remote_log_file TEXT,
+      remote_exit_file TEXT,
+      remote_script_file TEXT,
+      pre_upgrade_update_count INTEGER,
+      error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at TEXT,
+      completed_at TEXT
+    )
+  `);
+  const columns = [
+    "id", "batch_id", "system_id", "group_id", "group_sort_order", "system_sort_order",
+    "default_upgrade_mode_override", "status", "command", "pkg_manager", "history_id",
+    "current_pkg_manager", "current_command", "remote_pid", "remote_log_file", "remote_exit_file",
+    "remote_script_file", "pre_upgrade_update_count", "error", "created_at", "started_at", "completed_at",
+  ];
+  sqlite.exec(
+    `INSERT INTO upgrade_batch_items__new (${columns.join(", ")})
+     SELECT ${columns.join(", ")} FROM upgrade_batch_items`,
+  );
+  sqlite.exec("DROP TABLE upgrade_batch_items");
+  sqlite.exec("ALTER TABLE upgrade_batch_items__new RENAME TO upgrade_batch_items");
 }
 
 function migrateNotificationSettings(

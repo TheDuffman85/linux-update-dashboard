@@ -1,0 +1,120 @@
+{
+  "format": "ludash.custom-package-manager.v1",
+  "exportedAt": "2026-08-02T00:00:00.000Z",
+  "packageManager": {
+    "name": "docker-compose",
+    "label": "Docker Compose",
+    "parserConfig": null,
+    "configEntries": [
+      {
+        "key": "dockerCommand",
+        "description": "Docker executable used to run Docker Compose commands.",
+        "defaultValue": "docker"
+      },
+      {
+        "key": "projectPath",
+        "description": "Directory containing the Compose file. Import this bundle under another key to manage more than one project on a system.",
+        "defaultValue": "~/docker-compose"
+      }
+    ]
+  },
+  "scripts": [
+    {
+      "name": "Check Docker Compose Updates",
+      "description": "Pulls pullable service images into Docker's local cache and reports running services whose image ID changed. Containers are not restarted.",
+      "type": "package_manager",
+      "operation": "check_updates",
+      "pkgManager": "docker-compose",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Check Docker Compose service images",
+          "command": "docker_cmd=\"{{config.dockerCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$docker_cmd\" ] || docker_cmd=docker\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\nservices=\"$(\"$docker_cmd\" compose config --services)\" || exit $?\nimage_format=\"$(printf '{''{.Image}''}')\"\nid_format=\"$(printf '{''{.Id}''}')\"\nbefore_file=\"$(mktemp)\" || exit $?\ntrap 'rm -f \"$before_file\"' EXIT HUP INT TERM\nfor service in $services; do\n  container_id=\"$(\"$docker_cmd\" compose ps -q \"$service\")\"\n  [ -n \"$container_id\" ] || continue\n  current_id=\"$(\"$docker_cmd\" inspect --format \"$image_format\" \"$container_id\" 2>/dev/null)\"\n  [ -n \"$current_id\" ] && printf '%s %s\\n' \"$service\" \"$current_id\" >> \"$before_file\"\ndone\n\"$docker_cmd\" compose pull --quiet --ignore-buildable\nfor service in $services; do\n  current_id=\"$(awk -v name=\"$service\" '$1 == name { print $2; exit }' \"$before_file\")\"\n  [ -n \"$current_id\" ] || continue\n  image_ref=\"$(\"$docker_cmd\" compose config --images \"$service\" | head -n 1)\"\n  [ -n \"$image_ref\" ] || continue\n  latest_id=\"$(\"$docker_cmd\" image inspect --format \"$id_format\" \"$image_ref\" 2>/dev/null)\"\n  if [ -n \"$latest_id\" ] && [ \"$current_id\" != \"$latest_id\" ]; then\n    current_version=\"$(printf '%s' \"${current_id#sha256:}\" | cut -c1-12)\"\n    latest_version=\"$(printf '%s' \"${latest_id#sha256:}\" | cut -c1-12)\"\n    printf 'LUDASH_UPDATE %s %s %s\\n' \"$service\" \"$current_version\" \"$latest_version\"\n  fi\ndone"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "updateRegex": "^LUDASH_UPDATE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<newVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Detect Docker Compose",
+      "description": "Checks whether Docker Compose can read the configured project.",
+      "type": "package_manager",
+      "operation": "detect",
+      "pkgManager": "docker-compose",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Detect Docker Compose project",
+          "command": "docker_cmd=\"{{config.dockerCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$docker_cmd\" ] || docker_cmd=docker\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncommand -v \"$docker_cmd\" >/dev/null 2>&1 && cd \"$project_path\" && \"$docker_cmd\" compose version >/dev/null 2>&1 && \"$docker_cmd\" compose config --services >/dev/null 2>&1 && echo found"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "List Docker Compose Services",
+      "description": "Reports running Compose services and the image IDs used by their containers.",
+      "type": "package_manager",
+      "operation": "list_installed_packages",
+      "pkgManager": "docker-compose",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "List Docker Compose services",
+          "command": "docker_cmd=\"{{config.dockerCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$docker_cmd\" ] || docker_cmd=docker\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\nservices=\"$(\"$docker_cmd\" compose config --services)\" || exit $?\nimage_format=\"$(printf '{''{.Image}''}')\"\nfor service in $services; do\n  container_id=\"$(\"$docker_cmd\" compose ps -q \"$service\")\"\n  [ -n \"$container_id\" ] || continue\n  image_id=\"$(\"$docker_cmd\" inspect --format \"$image_format\" \"$container_id\" 2>/dev/null)\"\n  [ -n \"$image_id\" ] || continue\n  version=\"$(printf '%s' \"${image_id#sha256:}\" | cut -c1-12)\"\n  printf 'LUDASH_PACKAGE %s %s\\n' \"$service\" \"$version\"\ndone"
+        }
+      ],
+      "parserConfig": {
+        "parseStep": 0,
+        "successExitCodes": [
+          0
+        ],
+        "installedPackageRegex": "^LUDASH_PACKAGE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)$"
+      },
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update All Docker Compose Services",
+      "description": "Pulls pullable images and recreates the Compose project with the new images.",
+      "type": "package_manager",
+      "operation": "upgrade_all",
+      "pkgManager": "docker-compose",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update Docker Compose services",
+          "command": "docker_cmd=\"{{config.dockerCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$docker_cmd\" ] || docker_cmd=docker\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\n\"$docker_cmd\" compose pull --quiet --ignore-buildable\n\"$docker_cmd\" compose up -d --remove-orphans"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    },
+    {
+      "name": "Update Selected Docker Compose Services",
+      "description": "Pulls and recreates only the selected Compose services, including their declared dependencies.",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "docker-compose",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Update selected Docker Compose services",
+          "command": "docker_cmd=\"{{config.dockerCommand}}\"\nproject_path=\"{{config.projectPath}}\"\n[ -n \"$docker_cmd\" ] || docker_cmd=docker\ncase \"$project_path\" in \"~/\"*) project_path=\"$HOME/${project_path#??}\" ;; esac\ncd \"$project_path\"\n\"$docker_cmd\" compose pull --quiet --ignore-buildable --include-deps {{quotedPackages}}\n\"$docker_cmd\" compose up -d {{quotedPackages}}"
+        }
+      ],
+      "parserConfig": null,
+      "systemInfoConfig": null,
+      "sourceScriptId": null
+    }
+  ]
+}

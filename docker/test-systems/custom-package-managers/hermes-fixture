@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+STATE_DIR="${LUDASH_CUSTOM_PM_STATE_DIR:-$HOME/.local/state/ludash-custom-package-managers}"
+VERSION_FILE="$STATE_DIR/hermes-version"
+
+if [ ! -f "$VERSION_FILE" ]; then
+  echo "Hermes fixture state is not initialized" >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  version|--version)
+    printf 'Hermes Agent %s\n' "$(cat "$VERSION_FILE")"
+    ;;
+  update)
+    case " $* " in
+      *" --check "*)
+        if [ "$(cat "$VERSION_FILE")" = "1.1.0" ]; then
+          echo "Hermes Agent is up to date"
+        else
+          echo "Update available: 1 commit behind 1.1.0"
+        fi
+        ;;
+      *)
+        printf '1.1.0\n' > "$VERSION_FILE"
+        echo "Updated Hermes Agent to 1.1.0"
+        ;;
+    esac
+    ;;
+  doctor)
+    echo "Hermes Agent installation healthy"
+    ;;
+  gateway)
+    if [ "${2:-}" != "status" ]; then
+      echo "Unsupported Hermes gateway fixture command: ${2:-}" >&2
+      exit 2
+    fi
+    echo "Hermes gateway running"
+    ;;
+  *)
+    echo "Unsupported Hermes fixture command: ${1:-}" >&2
+    exit 2
+    ;;
+esac

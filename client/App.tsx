@@ -1,5 +1,6 @@
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useEffect, useRef } from "react";
 import { Routes, Route, Navigate } from "react-router";
+import { BackToTop } from "./components/BackToTop";
 import { useAuth } from "./context/AuthContext";
 import { useToast } from "./context/ToastContext";
 import {
@@ -128,6 +129,7 @@ function PermanentLanguagePrompt() {
 export default function App() {
   const { loading, setupRequired, user, backendUnavailable } = useAuth();
   const { t } = useI18n();
+  const pageTopRef = useRef<HTMLDivElement | null>(null);
 
   if (loading) {
     return <PageLoader message={backendUnavailable ? t("app.reconnectingToBackend") : undefined} />;
@@ -135,6 +137,11 @@ export default function App() {
 
   return (
     <Suspense fallback={<PageLoader />}>
+      <div
+        ref={pageTopRef}
+        className="pointer-events-none absolute left-0 top-80 h-px w-px"
+        aria-hidden="true"
+      />
       <PermanentLanguagePrompt />
       <Routes>
         <Route
@@ -215,6 +222,7 @@ export default function App() {
         />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
+      <BackToTop visibilityTargetRef={pageTopRef} />
     </Suspense>
   );
 }

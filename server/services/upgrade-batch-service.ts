@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { systems, updateHistory, upgradeBatchItems, upgradeBatches, upgradeGroups } from "../db/schema";
+import { dashboardGroups, systems, updateHistory, upgradeBatchItems, upgradeBatches } from "../db/schema";
 import { sanitizeCommand, sanitizeOutput } from "../utils/sanitize";
 import * as systemService from "./system-service";
 import * as updateService from "./update-service";
@@ -112,9 +112,9 @@ export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?
 
   const normalized = validateBatchItems(items);
   const db = getDb();
-  const groupRows = db.select().from(upgradeGroups).all();
+  const groupRows = db.select().from(dashboardGroups).all();
   const groupsById = new Map(groupRows.map((group) => [group.id, group]));
-  const ungroupedSortOrder = systemService.getUngroupedUpgradeGroupSortOrder();
+  const ungroupedSortOrder = systemService.getUngroupedDashboardGroupSortOrder();
   const systemsById = new Map(
     db
       .select()
@@ -134,7 +134,8 @@ export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?
   for (const item of normalized) {
     const system = systemsById.get(item.systemId);
     if (!system) continue;
-    const group = system.upgradeGroupId ? groupsById.get(system.upgradeGroupId) : undefined;
+    const group = system.dashboardGroupId ? groupsById.get(system.dashboardGroupId) : undefined;
+    const groupId = group?.id ?? null;
     const snapshot = updateService.getUpgradeAllCommandSnapshot(item.systemId, {
       defaultUpgradeModeOverride: item.defaultUpgradeModeOverride,
     });
@@ -148,9 +149,9 @@ export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?
       .values({
         batchId: batch.id,
         systemId: item.systemId,
-        groupId: system.upgradeGroupId ?? null,
+        groupId,
         groupSortOrder: group?.sortOrder ?? ungroupedSortOrder,
-        systemSortOrder: system.upgradeOrder ?? 1,
+        systemSortOrder: system.dashboardOrder ?? 1,
         defaultUpgradeModeOverride: item.defaultUpgradeModeOverride ?? null,
         status: "queued",
         command: snapshot.command,

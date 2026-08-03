@@ -1,0 +1,69 @@
+#!/bin/sh
+set -eu
+
+STATE_DIR="${LUDASH_CUSTOM_PM_STATE_DIR:-$HOME/.local/state/ludash-custom-package-managers}"
+RUNNING_VERSION="$STATE_DIR/docker-compose-running-version"
+PULLED_VERSION="$STATE_DIR/docker-compose-pulled-version"
+SERVICE=ludash-compose-fixture
+CONTAINER=ludash-compose-fixture-container
+IMAGE=ludash/docker-compose-fixture:latest
+
+require_state() {
+  if [ ! -f "$RUNNING_VERSION" ] || [ ! -f "$PULLED_VERSION" ]; then
+    echo "Docker Compose fixture state is not initialized" >&2
+    exit 1
+  fi
+}
+
+if [ "${1:-}" = "compose" ]; then
+  shift
+  case "${1:-}" in
+    version)
+      echo "Docker Compose version v2.0.0-fixture"
+      ;;
+    config)
+      case " $* " in
+        *" --services "*) echo "$SERVICE" ;;
+        *" --images "*) echo "$IMAGE" ;;
+        *) echo "name: ludash-custom-package-manager-fixture" ;;
+      esac
+      ;;
+    ps)
+      require_state
+      echo "$CONTAINER"
+      ;;
+    pull)
+      require_state
+      printf '1.1.0\n' > "$PULLED_VERSION"
+      ;;
+    up)
+      require_state
+      cp "$PULLED_VERSION" "$RUNNING_VERSION"
+      echo "Container $CONTAINER Recreated"
+      ;;
+    *)
+      echo "Unsupported Docker Compose fixture command: ${1:-}" >&2
+      exit 2
+      ;;
+  esac
+  exit 0
+fi
+
+case "${1:-}" in
+  inspect)
+    require_state
+    printf 'sha256:%s\n' "$(cat "$RUNNING_VERSION")"
+    ;;
+  image)
+    if [ "${2:-}" != "inspect" ]; then
+      echo "Unsupported Docker image fixture command: ${2:-}" >&2
+      exit 2
+    fi
+    require_state
+    printf 'sha256:%s\n' "$(cat "$PULLED_VERSION")"
+    ;;
+  *)
+    echo "Unsupported Docker fixture command: ${1:-}" >&2
+    exit 2
+    ;;
+esac

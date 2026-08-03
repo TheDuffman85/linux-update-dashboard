@@ -67,7 +67,6 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | GET    | `/api/systems/:id`                                 | System detail with updates, installed packages, issues, history, and command reference.                                       |
 | POST   | `/api/systems`                                     | Add a system. API tokens cannot use this route.                                                                               |
 | PUT    | `/api/systems/reorder`                             | Reorder systems.                                                                                                              |
-| PUT    | `/api/systems/upgrade-order`                       | Reorder the default Upgrade All system order.                                                                                 |
 | PUT    | `/api/systems/:id`                                 | Update system configuration. API tokens cannot use this route.                                                                |
 | PUT    | `/api/systems/:id/upgrade-mode`                    | Toggle the system's default full-upgrade/aggressive upgrade behavior where supported.                                         |
 | PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Include or exclude a system from Upgrade All by default.                                                                      |
@@ -86,16 +85,16 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | DELETE | `/api/systems/:id/hidden-updates/:hiddenUpdateId`  | Unhide an update.                                                                                                             |
 | POST   | `/api/systems/:id/package-issues/:issueId/dismiss` | Dismiss a visible package-manager issue.                                                                                      |
 
-## Upgrade Groups
+## Dashboard Groups
 
-| Method | Endpoint                              | Description                                                      |
-| ------ | ------------------------------------- | ---------------------------------------------------------------- |
-| GET    | `/api/systems/upgrade-groups`         | List saved Upgrade All groups and the Ungrouped position.        |
-| POST   | `/api/systems/upgrade-groups`         | Create an Upgrade All group.                                     |
-| PUT    | `/api/systems/upgrade-groups/reorder` | Reorder Upgrade All groups and Ungrouped.                        |
-| PUT    | `/api/systems/upgrade-groups/systems` | Move systems between Upgrade All groups and set per-group order. |
-| PUT    | `/api/systems/upgrade-groups/:id`     | Rename an Upgrade All group.                                     |
-| DELETE | `/api/systems/upgrade-groups/:id`     | Delete an Upgrade All group.                                     |
+| Method | Endpoint                                  | Description                                                        |
+| ------ | ----------------------------------------- | ------------------------------------------------------------------ |
+| GET    | `/api/systems/dashboard-groups`           | Return dashboard groups and the saved Ungrouped position.          |
+| POST   | `/api/systems/dashboard-groups`           | Create a dashboard organization group.                            |
+| PUT    | `/api/systems/dashboard-groups/reorder`  | Reorder with `{ groupKeys: [number..., "ungrouped"] }`; every group and Ungrouped must appear exactly once. |
+| PUT    | `/api/systems/dashboard-groups/systems`  | Assign systems to groups and persist their dashboard card order.  |
+| PUT    | `/api/systems/dashboard-groups/:id`      | Rename a dashboard organization group.                            |
+| DELETE | `/api/systems/dashboard-groups/:id`      | Delete a group and move its systems to Ungrouped.                 |
 
 ## Updates and Jobs
 

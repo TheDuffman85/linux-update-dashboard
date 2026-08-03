@@ -105,5 +105,5 @@ su - testuser -c "$SRC/reset-fixtures.sh"
 kill "$NPM_REGISTRY_PID" 2>/dev/null || true
 trap - EXIT
 
-chown -R testuser:testuser /home/testuser/ludash-npm-project /home/testuser/ludash-pip-venv /home/testuser/.npm /home/testuser/.npm-global /home/testuser/.config /home/testuser/.local
+chown -R testuser:testuser /home/testuser/ludash-npm-project /home/testuser/ludash-pip-venv /home/testuser/docker-compose /home/testuser/.npm /home/testuser/.npm-global /home/testuser/.config /home/testuser/.local
 rm -rf "$BUILD"

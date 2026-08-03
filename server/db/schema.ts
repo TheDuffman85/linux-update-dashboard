@@ -117,11 +117,11 @@ export const systems = sqliteTable("systems", {
   excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
     .notNull()
     .default(0),
-  upgradeGroupId: integer("upgrade_group_id").references(
-    (): AnySQLiteColumn => upgradeGroups.id,
+  dashboardGroupId: integer("dashboard_group_id").references(
+    (): AnySQLiteColumn => dashboardGroups.id,
     { onDelete: "set null" },
   ),
-  upgradeOrder: integer("upgrade_order").notNull().default(1),
+  dashboardOrder: integer("dashboard_order").notNull().default(0),
   hidden: integer("hidden").notNull().default(0),
   needsReboot: integer("needs_reboot").notNull().default(0),
   systemInfoUpdatedAt: text("system_info_updated_at"),
@@ -136,7 +136,7 @@ export const systems = sqliteTable("systems", {
     .default(sql`(datetime('now'))`),
 });
 
-export const upgradeGroups = sqliteTable("upgrade_groups", {
+export const dashboardGroups = sqliteTable("dashboard_groups", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   sortOrder: integer("sort_order").notNull().default(0),
@@ -307,7 +307,7 @@ export const upgradeBatchItems = sqliteTable("upgrade_batch_items", {
   systemId: integer("system_id")
     .notNull()
     .references(() => systems.id, { onDelete: "cascade" }),
-  groupId: integer("group_id").references(() => upgradeGroups.id, {
+  groupId: integer("group_id").references(() => dashboardGroups.id, {
     onDelete: "set null",
   }),
   groupSortOrder: integer("group_sort_order").notNull().default(0),

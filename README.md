@@ -33,10 +33,11 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, and custom package managers.
 - **SSH credential vault:** reusable password, key, and OpenSSH certificate credentials encrypted at rest with AES-256-GCM.
 - **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
-- **Granular maintenance:** refresh, upgrade all, grouped Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
+- **Granular maintenance:** refresh, upgrade all, dashboard-grouped Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
+- **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, and control Upgrade All execution order.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All exclusion, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
-- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, ordered upgrade groups, and schedule run history.
+- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, dashboard-controlled Upgrade All order, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
@@ -269,7 +270,7 @@ Managers are detected over SSH when testing a connection or running the first ch
 
 Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Snap does not currently expose manager-specific settings.
 
-## Scheduling and Upgrade Groups
+## Scheduling and Upgrade All ordering
 
 Schedules are managed from the **Schedules** page. Existing installs migrate to an enabled **Default refresh** schedule using the previous refresh interval and cache settings.
 
@@ -279,7 +280,7 @@ Schedules are managed from the **Schedules** page. Existing installs migrate to 
 
 Schedules use five-field cron expressions in the process timezone. Set Docker `TZ`, such as `TZ=Europe/Berlin`, for local-time scheduling. The default minimum interval is 5 minutes and can be changed with `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES`.
 
-The **Upgrade All Systems** dialog can save an ordered flow with optional groups. Systems in the same group run together; the next group starts only after the current group finishes. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
+Dashboard groups define the **Upgrade All Systems** execution order. Systems in the same dashboard group run together; the next group starts only after the current group finishes, with Ungrouped in its saved dashboard position. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
 
 Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger checks outside configured schedules. Notification channels can be assigned to multiple notification schedules.
 
@@ -326,6 +327,8 @@ Webhook delivery defaults to a 10-second timeout, 2 retries, and a 30-second ret
 ## Script Customization and Sudoers
 
 The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, and reboots.
+
+Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
 
 - Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot are read-only and can be copied.
 - Custom scripts can define shell steps, operation type, parser settings, installed-package inventory parsing, and system-info section mapping.
@@ -480,9 +483,23 @@ Shared credentials:
 | `ludash-test-dnf-eula-prompt` | 2014 | DNF EULA prompt fixture | Fedora 41 |
 | `ludash-test-apt-dpkg-interrupted` | 2015 | APT interrupted dpkg fixture | Debian 12 |
 | `ludash-test-ubuntu-root` | 2016 | APT root-login/full sudo fixture | Ubuntu 24.04 |
-| `ludash-test-custom-package-managers` | 2017 | npm/pip/pipx custom fixtures | Ubuntu 24.04 |
+| `ludash-test-custom-package-managers` | 2017 | All custom package-manager examples | Ubuntu 24.04 |
 
 Fixtures pin older package versions from archived or local repositories while current repos stay active, so package-manager checks report deterministic pending updates. Special fixtures cover kept-back packages, partial multi-manager failures, DNF GPG prompts, DNF EULA prompts, interrupted dpkg repair, root-login behavior, and custom package manager examples in [`examples/`](examples/).
+
+The custom package-manager container uses local npm/Python repositories and deterministic Docker Compose/Hermes command fixtures. Build it and run every example end to end with:
+
+```bash
+docker compose -f docker/test-systems/docker-compose.yml up -d --build custom-package-managers
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/custom-package-manager-examples.integration.test.ts
+```
+
+Import the JSON bundles from [`examples/`](examples/) on the dashboard's **Scripts** page. Then add the container as `localhost:2017` with `testuser` / `testpass`, disable its built-in APT manager, and run a check. Every custom example reports one update from `1.0.0` to its fixture target; **Upgrade all** installs them through the same persistent SSH workflow used for normal systems. Reset all fixtures to `1.0.0` whenever you want to repeat the test:
+
+```bash
+docker exec -u testuser ludash-test-custom-package-managers \
+  /opt/ludash-custom-package-managers/reset-fixtures.sh
+```
 
 Most test users are restricted through least-privilege sudoers allowlists in [`docker/test-systems/sudoers/`](docker/test-systems/sudoers/). Selected-package operations use reviewed argument wildcards only where a fixture needs them.
 

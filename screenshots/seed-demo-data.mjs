@@ -49,7 +49,7 @@ const tables = [
   "installed_package_cache",
   "update_cache",
   "systems",
-  "upgrade_groups",
+  "dashboard_groups",
   "credentials",
 ];
 
@@ -100,7 +100,7 @@ insertCredential.run({
 });
 
 db.prepare(`
-  INSERT INTO upgrade_groups (id, name, sort_order, created_at, updated_at)
+  INSERT INTO dashboard_groups (id, name, sort_order, created_at, updated_at)
   VALUES (1, 'Core Services', 1, @now, @now), (2, 'Edge Nodes', 2, @now, @now)
 `).run({ now });
 
@@ -112,7 +112,7 @@ const insertSystem = db.prepare(`
     detected_pkg_managers, disabled_pkg_managers, pkg_manager_configs,
     auto_hide_kept_back_updates, os_name, os_version, kernel, hostname_remote,
     uptime, uptime_seconds, arch, cpu_cores, memory, disk, boot_id,
-    exclude_from_upgrade_all, upgrade_group_id, upgrade_order, hidden,
+    exclude_from_upgrade_all, dashboard_group_id, dashboard_order, hidden,
     needs_reboot, system_info_updated_at, is_reachable, last_seen_at,
     created_at, updated_at
   ) VALUES (
@@ -122,7 +122,7 @@ const insertSystem = db.prepare(`
     @detectedPkgManagers, @disabledPkgManagers, @pkgManagerConfigs,
     @autoHideKeptBackUpdates, @osName, @osVersion, @kernel, @hostnameRemote,
     @uptime, @uptimeSeconds, @arch, @cpuCores, @memory, @disk, @bootId,
-    @excludeFromUpgradeAll, @upgradeGroupId, @upgradeOrder, @hidden,
+    @excludeFromUpgradeAll, @dashboardGroupId, @dashboardOrder, @hidden,
     @needsReboot, @systemInfoUpdatedAt, @isReachable, @lastSeenAt,
     @createdAt, @updatedAt
   )
@@ -168,8 +168,8 @@ const baseSystem = {
     memory: "7.7 GiB",
     disk: "68% of 120 GiB",
     bootId: "boot-web-01",
-    upgradeGroupId: 1,
-    upgradeOrder: 1,
+    dashboardGroupId: 1,
+    dashboardOrder: 1,
     needsReboot: 1,
     isReachable: 1,
     lastSeenAt: recent,
@@ -195,8 +195,8 @@ const baseSystem = {
     memory: "31.2 GiB",
     disk: "41% of 500 GiB",
     bootId: "boot-db-01",
-    upgradeGroupId: 1,
-    upgradeOrder: 2,
+    dashboardGroupId: 1,
+    dashboardOrder: 2,
     needsReboot: 0,
     isReachable: 1,
     lastSeenAt: recent,
@@ -222,8 +222,8 @@ const baseSystem = {
     memory: "15.5 GiB",
     disk: "53% of 240 GiB",
     bootId: "boot-edge-arch",
-    upgradeGroupId: 2,
-    upgradeOrder: 1,
+    dashboardGroupId: 2,
+    dashboardOrder: 1,
     needsReboot: 0,
     isReachable: 1,
     lastSeenAt: recent,
@@ -255,8 +255,8 @@ const baseSystem = {
     memory: "3.8 GiB",
     disk: "72% of 80 GiB",
     bootId: "boot-backup",
-    upgradeGroupId: 2,
-    upgradeOrder: 2,
+    dashboardGroupId: 2,
+    dashboardOrder: 2,
     needsReboot: 0,
     isReachable: 0,
     lastSeenAt: "2026-06-05 06:40:00",

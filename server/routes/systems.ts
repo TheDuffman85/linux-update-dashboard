@@ -168,7 +168,7 @@ function parseSystemIdList(value: unknown): number[] | null {
   return ids as number[];
 }
 
-function parseUpgradeGroupOrder(value: unknown): Array<number | "ungrouped"> | null {
+function parseDashboardGroupOrder(value: unknown): Array<number | "ungrouped"> | null {
   if (!Array.isArray(value)) return null;
 
   const keys: Array<number | "ungrouped"> = [];
@@ -184,9 +184,9 @@ function parseUpgradeGroupOrder(value: unknown): Array<number | "ungrouped"> | n
   return keys;
 }
 
-function parseSystemUpgradeGroupItems(value: unknown): Array<{ systemId: number; groupId: number | null; upgradeOrder: number }> | null {
+function parseSystemDashboardGroupItems(value: unknown): Array<{ systemId: number; groupId: number | null; dashboardOrder: number }> | null {
   if (!Array.isArray(value)) return null;
-  const items: Array<{ systemId: number; groupId: number | null; upgradeOrder: number }> = [];
+  const items: Array<{ systemId: number; groupId: number | null; dashboardOrder: number }> = [];
   for (const entry of value) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
     const raw = entry as Record<string, unknown>;
@@ -195,10 +195,10 @@ function parseSystemUpgradeGroupItems(value: unknown): Array<{ systemId: number;
       raw.groupId === null || raw.groupId === undefined
         ? null
         : parseId(String(raw.groupId));
-    const upgradeOrder = Number(raw.upgradeOrder);
+    const dashboardOrder = Number(raw.dashboardOrder);
     if (!systemId || (raw.groupId !== null && raw.groupId !== undefined && !groupId)) return null;
-    if (!Number.isInteger(upgradeOrder) || upgradeOrder <= 0) return null;
-    items.push({ systemId, groupId, upgradeOrder });
+    if (!Number.isInteger(dashboardOrder) || dashboardOrder <= 0) return null;
+    items.push({ systemId, groupId, dashboardOrder });
   }
   return items;
 }
@@ -441,60 +441,58 @@ function getLastCheckMap(systemIds: number[]): Map<number, updateService.LastChe
   return updateService.getLatestCompletedChecks(systemIds);
 }
 
-systems.get("/upgrade-groups", (c) => {
+systems.get("/dashboard-groups", (c) => {
   return c.json({
-    groups: systemService.listUpgradeGroups(),
-    ungroupedSortOrder: systemService.getUngroupedUpgradeGroupSortOrder(),
+    groups: systemService.listDashboardGroups(),
+    ungroupedSortOrder: systemService.getUngroupedDashboardGroupSortOrder(),
   });
 });
 
-systems.post("/upgrade-groups", async (c) => {
+systems.post("/dashboard-groups", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body || typeof body.name !== "string") {
     return c.json({ error: "name is required" }, 400);
   }
   try {
-    const id = systemService.createUpgradeGroup(body.name);
+    const id = systemService.createDashboardGroup(body.name);
     return c.json({ id }, 201);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to create upgrade group";
+    const message = error instanceof Error ? error.message : "Failed to create dashboard group";
     return c.json({ error: message }, 400);
   }
 });
 
-systems.put("/upgrade-groups/reorder", async (c) => {
+systems.put("/dashboard-groups/reorder", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) return c.json({ error: "Invalid request body" }, 400);
-  const groupKeys = parseUpgradeGroupOrder(body.groupKeys ?? body.groupIds);
-  if (!groupKeys) {
-    return c.json({ error: "groupKeys must include group IDs and Ungrouped" }, 400);
-  }
+  const groupKeys = parseDashboardGroupOrder(body.groupKeys);
+  if (!groupKeys) return c.json({ error: "groupKeys must include group IDs and Ungrouped" }, 400);
   try {
-    systemService.reorderUpgradeGroups(groupKeys);
+    systemService.reorderDashboardGroups(groupKeys);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to reorder upgrade groups";
+    const message = error instanceof Error ? error.message : "Failed to reorder dashboard groups";
     return c.json({ error: message }, 400);
   }
   return c.json({ status: "ok" });
 });
 
-systems.put("/upgrade-groups/systems", async (c) => {
+systems.put("/dashboard-groups/systems", async (c) => {
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) return c.json({ error: "Invalid request body" }, 400);
-  const items = parseSystemUpgradeGroupItems(body.items);
+  const items = parseSystemDashboardGroupItems(body.items);
   if (!items) {
-    return c.json({ error: "items must include systemId, groupId, and upgradeOrder" }, 400);
+    return c.json({ error: "items must include systemId, groupId, and dashboardOrder" }, 400);
   }
   try {
-    systemService.moveSystemsForUpgradeGroups(items);
+    systemService.moveSystemsForDashboardGroups(items);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to update upgrade group systems";
+    const message = error instanceof Error ? error.message : "Failed to update dashboard groups";
     return c.json({ error: message }, 400);
   }
   return c.json({ status: "ok" });
 });
 
-systems.put("/upgrade-groups/:id", async (c) => {
+systems.put("/dashboard-groups/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid group ID" }, 400);
   const body = asObject(await c.req.json().catch(() => null));
@@ -502,22 +500,22 @@ systems.put("/upgrade-groups/:id", async (c) => {
     return c.json({ error: "name is required" }, 400);
   }
   try {
-    systemService.updateUpgradeGroup(id, body.name);
+    systemService.updateDashboardGroup(id, body.name);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to update upgrade group";
-    return c.json({ error: message }, error instanceof Error && error.message.includes("not found") ? 404 : 400);
+    const message = error instanceof Error ? error.message : "Failed to update dashboard group";
+    return c.json({ error: message }, error instanceof Error && message.includes("not found") ? 404 : 400);
   }
   return c.json({ status: "ok" });
 });
 
-systems.delete("/upgrade-groups/:id", async (c) => {
+systems.delete("/dashboard-groups/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid group ID" }, 400);
   try {
-    systemService.deleteUpgradeGroup(id);
+    systemService.deleteDashboardGroup(id);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to delete upgrade group";
-    return c.json({ error: message }, error instanceof Error && error.message.includes("not found") ? 404 : 400);
+    const message = error instanceof Error ? error.message : "Failed to delete dashboard group";
+    return c.json({ error: message }, error instanceof Error && message.includes("not found") ? 404 : 400);
   }
   return c.json({ status: "ok" });
 });
@@ -850,27 +848,6 @@ systems.put("/reorder", async (c) => {
     systemService.reorderSystems(systemIds);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to reorder systems";
-    return c.json({ error: message }, 400);
-  }
-
-  return c.json({ status: "ok" });
-});
-
-systems.put("/upgrade-order", async (c) => {
-  const body = asObject(await c.req.json().catch(() => null));
-  if (!body) {
-    return c.json({ error: "Invalid request body" }, 400);
-  }
-  const systemIds = parseSystemIdList(body.systemIds);
-
-  if (!systemIds) {
-    return c.json({ error: "systemIds must be an array of positive integers" }, 400);
-  }
-
-  try {
-    systemService.reorderSystemUpgradeOrder(systemIds);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to reorder system upgrade order";
     return c.json({ error: message }, 400);
   }
 

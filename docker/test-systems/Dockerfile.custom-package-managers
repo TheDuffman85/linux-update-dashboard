@@ -21,7 +21,11 @@ RUN useradd -m -s /bin/bash testuser && \
 COPY custom-package-managers /opt/ludash-custom-package-managers
 RUN chmod 755 /opt/ludash-custom-package-managers/entrypoint.sh \
       /opt/ludash-custom-package-managers/prepare-fixtures.sh \
-      /opt/ludash-custom-package-managers/reset-fixtures.sh && \
+      /opt/ludash-custom-package-managers/reset-fixtures.sh \
+      /opt/ludash-custom-package-managers/docker-fixture \
+      /opt/ludash-custom-package-managers/hermes-fixture && \
+    install -m 755 /opt/ludash-custom-package-managers/docker-fixture /usr/local/bin/docker && \
+    install -m 755 /opt/ludash-custom-package-managers/hermes-fixture /usr/local/bin/hermes && \
     /opt/ludash-custom-package-managers/prepare-fixtures.sh
 
 RUN ssh-keygen -A

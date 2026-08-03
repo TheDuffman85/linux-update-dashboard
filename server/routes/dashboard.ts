@@ -33,8 +33,33 @@ function hasLifecycleWarning(system: { osLifecycleStatus?: string | null }): boo
   );
 }
 
+function listDashboardSystems() {
+  const groupOrderById = new Map(
+    systemService.listDashboardGroups().map((group) => [group.id, group.sortOrder]),
+  );
+  const ungroupedSortOrder = systemService.getUngroupedDashboardGroupSortOrder();
+
+  return systemService.listVisibleSystemsWithUpdateCounts().sort((a, b) => {
+    const groupOrderA =
+      a.dashboardGroupId !== null
+        ? groupOrderById.get(a.dashboardGroupId) ?? ungroupedSortOrder
+        : ungroupedSortOrder;
+    const groupOrderB =
+      b.dashboardGroupId !== null
+        ? groupOrderById.get(b.dashboardGroupId) ?? ungroupedSortOrder
+        : ungroupedSortOrder;
+
+    return (
+      groupOrderA - groupOrderB ||
+      a.dashboardOrder - b.dashboardOrder ||
+      a.name.localeCompare(b.name) ||
+      a.id - b.id
+    );
+  });
+}
+
 dashboard.get("/stats", (c) => {
-  const allSystems = systemService.listVisibleSystemsWithUpdateCounts();
+  const allSystems = listDashboardSystems();
   const lastChecks = updateService.getLatestCompletedChecks(
     allSystems.map((system) => system.id),
   );
@@ -74,7 +99,7 @@ dashboard.get("/stats", (c) => {
 });
 
 dashboard.get("/systems", (c) => {
-  const allSystems = systemService.listVisibleSystemsWithUpdateCounts();
+  const allSystems = listDashboardSystems();
   const lastChecks = updateService.getLatestCompletedChecks(
     allSystems.map((system) => system.id),
   );
