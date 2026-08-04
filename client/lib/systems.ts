@@ -72,6 +72,7 @@ export interface System {
   excludeFromUpgradeAll: number;
   dashboardGroupId: number | null;
   dashboardOrder: number;
+  updatePriority: number;
   hidden: number;
   needsReboot: number;
   isReachable: number;
@@ -446,6 +447,24 @@ export function useUpdateDashboardGroupPriority() {
       apiFetch("/systems/dashboard-groups/update-priority", {
         method: "PUT",
         body: JSON.stringify({ groupId, updatePriority }),
+      }),
+    onSuccess: () => invalidateDashboardGroupQueries(qc),
+  });
+}
+
+export function useUpdateSystemPriority() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      systemId,
+      updatePriority,
+    }: {
+      systemId: number;
+      updatePriority: number;
+    }) =>
+      apiFetch(`/systems/${systemId}/update-priority`, {
+        method: "PUT",
+        body: JSON.stringify({ updatePriority }),
       }),
     onSuccess: () => invalidateDashboardGroupQueries(qc),
   });

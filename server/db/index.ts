@@ -209,6 +209,7 @@ export function initDatabase(
     exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
     dashboard_group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
     dashboard_order INTEGER NOT NULL DEFAULT 0,
+    update_priority INTEGER NOT NULL DEFAULT 1,
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
     boot_id TEXT,
@@ -928,6 +929,20 @@ export function initDatabase(
       )
     `);
   }
+  // Systems at the same priority run in parallel within their dashboard group.
+  // Defaulting existing systems to 1 preserves the previous parallel behavior.
+  try {
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN update_priority INTEGER NOT NULL DEFAULT 1`,
+    );
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    UPDATE systems
+    SET update_priority = min(99, max(0, update_priority))
+    WHERE update_priority < 0 OR update_priority > 99
+  `);
   migrateLegacyUpgradeGroups(
     hadLegacyUpgradeGroups,
     hasIgnoreKeptBackPackages,
@@ -952,8 +967,8 @@ export function initDatabase(
   }
   _db.run(sql`
     UPDATE dashboard_groups
-    SET update_priority = min(99, max(1, update_priority))
-    WHERE update_priority < 1 OR update_priority > 99
+    SET update_priority = min(99, max(0, update_priority))
+    WHERE update_priority < 0 OR update_priority > 99
   `);
   _db.run(sql`
     INSERT INTO settings (key, value, description)
@@ -972,9 +987,9 @@ export function initDatabase(
   `);
   _db.run(sql`
     UPDATE settings
-    SET value = CAST(min(99, max(1, CAST(value AS INTEGER))) AS TEXT)
+    SET value = CAST(min(99, max(0, CAST(value AS INTEGER))) AS TEXT)
     WHERE key = 'dashboard_ungrouped_update_priority'
-      AND CAST(value AS INTEGER) NOT BETWEEN 1 AND 99
+      AND CAST(value AS INTEGER) NOT BETWEEN 0 AND 99
   `);
   migrateSystemsTableShape(
     hasIgnoreKeptBackPackages,
@@ -1695,6 +1710,7 @@ function rebuildSystemsTableWithinTransaction(
       exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
       dashboard_group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
       dashboard_order INTEGER NOT NULL DEFAULT 0,
+      update_priority INTEGER NOT NULL DEFAULT 1,
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
       boot_id TEXT,
@@ -1753,6 +1769,7 @@ function rebuildSystemsTableWithinTransaction(
     "exclude_from_upgrade_all",
     "dashboard_group_id",
     "dashboard_order",
+    "update_priority",
     "hidden",
     "needs_reboot",
     "boot_id",
@@ -1814,6 +1831,7 @@ function rebuildSystemsTableWithinTransaction(
     "exclude_from_upgrade_all",
     "dashboard_group_id",
     "dashboard_order",
+    "update_priority",
     "hidden",
     "needs_reboot",
     "boot_id",

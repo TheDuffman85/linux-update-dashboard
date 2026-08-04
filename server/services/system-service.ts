@@ -366,7 +366,7 @@ export function getUngroupedDashboardGroupUpdatePriority(): number {
     .where(eq(settings.key, DASHBOARD_UNGROUPED_UPDATE_PRIORITY_KEY))
     .get()?.value;
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 99
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 99
     ? parsed
     : Math.min(99, Math.max(1, getUngroupedDashboardGroupSortOrder() + 1));
 }
@@ -377,10 +377,10 @@ export function updateDashboardGroupPriority(
 ): void {
   if (
     !Number.isSafeInteger(updatePriority) ||
-    updatePriority < 1 ||
+    updatePriority < 0 ||
     updatePriority > 99
   ) {
-    throw new Error("Upgrade priority must be an integer from 1 to 99");
+    throw new Error("Upgrade priority must be an integer from 0 to 99");
   }
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const db = getDb();
@@ -404,6 +404,29 @@ export function updateDashboardGroupPriority(
     .where(eq(dashboardGroups.id, groupId))
     .run();
   if (result.changes === 0) throw new Error("Dashboard group not found");
+}
+
+export function updateSystemPriority(
+  systemId: number,
+  updatePriority: number,
+): void {
+  if (
+    !Number.isSafeInteger(updatePriority) ||
+    updatePriority < 0 ||
+    updatePriority > 99
+  ) {
+    throw new Error("Upgrade priority must be an integer from 0 to 99");
+  }
+
+  const result = getDb()
+    .update(systems)
+    .set({
+      updatePriority,
+      updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+  if (result.changes === 0) throw new Error("System not found");
 }
 
 export function reorderDashboardGroups(groupKeys: Array<number | "ungrouped">): void {

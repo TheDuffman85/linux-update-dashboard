@@ -204,7 +204,7 @@ describe("systems reorder route", () => {
     const updatePriority = await app.request("/api/systems/dashboard-groups/update-priority", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId: alpha.id, updatePriority: 4 }),
+      body: JSON.stringify({ groupId: alpha.id, updatePriority: 0 }),
     });
     const updateUngroupedPriority = await app.request("/api/systems/dashboard-groups/update-priority", {
       method: "PUT",
@@ -214,7 +214,7 @@ describe("systems reorder route", () => {
     const priorityTooLow = await app.request("/api/systems/dashboard-groups/update-priority", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId: alpha.id, updatePriority: 0 }),
+      body: JSON.stringify({ groupId: alpha.id, updatePriority: -1 }),
     });
     const priorityTooHigh = await app.request("/api/systems/dashboard-groups/update-priority", {
       method: "PUT",
@@ -239,7 +239,7 @@ describe("systems reorder route", () => {
     };
     expect(groupConfig.ungroupedSortOrder).toBe(2);
     expect(groupConfig.ungroupedUpdatePriority).toBe(4);
-    expect(groupConfig.groups.find((group) => group.id === alpha.id)?.updatePriority).toBe(4);
+    expect(groupConfig.groups.find((group) => group.id === alpha.id)?.updatePriority).toBe(0);
     const rows = db.select({ name: systems.name, groupId: systems.dashboardGroupId, order: systems.dashboardOrder }).from(systems).all();
     expect(Object.fromEntries(rows.map((row) => [row.name, { groupId: row.groupId, order: row.order }]))).toEqual({
       Alpha: { groupId: alpha.id, order: 2 },
@@ -302,6 +302,40 @@ describe("systems reorder route", () => {
         .all()
         .map((row) => row.name),
     ).toEqual(["Bravo", "Alpha"]);
+  });
+
+  test("updates and validates a system upgrade priority", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Alpha",
+      hostname: "alpha.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get();
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const updated = await app.request(`/api/systems/${inserted.id}/update-priority`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updatePriority: 0 }),
+    });
+    const invalid = await app.request(`/api/systems/${inserted.id}/update-priority`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updatePriority: 100 }),
+    });
+    const missing = await app.request("/api/systems/99999/update-priority", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updatePriority: 2 }),
+    });
+
+    expect(updated.status).toBe(200);
+    expect(invalid.status).toBe(400);
+    expect(missing.status).toBe(404);
+    expect(db.select({ updatePriority: systems.updatePriority }).from(systems).where(eq(systems.id, inserted.id)).get()?.updatePriority).toBe(0);
   });
 
   test("reorders Ungrouped at the beginning and end", async () => {

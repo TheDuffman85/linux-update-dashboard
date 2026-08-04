@@ -12,6 +12,7 @@ const {
   mockUseCreateDashboardGroup,
   mockUseUpdateDashboardGroup,
   mockUseUpdateDashboardGroupPriority,
+  mockUseUpdateSystemPriority,
   mockUseDeleteDashboardGroup,
   mockUseReorderDashboardGroups,
   mockUseUpdateSystemDashboardGroups,
@@ -28,6 +29,7 @@ const {
   mockUseCreateDashboardGroup: vi.fn(),
   mockUseUpdateDashboardGroup: vi.fn(),
   mockUseUpdateDashboardGroupPriority: vi.fn(),
+  mockUseUpdateSystemPriority: vi.fn(),
   mockUseDeleteDashboardGroup: vi.fn(),
   mockUseReorderDashboardGroups: vi.fn(),
   mockUseUpdateSystemDashboardGroups: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock("../../client/lib/systems", () => ({
   useCreateDashboardGroup: mockUseCreateDashboardGroup,
   useUpdateDashboardGroup: mockUseUpdateDashboardGroup,
   useUpdateDashboardGroupPriority: mockUseUpdateDashboardGroupPriority,
+  useUpdateSystemPriority: mockUseUpdateSystemPriority,
   useDeleteDashboardGroup: mockUseDeleteDashboardGroup,
   useReorderDashboardGroups: mockUseReorderDashboardGroups,
   useUpdateSystemDashboardGroups: mockUseUpdateSystemDashboardGroups,
@@ -68,7 +71,15 @@ vi.mock("../../client/context/UpgradeContext", () => ({
 }));
 
 vi.mock("../../client/components/Layout", () => ({
-  Layout: ({ title, actions, children }: { title: ReactNode; actions?: ReactNode; children: ReactNode }) => (
+  Layout: ({
+    title,
+    actions,
+    children,
+  }: {
+    title: ReactNode;
+    actions?: ReactNode;
+    children: ReactNode;
+  }) => (
     <div>
       <div>{title}</div>
       <div>{actions}</div>
@@ -80,6 +91,7 @@ vi.mock("../../client/components/Layout", () => ({
 import Dashboard, {
   canToggleUpgradePreset,
   compareUpgradeModalGroups,
+  compareUpgradeModalSystems,
   getDashboardUpgradeToast,
   isUpgradeAllSubmitDisabled,
   isUpgradePresetSelected,
@@ -149,7 +161,10 @@ describe("Dashboard", () => {
       dataUpdatedAt: Date.now(),
     });
     mockUseRefreshCache.mockReturnValue({ mutate: vi.fn(), isPending: false });
-    mockUseUpgradeAllBatch.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    mockUseUpgradeAllBatch.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    });
     mockUseDashboardGroups.mockReturnValue({
       data: {
         groups: [],
@@ -157,14 +172,50 @@ describe("Dashboard", () => {
         ungroupedUpdatePriority: 99,
       },
     });
-    mockUseCreateDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
-    mockUseUpdateDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
-    mockUseUpdateDashboardGroupPriority.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
-    mockUseDeleteDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
-    mockUseReorderDashboardGroups.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
-    mockUseUpdateSystemDashboardGroups.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
-    mockUseUpdateSystemUpgradeAllExclusion.mockReturnValue({ mutate: vi.fn(), isPending: false });
-    mockUseUpdateSystemUpgradeMode.mockReturnValue({ mutate: vi.fn(), isPending: false, variables: undefined });
+    mockUseCreateDashboardGroup.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    mockUseUpdateDashboardGroup.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    mockUseUpdateDashboardGroupPriority.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    mockUseUpdateSystemPriority.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    mockUseDeleteDashboardGroup.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    mockUseReorderDashboardGroups.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    mockUseUpdateSystemDashboardGroups.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+    });
+    mockUseUpdateSystemUpgradeAllExclusion.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    });
+    mockUseUpdateSystemUpgradeMode.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      variables: undefined,
+    });
     mockUseToast.mockReturnValue({ addToast: vi.fn() });
     mockUseUpgrade.mockReturnValue({
       upgradeAll: vi.fn(),
@@ -184,6 +235,27 @@ describe("Dashboard", () => {
 
     expect(html).toContain("Upgrade All");
     expect(html).not.toContain("Upgrade All (7)");
+  });
+
+  test("keeps the Upgrade All launcher available when no systems currently qualify", () => {
+    const current = mockUseDashboardSystems();
+    mockUseDashboardSystems.mockReturnValue({
+      ...current,
+      data: current.data.map((system: System) => ({
+        ...system,
+        updateCount: 0,
+      })),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(
+      false,
+    );
   });
 
   test("renders the dashboard summary cards", () => {
@@ -277,7 +349,8 @@ describe("Dashboard", () => {
           osLifecycleEolDate: "2030-06-30",
           osLifecycleDaysUntilEol: 1491,
           osLifecycleDaysUntilSupportEnd: 23,
-          osLifecycleLabel: "Debian 13 security support ends in 23 days; LTS until 2030-06-30",
+          osLifecycleLabel:
+            "Debian 13 security support ends in 23 days; LTS until 2030-06-30",
           cacheAge: null,
           cacheTimestamp: null,
           isStale: false,
@@ -306,7 +379,7 @@ describe("Dashboard", () => {
     expect(html).not.toContain("23d");
   });
 
-  test("shows active upgrades without disabling the dashboard upgrade modal launcher", () => {
+  test("keeps the Upgrade All launcher available when the only updated system is busy", () => {
     mockUseDashboardSystems.mockReturnValue({
       data: [
         {
@@ -347,9 +420,64 @@ describe("Dashboard", () => {
     );
 
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Refresh All<\/button>/);
-    expect(html).toContain("Upgrading...");
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrading..."))).toBe(true);
-    expect(html).not.toContain(">Upgrade All</button>");
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(
+      false,
+    );
+  });
+
+  test("keeps Upgrade All available for idle systems while another system is busy", () => {
+    const baseSystem = {
+      hostname: "system.local",
+      port: 22,
+      osName: "Debian",
+      isReachable: 1,
+      updateCount: 7,
+      securityCount: 0,
+      keptBackCount: 0,
+      cacheAge: null,
+      cacheTimestamp: null,
+      isStale: false,
+      lastCheck: null,
+      excludeFromUpgradeAll: 0,
+      dashboardGroupId: null,
+      pkgManager: "apt",
+      detectedPkgManagers: ["apt"],
+      disabledPkgManagers: [],
+      pkgManagerConfigs: null,
+      supportsFullUpgrade: true,
+    };
+    mockUseDashboardSystems.mockReturnValue({
+      data: [
+        {
+          ...baseSystem,
+          id: 1,
+          name: "Busy",
+          dashboardOrder: 1,
+          activeOperation: {
+            type: "check",
+            startedAt: "2026-05-18 10:00:00",
+          },
+        },
+        {
+          ...baseSystem,
+          id: 2,
+          name: "Idle",
+          dashboardOrder: 2,
+          activeOperation: null,
+        },
+      ],
+      dataUpdatedAt: Date.now(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(
+      false,
+    );
   });
 
   test("does not show the dashboard upgrade action as upgrading during refresh", () => {
@@ -362,8 +490,12 @@ describe("Dashboard", () => {
     );
 
     expect(html).toContain("Refreshing...");
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing..."))).toBe(true);
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(true);
+    expect(
+      hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing...")),
+    ).toBe(true);
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(
+      false,
+    );
     expect(html).not.toContain("Upgrading...");
   });
 
@@ -408,12 +540,16 @@ describe("Dashboard", () => {
     );
 
     expect(html).toContain("Refreshing...");
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing..."))).toBe(true);
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(true);
+    expect(
+      hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing...")),
+    ).toBe(true);
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(
+      false,
+    );
     expect(html).not.toContain("Upgrading...");
   });
 
-  test("disables the modal Upgrade All submit while dashboard work is running", () => {
+  test("disables the modal Upgrade All submit without a selection or during submission", () => {
     expect(isUpgradeAllSubmitDisabled(1, true)).toBe(true);
     expect(isUpgradeAllSubmitDisabled(1, false)).toBe(false);
     expect(isUpgradeAllSubmitDisabled(0, false)).toBe(true);
@@ -445,7 +581,8 @@ describe("Dashboard", () => {
     );
 
     expect(html).toContain("Production");
-    expect(html).toContain("Upgrade priority: 4");
+    expect(html).toContain("Priority: 4");
+    expect(html).toContain('class="ml-auto mr-3"');
     expect(html).toContain("bg-slate-100");
     expect(html).toContain(
       'title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."',
@@ -477,18 +614,81 @@ describe("Dashboard", () => {
     ]);
   });
 
+  test("orders systems by priority within an Upgrade All group", () => {
+    const systems = [
+      {
+        id: 1,
+        name: "First on dashboard",
+        dashboardOrder: 1,
+        updatePriority: 3,
+      },
+      {
+        id: 2,
+        name: "Second on dashboard",
+        dashboardOrder: 2,
+        updatePriority: 1,
+      },
+      {
+        id: 3,
+        name: "Third on dashboard",
+        dashboardOrder: 3,
+        updatePriority: 1,
+      },
+    ] as System[];
+
+    expect(
+      systems.sort(compareUpgradeModalSystems).map((system) => system.name),
+    ).toEqual([
+      "Second on dashboard",
+      "Third on dashboard",
+      "First on dashboard",
+    ]);
+  });
+
   test("renders dashboard groups in saved order and keeps Ungrouped last", () => {
     const systems = [
-      { id: 1, name: "Alpha", dashboardGroupId: 2, dashboardOrder: 2, sortOrder: 1 },
-      { id: 2, name: "Bravo", dashboardGroupId: null, dashboardOrder: 1, sortOrder: 2 },
-      { id: 3, name: "Charlie", dashboardGroupId: 2, dashboardOrder: 1, sortOrder: 3 },
+      {
+        id: 1,
+        name: "Alpha",
+        dashboardGroupId: 2,
+        dashboardOrder: 2,
+        sortOrder: 1,
+      },
+      {
+        id: 2,
+        name: "Bravo",
+        dashboardGroupId: null,
+        dashboardOrder: 1,
+        sortOrder: 2,
+      },
+      {
+        id: 3,
+        name: "Charlie",
+        dashboardGroupId: 2,
+        dashboardOrder: 1,
+        sortOrder: 3,
+      },
     ] as System[];
     const html = renderToStaticMarkup(
       <DashboardSystemGroups
         systems={systems}
         groups={[
-          { id: 2, name: "Production", sortOrder: 0, updatePriority: 4, createdAt: "", updatedAt: "" },
-          { id: 1, name: "Empty", sortOrder: 1, updatePriority: 8, createdAt: "", updatedAt: "" },
+          {
+            id: 2,
+            name: "Production",
+            sortOrder: 0,
+            updatePriority: 4,
+            createdAt: "",
+            updatedAt: "",
+          },
+          {
+            id: 1,
+            name: "Empty",
+            sortOrder: 1,
+            updatePriority: 8,
+            createdAt: "",
+            updatedAt: "",
+          },
         ]}
         ungroupedSortOrder={2}
         ungroupedUpdatePriority={7}
@@ -511,25 +711,47 @@ describe("Dashboard", () => {
     expect(html).toContain("Ungrouped");
     expect(html).not.toContain("Empty");
     expect(html.indexOf("Charlie")).toBeLessThan(html.indexOf("Alpha"));
-    expect(html).toContain("Upgrade priority: 4");
-    expect(html).toContain("Upgrade priority: 7");
-    expect(html).not.toContain("Upgrade priority: 8");
-    expect(html).toMatch(
-      /class="ml-auto shrink-0" data-dashboard-upgrade-priority="true" title="Lower numbers upgrade first\. Groups with the same priority upgrade in parallel\."[^>]*><span class="[^"]*bg-slate-100/,
-    );
+    expect(html).not.toContain("Priority: 4");
+    expect(html).not.toContain("Priority: 7");
+    expect(html).not.toContain("Priority: 8");
+    expect(html).not.toContain("data-dashboard-upgrade-priority");
   });
 
   test("renders Ungrouped in its saved middle position", () => {
     const systems = [
-      { id: 1, name: "Alpha", dashboardGroupId: 2, dashboardOrder: 1, sortOrder: 1 },
-      { id: 2, name: "Bravo", dashboardGroupId: null, dashboardOrder: 1, sortOrder: 2 },
-      { id: 3, name: "Charlie", dashboardGroupId: 3, dashboardOrder: 1, sortOrder: 3 },
+      {
+        id: 1,
+        name: "Alpha",
+        dashboardGroupId: 2,
+        dashboardOrder: 1,
+        sortOrder: 1,
+      },
+      {
+        id: 2,
+        name: "Bravo",
+        dashboardGroupId: null,
+        dashboardOrder: 1,
+        sortOrder: 2,
+      },
+      {
+        id: 3,
+        name: "Charlie",
+        dashboardGroupId: 3,
+        dashboardOrder: 1,
+        sortOrder: 3,
+      },
     ] as System[];
     const html = renderToStaticMarkup(
       <DashboardSystemGroups
         systems={systems}
         groups={[
-          { id: 2, name: "Production", sortOrder: 0, createdAt: "", updatedAt: "" },
+          {
+            id: 2,
+            name: "Production",
+            sortOrder: 0,
+            createdAt: "",
+            updatedAt: "",
+          },
           { id: 3, name: "Edge", sortOrder: 2, createdAt: "", updatedAt: "" },
         ]}
         ungroupedSortOrder={1}
@@ -552,11 +774,33 @@ describe("Dashboard", () => {
   test("does not use the Systems page order to break dashboard order ties", () => {
     const html = renderToStaticMarkup(
       <DashboardSystemGroups
-        systems={[
-          { id: 1, name: "Zulu", dashboardGroupId: 1, dashboardOrder: 1, sortOrder: 0 },
-          { id: 2, name: "Alpha", dashboardGroupId: 1, dashboardOrder: 1, sortOrder: 1 },
-        ] as System[]}
-        groups={[{ id: 1, name: "Primary", sortOrder: 0, createdAt: "", updatedAt: "" }]}
+        systems={
+          [
+            {
+              id: 1,
+              name: "Zulu",
+              dashboardGroupId: 1,
+              dashboardOrder: 1,
+              sortOrder: 0,
+            },
+            {
+              id: 2,
+              name: "Alpha",
+              dashboardGroupId: 1,
+              dashboardOrder: 1,
+              sortOrder: 1,
+            },
+          ] as System[]
+        }
+        groups={[
+          {
+            id: 1,
+            name: "Primary",
+            sortOrder: 0,
+            createdAt: "",
+            updatedAt: "",
+          },
+        ]}
         ungroupedSortOrder={1}
         editMode={false}
         onToggleEditMode={vi.fn()}
@@ -583,78 +827,94 @@ describe("Dashboard", () => {
       },
     });
     try {
-    const makeSystem = (id: number, name: string, overrides: Partial<System> = {}) => ({
-      id,
-      name,
-      dashboardGroupId: 1,
-      dashboardOrder: id,
-      sortOrder: id,
-      updateCount: 0,
-      isReachable: 1,
-      needsReboot: 0,
-      lastCheck: null,
-      osLifecycleStatus: "supported",
-      ...overrides,
-    }) as System;
-    const systems = [
-      makeSystem(1, "Up to date"),
-      makeSystem(2, "Needs updates", { updateCount: 3 }),
-      makeSystem(3, "Needs reboot", { needsReboot: 1 }),
-      makeSystem(4, "OS warning", { osLifecycleStatus: "support_ended" }),
-      makeSystem(5, "Check issue", { lastCheck: { status: "failed", error: "failed", startedAt: "", completedAt: "" } }),
-      makeSystem(6, "Unreachable", { isReachable: -1 }),
-      makeSystem(7, "Second group", { dashboardGroupId: 2 }),
-    ];
-    const renderGroups = (
-      groups: Array<{ id: number; name: string; sortOrder: number }>,
-      systemsToRender = systems,
-    ) =>
-      renderToStaticMarkup(
-        <DashboardSystemGroups
-          systems={systemsToRender}
-          groups={groups.map((group) => ({ ...group, createdAt: "", updatedAt: "" }))}
-          ungroupedSortOrder={groups.length}
-          editMode={false}
-          onToggleEditMode={vi.fn()}
-          onCreateGroup={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onDeleteGroup={vi.fn()}
-          saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
-          saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
-          onError={vi.fn()}
-          renderSystem={(system) => <span>{system.name}</span>}
-        />,
+      const makeSystem = (
+        id: number,
+        name: string,
+        overrides: Partial<System> = {},
+      ) =>
+        ({
+          id,
+          name,
+          dashboardGroupId: 1,
+          dashboardOrder: id,
+          sortOrder: id,
+          updateCount: 0,
+          isReachable: 1,
+          needsReboot: 0,
+          lastCheck: null,
+          osLifecycleStatus: "supported",
+          ...overrides,
+        }) as System;
+      const systems = [
+        makeSystem(1, "Up to date"),
+        makeSystem(2, "Needs updates", { updateCount: 3 }),
+        makeSystem(3, "Needs reboot", { needsReboot: 1 }),
+        makeSystem(4, "OS warning", { osLifecycleStatus: "support_ended" }),
+        makeSystem(5, "Check issue", {
+          lastCheck: {
+            status: "failed",
+            error: "failed",
+            startedAt: "",
+            completedAt: "",
+          },
+        }),
+        makeSystem(6, "Unreachable", { isReachable: -1 }),
+        makeSystem(7, "Second group", { dashboardGroupId: 2 }),
+      ];
+      const renderGroups = (
+        groups: Array<{ id: number; name: string; sortOrder: number }>,
+        systemsToRender = systems,
+      ) =>
+        renderToStaticMarkup(
+          <DashboardSystemGroups
+            systems={systemsToRender}
+            groups={groups.map((group) => ({
+              ...group,
+              createdAt: "",
+              updatedAt: "",
+            }))}
+            ungroupedSortOrder={groups.length}
+            editMode={false}
+            onToggleEditMode={vi.fn()}
+            onCreateGroup={vi.fn()}
+            onRenameGroup={vi.fn()}
+            onDeleteGroup={vi.fn()}
+            saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+            saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+            onError={vi.fn()}
+            renderSystem={(system) => <span>{system.name}</span>}
+          />,
+        );
+
+      const multipleGroupHtml = renderGroups([
+        { id: 1, name: "Primary", sortOrder: 0 },
+        { id: 2, name: "Secondary", sortOrder: 1 },
+      ]);
+      expect(multipleGroupHtml).toContain('aria-label="Group status"');
+      expect(multipleGroupHtml).toContain("Up to date");
+      expect(multipleGroupHtml).toContain("Need Updates");
+      expect(multipleGroupHtml).toContain("Needs Reboot");
+      expect(multipleGroupHtml).toContain("OS Warnings");
+      expect(multipleGroupHtml).toContain("Check Issues");
+      expect(multipleGroupHtml).toContain("Unreachable");
+
+      const singleGroupHtml = renderGroups(
+        [{ id: 1, name: "Primary", sortOrder: 0 }],
+        systems.slice(0, 6),
       );
+      expect(singleGroupHtml).toContain('aria-label="Group status"');
+      expect(singleGroupHtml).toContain("Need Updates");
 
-    const multipleGroupHtml = renderGroups([
-      { id: 1, name: "Primary", sortOrder: 0 },
-      { id: 2, name: "Secondary", sortOrder: 1 },
-    ]);
-    expect(multipleGroupHtml).toContain('aria-label="Group status"');
-    expect(multipleGroupHtml).toContain("Up to date");
-    expect(multipleGroupHtml).toContain("Need Updates");
-    expect(multipleGroupHtml).toContain("Needs Reboot");
-    expect(multipleGroupHtml).toContain("OS Warnings");
-    expect(multipleGroupHtml).toContain("Check Issues");
-    expect(multipleGroupHtml).toContain("Unreachable");
-
-    const singleGroupHtml = renderGroups(
-      [{ id: 1, name: "Primary", sortOrder: 0 }],
-      systems.slice(0, 6),
-    );
-    expect(singleGroupHtml).toContain('aria-label="Group status"');
-    expect(singleGroupHtml).toContain("Need Updates");
-
-    const ungroupedOnlyHtml = renderGroups(
-      [],
-      systems.slice(0, 6).map((system) => ({
-        ...system,
-        dashboardGroupId: null,
-      })),
-    );
-    expect(ungroupedOnlyHtml).toContain("Ungrouped");
-    expect(ungroupedOnlyHtml).toContain('aria-label="Group status"');
-    expect(ungroupedOnlyHtml).toContain("Need Updates");
+      const ungroupedOnlyHtml = renderGroups(
+        [],
+        systems.slice(0, 6).map((system) => ({
+          ...system,
+          dashboardGroupId: null,
+        })),
+      );
+      expect(ungroupedOnlyHtml).toContain("Ungrouped");
+      expect(ungroupedOnlyHtml).toContain('aria-label="Group status"');
+      expect(ungroupedOnlyHtml).toContain("Need Updates");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -667,6 +927,7 @@ describe("Dashboard", () => {
         name: "Alpha",
         dashboardGroupId: 1,
         dashboardOrder: 1,
+        updatePriority: 6,
         sortOrder: 1,
         updateCount: 1,
         isReachable: 1,
@@ -677,7 +938,16 @@ describe("Dashboard", () => {
     ] as System[];
     const commonProps = {
       systems,
-      groups: [{ id: 1, name: "Primary", sortOrder: 0, updatePriority: 3, createdAt: "", updatedAt: "" }],
+      groups: [
+        {
+          id: 1,
+          name: "Primary",
+          sortOrder: 0,
+          updatePriority: 3,
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
       ungroupedSortOrder: 1,
       ungroupedUpdatePriority: 4,
       onToggleEditMode: vi.fn(),
@@ -686,6 +956,7 @@ describe("Dashboard", () => {
       onDeleteGroup: vi.fn(),
       saveGroupOrder: vi.fn().mockResolvedValue(undefined),
       saveGroupUpdatePriority: vi.fn().mockResolvedValue(undefined),
+      saveSystemUpdatePriority: vi.fn().mockResolvedValue(undefined),
       saveSystemPlacements: vi.fn().mockResolvedValue(undefined),
       onError: vi.fn(),
       renderSystem: (system: System) => <span>{system.name}</span>,
@@ -701,7 +972,10 @@ describe("Dashboard", () => {
     expect(viewHtml).not.toContain("Edit groups");
     expect(viewHtml).not.toContain("Group badges");
     expect(viewHtml).not.toContain("Sort systems by name");
-    expect(viewHtml).not.toContain("Upgrade priority: 3");
+    expect(viewHtml).not.toContain("Priority: 3");
+    expect(viewHtml).not.toContain("data-dashboard-system-upgrade-priority");
+    expect(viewHtml).toContain('aria-controls="dashboard-group-content-1"');
+    expect(viewHtml).not.toContain("data-dashboard-group-order-actions");
 
     const editHtml = renderToStaticMarkup(
       <DashboardSystemGroups {...commonProps} editMode />,
@@ -711,30 +985,74 @@ describe("Dashboard", () => {
     expect(editHtml).not.toContain('aria-label="Group status"');
     expect(editHtml).toContain(">Done</button>");
     expect(editHtml).toContain('title="Drag to reorder system"');
+    expect(editHtml).toContain('title="Drag to reorder group"');
+    expect(editHtml).toContain(
+      'data-dashboard-group-drag-header="true" draggable="true"',
+    );
+    expect(editHtml).toContain("data-dashboard-group-actions");
+    expect(editHtml).toContain("data-dashboard-group-order-actions");
+    expect(editHtml).not.toContain('aria-controls="dashboard-group-content-1"');
     expect(editHtml).toContain("data-dashboard-system-drag-handle");
-    expect(editHtml).toContain(">Drag to reorder system</span>");
+    expect(editHtml).toContain("data-dashboard-system-actions");
+    expect(editHtml).not.toContain(">Drag to reorder system</span>");
     expect(editHtml).toMatch(/data-dashboard-system-id="1" draggable="true"/);
+    expect(editHtml).toContain('aria-label="Move group Primary up"');
+    expect(editHtml).toContain('aria-label="Move group Primary down"');
+    expect(editHtml).toContain('aria-label="Move system Alpha up"');
+    expect(editHtml).toContain('aria-label="Move system Alpha down"');
+    expect(editHtml).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Move group Primary up"/,
+    );
+    expect(editHtml).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Move system Alpha up"/,
+    );
+    expect(editHtml).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Move system Alpha down"/,
+    );
     expect(editHtml).toContain('aria-label="Sort systems by name"');
     expect(editHtml).toContain('aria-label="Upgrade priority for Primary"');
-    expect(editHtml).toContain('aria-label="Decrease upgrade priority for Primary"');
-    expect(editHtml).toContain('aria-label="Increase upgrade priority for Primary"');
-    expect(editHtml).toContain('title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."');
+    expect(editHtml).toContain(
+      'aria-label="Decrease upgrade priority for Primary"',
+    );
+    expect(editHtml).toContain(
+      'aria-label="Increase upgrade priority for Primary"',
+    );
+    expect(editHtml).toContain('data-dashboard-system-upgrade-priority="true"');
+    expect(editHtml).toContain('aria-label="Upgrade priority for Alpha"');
+    expect(editHtml).toContain(
+      'aria-label="Decrease upgrade priority for Alpha"',
+    );
+    expect(editHtml).toContain(
+      'aria-label="Increase upgrade priority for Alpha"',
+    );
+    expect(editHtml).toContain(
+      'title="Lower numbers upgrade first within this group. Systems with the same priority upgrade in parallel."',
+    );
+    expect(editHtml).toContain(
+      'title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."',
+    );
     expect(editHtml).toContain("flex-col sm:flex-row sm:justify-between");
     expect(editHtml).toContain(
       "flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0",
     );
-    expect(editHtml).toMatch(/<input type="number" min="1" max="99" step="1"[^>]*value="3"/);
-    expect(editHtml.indexOf('aria-label="Upgrade priority for Primary"')).toBeLessThan(
-      editHtml.indexOf('aria-label="Edit group name"'),
+    expect(editHtml).toMatch(
+      /<input type="number" min="0" max="99" step="1"[^>]*value="3"/,
+    );
+    expect(editHtml).toMatch(
+      /<input type="number" min="0" max="99" step="1"[^>]*value="6"/,
     );
     expect(editHtml.indexOf('aria-label="Sort systems by name"')).toBeLessThan(
       editHtml.indexOf('aria-label="Delete group"'),
     );
-    expect(editHtml.indexOf('aria-label="Upgrade priority for Primary"')).toBeLessThan(
-      editHtml.indexOf('aria-label="Sort systems by name"'),
+    expect(editHtml.indexOf('aria-label="Delete group"')).toBeLessThan(
+      editHtml.indexOf('aria-label="Upgrade priority for Primary"'),
     );
-    expect(editHtml).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Edit group name"/);
-    expect(editHtml).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Delete group"/);
+    expect(editHtml).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Edit group name"/,
+    );
+    expect(editHtml).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Delete group"/,
+    );
   });
 
   test("sorts system names case-insensitively and with natural number ordering", () => {
@@ -745,12 +1063,9 @@ describe("Dashboard", () => {
       { id: 4, name: "Alpha" },
     ] as System[];
 
-    expect([...systems].sort(compareSystemsByName).map((system) => system.name)).toEqual([
-      "Alpha",
-      "beta",
-      "System 2",
-      "System 10",
-    ]);
+    expect(
+      [...systems].sort(compareSystemsByName).map((system) => system.name),
+    ).toEqual(["Alpha", "beta", "System 2", "System 10"]);
   });
 
   test("restores the disabled group badge preference", () => {
@@ -780,7 +1095,15 @@ describe("Dashboard", () => {
               osLifecycleStatus: "supported",
             } as System,
           ]}
-          groups={[{ id: 1, name: "Primary", sortOrder: 0, createdAt: "", updatedAt: "" }]}
+          groups={[
+            {
+              id: 1,
+              name: "Primary",
+              sortOrder: 0,
+              createdAt: "",
+              updatedAt: "",
+            },
+          ]}
           ungroupedSortOrder={1}
           editMode
           onToggleEditMode={vi.fn()}

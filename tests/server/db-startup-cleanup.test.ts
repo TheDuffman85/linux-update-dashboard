@@ -368,6 +368,7 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "reboot_dismissed_at")).toBe(true);
     expect(columns.some((column) => column.name === "dashboard_group_id")).toBe(true);
     expect(columns.some((column) => column.name === "dashboard_order")).toBe(true);
+    expect(columns.some((column) => column.name === "update_priority")).toBe(true);
 
     expect(hiddenColumns.some((column) => column.name === "hide_reason")).toBe(true);
 
@@ -378,6 +379,7 @@ describe("database startup cleanup", () => {
     expect(restarted[0].autoHideKeptBackUpdates).toBe(1);
     expect(restarted[0].dashboardGroupId).toBeNull();
     expect(restarted[0].dashboardOrder).toBe(1);
+    expect(restarted[0].updatePriority).toBe(1);
     expect(restarted[0].pkgManagerConfigs).toBe(JSON.stringify({
       apt: {
         autoHideKeptBackUpdates: true,
@@ -657,7 +659,7 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "resolved_at")).toBe(true);
   });
 
-  test("creates only dashboard grouping columns for systems", () => {
+  test("creates dashboard grouping and system priority columns", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const columns = sqlite
       .prepare("PRAGMA table_info(systems)")
@@ -669,6 +671,7 @@ describe("database startup cleanup", () => {
 
     expect(columns.some((column) => column.name === "dashboard_group_id")).toBe(true);
     expect(columns.some((column) => column.name === "dashboard_order")).toBe(true);
+    expect(columns.some((column) => column.name === "update_priority")).toBe(true);
     expect(columns.some((column) => column.name === "upgrade_group_id")).toBe(false);
     expect(columns.some((column) => column.name === "upgrade_order")).toBe(false);
     expect(legacyTables).toHaveLength(0);

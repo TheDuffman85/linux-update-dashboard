@@ -15,6 +15,7 @@ import {
   useUpdateSystemDashboardGroups,
   useUpdateDashboardGroup,
   useUpdateDashboardGroupPriority,
+  useUpdateSystemPriority,
   useUpdateSystemUpgradeAllExclusion,
   useUpdateSystemUpgradeMode,
 } from "../lib/systems";
@@ -28,6 +29,13 @@ function compareDashboardOrder(a: System, b: System): number {
   const orderDiff = (a.dashboardOrder ?? 0) - (b.dashboardOrder ?? 0);
   if (orderDiff !== 0) return orderDiff;
   return a.name.localeCompare(b.name) || a.id - b.id;
+}
+
+export function compareUpgradeModalSystems(a: System, b: System): number {
+  return (
+    (a.updatePriority ?? 1) - (b.updatePriority ?? 1) ||
+    compareDashboardOrder(a, b)
+  );
 }
 
 type UpgradeModalGroup = {
@@ -78,7 +86,7 @@ export function UpgradeModalGroupHeading({
       </h3>
       <Badge variant="muted" small>{systemCount}</Badge>
       <span
-        className="ml-auto"
+        className="ml-auto mr-3"
         title={t("pages.dashboard.upgradePriorityHelp")}
       >
         <Badge variant="muted" small>
@@ -89,12 +97,8 @@ export function UpgradeModalGroupHeading({
   );
 }
 
-function hasActiveUpgradeOperation(system: System): boolean {
-  return !!system.activeOperation?.type.includes("upgrade") && !isPostUpgradeRecheck(system.activeOperation);
-}
-
 function isUpgradeAllEligible(system: System, locallyUpgrading: boolean): boolean {
-  return system.updateCount > 0 && !locallyUpgrading && !hasActiveUpgradeOperation(system);
+  return system.updateCount > 0 && !locallyUpgrading && !system.activeOperation;
 }
 
 export function isUpgradePresetSelected(
@@ -176,7 +180,7 @@ function getUpgradeSystemRowClass({
   isSelected: boolean;
 }): string {
   const baseClass =
-    "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto]";
+    "relative grid min-w-0 grid-cols-[minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 pt-11 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:pt-3";
 
   if (!hasUpdates) {
     return [
@@ -379,6 +383,7 @@ export default function Dashboard() {
   const createDashboardGroup = useCreateDashboardGroup();
   const updateDashboardGroup = useUpdateDashboardGroup();
   const updateDashboardGroupPriority = useUpdateDashboardGroupPriority();
+  const updateSystemPriority = useUpdateSystemPriority();
   const deleteDashboardGroup = useDeleteDashboardGroup();
   const reorderDashboardGroups = useReorderDashboardGroups();
   const updateSystemDashboardGroups = useUpdateSystemDashboardGroups();
@@ -418,18 +423,15 @@ export default function Dashboard() {
     });
   };
 
-  const hasUpgradeInProgress =
-    upgradingCount > 0 ||
-    (systems?.some((s) => isUpgrading(s.id) || hasActiveUpgradeOperation(s)) ?? false);
   const hasRefreshInProgress =
     refreshCache.isPending ||
     (systems?.some((s) => s.activeOperation?.type === "check") ?? false);
   const disableRefreshAll = refreshCache.isPending || hasActiveOps;
-  const disableUpgradeSubmit = refreshCache.isPending || hasActiveOps;
   const systemsWithUpdates = useMemo(
     () => systems?.filter((s) => isUpgradeAllEligible(s, isUpgrading(s.id))) ?? [],
     [systems, isUpgrading],
   );
+  const disableUpgradeLauncher = upgradeAllBatch.isPending;
   const dashboardGroupSortById = useMemo(
     () => new Map(dashboardGroups.map((group) => [group.id, group.sortOrder])),
     [dashboardGroups],
@@ -453,7 +455,20 @@ export default function Dashboard() {
     [systemsWithUpdates, dashboardGroupSortById, dashboardGroupConfig.ungroupedSortOrder],
   );
   const orderedModalCandidateSystems = orderedSystemsWithUpdates;
-  const modalSystems = showUpgradeConfirm ? upgradeModalSystems : orderedSystemsWithUpdates;
+  const latestSystemsById = useMemo(
+    () => new Map((systems ?? []).map((system) => [system.id, system])),
+    [systems],
+  );
+  const modalSystems = showUpgradeConfirm
+    ? upgradeModalSystems
+        .map((snapshot) => {
+          const latest = latestSystemsById.get(snapshot.id);
+          return latest
+            ? { ...latest, excludeFromUpgradeAll: snapshot.excludeFromUpgradeAll }
+            : snapshot;
+        })
+        .filter((system) => isUpgradeAllEligible(system, isUpgrading(system.id)))
+    : orderedSystemsWithUpdates;
   const defaultSelectedSystemIds = orderedModalCandidateSystems
     .filter((s) => s.excludeFromUpgradeAll !== 1)
     .map((s) => s.id);
@@ -474,7 +489,7 @@ export default function Dashboard() {
           group.updatePriority ?? Math.min(99, Math.max(1, group.sortOrder + 1)),
         systems: modalSystems
           .filter((system) => system.dashboardGroupId === group.id)
-          .sort(compareDashboardOrder),
+          .sort(compareUpgradeModalSystems),
       }));
     const ungroupedSystems = modalSystems
       .filter(
@@ -482,7 +497,7 @@ export default function Dashboard() {
           system.dashboardGroupId === null ||
           !knownGroupIds.has(system.dashboardGroupId),
       )
-      .sort(compareDashboardOrder);
+      .sort(compareUpgradeModalSystems);
     if (dashboardGroups.length > 0) {
       groups.push({
         key: "ungrouped",
@@ -632,7 +647,6 @@ export default function Dashboard() {
   };
 
   const handleUpgradeAll = () => {
-    const latestSystemsById = new Map((systems ?? []).map((system) => [system.id, system]));
     const systemsToUpgrade = modalSystems
       .map((system) => latestSystemsById.get(system.id) ?? system)
       .filter((system) =>
@@ -690,17 +704,10 @@ export default function Dashboard() {
           </button>
           <button
             onClick={openUpgradeConfirm}
-            disabled={disableUpgradeSubmit}
+            disabled={disableUpgradeLauncher}
             className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
           >
-            {hasUpgradeInProgress ? (
-              <span className="flex items-center gap-1.5">
-                <span className="spinner spinner-sm" />
-                {t("pages.dashboard.upgrading")}
-              </span>
-            ) : (
-              t("pages.dashboard.upgradeAll")
-            )}
+            {t("pages.dashboard.upgradeAll")}
           </button>
         </div>
       }
@@ -741,11 +748,17 @@ export default function Dashboard() {
               .mutateAsync({ groupId, updatePriority })
               .then(() => undefined)
           }
+          saveSystemUpdatePriority={(systemId, updatePriority) =>
+            updateSystemPriority
+              .mutateAsync({ systemId, updatePriority })
+              .then(() => undefined)
+          }
           saveSystemPlacements={(items) => updateSystemDashboardGroups.mutateAsync(items).then(() => undefined)}
           busy={
             createDashboardGroup.isPending ||
             updateDashboardGroup.isPending ||
             updateDashboardGroupPriority.isPending ||
+            updateSystemPriority.isPending ||
             deleteDashboardGroup.isPending ||
             reorderDashboardGroups.isPending ||
             updateSystemDashboardGroups.isPending
@@ -840,7 +853,7 @@ export default function Dashboard() {
                                 </button>
                               )}
                             </div>
-                            <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-start-auto sm:justify-end">
+                            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:justify-start">
                               <Badge variant="warning" small>
                                 {t("pages.dashboard.countUpdates", { count: s.updateCount })}
                               </Badge>
@@ -851,6 +864,14 @@ export default function Dashboard() {
                                 <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: s.keptBackCount })}</Badge>
                               )}
                             </div>
+                            <span
+                              className="absolute right-3 top-3 shrink-0 sm:static"
+                              title={t("pages.dashboard.systemUpgradePriorityHelp")}
+                            >
+                              <Badge variant="muted" small>
+                                {t("pages.dashboard.updatePriority")}: {s.updatePriority ?? 1}
+                              </Badge>
+                            </span>
                           </li>
                         );
                       })}
@@ -879,7 +900,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={handleUpgradeAll}
-            disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, disableUpgradeSubmit)}
+            disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, upgradeAllBatch.isPending)}
             className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:w-auto"
           >
             {t("pages.dashboard.upgradeAll")}
