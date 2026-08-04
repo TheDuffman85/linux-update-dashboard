@@ -114,7 +114,7 @@ export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?
   const db = getDb();
   const groupRows = db.select().from(dashboardGroups).all();
   const groupsById = new Map(groupRows.map((group) => [group.id, group]));
-  const ungroupedSortOrder = systemService.getUngroupedDashboardGroupSortOrder();
+  const ungroupedUpdatePriority = systemService.getUngroupedDashboardGroupUpdatePriority();
   const systemsById = new Map(
     db
       .select()
@@ -150,7 +150,9 @@ export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?
         batchId: batch.id,
         systemId: item.systemId,
         groupId,
-        groupSortOrder: group?.sortOrder ?? ungroupedSortOrder,
+        // This legacy-named snapshot column now stores the explicit update
+        // priority so equal-priority groups execute in parallel.
+        groupSortOrder: group?.updatePriority ?? ungroupedUpdatePriority,
         systemSortOrder: system.dashboardOrder ?? 1,
         defaultUpgradeModeOverride: item.defaultUpgradeModeOverride ?? null,
         status: "queued",

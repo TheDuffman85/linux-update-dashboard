@@ -89,10 +89,11 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 
 | Method | Endpoint                                  | Description                                                        |
 | ------ | ----------------------------------------- | ------------------------------------------------------------------ |
-| GET    | `/api/systems/dashboard-groups`           | Return dashboard groups and the saved Ungrouped position.          |
+| GET    | `/api/systems/dashboard-groups`           | Return dashboard groups plus the saved Ungrouped position and update priority. |
 | POST   | `/api/systems/dashboard-groups`           | Create a dashboard organization group.                            |
 | PUT    | `/api/systems/dashboard-groups/reorder`  | Reorder with `{ groupKeys: [number..., "ungrouped"] }`; every group and Ungrouped must appear exactly once. |
 | PUT    | `/api/systems/dashboard-groups/systems`  | Assign systems to groups and persist their dashboard card order.  |
+| PUT    | `/api/systems/dashboard-groups/update-priority` | Set a saved group or Ungrouped upgrade priority (1–99) with `{ groupId: number | null, updatePriority: integer }`; lower priorities run first and equal priorities run in parallel. |
 | PUT    | `/api/systems/dashboard-groups/:id`      | Rename a dashboard organization group.                            |
 | DELETE | `/api/systems/dashboard-groups/:id`      | Delete a group and move its systems to Ungrouped.                 |
 

@@ -15,7 +15,10 @@ import {
   upgradeBatchItems,
   upgradeBatches,
 } from "../../server/db/schema";
-import { listSystems } from "../../server/services/system-service";
+import {
+  getUngroupedDashboardGroupUpdatePriority,
+  listSystems,
+} from "../../server/services/system-service";
 
 describe("database startup cleanup", () => {
   let tempDir: string;
@@ -149,6 +152,37 @@ describe("database startup cleanup", () => {
     const row = restartedDb.select().from(updateHistory).get();
     expect(row?.command).toBe("apt-get update");
     expect(row?.steps).toBeNull();
+  });
+
+  test("initializes explicit update priorities from legacy dashboard order", () => {
+    closeDatabase();
+    unlinkSync(dbPath);
+
+    const sqlite = new Database(dbPath);
+    sqlite.exec(`
+      CREATE TABLE dashboard_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO dashboard_groups (name, sort_order)
+      VALUES ('Later', 5), ('Earlier', 2);
+    `);
+    sqlite.close();
+
+    initDatabase(dbPath);
+
+    const priorities = getDb()
+      .select({ name: dashboardGroups.name, priority: dashboardGroups.updatePriority })
+      .from(dashboardGroups)
+      .all();
+    expect(Object.fromEntries(priorities.map((row) => [row.name, row.priority]))).toEqual({
+      Later: 6,
+      Earlier: 3,
+    });
+    expect(getUngroupedDashboardGroupUpdatePriority()).toBe(7);
   });
 
   test("assigns alphabetical sort order when existing systems all use the default order", () => {

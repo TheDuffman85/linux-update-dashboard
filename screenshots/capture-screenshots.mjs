@@ -267,6 +267,11 @@ async function main() {
       await navigate(cdp, "/dashboard");
       await screenshot(cdp, "1.png");
 
+      await clickByText(cdp, "Edit mode");
+      await clickByText(cdp, "Group badges");
+      await screenshot(cdp, "14.png");
+      await clickByText(cdp, "Done");
+
       await clickByText(cdp, "Upgrade All");
       await screenshot(cdp, "12.png");
 
@@ -307,6 +312,12 @@ async function main() {
     }
   } finally {
     chrome.kill("SIGTERM");
+    if (chrome.exitCode === null) {
+      await Promise.race([
+        new Promise((resolve) => chrome.once("exit", resolve)),
+        sleep(2_000),
+      ]);
+    }
     rmSync(userDataDir, { recursive: true, force: true });
   }
 }

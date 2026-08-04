@@ -21,7 +21,7 @@ export LUDASH_SCREENSHOT_CHROME_PORT="${LUDASH_SCREENSHOT_CHROME_PORT:-9223}"
 export LUDASH_DB_PATH="${LUDASH_DB_PATH:-${TMPDIR:-/tmp}/ludash-screenshots/dashboard.db}"
 export LUDASH_ENCRYPTION_KEY="${LUDASH_ENCRYPTION_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}"
 export LUDASH_SECRET_KEY="${LUDASH_SECRET_KEY:-ludash-readme-screenshot-session-key}"
-export LUDASH_BASE_URL="${LUDASH_BASE_URL:-http://localhost:${LUDASH_SCREENSHOT_FRONTEND_PORT}}"
+export LUDASH_BASE_URL="${LUDASH_BASE_URL:-$LUDASH_SCREENSHOT_BASE_URL}"
 export LUDASH_PORT="$LUDASH_SCREENSHOT_BACKEND_PORT"
 export LUDASH_LOG_LEVEL="${LUDASH_LOG_LEVEL:-error}"
 
@@ -37,6 +37,12 @@ if [[ -z "${CHROME_PATH:-}" ]]; then
       break
     fi
   done
+fi
+
+if command -v pnpm >/dev/null 2>&1; then
+  PNPM=(pnpm)
+else
+  PNPM=(corepack pnpm)
 fi
 
 if [[ -z "${CHROME_PATH:-}" ]]; then
@@ -80,7 +86,7 @@ wait_for_url() {
 cd "$REPO_ROOT"
 
 echo "Initializing screenshot database schema: $LUDASH_DB_PATH"
-pnpm exec tsx server/index.ts &
+"${PNPM[@]}" exec tsx server/index.ts &
 BACKEND_PID="$!"
 wait_for_url "http://127.0.0.1:${LUDASH_SCREENSHOT_BACKEND_PORT}/api/auth/status" "backend schema initialization"
 stop_pid "$BACKEND_PID"
@@ -90,12 +96,12 @@ echo "Seeding screenshot database: $LUDASH_DB_PATH"
 node "$SCRIPT_DIR/seed-demo-data.mjs"
 
 echo "Starting backend on port $LUDASH_SCREENSHOT_BACKEND_PORT"
-pnpm exec tsx server/index.ts &
+"${PNPM[@]}" exec tsx server/index.ts &
 BACKEND_PID="$!"
 wait_for_url "http://127.0.0.1:${LUDASH_SCREENSHOT_BACKEND_PORT}/api/auth/status" "backend"
 
 echo "Starting frontend on ${LUDASH_SCREENSHOT_FRONTEND_HOST}:${LUDASH_SCREENSHOT_FRONTEND_PORT}"
-pnpm exec vite --host "$LUDASH_SCREENSHOT_FRONTEND_HOST" --port "$LUDASH_SCREENSHOT_FRONTEND_PORT" &
+"${PNPM[@]}" exec vite --host "$LUDASH_SCREENSHOT_FRONTEND_HOST" --port "$LUDASH_SCREENSHOT_FRONTEND_PORT" &
 FRONTEND_PID="$!"
 wait_for_url "$LUDASH_SCREENSHOT_BASE_URL" "frontend"
 

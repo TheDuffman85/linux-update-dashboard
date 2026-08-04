@@ -28,6 +28,7 @@ const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
 const SYSTEM_CONNECTION_UNIQUE_INDEX = "systems_connection_identity_idx";
 export const MAX_PROXY_JUMP_DEPTH = 10;
 const DASHBOARD_UNGROUPED_SORT_ORDER_KEY = "dashboard_ungrouped_sort_order";
+const DASHBOARD_UNGROUPED_UPDATE_PRIORITY_KEY = "dashboard_ungrouped_update_priority";
 const DEFAULT_UNGROUPED_DASHBOARD_SORT_ORDER = 1_000_000;
 
 export class DuplicateSystemConnectionError extends Error {
@@ -239,6 +240,10 @@ export function createDashboardGroup(name: string): number {
       .orderBy(asc(dashboardGroups.sortOrder), asc(dashboardGroups.name), asc(dashboardGroups.id))
       .all();
     const storedUngroupedSortOrder = getStoredUngroupedDashboardGroupSortOrder();
+    const ungroupedUpdatePriority = getUngroupedDashboardGroupUpdatePriority();
+    const nextUpdatePriority = groups.length === 0
+      ? 1
+      : Math.min(99, Math.max(...groups.map((group) => group.updatePriority)) + 1);
     const ungroupedIndex = Math.max(
       0,
       Math.min(
@@ -269,9 +274,22 @@ export function createDashboardGroup(name: string): number {
         set: { value: String(ungroupedIndex + 1), updatedAt: now },
       })
       .run();
+    if (groups.length === 0 && ungroupedUpdatePriority <= nextUpdatePriority) {
+      tx.insert(settings)
+        .values({
+          key: DASHBOARD_UNGROUPED_UPDATE_PRIORITY_KEY,
+          value: String(nextUpdatePriority + 1),
+          description: "Update priority of the implicit Ungrouped dashboard group",
+        })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: { value: String(nextUpdatePriority + 1), updatedAt: now },
+        })
+        .run();
+    }
     return tx
       .insert(dashboardGroups)
-      .values({ name: trimmedName, sortOrder: 0 })
+      .values({ name: trimmedName, sortOrder: 0, updatePriority: nextUpdatePriority })
       .returning({ id: dashboardGroups.id })
       .get();
   });
@@ -339,6 +357,53 @@ function getStoredUngroupedDashboardGroupSortOrder(): number | null {
 
 export function getUngroupedDashboardGroupSortOrder(): number {
   return getStoredUngroupedDashboardGroupSortOrder() ?? DEFAULT_UNGROUPED_DASHBOARD_SORT_ORDER;
+}
+
+export function getUngroupedDashboardGroupUpdatePriority(): number {
+  const value = getDb()
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, DASHBOARD_UNGROUPED_UPDATE_PRIORITY_KEY))
+    .get()?.value;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 99
+    ? parsed
+    : Math.min(99, Math.max(1, getUngroupedDashboardGroupSortOrder() + 1));
+}
+
+export function updateDashboardGroupPriority(
+  groupId: number | null,
+  updatePriority: number,
+): void {
+  if (
+    !Number.isSafeInteger(updatePriority) ||
+    updatePriority < 1 ||
+    updatePriority > 99
+  ) {
+    throw new Error("Upgrade priority must be an integer from 1 to 99");
+  }
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const db = getDb();
+  if (groupId === null) {
+    db.insert(settings)
+      .values({
+        key: DASHBOARD_UNGROUPED_UPDATE_PRIORITY_KEY,
+        value: String(updatePriority),
+        description: "Update priority of the implicit Ungrouped dashboard group",
+      })
+      .onConflictDoUpdate({
+        target: settings.key,
+        set: { value: String(updatePriority), updatedAt: now },
+      })
+      .run();
+    return;
+  }
+
+  const result = db.update(dashboardGroups)
+    .set({ updatePriority, updatedAt: now })
+    .where(eq(dashboardGroups.id, groupId))
+    .run();
+  if (result.changes === 0) throw new Error("Dashboard group not found");
 }
 
 export function reorderDashboardGroups(groupKeys: Array<number | "ungrouped">): void {

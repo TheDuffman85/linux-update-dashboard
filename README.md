@@ -33,11 +33,11 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, and custom package managers.
 - **SSH credential vault:** reusable password, key, and OpenSSH certificate credentials encrypted at rest with AES-256-GCM.
 - **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
-- **Granular maintenance:** refresh, upgrade all, dashboard-grouped Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
-- **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, and control Upgrade All execution order.
+- **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
+- **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All exclusion, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
-- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, dashboard-controlled Upgrade All order, and schedule run history.
+- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
@@ -72,6 +72,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 </p>
 <p>
   <a href="screenshots/9.png"><img src="screenshots/9.png" alt="Settings" width="48%"></a>
+  <a href="screenshots/14.png"><img src="screenshots/14.png" alt="Dashboard groups with upgrade priorities and status badges" width="48%"></a>
 </p>
 
 > [!CAUTION]
@@ -270,7 +271,20 @@ Managers are detected over SSH when testing a connection or running the first ch
 
 Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Snap does not currently expose manager-specific settings.
 
-## Scheduling and Upgrade All ordering
+## Dashboard groups and Upgrade All priorities
+
+Use **Edit mode** on the dashboard to create groups, drag groups into a preferred display order, and drag systems between or within groups. The display order is independent of upgrade execution order.
+
+Each group, including **Ungrouped**, has an **Upgrade priority** from `1` to `99`:
+
+- Lower priority numbers run first.
+- Groups with the same priority run in parallel.
+- The next priority starts only after all systems at the current priority finish.
+- Systems within one group run in parallel.
+
+The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The preference is stored in the browser and is disabled by default. Groups can be collapsed outside Edit mode without changing their display or upgrade priority.
+
+## Scheduling and Upgrade All priorities
 
 Schedules are managed from the **Schedules** page. Existing installs migrate to an enabled **Default refresh** schedule using the previous refresh interval and cache settings.
 
@@ -280,7 +294,7 @@ Schedules are managed from the **Schedules** page. Existing installs migrate to 
 
 Schedules use five-field cron expressions in the process timezone. Set Docker `TZ`, such as `TZ=Europe/Berlin`, for local-time scheduling. The default minimum interval is 5 minutes and can be changed with `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES`.
 
-Dashboard groups define the **Upgrade All Systems** execution order. Systems in the same dashboard group run together; the next group starts only after the current group finishes, with Ungrouped in its saved dashboard position. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
+Update schedules use the same explicit dashboard-group priorities as manual **Upgrade All Systems** runs. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
 
 Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger checks outside configured schedules. Notification channels can be assigned to multiple notification schedules.
 

@@ -6,6 +6,7 @@ import { join } from "path";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { dashboardGroups, systems, updateCache, updateHistory, upgradeBatchItems, upgradeBatches } from "../../server/db/schema";
 import { createUpgradeBatch } from "../../server/services/upgrade-batch-service";
+import { updateDashboardGroupPriority } from "../../server/services/system-service";
 
 describe("upgrade batch service", () => {
   let tempDir: string;
@@ -22,7 +23,12 @@ describe("upgrade batch service", () => {
 
   test("persists queued items and queued activity rows", () => {
     const db = getDb();
-    const group = db.insert(dashboardGroups).values({ name: "Wave 1", sortOrder: 0 }).returning({ id: dashboardGroups.id }).get();
+    const group = db.insert(dashboardGroups).values({
+      name: "Wave 1",
+      sortOrder: 0,
+      updatePriority: 7,
+    }).returning({ id: dashboardGroups.id }).get();
+    updateDashboardGroupPriority(null, 3);
     const inserted = db.insert(systems).values([
       {
         name: "Alpha",
@@ -77,8 +83,8 @@ describe("upgrade batch service", () => {
       .all();
     expect(items.map((item) => item.status)).toEqual(["queued", "queued"]);
     expect(items.find((item) => item.systemId === inserted[0].id)?.groupId).toBe(group.id);
-    expect(items.find((item) => item.systemId === inserted[0].id)?.groupSortOrder).toBe(0);
-    expect(items.find((item) => item.systemId === inserted[1].id)?.groupSortOrder).toBe(1_000_000);
+    expect(items.find((item) => item.systemId === inserted[0].id)?.groupSortOrder).toBe(7);
+    expect(items.find((item) => item.systemId === inserted[1].id)?.groupSortOrder).toBe(3);
 
     const history = db.select().from(updateHistory).all();
     expect(history).toHaveLength(2);

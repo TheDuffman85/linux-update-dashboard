@@ -26,6 +26,7 @@ type DashboardSection = {
   groupId: number | null;
   name: string;
   sortOrder: number;
+  updatePriority: number;
   group?: DashboardGroup;
   systems: System[];
 };
@@ -54,11 +55,11 @@ function readCollapsedGroups(): Set<string> {
 }
 
 function readGroupBadgesEnabled(): boolean {
-  if (typeof window === "undefined") return true;
+  if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem(GROUP_BADGES_STORAGE_KEY) !== "false";
+    return window.localStorage.getItem(GROUP_BADGES_STORAGE_KEY) === "true";
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -179,12 +180,17 @@ export function DashboardSystemGroups({
   systems,
   groups,
   ungroupedSortOrder,
+  ungroupedUpdatePriority = Math.min(
+    99,
+    Math.max(1, ungroupedSortOrder + 1),
+  ),
   editMode,
   onToggleEditMode,
   onCreateGroup,
   onRenameGroup,
   onDeleteGroup,
   saveGroupOrder,
+  saveGroupUpdatePriority,
   saveSystemPlacements,
   busy = false,
   onError,
@@ -193,12 +199,17 @@ export function DashboardSystemGroups({
   systems: System[];
   groups: DashboardGroup[];
   ungroupedSortOrder: number;
+  ungroupedUpdatePriority: number;
   editMode: boolean;
   onToggleEditMode: () => void;
   onCreateGroup: () => void;
   onRenameGroup: (group: DashboardGroup) => void;
   onDeleteGroup: (group: DashboardGroup) => void;
   saveGroupOrder: (groupKeys: Array<number | "ungrouped">) => Promise<void>;
+  saveGroupUpdatePriority: (
+    groupId: number | null,
+    updatePriority: number,
+  ) => Promise<void>;
   saveSystemPlacements: (items: SystemPlacement[]) => Promise<void>;
   busy?: boolean;
   onError: (message: string) => void;
@@ -208,6 +219,8 @@ export function DashboardSystemGroups({
   const [localGroups, setLocalGroups] = useState<DashboardGroup[]>(groups);
   const [localUngroupedSortOrder, setLocalUngroupedSortOrder] =
     useState(ungroupedSortOrder);
+  const [localUngroupedUpdatePriority, setLocalUngroupedUpdatePriority] =
+    useState(ungroupedUpdatePriority);
   const [localSystems, setLocalSystems] = useState<System[]>(systems);
   const [collapsedGroups, setCollapsedGroups] =
     useState<Set<string>>(readCollapsedGroups);
@@ -217,6 +230,10 @@ export function DashboardSystemGroups({
 
   useEffect(() => setLocalGroups(groups), [groups]);
   useEffect(() => setLocalUngroupedSortOrder(ungroupedSortOrder), [ungroupedSortOrder]);
+  useEffect(
+    () => setLocalUngroupedUpdatePriority(ungroupedUpdatePriority),
+    [ungroupedUpdatePriority],
+  );
   useEffect(() => setLocalSystems(systems), [systems]);
 
   const sections = useMemo(() => {
@@ -226,6 +243,8 @@ export function DashboardSystemGroups({
       groupId: group.id as number | null,
       name: group.name,
       sortOrder: group.sortOrder,
+      updatePriority:
+        group.updatePriority ?? Math.min(99, Math.max(1, group.sortOrder + 1)),
       group,
       systems: localSystems
         .filter((system) => system.dashboardGroupId === group.id)
@@ -238,18 +257,27 @@ export function DashboardSystemGroups({
           !knownGroupIds.has(system.dashboardGroupId),
       )
       .sort(compareSystems);
-    if (localGroups.length > 0 || editMode) {
+    if (localGroups.length > 0 || editMode || groupBadgesEnabled) {
       result.push({
         key: UNGROUPED_KEY,
         groupId: null,
         name: t("pages.dashboard.ungrouped"),
         sortOrder: localUngroupedSortOrder,
+        updatePriority: localUngroupedUpdatePriority,
         group: undefined,
         systems: ungroupedSystems,
       });
     }
     return result.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-  }, [editMode, localGroups, localSystems, localUngroupedSortOrder, t]);
+  }, [
+    editMode,
+    groupBadgesEnabled,
+    localGroups,
+    localSystems,
+    localUngroupedSortOrder,
+    localUngroupedUpdatePriority,
+    t,
+  ]);
   const displayedSections = editMode
     ? sections
     : sections.filter((section) => section.systems.length > 0);
@@ -439,6 +467,108 @@ export function DashboardSystemGroups({
     }
   };
 
+  const setLocalUpdatePriority = (
+    groupId: number | null,
+    updatePriority: number,
+  ) => {
+    if (groupId === null) {
+      setLocalUngroupedUpdatePriority(updatePriority);
+      return;
+    }
+    setLocalGroups((current) =>
+      current.map((group) =>
+        group.id === groupId ? { ...group, updatePriority } : group,
+      ),
+    );
+  };
+
+  const persistUpdatePriority = async (
+    section: DashboardSection,
+    updatePriority: number,
+  ) => {
+    if (
+      busy ||
+      !Number.isSafeInteger(updatePriority) ||
+      updatePriority < 1 ||
+      updatePriority > 99
+    ) return;
+    const previousPriority = section.groupId === null
+      ? ungroupedUpdatePriority
+      : groups.find((group) => group.id === section.groupId)?.updatePriority;
+    if (previousPriority === undefined || previousPriority === updatePriority) return;
+    setLocalUpdatePriority(section.groupId, updatePriority);
+    try {
+      await saveGroupUpdatePriority(section.groupId, updatePriority);
+    } catch (error) {
+      setLocalUpdatePriority(section.groupId, previousPriority);
+      onError(
+        error instanceof Error
+          ? error.message
+          : t("pages.dashboard.failedToSaveUpdatePriority"),
+      );
+    }
+  };
+
+  const renderUpdatePriorityControl = (section: DashboardSection) => (
+    <div
+      className="inline-flex h-7 items-center overflow-hidden rounded-md border border-border bg-white dark:bg-slate-900"
+      title={t("pages.dashboard.upgradePriorityHelp")}
+      aria-label={t("pages.dashboard.updatePriorityForName", {
+        name: section.name,
+      })}
+    >
+      <span className="px-1.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+        {t("pages.dashboard.updatePriority")}
+      </span>
+      <button
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => void persistUpdatePriority(section, section.updatePriority - 1)}
+        disabled={busy || section.updatePriority <= 1}
+        className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
+        aria-label={t("pages.dashboard.decreaseUpdatePriorityForName", {
+          name: section.name,
+        })}
+      >
+        -
+      </button>
+      <input
+        type="number"
+        min="1"
+        max="99"
+        step="1"
+        value={section.updatePriority}
+        onChange={(event) => {
+          const next = event.currentTarget.valueAsNumber;
+          if (Number.isSafeInteger(next) && next >= 1 && next <= 99) {
+            setLocalUpdatePriority(section.groupId, next);
+          }
+        }}
+        onBlur={() => void persistUpdatePriority(section, section.updatePriority)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+        disabled={busy}
+        className="h-full w-8 border-l border-border bg-transparent px-0.5 text-center text-[11px] font-semibold text-slate-700 outline-none focus:bg-blue-50 dark:text-slate-100 dark:focus:bg-blue-950/30 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        aria-label={t("pages.dashboard.updatePriorityForName", {
+          name: section.name,
+        })}
+      />
+      <button
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => void persistUpdatePriority(section, section.updatePriority + 1)}
+        disabled={busy || section.updatePriority >= 99}
+        className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
+        aria-label={t("pages.dashboard.increaseUpdatePriorityForName", {
+          name: section.name,
+        })}
+      >
+        +
+      </button>
+    </div>
+  );
+
   const handleDrop = (
     event: DragEvent,
     targetGroupId: number | null,
@@ -469,8 +599,18 @@ export function DashboardSystemGroups({
           editMode && !busy && handleDrop(event, section.groupId, section.key)
         }
       >
-        <div className="mb-3 flex items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div
+          className={`mb-3 flex items-start gap-2 ${
+            editMode
+              ? "flex-col sm:flex-row sm:justify-between"
+              : "justify-between"
+          }`}
+        >
+          <div
+            className={`flex min-w-0 flex-wrap items-center gap-2 ${
+              editMode ? "w-full sm:w-auto" : ""
+            }`}
+          >
             {editMode && (
               <span
                 draggable
@@ -538,8 +678,9 @@ export function DashboardSystemGroups({
               </div>
             )}
           </div>
-          {editMode && (
-            <div className="flex shrink-0 gap-1">
+          {editMode ? (
+            <div className="flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0">
+              {renderUpdatePriorityControl(section)}
               <button
                 type="button"
                 onClick={() => void sortSystemsByName(section)}
@@ -552,58 +693,64 @@ export function DashboardSystemGroups({
                   A–Z
                 </span>
               </button>
-              {section.group && (
-                <button
-                  type="button"
-                  onClick={() => onRenameGroup(section.group!)}
-                  disabled={busy}
-                  className="rounded p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-                  title={t("pages.dashboard.editGroupName")}
-                  aria-label={t("pages.dashboard.editGroupName")}
+              <button
+                type="button"
+                onClick={() => section.group && onRenameGroup(section.group)}
+                disabled={busy || !section.group}
+                className="rounded p-1.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
+                title={t("pages.dashboard.editGroupName")}
+                aria-label={t("pages.dashboard.editGroupName")}
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
                 >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-1.4-9.4a2 2 0 1 0 2.8 2.8L11.8 15H9v-2.8l8.6-8.6Z"
-                    />
-                  </svg>
-                </button>
-              )}
-              {section.group && (
-                <button
-                  type="button"
-                  onClick={() => onDeleteGroup(section.group!)}
-                  disabled={busy}
-                  className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-                  title={t("pages.dashboard.deleteGroup")}
-                  aria-label={t("pages.dashboard.deleteGroup")}
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-1.4-9.4a2 2 0 1 0 2.8 2.8L11.8 15H9v-2.8l8.6-8.6Z"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => section.group && onDeleteGroup(section.group)}
+                disabled={busy || !section.group}
+                className="rounded p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/20"
+                title={t("pages.dashboard.deleteGroup")}
+                aria-label={t("pages.dashboard.deleteGroup")}
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
                 >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7 18.1 19.1A2 2 0 0 1 16.1 21H7.9a2 2 0 0 1-2-1.9L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
-              )}
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7 18.1 19.1A2 2 0 0 1 16.1 21H7.9a2 2 0 0 1-2-1.9L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"
+                  />
+                </svg>
+              </button>
             </div>
-          )}
+          ) : displayedSections.length > 1 ? (
+            <span
+              className="ml-auto shrink-0"
+              data-dashboard-upgrade-priority
+              title={t("pages.dashboard.upgradePriorityHelp")}
+            >
+              <Badge variant="muted" small>
+                {t("pages.dashboard.updatePriority")}: {section.updatePriority}
+              </Badge>
+            </span>
+          ) : null}
         </div>
         {!isCollapsed && (
           <div
@@ -615,9 +762,13 @@ export function DashboardSystemGroups({
                 key={system.id}
                 data-dashboard-system-id={system.id}
                 draggable={editMode && !busy}
-                onDragStart={(event) =>
-                  beginDrag(event, { kind: "system", id: system.id })
-                }
+                onDragStart={(event) => {
+                  if (!editMode || busy) {
+                    event.preventDefault();
+                    return;
+                  }
+                  beginDrag(event, { kind: "system", id: system.id });
+                }}
                 onDragEnd={finishDrag}
                 onDragOver={(event) =>
                   editMode && !busy && event.preventDefault()
@@ -665,7 +816,8 @@ export function DashboardSystemGroups({
     );
   };
 
-  const flatMode = localGroups.length === 0 && !editMode;
+  const flatMode =
+    localGroups.length === 0 && !editMode && !groupBadgesEnabled;
 
   return (
     <div>
@@ -773,7 +925,9 @@ export function DashboardSystemGroups({
       {flatMode ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {[...localSystems].sort(compareSystems).map((system) => (
-            <div key={system.id}>{renderSystem(system)}</div>
+            <div key={system.id} onDragStart={(event) => event.preventDefault()}>
+              {renderSystem(system)}
+            </div>
           ))}
         </div>
       ) : (
