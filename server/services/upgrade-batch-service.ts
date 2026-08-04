@@ -28,13 +28,13 @@ function isTerminal(status: string): boolean {
   return terminalStatuses().includes(status as ItemStatus);
 }
 
-function getActiveBatch() {
+function getActiveBatches() {
   return getDb()
     .select()
     .from(upgradeBatches)
     .where(sql`${upgradeBatches.status} IN ('queued', 'running')`)
     .orderBy(asc(upgradeBatches.createdAt), asc(upgradeBatches.id))
-    .get();
+    .all();
 }
 
 function getSystemUpdateCounts(): Map<number, number> {
@@ -64,6 +64,14 @@ function validateBatchItems(items: BatchItemInput[]): BatchItemInput[] {
     }
     if ((updateCounts.get(item.systemId) ?? 0) <= 0) {
       throw new Error("Only systems with updates can be queued");
+    }
+    if (
+      updateService.getActiveOperation(item.systemId) ||
+      getQueuedOrRunningOperation(item.systemId)
+    ) {
+      throw new Error(
+        `System ${item.systemId} already has an operation queued or running`,
+      );
     }
     if (
       item.defaultUpgradeModeOverride !== undefined &&
@@ -106,10 +114,6 @@ function insertQueuedHistory(input: {
 }
 
 export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?: boolean }): { batchId: number } {
-  if (getActiveBatch()) {
-    throw new Error("An Upgrade All batch is already queued or running");
-  }
-
   const normalized = validateBatchItems(items);
   const db = getDb();
   const groupRows = db.select().from(dashboardGroups).all();
@@ -170,8 +174,6 @@ export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?
   }
   return { batchId: batch.id };
 }
-
-let runnerActive = false;
 
 function getNextGroupItems(batchId: number) {
   const db = getDb();
@@ -338,36 +340,66 @@ function summarizeBatch(batchId: number): BatchStatus {
   return "success";
 }
 
+const activeBatchRunners = new Map<number, Promise<void>>();
+
+async function runUpgradeBatch(batchId: number): Promise<void> {
+  const batch = getDb()
+    .select()
+    .from(upgradeBatches)
+    .where(
+      and(
+        eq(upgradeBatches.id, batchId),
+        sql`${upgradeBatches.status} IN ('queued', 'running')`,
+      ),
+    )
+    .get();
+  if (!batch) return;
+
+  if (batch.status === "queued") {
+    getDb().update(upgradeBatches)
+      .set({ status: "running", startedAt: batch.startedAt ?? now() })
+      .where(eq(upgradeBatches.id, batch.id))
+      .run();
+  }
+
+  while (true) {
+    const groupItems = getNextGroupItems(batch.id);
+    if (groupItems.length === 0) break;
+    await runGroupPriorityWave(groupItems);
+  }
+
+  const status = summarizeBatch(batch.id);
+  getDb().update(upgradeBatches)
+    .set({ status, completedAt: now() })
+    .where(eq(upgradeBatches.id, batch.id))
+    .run();
+}
+
+function ensureUpgradeBatchRunner(batchId: number): Promise<void> {
+  const existing = activeBatchRunners.get(batchId);
+  if (existing) return existing;
+
+  const runner = runUpgradeBatch(batchId)
+    .catch((error) => {
+      logger.error("Upgrade batch runner failed", {
+        batchId,
+        error: String(error),
+      });
+    })
+    .finally(() => {
+      activeBatchRunners.delete(batchId);
+    });
+  activeBatchRunners.set(batchId, runner);
+  return runner;
+}
+
 export async function runUpgradeBatches(): Promise<void> {
-  if (runnerActive) return;
-  runnerActive = true;
   try {
-    while (true) {
-      const batch = getActiveBatch();
-      if (!batch) return;
-      if (batch.status === "queued") {
-        getDb().update(upgradeBatches)
-          .set({ status: "running", startedAt: batch.startedAt ?? now() })
-          .where(eq(upgradeBatches.id, batch.id))
-          .run();
-      }
-
-      while (true) {
-        const groupItems = getNextGroupItems(batch.id);
-        if (groupItems.length === 0) break;
-        await runGroupPriorityWave(groupItems);
-      }
-
-      const status = summarizeBatch(batch.id);
-      getDb().update(upgradeBatches)
-        .set({ status, completedAt: now() })
-        .where(eq(upgradeBatches.id, batch.id))
-        .run();
-    }
+    await Promise.all(
+      getActiveBatches().map((batch) => ensureUpgradeBatchRunner(batch.id)),
+    );
   } catch (error) {
     logger.error("Upgrade batch runner failed", { error: String(error) });
-  } finally {
-    runnerActive = false;
   }
 }
 

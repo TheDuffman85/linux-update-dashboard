@@ -275,14 +275,16 @@ Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-bac
 
 Use **Edit mode** on the dashboard to create groups, drag groups into a preferred display order, and drag systems between or within groups. The display order is independent of upgrade execution order.
 
-Each group, including **Ungrouped**, has an **Upgrade priority** from `1` to `99`:
+Each group, including **Ungrouped**, has an **Upgrade priority** from `0` to `99` (default `1`):
 
 - Lower priority numbers run first.
 - Groups with the same priority run in parallel.
 - The next priority starts only after all systems at the current priority finish.
-- Each system also has an **Upgrade priority** from `1` to `99` within its current group (including **Ungrouped**).
+- Each system also has an **Upgrade priority** from `0` to `99` within its current group (including **Ungrouped**), with a default of `1`.
 - Lower-priority-number systems run first within that group, while systems with the same priority run in parallel.
 - System priority is scoped to its group, so groups sharing a priority progress through their own system priorities independently.
+
+**Upgrade All** remains available whenever at least one system with updates is idle. Systems that are refreshing, queued, upgrading, rebooting, repairing package-manager issues, or running another maintenance operation are left out until that operation finishes.
 
 The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The preference is stored in the browser and is disabled by default. Groups can be collapsed outside Edit mode without changing their display or upgrade priority.
 

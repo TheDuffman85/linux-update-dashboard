@@ -940,8 +940,8 @@ export function initDatabase(
   }
   _db.run(sql`
     UPDATE systems
-    SET update_priority = min(99, max(1, update_priority))
-    WHERE update_priority < 1 OR update_priority > 99
+    SET update_priority = min(99, max(0, update_priority))
+    WHERE update_priority < 0 OR update_priority > 99
   `);
   migrateLegacyUpgradeGroups(
     hadLegacyUpgradeGroups,
@@ -967,8 +967,8 @@ export function initDatabase(
   }
   _db.run(sql`
     UPDATE dashboard_groups
-    SET update_priority = min(99, max(1, update_priority))
-    WHERE update_priority < 1 OR update_priority > 99
+    SET update_priority = min(99, max(0, update_priority))
+    WHERE update_priority < 0 OR update_priority > 99
   `);
   _db.run(sql`
     INSERT INTO settings (key, value, description)
@@ -987,9 +987,9 @@ export function initDatabase(
   `);
   _db.run(sql`
     UPDATE settings
-    SET value = CAST(min(99, max(1, CAST(value AS INTEGER))) AS TEXT)
+    SET value = CAST(min(99, max(0, CAST(value AS INTEGER))) AS TEXT)
     WHERE key = 'dashboard_ungrouped_update_priority'
-      AND CAST(value AS INTEGER) NOT BETWEEN 1 AND 99
+      AND CAST(value AS INTEGER) NOT BETWEEN 0 AND 99
   `);
   migrateSystemsTableShape(
     hasIgnoreKeptBackPackages,

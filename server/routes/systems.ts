@@ -502,10 +502,10 @@ systems.put("/dashboard-groups/update-priority", async (c) => {
   }
   if (
     !Number.isSafeInteger(body.updatePriority) ||
-    (body.updatePriority as number) < 1 ||
+    (body.updatePriority as number) < 0 ||
     (body.updatePriority as number) > 99
   ) {
-    return c.json({ error: "updatePriority must be an integer from 1 to 99" }, 400);
+    return c.json({ error: "updatePriority must be an integer from 0 to 99" }, 400);
   }
   try {
     systemService.updateDashboardGroupPriority(groupId, body.updatePriority as number);
@@ -906,10 +906,10 @@ systems.put("/:id/update-priority", async (c) => {
   if (!body) return c.json({ error: "Invalid request body" }, 400);
   if (
     !Number.isSafeInteger(body.updatePriority) ||
-    (body.updatePriority as number) < 1 ||
+    (body.updatePriority as number) < 0 ||
     (body.updatePriority as number) > 99
   ) {
-    return c.json({ error: "updatePriority must be an integer from 1 to 99" }, 400);
+    return c.json({ error: "updatePriority must be an integer from 0 to 99" }, 400);
   }
 
   try {

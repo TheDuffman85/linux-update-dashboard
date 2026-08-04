@@ -191,6 +191,25 @@ describe("Dashboard", () => {
     expect(html).not.toContain("Upgrade All (7)");
   });
 
+  test("keeps the Upgrade All launcher available when no systems currently qualify", () => {
+    const current = mockUseDashboardSystems();
+    mockUseDashboardSystems.mockReturnValue({
+      ...current,
+      data: current.data.map((system: System) => ({
+        ...system,
+        updateCount: 0,
+      })),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(false);
+  });
+
   test("renders the dashboard summary cards", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -311,7 +330,7 @@ describe("Dashboard", () => {
     expect(html).not.toContain("23d");
   });
 
-  test("shows active upgrades without disabling the dashboard upgrade modal launcher", () => {
+  test("keeps the Upgrade All launcher available when the only updated system is busy", () => {
     mockUseDashboardSystems.mockReturnValue({
       data: [
         {
@@ -352,9 +371,60 @@ describe("Dashboard", () => {
     );
 
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Refresh All<\/button>/);
-    expect(html).toContain("Upgrading...");
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrading..."))).toBe(true);
-    expect(html).not.toContain(">Upgrade All</button>");
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(false);
+  });
+
+  test("keeps Upgrade All available for idle systems while another system is busy", () => {
+    const baseSystem = {
+      hostname: "system.local",
+      port: 22,
+      osName: "Debian",
+      isReachable: 1,
+      updateCount: 7,
+      securityCount: 0,
+      keptBackCount: 0,
+      cacheAge: null,
+      cacheTimestamp: null,
+      isStale: false,
+      lastCheck: null,
+      excludeFromUpgradeAll: 0,
+      dashboardGroupId: null,
+      pkgManager: "apt",
+      detectedPkgManagers: ["apt"],
+      disabledPkgManagers: [],
+      pkgManagerConfigs: null,
+      supportsFullUpgrade: true,
+    };
+    mockUseDashboardSystems.mockReturnValue({
+      data: [
+        {
+          ...baseSystem,
+          id: 1,
+          name: "Busy",
+          dashboardOrder: 1,
+          activeOperation: {
+            type: "check",
+            startedAt: "2026-05-18 10:00:00",
+          },
+        },
+        {
+          ...baseSystem,
+          id: 2,
+          name: "Idle",
+          dashboardOrder: 2,
+          activeOperation: null,
+        },
+      ],
+      dataUpdatedAt: Date.now(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(false);
   });
 
   test("does not show the dashboard upgrade action as upgrading during refresh", () => {
@@ -368,7 +438,7 @@ describe("Dashboard", () => {
 
     expect(html).toContain("Refreshing...");
     expect(hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing..."))).toBe(true);
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(true);
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(false);
     expect(html).not.toContain("Upgrading...");
   });
 
@@ -414,11 +484,11 @@ describe("Dashboard", () => {
 
     expect(html).toContain("Refreshing...");
     expect(hasDisabledAttribute(getOpeningButtonTag(html, "Refreshing..."))).toBe(true);
-    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(true);
+    expect(hasDisabledAttribute(getOpeningButtonTag(html, "Upgrade All"))).toBe(false);
     expect(html).not.toContain("Upgrading...");
   });
 
-  test("disables the modal Upgrade All submit while dashboard work is running", () => {
+  test("disables the modal Upgrade All submit without a selection or during submission", () => {
     expect(isUpgradeAllSubmitDisabled(1, true)).toBe(true);
     expect(isUpgradeAllSubmitDisabled(1, false)).toBe(false);
     expect(isUpgradeAllSubmitDisabled(0, false)).toBe(true);
@@ -734,6 +804,7 @@ describe("Dashboard", () => {
     expect(editHtml).toContain(">Done</button>");
     expect(editHtml).toContain('title="Drag to reorder system"');
     expect(editHtml).toContain("data-dashboard-system-drag-handle");
+    expect(editHtml).toContain("items-center justify-start gap-1.5");
     expect(editHtml).toContain(">Drag to reorder system</span>");
     expect(editHtml).toMatch(/data-dashboard-system-id="1" draggable="true"/);
     expect(editHtml).toContain('aria-label="Sort systems by name"');
@@ -750,8 +821,8 @@ describe("Dashboard", () => {
     expect(editHtml).toContain(
       "flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0",
     );
-    expect(editHtml).toMatch(/<input type="number" min="1" max="99" step="1"[^>]*value="3"/);
-    expect(editHtml).toMatch(/<input type="number" min="1" max="99" step="1"[^>]*value="6"/);
+    expect(editHtml).toMatch(/<input type="number" min="0" max="99" step="1"[^>]*value="3"/);
+    expect(editHtml).toMatch(/<input type="number" min="0" max="99" step="1"[^>]*value="6"/);
     expect(editHtml.indexOf('aria-label="Sort systems by name"')).toBeLessThan(
       editHtml.indexOf('aria-label="Delete group"'),
     );

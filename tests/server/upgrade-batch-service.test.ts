@@ -144,4 +144,45 @@ describe("upgrade batch service", () => {
     await running;
     expect(started).toContain(inserted[3].id);
   });
+
+  test("starts another batch for idle systems while a batch is already active", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      { name: "Alpha", hostname: "alpha.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]' },
+      { name: "Bravo", hostname: "bravo.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]' },
+    ]).returning({ id: systems.id }).all();
+    db.insert(updateCache).values(inserted.map((system) => ({
+      systemId: system.id,
+      pkgManager: "apt",
+      packageName: `package-${system.id}`,
+      newVersion: "2",
+    }))).run();
+
+    const started: number[] = [];
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    vi.spyOn(updateService, "applyUpgradeAll").mockImplementation(async (systemId) => {
+      started.push(systemId);
+      if (systemId === inserted[0].id) await firstBlocked;
+      return { success: true, warning: false, cancelled: false, output: "" };
+    });
+
+    const first = createUpgradeBatch([{ systemId: inserted[0].id }]);
+    await vi.waitFor(() => expect(started).toContain(inserted[0].id));
+    const second = createUpgradeBatch([{ systemId: inserted[1].id }]);
+    await vi.waitFor(() => expect(started).toContain(inserted[1].id));
+
+    expect(second.batchId).not.toBe(first.batchId);
+    expect(() =>
+      createUpgradeBatch([{ systemId: inserted[0].id }], { autoRun: false })
+    ).toThrow("already has an operation queued or running");
+
+    releaseFirst();
+    await runUpgradeBatches();
+    expect(
+      db.select({ status: upgradeBatches.status }).from(upgradeBatches).all(),
+    ).toEqual([{ status: "success" }, { status: "success" }]);
+  });
 });

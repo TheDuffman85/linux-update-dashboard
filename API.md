@@ -69,7 +69,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | PUT    | `/api/systems/reorder`                             | Reorder systems.                                                                                                              |
 | PUT    | `/api/systems/:id`                                 | Update system configuration. API tokens cannot use this route.                                                                |
 | PUT    | `/api/systems/:id/upgrade-mode`                    | Toggle the system's default full-upgrade/aggressive upgrade behavior where supported.                                         |
-| PUT    | `/api/systems/:id/update-priority`                 | Set the system's Upgrade All priority (1–99) within its dashboard group.                                                       |
+| PUT    | `/api/systems/:id/update-priority`                 | Set the system's Upgrade All priority (0–99) within its dashboard group.                                                       |
 | PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Include or exclude a system from Upgrade All by default.                                                                      |
 | POST   | `/api/systems/test-connection`                     | Test SSH connectivity, host-key trust, and package-manager detection for a proposed config. API tokens cannot use this route. |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system.                                                                                                              |
@@ -94,7 +94,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | POST   | `/api/systems/dashboard-groups`           | Create a dashboard organization group.                            |
 | PUT    | `/api/systems/dashboard-groups/reorder`  | Reorder with `{ groupKeys: [number..., "ungrouped"] }`; every group and Ungrouped must appear exactly once. |
 | PUT    | `/api/systems/dashboard-groups/systems`  | Assign systems to groups and persist their dashboard card order.  |
-| PUT    | `/api/systems/dashboard-groups/update-priority` | Set a saved group or Ungrouped upgrade priority (1–99) with `{ groupId: number | null, updatePriority: integer }`; lower priorities run first and equal priorities run in parallel. |
+| PUT    | `/api/systems/dashboard-groups/update-priority` | Set a saved group or Ungrouped upgrade priority (0–99) with `{ groupId: number | null, updatePriority: integer }`; lower priorities run first and equal priorities run in parallel. |
 | PUT    | `/api/systems/dashboard-groups/:id`      | Rename a dashboard organization group.                            |
 | DELETE | `/api/systems/dashboard-groups/:id`      | Delete a group and move its systems to Ungrouped.                 |
 

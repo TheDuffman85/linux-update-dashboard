@@ -494,7 +494,7 @@ export function DashboardSystemGroups({
     if (
       busy ||
       !Number.isSafeInteger(updatePriority) ||
-      updatePriority < 1 ||
+      updatePriority < 0 ||
       updatePriority > 99
     ) return;
     const previousPriority = section.groupId === null
@@ -532,7 +532,7 @@ export function DashboardSystemGroups({
     if (
       busy ||
       !Number.isSafeInteger(updatePriority) ||
-      updatePriority < 1 ||
+      updatePriority < 0 ||
       updatePriority > 99
     ) return;
     const previousPriority =
@@ -566,7 +566,7 @@ export function DashboardSystemGroups({
         type="button"
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => void persistUpdatePriority(section, section.updatePriority - 1)}
-        disabled={busy || section.updatePriority <= 1}
+        disabled={busy || section.updatePriority <= 0}
         className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
         aria-label={t("pages.dashboard.decreaseUpdatePriorityForName", {
           name: section.name,
@@ -576,13 +576,13 @@ export function DashboardSystemGroups({
       </button>
       <input
         type="number"
-        min="1"
+        min="0"
         max="99"
         step="1"
         value={section.updatePriority}
         onChange={(event) => {
           const next = event.currentTarget.valueAsNumber;
-          if (Number.isSafeInteger(next) && next >= 1 && next <= 99) {
+          if (Number.isSafeInteger(next) && next >= 0 && next <= 99) {
             setLocalUpdatePriority(section.groupId, next);
           }
         }}
@@ -630,7 +630,7 @@ export function DashboardSystemGroups({
           type="button"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => void persistSystemUpdatePriority(system, updatePriority - 1)}
-          disabled={busy || updatePriority <= 1}
+          disabled={busy || updatePriority <= 0}
           className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
           aria-label={t("pages.dashboard.decreaseUpdatePriorityForName", {
             name: system.name,
@@ -640,13 +640,13 @@ export function DashboardSystemGroups({
         </button>
         <input
           type="number"
-          min="1"
+          min="0"
           max="99"
           step="1"
           value={updatePriority}
           onChange={(event) => {
             const next = event.currentTarget.valueAsNumber;
-            if (Number.isSafeInteger(next) && next >= 1 && next <= 99) {
+            if (Number.isSafeInteger(next) && next >= 0 && next <= 99) {
               setLocalSystemUpdatePriority(system.id, next);
             }
           }}
@@ -894,7 +894,7 @@ export function DashboardSystemGroups({
                   <div className="flex flex-wrap items-center justify-between gap-1.5 pb-1.5">
                     <div
                       data-dashboard-system-drag-handle
-                      className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300"
+                      className="flex min-w-0 flex-1 items-center justify-start gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300"
                       title={t("pages.dashboard.dragToReorderSystem")}
                     >
                       <svg

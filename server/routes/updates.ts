@@ -145,7 +145,7 @@ updates.post("/systems/upgrade-all", async (c) => {
     return c.json({ status: "queued", batchId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to start Upgrade All batch";
-    return c.json({ error: message }, message.includes("already queued or running") ? 409 : 400);
+    return c.json({ error: message }, message.includes("queued or running") ? 409 : 400);
   }
 });
 

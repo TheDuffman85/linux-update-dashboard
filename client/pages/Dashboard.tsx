@@ -97,12 +97,8 @@ export function UpgradeModalGroupHeading({
   );
 }
 
-function hasActiveUpgradeOperation(system: System): boolean {
-  return !!system.activeOperation?.type.includes("upgrade") && !isPostUpgradeRecheck(system.activeOperation);
-}
-
 function isUpgradeAllEligible(system: System, locallyUpgrading: boolean): boolean {
-  return system.updateCount > 0 && !locallyUpgrading && !hasActiveUpgradeOperation(system);
+  return system.updateCount > 0 && !locallyUpgrading && !system.activeOperation;
 }
 
 export function isUpgradePresetSelected(
@@ -427,18 +423,15 @@ export default function Dashboard() {
     });
   };
 
-  const hasUpgradeInProgress =
-    upgradingCount > 0 ||
-    (systems?.some((s) => isUpgrading(s.id) || hasActiveUpgradeOperation(s)) ?? false);
   const hasRefreshInProgress =
     refreshCache.isPending ||
     (systems?.some((s) => s.activeOperation?.type === "check") ?? false);
   const disableRefreshAll = refreshCache.isPending || hasActiveOps;
-  const disableUpgradeSubmit = refreshCache.isPending || hasActiveOps;
   const systemsWithUpdates = useMemo(
     () => systems?.filter((s) => isUpgradeAllEligible(s, isUpgrading(s.id))) ?? [],
     [systems, isUpgrading],
   );
+  const disableUpgradeLauncher = upgradeAllBatch.isPending;
   const dashboardGroupSortById = useMemo(
     () => new Map(dashboardGroups.map((group) => [group.id, group.sortOrder])),
     [dashboardGroups],
@@ -462,7 +455,20 @@ export default function Dashboard() {
     [systemsWithUpdates, dashboardGroupSortById, dashboardGroupConfig.ungroupedSortOrder],
   );
   const orderedModalCandidateSystems = orderedSystemsWithUpdates;
-  const modalSystems = showUpgradeConfirm ? upgradeModalSystems : orderedSystemsWithUpdates;
+  const latestSystemsById = useMemo(
+    () => new Map((systems ?? []).map((system) => [system.id, system])),
+    [systems],
+  );
+  const modalSystems = showUpgradeConfirm
+    ? upgradeModalSystems
+        .map((snapshot) => {
+          const latest = latestSystemsById.get(snapshot.id);
+          return latest
+            ? { ...latest, excludeFromUpgradeAll: snapshot.excludeFromUpgradeAll }
+            : snapshot;
+        })
+        .filter((system) => isUpgradeAllEligible(system, isUpgrading(system.id)))
+    : orderedSystemsWithUpdates;
   const defaultSelectedSystemIds = orderedModalCandidateSystems
     .filter((s) => s.excludeFromUpgradeAll !== 1)
     .map((s) => s.id);
@@ -641,7 +647,6 @@ export default function Dashboard() {
   };
 
   const handleUpgradeAll = () => {
-    const latestSystemsById = new Map((systems ?? []).map((system) => [system.id, system]));
     const systemsToUpgrade = modalSystems
       .map((system) => latestSystemsById.get(system.id) ?? system)
       .filter((system) =>
@@ -699,17 +704,10 @@ export default function Dashboard() {
           </button>
           <button
             onClick={openUpgradeConfirm}
-            disabled={disableUpgradeSubmit}
+            disabled={disableUpgradeLauncher}
             className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
           >
-            {hasUpgradeInProgress ? (
-              <span className="flex items-center gap-1.5">
-                <span className="spinner spinner-sm" />
-                {t("pages.dashboard.upgrading")}
-              </span>
-            ) : (
-              t("pages.dashboard.upgradeAll")
-            )}
+            {t("pages.dashboard.upgradeAll")}
           </button>
         </div>
       }
@@ -899,7 +897,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={handleUpgradeAll}
-            disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, disableUpgradeSubmit)}
+            disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, upgradeAllBatch.isPending)}
             className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:w-auto"
           >
             {t("pages.dashboard.upgradeAll")}
