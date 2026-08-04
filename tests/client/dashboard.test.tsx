@@ -521,6 +521,7 @@ describe("Dashboard", () => {
 
     expect(html).toContain("Production");
     expect(html).toContain("Priority: 4");
+    expect(html).toContain('class="ml-auto mr-3"');
     expect(html).toContain("bg-slate-100");
     expect(html).toContain(
       'title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."',

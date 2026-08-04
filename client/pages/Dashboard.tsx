@@ -86,7 +86,7 @@ export function UpgradeModalGroupHeading({
       </h3>
       <Badge variant="muted" small>{systemCount}</Badge>
       <span
-        className="ml-auto"
+        className="ml-auto mr-3"
         title={t("pages.dashboard.upgradePriorityHelp")}
       >
         <Badge variant="muted" small>
@@ -180,7 +180,7 @@ function getUpgradeSystemRowClass({
   isSelected: boolean;
 }): string {
   const baseClass =
-    "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto]";
+    "relative grid min-w-0 grid-cols-[minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 pt-11 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:pt-3";
 
   if (!hasUpdates) {
     return [
@@ -853,7 +853,7 @@ export default function Dashboard() {
                                 </button>
                               )}
                             </div>
-                            <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-start-auto sm:justify-end">
+                            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:justify-start">
                               <Badge variant="warning" small>
                                 {t("pages.dashboard.countUpdates", { count: s.updateCount })}
                               </Badge>
@@ -863,12 +863,15 @@ export default function Dashboard() {
                               {s.keptBackCount > 0 && (
                                 <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: s.keptBackCount })}</Badge>
                               )}
-                              <span className="ml-auto shrink-0" title={t("pages.dashboard.systemUpgradePriorityHelp")}>
-                                <Badge variant="muted" small>
-                                  {t("pages.dashboard.updatePriority")}: {s.updatePriority ?? 1}
-                                </Badge>
-                              </span>
                             </div>
+                            <span
+                              className="absolute right-3 top-3 shrink-0 sm:static"
+                              title={t("pages.dashboard.systemUpgradePriorityHelp")}
+                            >
+                              <Badge variant="muted" small>
+                                {t("pages.dashboard.updatePriority")}: {s.updatePriority ?? 1}
+                              </Badge>
+                            </span>
                           </li>
                         );
                       })}
