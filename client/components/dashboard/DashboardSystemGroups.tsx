@@ -79,7 +79,10 @@ export function compareSystemsByName(a: System, b: System): number {
 }
 
 function hasCheckIssue(system: System): boolean {
-  return system.lastCheck?.status === "failed" || system.lastCheck?.status === "warning";
+  return (
+    system.lastCheck?.status === "failed" ||
+    system.lastCheck?.status === "warning"
+  );
 }
 
 function hasLifecycleWarning(system: System): boolean {
@@ -91,7 +94,10 @@ function hasLifecycleWarning(system: System): boolean {
   );
 }
 
-function getGroupStatusBadges(systems: System[], t: (key: string) => string): GroupStatusBadge[] {
+function getGroupStatusBadges(
+  systems: System[],
+  t: (key: string) => string,
+): GroupStatusBadge[] {
   const checkIssues = systems.filter(hasCheckIssue).length;
   const badges: GroupStatusBadge[] = [
     {
@@ -180,10 +186,7 @@ export function DashboardSystemGroups({
   systems,
   groups,
   ungroupedSortOrder,
-  ungroupedUpdatePriority = Math.min(
-    99,
-    Math.max(1, ungroupedSortOrder + 1),
-  ),
+  ungroupedUpdatePriority = Math.min(99, Math.max(1, ungroupedSortOrder + 1)),
   editMode,
   onToggleEditMode,
   onCreateGroup,
@@ -229,12 +232,16 @@ export function DashboardSystemGroups({
   const [localSystems, setLocalSystems] = useState<System[]>(systems);
   const [collapsedGroups, setCollapsedGroups] =
     useState<Set<string>>(readCollapsedGroups);
-  const [groupBadgesEnabled, setGroupBadgesEnabled] =
-    useState(readGroupBadgesEnabled);
+  const [groupBadgesEnabled, setGroupBadgesEnabled] = useState(
+    readGroupBadgesEnabled,
+  );
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
 
   useEffect(() => setLocalGroups(groups), [groups]);
-  useEffect(() => setLocalUngroupedSortOrder(ungroupedSortOrder), [ungroupedSortOrder]);
+  useEffect(
+    () => setLocalUngroupedSortOrder(ungroupedSortOrder),
+    [ungroupedSortOrder],
+  );
   useEffect(
     () => setLocalUngroupedUpdatePriority(ungroupedUpdatePriority),
     [ungroupedUpdatePriority],
@@ -273,7 +280,9 @@ export function DashboardSystemGroups({
         systems: ungroupedSystems,
       });
     }
-    return result.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    return result.sort(
+      (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+    );
   }, [
     editMode,
     groupBadgesEnabled,
@@ -325,32 +334,22 @@ export function DashboardSystemGroups({
 
   const finishDrag = () => setDragItem(null);
 
-  const reorderGroups = async (targetGroupKey: string) => {
-    if (
-      busy ||
-      !dragItem ||
-      dragItem.kind !== "group" ||
-      dragItem.id === targetGroupKey
-    )
-      return;
-    const previous = sections;
-    const next = [...previous];
-    const sourceIndex = next.findIndex((section) => section.key === dragItem.id);
-    const targetIndex = next.findIndex((section) => section.key === targetGroupKey);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-    const [source] = next.splice(sourceIndex, 1);
-    next.splice(targetIndex, 0, source);
+  const persistGroupOrder = async (next: DashboardSection[]) => {
     const nextGroupKeys = next.map((section) => section.key);
     setLocalGroups(
       next.flatMap((section, sortOrder) =>
         section.group ? [{ ...section.group, sortOrder }] : [],
       ),
     );
-    const nextUngroupedSortOrder = next.findIndex((section) => section.groupId === null);
+    const nextUngroupedSortOrder = next.findIndex(
+      (section) => section.groupId === null,
+    );
     setLocalUngroupedSortOrder(nextUngroupedSortOrder);
     try {
       await saveGroupOrder(
-        nextGroupKeys.map((key) => (key === UNGROUPED_KEY ? UNGROUPED_KEY : Number(key))),
+        nextGroupKeys.map((key) =>
+          key === UNGROUPED_KEY ? UNGROUPED_KEY : Number(key),
+        ),
       );
     } catch (error) {
       setLocalGroups(groups);
@@ -359,6 +358,63 @@ export function DashboardSystemGroups({
         error instanceof Error
           ? error.message
           : t("pages.dashboard.failedToSaveGroupOrder"),
+      );
+    }
+  };
+
+  const moveGroup = async (sourceGroupKey: string, targetIndex: number) => {
+    if (busy) return;
+    const next = [...sections];
+    const sourceIndex = next.findIndex(
+      (section) => section.key === sourceGroupKey,
+    );
+    if (
+      sourceIndex < 0 ||
+      targetIndex < 0 ||
+      targetIndex >= next.length ||
+      sourceIndex === targetIndex
+    )
+      return;
+    const [source] = next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, source);
+    await persistGroupOrder(next);
+  };
+
+  const reorderGroups = async (targetGroupKey: string) => {
+    if (
+      busy ||
+      !dragItem ||
+      dragItem.kind !== "group" ||
+      dragItem.id === targetGroupKey
+    )
+      return;
+    const targetIndex = sections.findIndex(
+      (section) => section.key === targetGroupKey,
+    );
+    await moveGroup(dragItem.id, targetIndex);
+  };
+
+  const persistSystemOrder = async (
+    orderedSections: Array<{ groupId: number | null; systems: System[] }>,
+  ) => {
+    const previous = cloneSystems(localSystems);
+    const next = applySystemOrder(localSystems, orderedSections);
+    const items = orderedSections.flatMap((section) =>
+      section.systems.map((system, index) => ({
+        systemId: system.id,
+        groupId: section.groupId,
+        dashboardOrder: index + 1,
+      })),
+    );
+    setLocalSystems(next);
+    try {
+      await saveSystemPlacements(items);
+    } catch (error) {
+      setLocalSystems(previous);
+      onError(
+        error instanceof Error
+          ? error.message
+          : t("pages.dashboard.failedToSaveSystemGroups"),
       );
     }
   };
@@ -424,52 +480,39 @@ export function DashboardSystemGroups({
       groupId: section.groupId,
       systems: sectionByKey.get(groupKey(section.groupId)) ?? [],
     }));
-    const previous = cloneSystems(localSystems);
-    const next = applySystemOrder(localSystems, orderedSections);
-    const items = orderedSections.flatMap((section) =>
-      section.systems.map((system, index) => ({
-        systemId: system.id,
-        groupId: section.groupId,
-        dashboardOrder: index + 1,
-      })),
+    await persistSystemOrder(orderedSections);
+  };
+
+  const moveSystemByOffset = async (
+    section: DashboardSection,
+    systemId: number,
+    offset: -1 | 1,
+  ) => {
+    if (busy) return;
+    const reorderedSystems = [...section.systems];
+    const sourceIndex = reorderedSystems.findIndex(
+      (system) => system.id === systemId,
     );
-    setLocalSystems(next);
-    try {
-      await saveSystemPlacements(items);
-    } catch (error) {
-      setLocalSystems(previous);
-      onError(
-        error instanceof Error
-          ? error.message
-          : t("pages.dashboard.failedToSaveSystemGroups"),
-      );
-    }
+    const targetIndex = sourceIndex + offset;
+    if (
+      sourceIndex < 0 ||
+      targetIndex < 0 ||
+      targetIndex >= reorderedSystems.length
+    )
+      return;
+    const [source] = reorderedSystems.splice(sourceIndex, 1);
+    reorderedSystems.splice(targetIndex, 0, source);
+    await persistSystemOrder([
+      { groupId: section.groupId, systems: reorderedSystems },
+    ]);
   };
 
   const sortSystemsByName = async (section: DashboardSection) => {
     if (busy || section.systems.length < 2) return;
     const sortedSystems = [...section.systems].sort(compareSystemsByName);
-    const items = sortedSystems.map((system, index) => ({
-      systemId: system.id,
-      groupId: section.groupId,
-      dashboardOrder: index + 1,
-    }));
-    const previous = cloneSystems(localSystems);
-    setLocalSystems(
-      applySystemOrder(localSystems, [
-        { groupId: section.groupId, systems: sortedSystems },
-      ]),
-    );
-    try {
-      await saveSystemPlacements(items);
-    } catch (error) {
-      setLocalSystems(previous);
-      onError(
-        error instanceof Error
-          ? error.message
-          : t("pages.dashboard.failedToSaveSystemGroups"),
-      );
-    }
+    await persistSystemOrder([
+      { groupId: section.groupId, systems: sortedSystems },
+    ]);
   };
 
   const setLocalUpdatePriority = (
@@ -496,11 +539,14 @@ export function DashboardSystemGroups({
       !Number.isSafeInteger(updatePriority) ||
       updatePriority < 0 ||
       updatePriority > 99
-    ) return;
-    const previousPriority = section.groupId === null
-      ? ungroupedUpdatePriority
-      : groups.find((group) => group.id === section.groupId)?.updatePriority;
-    if (previousPriority === undefined || previousPriority === updatePriority) return;
+    )
+      return;
+    const previousPriority =
+      section.groupId === null
+        ? ungroupedUpdatePriority
+        : groups.find((group) => group.id === section.groupId)?.updatePriority;
+    if (previousPriority === undefined || previousPriority === updatePriority)
+      return;
     setLocalUpdatePriority(section.groupId, updatePriority);
     try {
       await saveGroupUpdatePriority(section.groupId, updatePriority);
@@ -534,9 +580,11 @@ export function DashboardSystemGroups({
       !Number.isSafeInteger(updatePriority) ||
       updatePriority < 0 ||
       updatePriority > 99
-    ) return;
+    )
+      return;
     const previousPriority =
-      systems.find((candidate) => candidate.id === system.id)?.updatePriority ?? 1;
+      systems.find((candidate) => candidate.id === system.id)?.updatePriority ??
+      1;
     if (previousPriority === updatePriority) return;
     setLocalSystemUpdatePriority(system.id, updatePriority);
     try {
@@ -565,7 +613,9 @@ export function DashboardSystemGroups({
       <button
         type="button"
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => void persistUpdatePriority(section, section.updatePriority - 1)}
+        onClick={() =>
+          void persistUpdatePriority(section, section.updatePriority - 1)
+        }
         disabled={busy || section.updatePriority <= 0}
         className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
         aria-label={t("pages.dashboard.decreaseUpdatePriorityForName", {
@@ -586,7 +636,9 @@ export function DashboardSystemGroups({
             setLocalUpdatePriority(section.groupId, next);
           }
         }}
-        onBlur={() => void persistUpdatePriority(section, section.updatePriority)}
+        onBlur={() =>
+          void persistUpdatePriority(section, section.updatePriority)
+        }
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
         }}
@@ -599,7 +651,9 @@ export function DashboardSystemGroups({
       <button
         type="button"
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => void persistUpdatePriority(section, section.updatePriority + 1)}
+        onClick={() =>
+          void persistUpdatePriority(section, section.updatePriority + 1)
+        }
         disabled={busy || section.updatePriority >= 99}
         className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
         aria-label={t("pages.dashboard.increaseUpdatePriorityForName", {
@@ -629,7 +683,9 @@ export function DashboardSystemGroups({
         <button
           type="button"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => void persistSystemUpdatePriority(system, updatePriority - 1)}
+          onClick={() =>
+            void persistSystemUpdatePriority(system, updatePriority - 1)
+          }
           disabled={busy || updatePriority <= 0}
           className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
           aria-label={t("pages.dashboard.decreaseUpdatePriorityForName", {
@@ -650,7 +706,9 @@ export function DashboardSystemGroups({
               setLocalSystemUpdatePriority(system.id, next);
             }
           }}
-          onBlur={() => void persistSystemUpdatePriority(system, updatePriority)}
+          onBlur={() =>
+            void persistSystemUpdatePriority(system, updatePriority)
+          }
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();
           }}
@@ -663,7 +721,9 @@ export function DashboardSystemGroups({
         <button
           type="button"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => void persistSystemUpdatePriority(system, updatePriority + 1)}
+          onClick={() =>
+            void persistSystemUpdatePriority(system, updatePriority + 1)
+          }
           disabled={busy || updatePriority >= 99}
           className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
           aria-label={t("pages.dashboard.increaseUpdatePriorityForName", {
@@ -693,7 +753,7 @@ export function DashboardSystemGroups({
     finishDrag();
   };
 
-  const renderSection = (section: DashboardSection) => {
+  const renderSection = (section: DashboardSection, sectionIndex: number) => {
     const isCollapsed = !editMode && collapsedGroups.has(section.key);
     const statusBadges = getGroupStatusBadges(section.systems, t);
     return (
@@ -707,11 +767,26 @@ export function DashboardSystemGroups({
         }
       >
         <div
+          data-dashboard-group-drag-header={editMode || undefined}
+          draggable={editMode && !busy}
+          onDragStart={(event) => {
+            if (
+              (event.target as HTMLElement).closest(
+                "[data-dashboard-group-actions], [data-dashboard-group-order-actions]",
+              )
+            ) {
+              event.preventDefault();
+              return;
+            }
+            beginDrag(event, { kind: "group", id: section.key });
+          }}
+          onDragEnd={finishDrag}
           className={`mb-3 flex items-start gap-2 ${
             editMode
-              ? "flex-col sm:flex-row sm:justify-between"
+              ? "cursor-grab flex-col sm:flex-row sm:justify-between"
               : "justify-between"
           }`}
+          title={editMode ? t("pages.dashboard.dragToReorderGroup") : undefined}
         >
           <div
             className={`flex min-w-0 flex-wrap items-center gap-2 ${
@@ -720,12 +795,7 @@ export function DashboardSystemGroups({
           >
             {editMode && (
               <span
-                draggable
-                onDragStart={(event) =>
-                  beginDrag(event, { kind: "group", id: section.key })
-                }
-                onDragEnd={finishDrag}
-                className="cursor-grab rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                 title={t("pages.dashboard.dragToReorderGroup")}
                 aria-label={t("pages.dashboard.dragToReorderGroup")}
               >
@@ -745,37 +815,112 @@ export function DashboardSystemGroups({
                 </svg>
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => toggleCollapsed(section.key)}
-              disabled={editMode}
-              aria-expanded={!isCollapsed}
-              aria-controls={`dashboard-group-content-${section.key}`}
-              className="flex min-w-0 items-center gap-2 text-left"
-            >
-              <svg
-                className={`h-4 w-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
+            {editMode && (
+              <div
+                data-dashboard-group-order-actions
+                draggable={false}
+                className="inline-flex items-center"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="m6 9 6 6 6-6"
-                />
-              </svg>
-              <h2 className="truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
-                {section.name}
-              </h2>
-              <Badge variant="muted" small>
-                {section.systems.length}
-              </Badge>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => void moveGroup(section.key, sectionIndex - 1)}
+                  disabled={busy || sectionIndex === 0}
+                  className="rounded p-1.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
+                  title={t("pages.dashboard.moveGroupUpForName", {
+                    name: section.name,
+                  })}
+                  aria-label={t("pages.dashboard.moveGroupUpForName", {
+                    name: section.name,
+                  })}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="m6 15 6-6 6 6"
+                    />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void moveGroup(section.key, sectionIndex + 1)}
+                  disabled={busy || sectionIndex === sections.length - 1}
+                  className="rounded p-1.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
+                  title={t("pages.dashboard.moveGroupDownForName", {
+                    name: section.name,
+                  })}
+                  aria-label={t("pages.dashboard.moveGroupDownForName", {
+                    name: section.name,
+                  })}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="m6 9 6 6 6-6"
+                    />
+                  </svg>
+                </button>
+              </div>
+            )}
+            {editMode ? (
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
+                  {section.name}
+                </h2>
+                <Badge variant="muted" small>
+                  {section.systems.length}
+                </Badge>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => toggleCollapsed(section.key)}
+                aria-expanded={!isCollapsed}
+                aria-controls={`dashboard-group-content-${section.key}`}
+                className="flex min-w-0 items-center gap-2 text-left"
+              >
+                <svg
+                  className={`h-4 w-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="m6 9 6 6 6-6"
+                  />
+                </svg>
+                <h2 className="truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
+                  {section.name}
+                </h2>
+                <Badge variant="muted" small>
+                  {section.systems.length}
+                </Badge>
+              </button>
+            )}
             {groupBadgesEnabled && statusBadges.length > 0 && (
-              <div className="flex min-w-0 flex-wrap items-center gap-1" aria-label={t("pages.dashboard.groupStatus")}>
+              <div
+                className="flex min-w-0 flex-wrap items-center gap-1"
+                aria-label={t("pages.dashboard.groupStatus")}
+              >
                 {statusBadges.map((badge) => (
                   <Badge key={badge.key} variant={badge.variant} small>
                     <span>{badge.label}</span>
@@ -786,7 +931,11 @@ export function DashboardSystemGroups({
             )}
           </div>
           {editMode && (
-            <div className="flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0">
+            <div
+              data-dashboard-group-actions
+              draggable={false}
+              className="flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0 cursor-default"
+            >
               <button
                 type="button"
                 onClick={() => void sortSystemsByName(section)}
@@ -795,7 +944,10 @@ export function DashboardSystemGroups({
                 title={t("pages.dashboard.sortSystemsByName")}
                 aria-label={t("pages.dashboard.sortSystemsByName")}
               >
-                <span className="text-[10px] font-bold leading-4" aria-hidden="true">
+                <span
+                  className="text-[10px] font-bold leading-4"
+                  aria-hidden="true"
+                >
                   A–Z
                 </span>
               </button>
@@ -854,7 +1006,7 @@ export function DashboardSystemGroups({
             id={`dashboard-group-content-${section.key}`}
             className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           >
-            {section.systems.map((system) => (
+            {section.systems.map((system, systemIndex) => (
               <div
                 key={system.id}
                 data-dashboard-system-id={system.id}
@@ -862,7 +1014,7 @@ export function DashboardSystemGroups({
                 onDragStart={(event) => {
                   if (
                     (event.target as HTMLElement).closest(
-                      "[data-dashboard-system-upgrade-priority]",
+                      "[data-dashboard-system-actions], [data-dashboard-system-upgrade-priority]",
                     )
                   ) {
                     event.preventDefault();
@@ -888,30 +1040,99 @@ export function DashboardSystemGroups({
                     ? "cursor-grab rounded-xl bg-slate-100 p-1.5 ring-1 ring-dashed ring-slate-400 dark:bg-slate-900/40 dark:ring-slate-500"
                     : undefined
                 }
-                title={editMode ? t("pages.dashboard.dragToReorderSystem") : undefined}
+                title={
+                  editMode
+                    ? t("pages.dashboard.dragToReorderSystem")
+                    : undefined
+                }
               >
                 {editMode && (
                   <div className="flex flex-wrap items-center justify-between gap-1.5 pb-1.5">
                     <div
-                      data-dashboard-system-drag-handle
-                      className="flex min-w-0 flex-1 items-center justify-start gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300"
-                      title={t("pages.dashboard.dragToReorderSystem")}
+                      data-dashboard-system-actions
+                      draggable={false}
+                      className="flex min-w-0 flex-1 items-center gap-0.5"
                     >
-                      <svg
-                        className="h-3.5 w-3.5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
+                      <div
+                        data-dashboard-system-drag-handle
+                        className="flex items-center justify-start p-1 text-[11px] font-medium text-slate-600 dark:text-slate-300"
+                        title={t("pages.dashboard.dragToReorderSystem")}
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
-                        />
-                      </svg>
-                      <span>{t("pages.dashboard.dragToReorderSystem")}</span>
+                        <svg
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
+                          />
+                        </svg>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void moveSystemByOffset(section, system.id, -1)
+                        }
+                        disabled={busy || systemIndex === 0}
+                        className="rounded p-1 text-slate-500 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
+                        title={t("pages.dashboard.moveSystemUpForName", {
+                          name: system.name,
+                        })}
+                        aria-label={t("pages.dashboard.moveSystemUpForName", {
+                          name: system.name,
+                        })}
+                      >
+                        <svg
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="m6 15 6-6 6 6"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void moveSystemByOffset(section, system.id, 1)
+                        }
+                        disabled={
+                          busy || systemIndex === section.systems.length - 1
+                        }
+                        className="rounded p-1 text-slate-500 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
+                        title={t("pages.dashboard.moveSystemDownForName", {
+                          name: system.name,
+                        })}
+                        aria-label={t("pages.dashboard.moveSystemDownForName", {
+                          name: system.name,
+                        })}
+                      >
+                        <svg
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="m6 9 6 6 6-6"
+                          />
+                        </svg>
+                      </button>
                     </div>
                     {renderSystemUpdatePriorityControl(system)}
                   </div>
@@ -925,8 +1146,7 @@ export function DashboardSystemGroups({
     );
   };
 
-  const flatMode =
-    localGroups.length === 0 && !editMode && !groupBadgesEnabled;
+  const flatMode = localGroups.length === 0 && !editMode && !groupBadgesEnabled;
 
   return (
     <div>
@@ -997,7 +1217,12 @@ export function DashboardSystemGroups({
                 viewBox="0 0 24 24"
                 aria-hidden="true"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m-7-7h14" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 5v14m-7-7h14"
+                />
               </svg>
               {t("pages.dashboard.addGroup")}
             </button>
@@ -1024,17 +1249,26 @@ export function DashboardSystemGroups({
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d={editMode ? "m5 12 4 4L19 6" : "M11 4H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4m-1.5-7.5a2.12 2.12 0 0 1 3 3L12 18l-4 1 1-4 9.5-9.5Z"}
+                d={
+                  editMode
+                    ? "m5 12 4 4L19 6"
+                    : "M11 4H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4m-1.5-7.5a2.12 2.12 0 0 1 3 3L12 18l-4 1 1-4 9.5-9.5Z"
+                }
               />
             </svg>
-            {editMode ? t("pages.dashboard.done") : t("pages.dashboard.editMode")}
+            {editMode
+              ? t("pages.dashboard.done")
+              : t("pages.dashboard.editMode")}
           </button>
         </div>
       </div>
       {flatMode ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {[...localSystems].sort(compareSystems).map((system) => (
-            <div key={system.id} onDragStart={(event) => event.preventDefault()}>
+            <div
+              key={system.id}
+              onDragStart={(event) => event.preventDefault()}
+            >
               {renderSystem(system)}
             </div>
           ))}
