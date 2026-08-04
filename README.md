@@ -280,7 +280,9 @@ Each group, including **Ungrouped**, has an **Upgrade priority** from `1` to `99
 - Lower priority numbers run first.
 - Groups with the same priority run in parallel.
 - The next priority starts only after all systems at the current priority finish.
-- Systems within one group run in parallel.
+- Each system also has an **Upgrade priority** from `1` to `99` within its current group (including **Ungrouped**).
+- Lower-priority-number systems run first within that group, while systems with the same priority run in parallel.
+- System priority is scoped to its group, so groups sharing a priority progress through their own system priorities independently.
 
 The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The preference is stored in the browser and is disabled by default. Groups can be collapsed outside Edit mode without changing their display or upgrade priority.
 
@@ -294,7 +296,7 @@ Schedules are managed from the **Schedules** page. Existing installs migrate to 
 
 Schedules use five-field cron expressions in the process timezone. Set Docker `TZ`, such as `TZ=Europe/Berlin`, for local-time scheduling. The default minimum interval is 5 minutes and can be changed with `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES`.
 
-Update schedules use the same explicit dashboard-group priorities as manual **Upgrade All Systems** runs. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
+Update schedules use the same explicit dashboard-group and per-system priorities as manual **Upgrade All Systems** runs. Hidden systems and systems excluded from Upgrade All are not queued unless explicitly included.
 
 Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual refreshes, server restarts, and newly added systems can still trigger checks outside configured schedules. Notification channels can be assigned to multiple notification schedules.
 

@@ -153,7 +153,9 @@ export function createUpgradeBatch(items: BatchItemInput[], options?: { autoRun?
         // This legacy-named snapshot column now stores the explicit update
         // priority so equal-priority groups execute in parallel.
         groupSortOrder: group?.updatePriority ?? ungroupedUpdatePriority,
-        systemSortOrder: system.dashboardOrder ?? 1,
+        // This legacy-named snapshot column stores the system's explicit
+        // priority within its group. Equal priorities execute in parallel.
+        systemSortOrder: system.updatePriority ?? 1,
         defaultUpgradeModeOverride: item.defaultUpgradeModeOverride ?? null,
         status: "queued",
         command: snapshot.command,
@@ -191,6 +193,41 @@ function getNextGroupItems(batchId: number) {
   const first = activeRows[0];
   if (!first) return [];
   return activeRows.filter((row) => row.groupSortOrder === first.groupSortOrder);
+}
+
+async function runSystemsByPriority(
+  items: ReturnType<typeof getNextGroupItems>,
+): Promise<void> {
+  const priorities = Array.from(
+    new Set(items.map((item) => item.systemSortOrder)),
+  ).sort((a, b) => a - b);
+
+  for (const priority of priorities) {
+    await Promise.all(
+      items
+        .filter((item) => item.systemSortOrder === priority)
+        .map((item) => runBatchItem(item.id)),
+    );
+  }
+}
+
+async function runGroupPriorityWave(
+  items: ReturnType<typeof getNextGroupItems>,
+): Promise<void> {
+  const itemsByGroup = new Map<number | null, typeof items>();
+  for (const item of items) {
+    const groupItems = itemsByGroup.get(item.groupId) ?? [];
+    groupItems.push(item);
+    itemsByGroup.set(item.groupId, groupItems);
+  }
+
+  // Groups sharing an outer priority progress independently. Within each
+  // group, lower system priorities finish before its next priority begins.
+  await Promise.all(
+    Array.from(itemsByGroup.values()).map((groupItems) =>
+      runSystemsByPriority(groupItems),
+    ),
+  );
 }
 
 async function runBatchItem(itemId: number): Promise<ItemStatus> {
@@ -318,7 +355,7 @@ export async function runUpgradeBatches(): Promise<void> {
       while (true) {
         const groupItems = getNextGroupItems(batch.id);
         if (groupItems.length === 0) break;
-        await Promise.all(groupItems.map((item) => runBatchItem(item.id)));
+        await runGroupPriorityWave(groupItems);
       }
 
       const status = summarizeBatch(batch.id);

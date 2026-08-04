@@ -191,6 +191,7 @@ export function DashboardSystemGroups({
   onDeleteGroup,
   saveGroupOrder,
   saveGroupUpdatePriority,
+  saveSystemUpdatePriority,
   saveSystemPlacements,
   busy = false,
   onError,
@@ -208,6 +209,10 @@ export function DashboardSystemGroups({
   saveGroupOrder: (groupKeys: Array<number | "ungrouped">) => Promise<void>;
   saveGroupUpdatePriority: (
     groupId: number | null,
+    updatePriority: number,
+  ) => Promise<void>;
+  saveSystemUpdatePriority: (
+    systemId: number,
     updatePriority: number,
   ) => Promise<void>;
   saveSystemPlacements: (items: SystemPlacement[]) => Promise<void>;
@@ -509,6 +514,43 @@ export function DashboardSystemGroups({
     }
   };
 
+  const setLocalSystemUpdatePriority = (
+    systemId: number,
+    updatePriority: number,
+  ) => {
+    setLocalSystems((current) =>
+      current.map((system) =>
+        system.id === systemId ? { ...system, updatePriority } : system,
+      ),
+    );
+  };
+
+  const persistSystemUpdatePriority = async (
+    system: System,
+    updatePriority: number,
+  ) => {
+    if (
+      busy ||
+      !Number.isSafeInteger(updatePriority) ||
+      updatePriority < 1 ||
+      updatePriority > 99
+    ) return;
+    const previousPriority =
+      systems.find((candidate) => candidate.id === system.id)?.updatePriority ?? 1;
+    if (previousPriority === updatePriority) return;
+    setLocalSystemUpdatePriority(system.id, updatePriority);
+    try {
+      await saveSystemUpdatePriority(system.id, updatePriority);
+    } catch (error) {
+      setLocalSystemUpdatePriority(system.id, previousPriority);
+      onError(
+        error instanceof Error
+          ? error.message
+          : t("pages.dashboard.failedToSaveUpdatePriority"),
+      );
+    }
+  };
+
   const renderUpdatePriorityControl = (section: DashboardSection) => (
     <div
       className="inline-flex h-7 items-center overflow-hidden rounded-md border border-border bg-white dark:bg-slate-900"
@@ -568,6 +610,71 @@ export function DashboardSystemGroups({
       </button>
     </div>
   );
+
+  const renderSystemUpdatePriorityControl = (system: System) => {
+    const updatePriority = system.updatePriority ?? 1;
+    return (
+      <div
+        data-dashboard-system-upgrade-priority
+        draggable={false}
+        className="ml-auto inline-flex h-7 shrink-0 items-center overflow-hidden rounded-md border border-border bg-white dark:bg-slate-900"
+        title={t("pages.dashboard.systemUpgradePriorityHelp")}
+        aria-label={t("pages.dashboard.updatePriorityForName", {
+          name: system.name,
+        })}
+      >
+        <span className="px-1.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+          {t("pages.dashboard.updatePriority")}
+        </span>
+        <button
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void persistSystemUpdatePriority(system, updatePriority - 1)}
+          disabled={busy || updatePriority <= 1}
+          className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
+          aria-label={t("pages.dashboard.decreaseUpdatePriorityForName", {
+            name: system.name,
+          })}
+        >
+          -
+        </button>
+        <input
+          type="number"
+          min="1"
+          max="99"
+          step="1"
+          value={updatePriority}
+          onChange={(event) => {
+            const next = event.currentTarget.valueAsNumber;
+            if (Number.isSafeInteger(next) && next >= 1 && next <= 99) {
+              setLocalSystemUpdatePriority(system.id, next);
+            }
+          }}
+          onBlur={() => void persistSystemUpdatePriority(system, updatePriority)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          disabled={busy}
+          className="h-full w-8 border-l border-border bg-transparent px-0.5 text-center text-[11px] font-semibold text-slate-700 outline-none focus:bg-blue-50 dark:text-slate-100 dark:focus:bg-blue-950/30 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          aria-label={t("pages.dashboard.updatePriorityForName", {
+            name: system.name,
+          })}
+        />
+        <button
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void persistSystemUpdatePriority(system, updatePriority + 1)}
+          disabled={busy || updatePriority >= 99}
+          className="h-full border-l border-border px-1.5 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
+          aria-label={t("pages.dashboard.increaseUpdatePriorityForName", {
+            name: system.name,
+          })}
+        >
+          +
+        </button>
+      </div>
+    );
+  };
 
   const handleDrop = (
     event: DragEvent,
@@ -678,9 +785,8 @@ export function DashboardSystemGroups({
               </div>
             )}
           </div>
-          {editMode ? (
+          {editMode && (
             <div className="flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0">
-              {renderUpdatePriorityControl(section)}
               <button
                 type="button"
                 onClick={() => void sortSystemsByName(section)}
@@ -739,18 +845,9 @@ export function DashboardSystemGroups({
                   />
                 </svg>
               </button>
+              {renderUpdatePriorityControl(section)}
             </div>
-          ) : displayedSections.length > 1 ? (
-            <span
-              className="ml-auto shrink-0"
-              data-dashboard-upgrade-priority
-              title={t("pages.dashboard.upgradePriorityHelp")}
-            >
-              <Badge variant="muted" small>
-                {t("pages.dashboard.updatePriority")}: {section.updatePriority}
-              </Badge>
-            </span>
-          ) : null}
+          )}
         </div>
         {!isCollapsed && (
           <div
@@ -763,6 +860,14 @@ export function DashboardSystemGroups({
                 data-dashboard-system-id={system.id}
                 draggable={editMode && !busy}
                 onDragStart={(event) => {
+                  if (
+                    (event.target as HTMLElement).closest(
+                      "[data-dashboard-system-upgrade-priority]",
+                    )
+                  ) {
+                    event.preventDefault();
+                    return;
+                  }
                   if (!editMode || busy) {
                     event.preventDefault();
                     return;
@@ -786,25 +891,29 @@ export function DashboardSystemGroups({
                 title={editMode ? t("pages.dashboard.dragToReorderSystem") : undefined}
               >
                 {editMode && (
-                  <div
-                    data-dashboard-system-drag-handle
-                    className="flex items-center justify-center gap-1.5 pb-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300"
-                  >
-                    <svg
-                      className="h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-hidden="true"
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pb-1.5">
+                    <div
+                      data-dashboard-system-drag-handle
+                      className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300"
+                      title={t("pages.dashboard.dragToReorderSystem")}
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
-                      />
-                    </svg>
-                    <span>{t("pages.dashboard.dragToReorderSystem")}</span>
+                      <svg
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
+                        />
+                      </svg>
+                      <span>{t("pages.dashboard.dragToReorderSystem")}</span>
+                    </div>
+                    {renderSystemUpdatePriorityControl(system)}
                   </div>
                 )}
                 {renderSystem(system)}

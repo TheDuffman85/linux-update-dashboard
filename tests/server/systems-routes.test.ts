@@ -304,6 +304,40 @@ describe("systems reorder route", () => {
     ).toEqual(["Bravo", "Alpha"]);
   });
 
+  test("updates and validates a system upgrade priority", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values({
+      name: "Alpha",
+      hostname: "alpha.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+    }).returning({ id: systems.id }).get();
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const updated = await app.request(`/api/systems/${inserted.id}/update-priority`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updatePriority: 7 }),
+    });
+    const invalid = await app.request(`/api/systems/${inserted.id}/update-priority`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updatePriority: 100 }),
+    });
+    const missing = await app.request("/api/systems/99999/update-priority", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updatePriority: 2 }),
+    });
+
+    expect(updated.status).toBe(200);
+    expect(invalid.status).toBe(400);
+    expect(missing.status).toBe(404);
+    expect(db.select({ updatePriority: systems.updatePriority }).from(systems).where(eq(systems.id, inserted.id)).get()?.updatePriority).toBe(7);
+  });
+
   test("reorders Ungrouped at the beginning and end", async () => {
     const db = getDb();
     const groups = db.insert(dashboardGroups).values([

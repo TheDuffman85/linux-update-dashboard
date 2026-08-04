@@ -899,6 +899,29 @@ systems.put("/:id/upgrade-mode", async (c) => {
   return c.json({ status: "ok" });
 });
 
+systems.put("/:id/update-priority", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) return c.json({ error: "Invalid request body" }, 400);
+  if (
+    !Number.isSafeInteger(body.updatePriority) ||
+    (body.updatePriority as number) < 1 ||
+    (body.updatePriority as number) > 99
+  ) {
+    return c.json({ error: "updatePriority must be an integer from 1 to 99" }, 400);
+  }
+
+  try {
+    systemService.updateSystemPriority(id, body.updatePriority as number);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update system priority";
+    return c.json({ error: message }, message.includes("not found") ? 404 : 400);
+  }
+
+  return c.json({ status: "ok" });
+});
+
 systems.put("/:id/upgrade-all-exclusion", async (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);

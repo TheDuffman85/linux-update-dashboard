@@ -122,6 +122,7 @@ export const systems = sqliteTable("systems", {
     { onDelete: "set null" },
   ),
   dashboardOrder: integer("dashboard_order").notNull().default(0),
+  updatePriority: integer("update_priority").notNull().default(1),
   hidden: integer("hidden").notNull().default(0),
   needsReboot: integer("needs_reboot").notNull().default(0),
   systemInfoUpdatedAt: text("system_info_updated_at"),

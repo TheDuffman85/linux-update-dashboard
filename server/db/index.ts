@@ -209,6 +209,7 @@ export function initDatabase(
     exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
     dashboard_group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
     dashboard_order INTEGER NOT NULL DEFAULT 0,
+    update_priority INTEGER NOT NULL DEFAULT 1,
     hidden INTEGER NOT NULL DEFAULT 0,
     needs_reboot INTEGER NOT NULL DEFAULT 0,
     boot_id TEXT,
@@ -928,6 +929,20 @@ export function initDatabase(
       )
     `);
   }
+  // Systems at the same priority run in parallel within their dashboard group.
+  // Defaulting existing systems to 1 preserves the previous parallel behavior.
+  try {
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN update_priority INTEGER NOT NULL DEFAULT 1`,
+    );
+  } catch {
+    // Column already exists
+  }
+  _db.run(sql`
+    UPDATE systems
+    SET update_priority = min(99, max(1, update_priority))
+    WHERE update_priority < 1 OR update_priority > 99
+  `);
   migrateLegacyUpgradeGroups(
     hadLegacyUpgradeGroups,
     hasIgnoreKeptBackPackages,
@@ -1695,6 +1710,7 @@ function rebuildSystemsTableWithinTransaction(
       exclude_from_upgrade_all INTEGER NOT NULL DEFAULT 0,
       dashboard_group_id INTEGER REFERENCES dashboard_groups(id) ON DELETE SET NULL,
       dashboard_order INTEGER NOT NULL DEFAULT 0,
+      update_priority INTEGER NOT NULL DEFAULT 1,
       hidden INTEGER NOT NULL DEFAULT 0,
       needs_reboot INTEGER NOT NULL DEFAULT 0,
       boot_id TEXT,
@@ -1753,6 +1769,7 @@ function rebuildSystemsTableWithinTransaction(
     "exclude_from_upgrade_all",
     "dashboard_group_id",
     "dashboard_order",
+    "update_priority",
     "hidden",
     "needs_reboot",
     "boot_id",
@@ -1814,6 +1831,7 @@ function rebuildSystemsTableWithinTransaction(
     "exclude_from_upgrade_all",
     "dashboard_group_id",
     "dashboard_order",
+    "update_priority",
     "hidden",
     "needs_reboot",
     "boot_id",

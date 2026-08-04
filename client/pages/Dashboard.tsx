@@ -15,6 +15,7 @@ import {
   useUpdateSystemDashboardGroups,
   useUpdateDashboardGroup,
   useUpdateDashboardGroupPriority,
+  useUpdateSystemPriority,
   useUpdateSystemUpgradeAllExclusion,
   useUpdateSystemUpgradeMode,
 } from "../lib/systems";
@@ -28,6 +29,13 @@ function compareDashboardOrder(a: System, b: System): number {
   const orderDiff = (a.dashboardOrder ?? 0) - (b.dashboardOrder ?? 0);
   if (orderDiff !== 0) return orderDiff;
   return a.name.localeCompare(b.name) || a.id - b.id;
+}
+
+export function compareUpgradeModalSystems(a: System, b: System): number {
+  return (
+    (a.updatePriority ?? 1) - (b.updatePriority ?? 1) ||
+    compareDashboardOrder(a, b)
+  );
 }
 
 type UpgradeModalGroup = {
@@ -379,6 +387,7 @@ export default function Dashboard() {
   const createDashboardGroup = useCreateDashboardGroup();
   const updateDashboardGroup = useUpdateDashboardGroup();
   const updateDashboardGroupPriority = useUpdateDashboardGroupPriority();
+  const updateSystemPriority = useUpdateSystemPriority();
   const deleteDashboardGroup = useDeleteDashboardGroup();
   const reorderDashboardGroups = useReorderDashboardGroups();
   const updateSystemDashboardGroups = useUpdateSystemDashboardGroups();
@@ -474,7 +483,7 @@ export default function Dashboard() {
           group.updatePriority ?? Math.min(99, Math.max(1, group.sortOrder + 1)),
         systems: modalSystems
           .filter((system) => system.dashboardGroupId === group.id)
-          .sort(compareDashboardOrder),
+          .sort(compareUpgradeModalSystems),
       }));
     const ungroupedSystems = modalSystems
       .filter(
@@ -482,7 +491,7 @@ export default function Dashboard() {
           system.dashboardGroupId === null ||
           !knownGroupIds.has(system.dashboardGroupId),
       )
-      .sort(compareDashboardOrder);
+      .sort(compareUpgradeModalSystems);
     if (dashboardGroups.length > 0) {
       groups.push({
         key: "ungrouped",
@@ -741,11 +750,17 @@ export default function Dashboard() {
               .mutateAsync({ groupId, updatePriority })
               .then(() => undefined)
           }
+          saveSystemUpdatePriority={(systemId, updatePriority) =>
+            updateSystemPriority
+              .mutateAsync({ systemId, updatePriority })
+              .then(() => undefined)
+          }
           saveSystemPlacements={(items) => updateSystemDashboardGroups.mutateAsync(items).then(() => undefined)}
           busy={
             createDashboardGroup.isPending ||
             updateDashboardGroup.isPending ||
             updateDashboardGroupPriority.isPending ||
+            updateSystemPriority.isPending ||
             deleteDashboardGroup.isPending ||
             reorderDashboardGroups.isPending ||
             updateSystemDashboardGroups.isPending
@@ -850,6 +865,11 @@ export default function Dashboard() {
                               {s.keptBackCount > 0 && (
                                 <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: s.keptBackCount })}</Badge>
                               )}
+                              <span className="ml-auto shrink-0" title={t("pages.dashboard.systemUpgradePriorityHelp")}>
+                                <Badge variant="muted" small>
+                                  {t("pages.dashboard.updatePriority")}: {s.updatePriority ?? 1}
+                                </Badge>
+                              </span>
                             </div>
                           </li>
                         );

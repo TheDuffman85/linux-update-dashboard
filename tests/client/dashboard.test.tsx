@@ -12,6 +12,7 @@ const {
   mockUseCreateDashboardGroup,
   mockUseUpdateDashboardGroup,
   mockUseUpdateDashboardGroupPriority,
+  mockUseUpdateSystemPriority,
   mockUseDeleteDashboardGroup,
   mockUseReorderDashboardGroups,
   mockUseUpdateSystemDashboardGroups,
@@ -28,6 +29,7 @@ const {
   mockUseCreateDashboardGroup: vi.fn(),
   mockUseUpdateDashboardGroup: vi.fn(),
   mockUseUpdateDashboardGroupPriority: vi.fn(),
+  mockUseUpdateSystemPriority: vi.fn(),
   mockUseDeleteDashboardGroup: vi.fn(),
   mockUseReorderDashboardGroups: vi.fn(),
   mockUseUpdateSystemDashboardGroups: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock("../../client/lib/systems", () => ({
   useCreateDashboardGroup: mockUseCreateDashboardGroup,
   useUpdateDashboardGroup: mockUseUpdateDashboardGroup,
   useUpdateDashboardGroupPriority: mockUseUpdateDashboardGroupPriority,
+  useUpdateSystemPriority: mockUseUpdateSystemPriority,
   useDeleteDashboardGroup: mockUseDeleteDashboardGroup,
   useReorderDashboardGroups: mockUseReorderDashboardGroups,
   useUpdateSystemDashboardGroups: mockUseUpdateSystemDashboardGroups,
@@ -80,6 +83,7 @@ vi.mock("../../client/components/Layout", () => ({
 import Dashboard, {
   canToggleUpgradePreset,
   compareUpgradeModalGroups,
+  compareUpgradeModalSystems,
   getDashboardUpgradeToast,
   isUpgradeAllSubmitDisabled,
   isUpgradePresetSelected,
@@ -160,6 +164,7 @@ describe("Dashboard", () => {
     mockUseCreateDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseUpdateDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseUpdateDashboardGroupPriority.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+    mockUseUpdateSystemPriority.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseDeleteDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseReorderDashboardGroups.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseUpdateSystemDashboardGroups.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
@@ -445,7 +450,7 @@ describe("Dashboard", () => {
     );
 
     expect(html).toContain("Production");
-    expect(html).toContain("Upgrade priority: 4");
+    expect(html).toContain("Priority: 4");
     expect(html).toContain("bg-slate-100");
     expect(html).toContain(
       'title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."',
@@ -473,6 +478,22 @@ describe("Dashboard", () => {
       "Second on dashboard",
       "Third on dashboard",
       "Ungrouped",
+      "First on dashboard",
+    ]);
+  });
+
+  test("orders systems by priority within an Upgrade All group", () => {
+    const systems = [
+      { id: 1, name: "First on dashboard", dashboardOrder: 1, updatePriority: 3 },
+      { id: 2, name: "Second on dashboard", dashboardOrder: 2, updatePriority: 1 },
+      { id: 3, name: "Third on dashboard", dashboardOrder: 3, updatePriority: 1 },
+    ] as System[];
+
+    expect(
+      systems.sort(compareUpgradeModalSystems).map((system) => system.name),
+    ).toEqual([
+      "Second on dashboard",
+      "Third on dashboard",
       "First on dashboard",
     ]);
   });
@@ -511,12 +532,10 @@ describe("Dashboard", () => {
     expect(html).toContain("Ungrouped");
     expect(html).not.toContain("Empty");
     expect(html.indexOf("Charlie")).toBeLessThan(html.indexOf("Alpha"));
-    expect(html).toContain("Upgrade priority: 4");
-    expect(html).toContain("Upgrade priority: 7");
-    expect(html).not.toContain("Upgrade priority: 8");
-    expect(html).toMatch(
-      /class="ml-auto shrink-0" data-dashboard-upgrade-priority="true" title="Lower numbers upgrade first\. Groups with the same priority upgrade in parallel\."[^>]*><span class="[^"]*bg-slate-100/,
-    );
+    expect(html).not.toContain("Priority: 4");
+    expect(html).not.toContain("Priority: 7");
+    expect(html).not.toContain("Priority: 8");
+    expect(html).not.toContain("data-dashboard-upgrade-priority");
   });
 
   test("renders Ungrouped in its saved middle position", () => {
@@ -667,6 +686,7 @@ describe("Dashboard", () => {
         name: "Alpha",
         dashboardGroupId: 1,
         dashboardOrder: 1,
+        updatePriority: 6,
         sortOrder: 1,
         updateCount: 1,
         isReachable: 1,
@@ -686,6 +706,7 @@ describe("Dashboard", () => {
       onDeleteGroup: vi.fn(),
       saveGroupOrder: vi.fn().mockResolvedValue(undefined),
       saveGroupUpdatePriority: vi.fn().mockResolvedValue(undefined),
+      saveSystemUpdatePriority: vi.fn().mockResolvedValue(undefined),
       saveSystemPlacements: vi.fn().mockResolvedValue(undefined),
       onError: vi.fn(),
       renderSystem: (system: System) => <span>{system.name}</span>,
@@ -701,7 +722,8 @@ describe("Dashboard", () => {
     expect(viewHtml).not.toContain("Edit groups");
     expect(viewHtml).not.toContain("Group badges");
     expect(viewHtml).not.toContain("Sort systems by name");
-    expect(viewHtml).not.toContain("Upgrade priority: 3");
+    expect(viewHtml).not.toContain("Priority: 3");
+    expect(viewHtml).not.toContain("data-dashboard-system-upgrade-priority");
 
     const editHtml = renderToStaticMarkup(
       <DashboardSystemGroups {...commonProps} editMode />,
@@ -718,20 +740,23 @@ describe("Dashboard", () => {
     expect(editHtml).toContain('aria-label="Upgrade priority for Primary"');
     expect(editHtml).toContain('aria-label="Decrease upgrade priority for Primary"');
     expect(editHtml).toContain('aria-label="Increase upgrade priority for Primary"');
+    expect(editHtml).toContain('data-dashboard-system-upgrade-priority="true"');
+    expect(editHtml).toContain('aria-label="Upgrade priority for Alpha"');
+    expect(editHtml).toContain('aria-label="Decrease upgrade priority for Alpha"');
+    expect(editHtml).toContain('aria-label="Increase upgrade priority for Alpha"');
+    expect(editHtml).toContain('title="Lower numbers upgrade first within this group. Systems with the same priority upgrade in parallel."');
     expect(editHtml).toContain('title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."');
     expect(editHtml).toContain("flex-col sm:flex-row sm:justify-between");
     expect(editHtml).toContain(
       "flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0",
     );
     expect(editHtml).toMatch(/<input type="number" min="1" max="99" step="1"[^>]*value="3"/);
-    expect(editHtml.indexOf('aria-label="Upgrade priority for Primary"')).toBeLessThan(
-      editHtml.indexOf('aria-label="Edit group name"'),
-    );
+    expect(editHtml).toMatch(/<input type="number" min="1" max="99" step="1"[^>]*value="6"/);
     expect(editHtml.indexOf('aria-label="Sort systems by name"')).toBeLessThan(
       editHtml.indexOf('aria-label="Delete group"'),
     );
-    expect(editHtml.indexOf('aria-label="Upgrade priority for Primary"')).toBeLessThan(
-      editHtml.indexOf('aria-label="Sort systems by name"'),
+    expect(editHtml.indexOf('aria-label="Delete group"')).toBeLessThan(
+      editHtml.indexOf('aria-label="Upgrade priority for Primary"'),
     );
     expect(editHtml).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Edit group name"/);
     expect(editHtml).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Delete group"/);
