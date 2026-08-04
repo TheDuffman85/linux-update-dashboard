@@ -445,6 +445,7 @@ systems.get("/dashboard-groups", (c) => {
   return c.json({
     groups: systemService.listDashboardGroups(),
     ungroupedSortOrder: systemService.getUngroupedDashboardGroupSortOrder(),
+    ungroupedUpdatePriority: systemService.getUngroupedDashboardGroupUpdatePriority(),
   });
 });
 
@@ -488,6 +489,29 @@ systems.put("/dashboard-groups/systems", async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update dashboard groups";
     return c.json({ error: message }, 400);
+  }
+  return c.json({ status: "ok" });
+});
+
+systems.put("/dashboard-groups/update-priority", async (c) => {
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body) return c.json({ error: "Invalid request body" }, 400);
+  const groupId = body.groupId === null ? null : parseId(String(body.groupId));
+  if (groupId === null && body.groupId !== null) {
+    return c.json({ error: "groupId must be a positive integer or null" }, 400);
+  }
+  if (
+    !Number.isSafeInteger(body.updatePriority) ||
+    (body.updatePriority as number) < 1 ||
+    (body.updatePriority as number) > 99
+  ) {
+    return c.json({ error: "updatePriority must be an integer from 1 to 99" }, 400);
+  }
+  try {
+    systemService.updateDashboardGroupPriority(groupId, body.updatePriority as number);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update group priority";
+    return c.json({ error: message }, message.includes("not found") ? 404 : 400);
   }
   return c.json({ status: "ok" });
 });

@@ -99,6 +99,7 @@ export interface DashboardGroup {
   id: number;
   name: string;
   sortOrder: number;
+  updatePriority: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,6 +107,7 @@ export interface DashboardGroup {
 export interface DashboardGroupConfig {
   groups: DashboardGroup[];
   ungroupedSortOrder: number;
+  ungroupedUpdatePriority: number;
 }
 
 export interface CachedUpdate {
@@ -426,6 +428,24 @@ export function useUpdateDashboardGroup() {
       apiFetch(`/systems/dashboard-groups/${groupId}`, {
         method: "PUT",
         body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => invalidateDashboardGroupQueries(qc),
+  });
+}
+
+export function useUpdateDashboardGroupPriority() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      groupId,
+      updatePriority,
+    }: {
+      groupId: number | null;
+      updatePriority: number;
+    }) =>
+      apiFetch("/systems/dashboard-groups/update-priority", {
+        method: "PUT",
+        body: JSON.stringify({ groupId, updatePriority }),
       }),
     onSuccess: () => invalidateDashboardGroupQueries(qc),
   });

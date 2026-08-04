@@ -140,6 +140,7 @@ export const dashboardGroups = sqliteTable("dashboard_groups", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   sortOrder: integer("sort_order").notNull().default(0),
+  updatePriority: integer("update_priority").notNull().default(1),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

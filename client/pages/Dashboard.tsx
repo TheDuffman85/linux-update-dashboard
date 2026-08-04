@@ -14,6 +14,7 @@ import {
   useReorderDashboardGroups,
   useUpdateSystemDashboardGroups,
   useUpdateDashboardGroup,
+  useUpdateDashboardGroupPriority,
   useUpdateSystemUpgradeAllExclusion,
   useUpdateSystemUpgradeMode,
 } from "../lib/systems";
@@ -33,8 +34,60 @@ type UpgradeModalGroup = {
   key: string;
   id: number | null;
   name: string;
+  updatePriority: number;
   systems: System[];
 };
+
+export function compareUpgradeModalGroups(
+  a: Pick<UpgradeModalGroup, "id" | "name" | "updatePriority">,
+  b: Pick<UpgradeModalGroup, "id" | "name" | "updatePriority">,
+  dashboardGroupSortById: ReadonlyMap<number, number>,
+  ungroupedSortOrder: number,
+): number {
+  const aDashboardOrder =
+    a.id === null
+      ? ungroupedSortOrder
+      : dashboardGroupSortById.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+  const bDashboardOrder =
+    b.id === null
+      ? ungroupedSortOrder
+      : dashboardGroupSortById.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+
+  return (
+    a.updatePriority - b.updatePriority ||
+    aDashboardOrder - bDashboardOrder ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+export function UpgradeModalGroupHeading({
+  name,
+  systemCount,
+  updatePriority,
+}: {
+  name: string;
+  systemCount: number;
+  updatePriority: number;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <h3 className="min-w-0 truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
+        {name}
+      </h3>
+      <Badge variant="muted" small>{systemCount}</Badge>
+      <span
+        className="ml-auto"
+        title={t("pages.dashboard.upgradePriorityHelp")}
+      >
+        <Badge variant="muted" small>
+          {t("pages.dashboard.updatePriority")}: {updatePriority}
+        </Badge>
+      </span>
+    </div>
+  );
+}
 
 function hasActiveUpgradeOperation(system: System): boolean {
   return !!system.activeOperation?.type.includes("upgrade") && !isPostUpgradeRecheck(system.activeOperation);
@@ -312,12 +365,20 @@ export default function Dashboard() {
   const { data: systems, dataUpdatedAt } = useDashboardSystems(upgradingCount > 0);
   const hasActiveOps = systems?.some((s) => s.activeOperation) ?? false;
   const { data: stats } = useDashboardStats(hasActiveOps);
-  const { data: dashboardGroupConfig = { groups: [], ungroupedSortOrder: 1_000_000 } } = useDashboardGroups();
+  const { data: dashboardGroupConfig = {
+    groups: [],
+    ungroupedSortOrder: 1_000_000,
+    ungroupedUpdatePriority: 99,
+  } } = useDashboardGroups();
+  const ungroupedUpdatePriority =
+    dashboardGroupConfig.ungroupedUpdatePriority ??
+    Math.min(99, Math.max(1, dashboardGroupConfig.ungroupedSortOrder + 1));
   const dashboardGroups = dashboardGroupConfig.groups;
   const refreshCache = useRefreshCache();
   const upgradeAllBatch = useUpgradeAllBatch();
   const createDashboardGroup = useCreateDashboardGroup();
   const updateDashboardGroup = useUpdateDashboardGroup();
+  const updateDashboardGroupPriority = useUpdateDashboardGroupPriority();
   const deleteDashboardGroup = useDeleteDashboardGroup();
   const reorderDashboardGroups = useReorderDashboardGroups();
   const updateSystemDashboardGroups = useUpdateSystemDashboardGroups();
@@ -409,6 +470,8 @@ export default function Dashboard() {
         key: String(group.id),
         id: group.id,
         name: group.name,
+        updatePriority:
+          group.updatePriority ?? Math.min(99, Math.max(1, group.sortOrder + 1)),
         systems: modalSystems
           .filter((system) => system.dashboardGroupId === group.id)
           .sort(compareDashboardOrder),
@@ -425,6 +488,7 @@ export default function Dashboard() {
         key: "ungrouped",
         id: null,
         name: t("pages.dashboard.ungrouped"),
+        updatePriority: ungroupedUpdatePriority,
         systems: ungroupedSystems,
       });
     } else if (ungroupedSystems.length > 0) {
@@ -432,21 +496,19 @@ export default function Dashboard() {
         key: "ungrouped",
         id: null,
         name: t("pages.dashboard.systems"),
+        updatePriority: ungroupedUpdatePriority,
         systems: ungroupedSystems,
       });
     }
     return groups
-      .sort((a, b) => {
-        const aOrder =
-          a.id === null
-            ? dashboardGroupConfig.ungroupedSortOrder
-            : dashboardGroupSortById.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-        const bOrder =
-          b.id === null
-            ? dashboardGroupConfig.ungroupedSortOrder
-            : dashboardGroupSortById.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-        return aOrder - bOrder || a.name.localeCompare(b.name);
-      })
+      .sort((a, b) =>
+        compareUpgradeModalGroups(
+          a,
+          b,
+          dashboardGroupSortById,
+          dashboardGroupConfig.ungroupedSortOrder,
+        )
+      )
       .filter((group) => group.systems.length > 0);
   }, [
     dashboardGroups,
@@ -454,6 +516,7 @@ export default function Dashboard() {
     dashboardGroupSortById,
     modalSystems,
     t,
+    ungroupedUpdatePriority,
   ]);
 
   const openUpgradeConfirm = () => {
@@ -666,16 +729,23 @@ export default function Dashboard() {
           systems={systems}
           groups={dashboardGroups}
           ungroupedSortOrder={dashboardGroupConfig.ungroupedSortOrder}
+          ungroupedUpdatePriority={ungroupedUpdatePriority}
           editMode={dashboardGroupEditMode}
           onToggleEditMode={() => setDashboardGroupEditMode((current) => !current)}
           onCreateGroup={handleCreateDashboardGroup}
           onRenameGroup={handleRenameDashboardGroup}
           onDeleteGroup={handleDeleteDashboardGroup}
           saveGroupOrder={(groupKeys) => reorderDashboardGroups.mutateAsync(groupKeys).then(() => undefined)}
+          saveGroupUpdatePriority={(groupId, updatePriority) =>
+            updateDashboardGroupPriority
+              .mutateAsync({ groupId, updatePriority })
+              .then(() => undefined)
+          }
           saveSystemPlacements={(items) => updateSystemDashboardGroups.mutateAsync(items).then(() => undefined)}
           busy={
             createDashboardGroup.isPending ||
             updateDashboardGroup.isPending ||
+            updateDashboardGroupPriority.isPending ||
             deleteDashboardGroup.isPending ||
             reorderDashboardGroups.isPending ||
             updateSystemDashboardGroups.isPending
@@ -723,12 +793,11 @@ export default function Dashboard() {
                     key={group.key}
                     className="rounded-lg border border-border bg-slate-50/60 p-2 dark:bg-slate-800/40"
                   >
-                    <div className="mb-2 flex items-center gap-2">
-                      <h3 className="min-w-0 truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
-                        {group.name}
-                      </h3>
-                      <Badge variant="muted" small>{group.systems.length}</Badge>
-                    </div>
+                    <UpgradeModalGroupHeading
+                      name={group.name}
+                      systemCount={group.systems.length}
+                      updatePriority={group.updatePriority}
+                    />
                     <ul className="min-h-6 space-y-2">
                       {group.systems.map((s) => {
                         const isSelected = isUpgradePresetSelected(s, selectedSystemIds);

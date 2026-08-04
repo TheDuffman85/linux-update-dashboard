@@ -11,6 +11,7 @@ const {
   mockUseDashboardGroups,
   mockUseCreateDashboardGroup,
   mockUseUpdateDashboardGroup,
+  mockUseUpdateDashboardGroupPriority,
   mockUseDeleteDashboardGroup,
   mockUseReorderDashboardGroups,
   mockUseUpdateSystemDashboardGroups,
@@ -26,6 +27,7 @@ const {
   mockUseDashboardGroups: vi.fn(),
   mockUseCreateDashboardGroup: vi.fn(),
   mockUseUpdateDashboardGroup: vi.fn(),
+  mockUseUpdateDashboardGroupPriority: vi.fn(),
   mockUseDeleteDashboardGroup: vi.fn(),
   mockUseReorderDashboardGroups: vi.fn(),
   mockUseUpdateSystemDashboardGroups: vi.fn(),
@@ -49,6 +51,7 @@ vi.mock("../../client/lib/systems", () => ({
   useDashboardGroups: mockUseDashboardGroups,
   useCreateDashboardGroup: mockUseCreateDashboardGroup,
   useUpdateDashboardGroup: mockUseUpdateDashboardGroup,
+  useUpdateDashboardGroupPriority: mockUseUpdateDashboardGroupPriority,
   useDeleteDashboardGroup: mockUseDeleteDashboardGroup,
   useReorderDashboardGroups: mockUseReorderDashboardGroups,
   useUpdateSystemDashboardGroups: mockUseUpdateSystemDashboardGroups,
@@ -76,9 +79,11 @@ vi.mock("../../client/components/Layout", () => ({
 
 import Dashboard, {
   canToggleUpgradePreset,
+  compareUpgradeModalGroups,
   getDashboardUpgradeToast,
   isUpgradeAllSubmitDisabled,
   isUpgradePresetSelected,
+  UpgradeModalGroupHeading,
 } from "../../client/pages/Dashboard";
 import {
   compareSystemsByName,
@@ -145,9 +150,16 @@ describe("Dashboard", () => {
     });
     mockUseRefreshCache.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseUpgradeAllBatch.mockReturnValue({ mutate: vi.fn(), isPending: false });
-    mockUseDashboardGroups.mockReturnValue({ data: { groups: [], ungroupedSortOrder: 1_000_000 } });
+    mockUseDashboardGroups.mockReturnValue({
+      data: {
+        groups: [],
+        ungroupedSortOrder: 1_000_000,
+        ungroupedUpdatePriority: 99,
+      },
+    });
     mockUseCreateDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseUpdateDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+    mockUseUpdateDashboardGroupPriority.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseDeleteDashboardGroup.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseReorderDashboardGroups.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
     mockUseUpdateSystemDashboardGroups.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
@@ -423,6 +435,48 @@ describe("Dashboard", () => {
     expect(canToggleUpgradePreset(systemWithUpdates)).toBe(true);
   });
 
+  test("shows the group upgrade priority in the Upgrade All modal heading", () => {
+    const html = renderToStaticMarkup(
+      <UpgradeModalGroupHeading
+        name="Production"
+        systemCount={3}
+        updatePriority={4}
+      />,
+    );
+
+    expect(html).toContain("Production");
+    expect(html).toContain("Upgrade priority: 4");
+    expect(html).toContain("bg-slate-100");
+    expect(html).toContain(
+      'title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."',
+    );
+  });
+
+  test("orders Upgrade All groups by priority and then dashboard position", () => {
+    const dashboardOrder = new Map([
+      [1, 0],
+      [2, 1],
+      [3, 2],
+    ]);
+    const groups = [
+      { id: 1, name: "First on dashboard", updatePriority: 3 },
+      { id: 2, name: "Second on dashboard", updatePriority: 1 },
+      { id: 3, name: "Third on dashboard", updatePriority: 1 },
+      { id: null, name: "Ungrouped", updatePriority: 2 },
+    ];
+
+    expect(
+      groups
+        .sort((a, b) => compareUpgradeModalGroups(a, b, dashboardOrder, 3))
+        .map((group) => group.name),
+    ).toEqual([
+      "Second on dashboard",
+      "Third on dashboard",
+      "Ungrouped",
+      "First on dashboard",
+    ]);
+  });
+
   test("renders dashboard groups in saved order and keeps Ungrouped last", () => {
     const systems = [
       { id: 1, name: "Alpha", dashboardGroupId: 2, dashboardOrder: 2, sortOrder: 1 },
@@ -433,16 +487,18 @@ describe("Dashboard", () => {
       <DashboardSystemGroups
         systems={systems}
         groups={[
-          { id: 2, name: "Production", sortOrder: 0, createdAt: "", updatedAt: "" },
-          { id: 1, name: "Empty", sortOrder: 1, createdAt: "", updatedAt: "" },
+          { id: 2, name: "Production", sortOrder: 0, updatePriority: 4, createdAt: "", updatedAt: "" },
+          { id: 1, name: "Empty", sortOrder: 1, updatePriority: 8, createdAt: "", updatedAt: "" },
         ]}
         ungroupedSortOrder={2}
+        ungroupedUpdatePriority={7}
         editMode={false}
         onToggleEditMode={vi.fn()}
         onCreateGroup={vi.fn()}
         onRenameGroup={vi.fn()}
         onDeleteGroup={vi.fn()}
         saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+        saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
         saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
         onError={vi.fn()}
         renderSystem={(system) => <span>{system.name}</span>}
@@ -455,6 +511,12 @@ describe("Dashboard", () => {
     expect(html).toContain("Ungrouped");
     expect(html).not.toContain("Empty");
     expect(html.indexOf("Charlie")).toBeLessThan(html.indexOf("Alpha"));
+    expect(html).toContain("Upgrade priority: 4");
+    expect(html).toContain("Upgrade priority: 7");
+    expect(html).not.toContain("Upgrade priority: 8");
+    expect(html).toMatch(
+      /class="ml-auto shrink-0" data-dashboard-upgrade-priority="true" title="Lower numbers upgrade first\. Groups with the same priority upgrade in parallel\."[^>]*><span class="[^"]*bg-slate-100/,
+    );
   });
 
   test("renders Ungrouped in its saved middle position", () => {
@@ -512,6 +574,15 @@ describe("Dashboard", () => {
   });
 
   test("shows state badges for each group including a single visible group", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: vi.fn((key: string) =>
+          key === "ludash.dashboard.group-badges" ? "true" : null,
+        ),
+        setItem: vi.fn(),
+      },
+    });
+    try {
     const makeSystem = (id: number, name: string, overrides: Partial<System> = {}) => ({
       id,
       name,
@@ -573,6 +644,20 @@ describe("Dashboard", () => {
     );
     expect(singleGroupHtml).toContain('aria-label="Group status"');
     expect(singleGroupHtml).toContain("Need Updates");
+
+    const ungroupedOnlyHtml = renderGroups(
+      [],
+      systems.slice(0, 6).map((system) => ({
+        ...system,
+        dashboardGroupId: null,
+      })),
+    );
+    expect(ungroupedOnlyHtml).toContain("Ungrouped");
+    expect(ungroupedOnlyHtml).toContain('aria-label="Group status"');
+    expect(ungroupedOnlyHtml).toContain("Need Updates");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test("uses Edit mode and exposes system ordering and badge controls while editing", () => {
@@ -592,13 +677,15 @@ describe("Dashboard", () => {
     ] as System[];
     const commonProps = {
       systems,
-      groups: [{ id: 1, name: "Primary", sortOrder: 0, createdAt: "", updatedAt: "" }],
+      groups: [{ id: 1, name: "Primary", sortOrder: 0, updatePriority: 3, createdAt: "", updatedAt: "" }],
       ungroupedSortOrder: 1,
+      ungroupedUpdatePriority: 4,
       onToggleEditMode: vi.fn(),
       onCreateGroup: vi.fn(),
       onRenameGroup: vi.fn(),
       onDeleteGroup: vi.fn(),
       saveGroupOrder: vi.fn().mockResolvedValue(undefined),
+      saveGroupUpdatePriority: vi.fn().mockResolvedValue(undefined),
       saveSystemPlacements: vi.fn().mockResolvedValue(undefined),
       onError: vi.fn(),
       renderSystem: (system: System) => <span>{system.name}</span>,
@@ -614,18 +701,40 @@ describe("Dashboard", () => {
     expect(viewHtml).not.toContain("Edit groups");
     expect(viewHtml).not.toContain("Group badges");
     expect(viewHtml).not.toContain("Sort systems by name");
+    expect(viewHtml).not.toContain("Upgrade priority: 3");
 
     const editHtml = renderToStaticMarkup(
       <DashboardSystemGroups {...commonProps} editMode />,
     );
     expect(editHtml).toContain("Group badges");
-    expect(editHtml).toContain('aria-pressed="true"');
+    expect(editHtml).toContain('aria-checked="false"');
+    expect(editHtml).not.toContain('aria-label="Group status"');
     expect(editHtml).toContain(">Done</button>");
     expect(editHtml).toContain('title="Drag to reorder system"');
     expect(editHtml).toContain("data-dashboard-system-drag-handle");
     expect(editHtml).toContain(">Drag to reorder system</span>");
     expect(editHtml).toMatch(/data-dashboard-system-id="1" draggable="true"/);
     expect(editHtml).toContain('aria-label="Sort systems by name"');
+    expect(editHtml).toContain('aria-label="Upgrade priority for Primary"');
+    expect(editHtml).toContain('aria-label="Decrease upgrade priority for Primary"');
+    expect(editHtml).toContain('aria-label="Increase upgrade priority for Primary"');
+    expect(editHtml).toContain('title="Lower numbers upgrade first. Groups with the same priority upgrade in parallel."');
+    expect(editHtml).toContain("flex-col sm:flex-row sm:justify-between");
+    expect(editHtml).toContain(
+      "flex w-full items-center justify-end gap-1 sm:w-auto sm:shrink-0",
+    );
+    expect(editHtml).toMatch(/<input type="number" min="1" max="99" step="1"[^>]*value="3"/);
+    expect(editHtml.indexOf('aria-label="Upgrade priority for Primary"')).toBeLessThan(
+      editHtml.indexOf('aria-label="Edit group name"'),
+    );
+    expect(editHtml.indexOf('aria-label="Sort systems by name"')).toBeLessThan(
+      editHtml.indexOf('aria-label="Delete group"'),
+    );
+    expect(editHtml.indexOf('aria-label="Upgrade priority for Primary"')).toBeLessThan(
+      editHtml.indexOf('aria-label="Sort systems by name"'),
+    );
+    expect(editHtml).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Edit group name"/);
+    expect(editHtml).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Delete group"/);
   });
 
   test("sorts system names case-insensitively and with natural number ordering", () => {

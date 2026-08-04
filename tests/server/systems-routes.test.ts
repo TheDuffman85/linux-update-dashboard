@@ -201,14 +201,45 @@ describe("systems reorder route", () => {
         { systemId: inserted[1].id, groupId: beta.id, dashboardOrder: 1 },
       ] }),
     });
+    const updatePriority = await app.request("/api/systems/dashboard-groups/update-priority", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: alpha.id, updatePriority: 4 }),
+    });
+    const updateUngroupedPriority = await app.request("/api/systems/dashboard-groups/update-priority", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: null, updatePriority: 4 }),
+    });
+    const priorityTooLow = await app.request("/api/systems/dashboard-groups/update-priority", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: alpha.id, updatePriority: 0 }),
+    });
+    const priorityTooHigh = await app.request("/api/systems/dashboard-groups/update-priority", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: alpha.id, updatePriority: 100 }),
+    });
 
     expect(rename.status).toBe(200);
     expect(reorder.status).toBe(200);
     expect(createGamma.status).toBe(201);
     expect(assign.status).toBe(200);
+    expect(updatePriority.status).toBe(200);
+    expect(updateUngroupedPriority.status).toBe(200);
+    expect(priorityTooLow.status).toBe(400);
+    expect(priorityTooHigh.status).toBe(400);
     expect(db.select().from(dashboardGroups).orderBy(dashboardGroups.sortOrder).all().map((group) => group.name)).toEqual(["Canary", "Staging", "Core"]);
     const config = await app.request("/api/systems/dashboard-groups");
-    expect((await config.json() as { ungroupedSortOrder: number }).ungroupedSortOrder).toBe(2);
+    const groupConfig = await config.json() as {
+      groups: Array<{ id: number; updatePriority: number }>;
+      ungroupedSortOrder: number;
+      ungroupedUpdatePriority: number;
+    };
+    expect(groupConfig.ungroupedSortOrder).toBe(2);
+    expect(groupConfig.ungroupedUpdatePriority).toBe(4);
+    expect(groupConfig.groups.find((group) => group.id === alpha.id)?.updatePriority).toBe(4);
     const rows = db.select({ name: systems.name, groupId: systems.dashboardGroupId, order: systems.dashboardOrder }).from(systems).all();
     expect(Object.fromEntries(rows.map((row) => [row.name, { groupId: row.groupId, order: row.order }]))).toEqual({
       Alpha: { groupId: alpha.id, order: 2 },

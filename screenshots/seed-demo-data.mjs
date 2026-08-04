@@ -100,8 +100,8 @@ insertCredential.run({
 });
 
 db.prepare(`
-  INSERT INTO dashboard_groups (id, name, sort_order, created_at, updated_at)
-  VALUES (1, 'Core Services', 1, @now, @now), (2, 'Edge Nodes', 2, @now, @now)
+  INSERT INTO dashboard_groups (id, name, sort_order, update_priority, created_at, updated_at)
+  VALUES (1, 'Core Services', 1, 1, @now, @now), (2, 'Edge Nodes', 2, 2, @now, @now)
 `).run({ now });
 
 const insertSystem = db.prepare(`

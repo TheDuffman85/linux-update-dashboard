@@ -164,6 +164,7 @@ export function initDatabase(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    update_priority INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -932,6 +933,49 @@ export function initDatabase(
     hasIgnoreKeptBackPackages,
     hasAutoHideKeptBackUpdates,
   );
+  // Keep the execution order users had before dashboard order and update
+  // priority became independent settings.
+  let addedDashboardGroupUpdatePriority = false;
+  try {
+    _db.run(
+      sql`ALTER TABLE dashboard_groups ADD COLUMN update_priority INTEGER NOT NULL DEFAULT 1`,
+    );
+    addedDashboardGroupUpdatePriority = true;
+  } catch {
+    // Column already exists
+  }
+  if (addedDashboardGroupUpdatePriority) {
+    _db.run(sql`
+      UPDATE dashboard_groups
+      SET update_priority = min(99, max(1, sort_order + 1))
+    `);
+  }
+  _db.run(sql`
+    UPDATE dashboard_groups
+    SET update_priority = min(99, max(1, update_priority))
+    WHERE update_priority < 1 OR update_priority > 99
+  `);
+  _db.run(sql`
+    INSERT INTO settings (key, value, description)
+    SELECT
+      'dashboard_ungrouped_update_priority',
+      CAST(min(99, max(1,
+        CAST(COALESCE(
+          (SELECT value FROM settings WHERE key = 'dashboard_ungrouped_sort_order'),
+          (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM dashboard_groups)
+        ) AS INTEGER) + 1
+      )) AS TEXT),
+      'Update priority of the implicit Ungrouped dashboard group'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM settings WHERE key = 'dashboard_ungrouped_update_priority'
+    )
+  `);
+  _db.run(sql`
+    UPDATE settings
+    SET value = CAST(min(99, max(1, CAST(value AS INTEGER))) AS TEXT)
+    WHERE key = 'dashboard_ungrouped_update_priority'
+      AND CAST(value AS INTEGER) NOT BETWEEN 1 AND 99
+  `);
   migrateSystemsTableShape(
     hasIgnoreKeptBackPackages,
     hasAutoHideKeptBackUpdates,
