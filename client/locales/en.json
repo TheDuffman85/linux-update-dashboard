@@ -1038,6 +1038,7 @@
   "pages.systemDetail.runningForDuration": "running for {duration}",
   "pages.systemDetail.searchInstalledPackages": "Search installed packages",
   "pages.systemDetail.security": "security",
+  "pages.systemDetail.selectAllPackages": "Select all packages",
   "pages.systemDetail.selectPackage": "Select {packageName}",
   "pages.systemDetail.showMaintenanceActions": "Show maintenance actions",
   "pages.systemDetail.solve": "Solve",

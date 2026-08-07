@@ -1038,6 +1038,7 @@
   "pages.systemDetail.runningForDuration": "{duration} से चल रहा है",
   "pages.systemDetail.searchInstalledPackages": "इंस्टॉल्ड पैकेज खोजें",
   "pages.systemDetail.security": "सुरक्षा",
+  "pages.systemDetail.selectAllPackages": "सभी पैकेज चुनें",
   "pages.systemDetail.selectPackage": "{packageName} चुनें",
   "pages.systemDetail.showMaintenanceActions": "मेंटेनेंस कार्रवाइयां दिखाएं",
   "pages.systemDetail.solve": "हल करें",

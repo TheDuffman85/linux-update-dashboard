@@ -1038,6 +1038,7 @@
   "pages.systemDetail.runningForDuration": "en cours depuis {duration}",
   "pages.systemDetail.searchInstalledPackages": "Rechercher les paquets installés",
   "pages.systemDetail.security": "sécurité",
+  "pages.systemDetail.selectAllPackages": "Sélectionner tous les paquets",
   "pages.systemDetail.selectPackage": "Sélectionner {packageName}",
   "pages.systemDetail.showMaintenanceActions": "Afficher les actions de maintenance",
   "pages.systemDetail.solve": "Résoudre",

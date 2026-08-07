@@ -1038,6 +1038,7 @@
   "pages.systemDetail.runningForDuration": "قيد التشغيل منذ {duration}",
   "pages.systemDetail.searchInstalledPackages": "البحث في الحزم المثبتة",
   "pages.systemDetail.security": "أمني",
+  "pages.systemDetail.selectAllPackages": "تحديد جميع الحزم",
   "pages.systemDetail.selectPackage": "تحديد {packageName}",
   "pages.systemDetail.showMaintenanceActions": "إظهار إجراءات الصيانة",
   "pages.systemDetail.solve": "حل",

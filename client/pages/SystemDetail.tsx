@@ -150,6 +150,7 @@ function UpdatesTable({
   updates,
   onHide,
   onTogglePackage,
+  onToggleAllPackages,
   selectedPackageNames,
   selectionDisabled,
   hideBusy,
@@ -157,11 +158,20 @@ function UpdatesTable({
   updates: CachedUpdate[];
   onHide: (update: CachedUpdate) => void;
   onTogglePackage: (packageName: string) => void;
+  onToggleAllPackages: () => void;
   selectedPackageNames: string[];
   selectionDisabled?: boolean;
   hideBusy?: boolean;
 }) {
   const { t } = useI18n();
+  const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionDisabled);
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useBrowserLayoutEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = packageSelectionState.indeterminate;
+    }
+  }, [packageSelectionState.indeterminate, packageSelectionState.totalCount]);
 
   if (!updates.length) {
     return (
@@ -176,7 +186,17 @@ function UpdatesTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
-            <th className="px-2 sm:px-4 py-2 w-10" />
+            <th className="px-2 sm:px-4 py-2 w-10">
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                aria-label={t("pages.systemDetail.selectAllPackages")}
+                checked={packageSelectionState.allSelected}
+                disabled={packageSelectionState.selectionDisabled}
+                onChange={onToggleAllPackages}
+                className="rounded border-border text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+              />
+            </th>
             <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.package")}</th>
             <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">{t("pages.systemDetail.current")}</th>
             <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.available")}</th>
@@ -2495,6 +2515,13 @@ export default function SystemDetail() {
     setSelectedPackageNames((current) => toggleSelectedPackageName(current, packageName));
   };
 
+  const handleToggleAllPackageSelection = () => {
+    setSelectedPackageNames((current) => {
+      const selectionState = getPackageSelectionState(current, updates);
+      return selectionState.allSelected ? [] : selectionState.visiblePackageNames;
+    });
+  };
+
   const renderRunningCancelAction = (label: string, className: string) => (
     <button
       type="button"
@@ -2806,6 +2833,7 @@ export default function SystemDetail() {
         <UpdatesTable
           updates={updates}
           onTogglePackage={handleTogglePackageSelection}
+          onToggleAllPackages={handleToggleAllPackageSelection}
           selectedPackageNames={selectedVisiblePackageNames}
           selectionDisabled={packageSelectionState.selectionDisabled}
           hideBusy={hideUpdate.isPending}

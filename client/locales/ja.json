@@ -1038,6 +1038,7 @@
   "pages.systemDetail.runningForDuration": "{duration} 実行中",
   "pages.systemDetail.searchInstalledPackages": "インストール済みパッケージを検索",
   "pages.systemDetail.security": "セキュリティ",
+  "pages.systemDetail.selectAllPackages": "すべてのパッケージを選択",
   "pages.systemDetail.selectPackage": "選択 {packageName}",
   "pages.systemDetail.showMaintenanceActions": "メンテナンス操作を表示",
   "pages.systemDetail.solve": "解決",

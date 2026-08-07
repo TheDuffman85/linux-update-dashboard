@@ -1038,6 +1038,7 @@
   "pages.systemDetail.runningForDuration": "выполняется {duration}",
   "pages.systemDetail.searchInstalledPackages": "Поиск установленных пакетов",
   "pages.systemDetail.security": "безопасность",
+  "pages.systemDetail.selectAllPackages": "Выбрать все пакеты",
   "pages.systemDetail.selectPackage": "Выбрать {packageName}",
   "pages.systemDetail.showMaintenanceActions": "Показать действия обслуживания",
   "pages.systemDetail.solve": "Исправить",

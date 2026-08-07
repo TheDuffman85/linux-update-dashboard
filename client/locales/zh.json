@@ -1038,6 +1038,7 @@
   "pages.systemDetail.runningForDuration": "已运行 {duration}",
   "pages.systemDetail.searchInstalledPackages": "搜索已安装的软件包",
   "pages.systemDetail.security": "安全",
+  "pages.systemDetail.selectAllPackages": "选择所有软件包",
   "pages.systemDetail.selectPackage": "选择 {packageName}",
   "pages.systemDetail.showMaintenanceActions": "显示维护操作",
   "pages.systemDetail.solve": "解决",
