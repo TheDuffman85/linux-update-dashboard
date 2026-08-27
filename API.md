@@ -56,8 +56,13 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | ------ | ------------------------ | --------------------------------------- |
 | GET    | `/api/dashboard/stats`   | Summary statistics.                     |
 | GET    | `/api/dashboard/systems` | Systems with dashboard status metadata. |
+| GET    | `/api/app-update`        | Application update status.              |
 | GET    | `/api/settings`          | Current settings.                       |
 | PUT    | `/api/settings`          | Update settings.                        |
+
+`GET /api/app-update` is available to read-only and read/write API tokens. It
+returns the current version and branch, the latest remote version, whether an
+update is available, and release/repository URLs when available.
 
 ## Systems
 
