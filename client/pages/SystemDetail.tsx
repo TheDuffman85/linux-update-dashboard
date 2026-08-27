@@ -2285,9 +2285,10 @@ export default function SystemDetail() {
   ].join(" ");
   const autoremoveSupport = system.autoremoveSupport ?? { supportedManagers: [], skippedManagers: [] };
   const hasAutoremoveAction = shouldShowAutoremoveAction(autoremoveSupport);
+  const hasRebootAction = true;
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
-  const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || autoremoving;
-  const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction;
+  const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || hasRebootAction || autoremoving;
+  const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction || hasRebootAction;
   const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport, t);
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
@@ -2549,8 +2550,8 @@ export default function SystemDetail() {
     <Layout
       title={
         <span className="flex items-center gap-2 min-w-0">
-          {upgrading || autoremoving || checking || repairingPackageIssue ? (
-            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || autoremoving || repairingPackageIssue ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+          {upgrading || autoremoving || checking || rebooting || repairingPackageIssue ? (
+            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || autoremoving || rebooting || repairingPackageIssue ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
           ) : (
             <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
           )}
@@ -2576,7 +2577,7 @@ export default function SystemDetail() {
           ) : (
             <button
               onClick={handleCheck}
-              disabled={checking || upgrading || autoremoving || repairingPackageIssue}
+              disabled={checking || upgrading || autoremoving || rebooting || repairingPackageIssue}
               className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 min-w-24"
             >
               {checking ? (
@@ -2642,6 +2643,21 @@ export default function SystemDetail() {
                         }`}
                       >
                         {t("pages.systemDetail.autoremove")}
+                      </button>
+                    )}
+                    {hasRebootAction && (
+                      <button
+                        onClick={() => {
+                          setShowUpgradeDropdown(false);
+                          setShowRebootConfirm(true);
+                        }}
+                        className={`w-full px-3 py-2 text-sm text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors ${
+                          system.supportsFullUpgrade || hasAutoremoveAction
+                            ? "border-t border-border"
+                            : ""
+                        }`}
+                      >
+                        {t("pages.systemDetail.reboot")}
                       </button>
                     )}
                   </div>

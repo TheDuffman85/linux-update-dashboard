@@ -145,6 +145,10 @@ Long-running update routes usually return a job ID. Poll `GET /api/jobs/:id` for
 | PUT    | `/api/schedules/:id`     | Update a schedule. |
 | DELETE | `/api/schedules/:id`     | Delete a schedule. |
 
+Schedule `type` can be `refresh`, `update`, `autoremove`, `reboot`, or
+`notification_digest`. All schedule types use `config.cron`. System-targeted
+schedules accept `systemIds: null` for all systems or an array of system IDs.
+
 ## Scripts
 
 | Method | Endpoint                                     | Description                                                                                     |

@@ -309,6 +309,47 @@ describe("schedules routes and migration", () => {
     expect(JSON.parse(row?.config || "{}")).toEqual({ cron: "0 3 * * 0" });
   });
 
+  test("creates autoremove schedules with selected system scope", async () => {
+    const res = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Weekly cleanup",
+        type: "autoremove",
+        enabled: true,
+        systemIds: [1, 2],
+        config: { cron: "0 3 * * 0" },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json() as { id: number };
+    const row = getDb().select().from(schedules).where(eq(schedules.id, body.id)).get();
+    expect(row?.type).toBe("autoremove");
+    expect(row?.systemIds).toBe("[1,2]");
+    expect(JSON.parse(row?.config || "{}")).toEqual({ cron: "0 3 * * 0" });
+  });
+
+  test("creates recurring reboot schedules", async () => {
+    const res = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Maintenance reboot",
+        type: "reboot",
+        enabled: true,
+        systemIds: [1],
+        config: { cron: "0 3 * * 0" },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json() as { id: number };
+    const row = getDb().select().from(schedules).where(eq(schedules.id, body.id)).get();
+    expect(row?.type).toBe("reboot");
+    expect(JSON.parse(row?.config || "{}")).toEqual({ cron: "0 3 * * 0" });
+  });
+
   test("creates refresh schedules with cron and cache settings", async () => {
     const res = await app.request("/api/schedules", {
       method: "POST",
