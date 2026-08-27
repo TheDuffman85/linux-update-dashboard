@@ -70,7 +70,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | PUT    | `/api/systems/:id`                                 | Update system configuration. API tokens cannot use this route.                                                                |
 | PUT    | `/api/systems/:id/upgrade-mode`                    | Toggle the system's default full-upgrade/aggressive upgrade behavior where supported.                                         |
 | PUT    | `/api/systems/:id/update-priority`                 | Set the system's Upgrade All priority (0–99) within its dashboard group.                                                       |
-| PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Include or exclude a system from Upgrade All by default.                                                                      |
+| PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Set whether a system is preselected for Upgrade All by default (using the inverse `excluded` flag).                            |
 | POST   | `/api/systems/test-connection`                     | Test SSH connectivity, host-key trust, and package-manager detection for a proposed config. API tokens cannot use this route. |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system.                                                                                                              |
 | POST   | `/api/systems/:id/dismiss-needs-reboot`            | Dismiss a stale reboot-needed indicator.                                                                                      |

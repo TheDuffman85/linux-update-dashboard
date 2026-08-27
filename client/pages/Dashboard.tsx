@@ -108,6 +108,12 @@ export function isUpgradePresetSelected(
   return selectedSystemIds.includes(system.id);
 }
 
+export function isPreselectedForUpgradeAll(
+  system: Pick<System, "excludeFromUpgradeAll">,
+): boolean {
+  return system.excludeFromUpgradeAll !== 1;
+}
+
 export function canToggleUpgradePreset(
   system: Pick<System, "updateCount">,
 ): boolean {
@@ -463,14 +469,12 @@ export default function Dashboard() {
     ? upgradeModalSystems
         .map((snapshot) => {
           const latest = latestSystemsById.get(snapshot.id);
-          return latest
-            ? { ...latest, excludeFromUpgradeAll: snapshot.excludeFromUpgradeAll }
-            : snapshot;
+          return latest ?? snapshot;
         })
         .filter((system) => isUpgradeAllEligible(system, isUpgrading(system.id)))
     : orderedSystemsWithUpdates;
   const defaultSelectedSystemIds = orderedModalCandidateSystems
-    .filter((s) => s.excludeFromUpgradeAll !== 1)
+    .filter(isPreselectedForUpgradeAll)
     .map((s) => s.id);
   const selectedSystems = modalSystems.filter(
     (s) => selectedSystemIds.includes(s.id) && s.updateCount > 0,
@@ -550,39 +554,11 @@ export default function Dashboard() {
     setFullUpgradeSelections({});
   };
 
-  const setModalSystemExclusion = (systemId: number, excluded: boolean) => {
-    setUpgradeModalSystems((current) =>
-      current.map((system) =>
-        system.id === systemId
-          ? { ...system, excludeFromUpgradeAll: excluded ? 1 : 0 }
-          : system
-      )
-    );
-  };
-
   const toggleSystemSelection = (systemId: number) => {
-    const wasSelected = selectedSystemIds.includes(systemId);
-    const excluded = wasSelected;
-
     setSelectedSystemIds((current) =>
-      wasSelected
+      current.includes(systemId)
         ? current.filter((id) => id !== systemId)
         : [...current, systemId]
-    );
-    setModalSystemExclusion(systemId, excluded);
-    updateSystemUpgradeAllExclusion.mutate(
-      { systemId, excluded },
-      {
-        onError: (err) => {
-          setSelectedSystemIds((current) =>
-            wasSelected
-              ? [...current, systemId]
-              : current.filter((id) => id !== systemId)
-          );
-          setModalSystemExclusion(systemId, !excluded);
-          addToast(err.message, "danger");
-        },
-      }
     );
   };
 
@@ -753,6 +729,11 @@ export default function Dashboard() {
               .mutateAsync({ systemId, updatePriority })
               .then(() => undefined)
           }
+          saveSystemUpgradeAllExclusion={(systemId, excluded) =>
+            updateSystemUpgradeAllExclusion
+              .mutateAsync({ systemId, excluded })
+              .then(() => undefined)
+          }
           saveSystemPlacements={(items) => updateSystemDashboardGroups.mutateAsync(items).then(() => undefined)}
           busy={
             createDashboardGroup.isPending ||
@@ -829,9 +810,13 @@ export default function Dashboard() {
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => toggleSystemSelection(s.id)}
-                                disabled={updateSystemUpgradeAllExclusion.isPending}
                                 className="shrink-0 rounded"
-                                aria-label={`${isSelected ? "Exclude" : "Include"} ${s.name} in Upgrade All`}
+                                aria-label={t(
+                                  isSelected
+                                    ? "pages.dashboard.excludeNameFromThisUpgrade"
+                                    : "pages.dashboard.includeNameInThisUpgrade",
+                                  { name: s.name },
+                                )}
                               />
                               <span className={getUpgradeSystemNameClass({ hasUpdates: true, isSelected })}>
                                 {s.name}
@@ -882,7 +867,7 @@ export default function Dashboard() {
             )}
             {systemsWithUpdates.length > 0 && (
               <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                {t("pages.dashboard.checkASystemToIncludeItInFuture")}
+                {t("pages.dashboard.selectionsApplyToThisRunOnly")}
               </p>
             )}
           </div>
