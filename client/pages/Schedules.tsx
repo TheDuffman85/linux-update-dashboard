@@ -5,8 +5,10 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
 import {
+  isAutoremoveConfig,
   isRefreshConfig,
   isNotificationScheduleConfig,
+  isRebootConfig,
   isUpdateConfig,
   useCreateSchedule,
   useDeleteSchedule,
@@ -38,11 +40,15 @@ const MAX_SCHEDULE_NAME_LENGTH = 100;
 const TYPE_LABELS: Record<ScheduleType, string> = {
   refresh: "Refresh",
   update: "Update",
+  autoremove: "Autoremove",
+  reboot: "Reboot",
   notification_digest: "Notification",
 };
 const TYPE_LABEL_KEYS: Record<ScheduleType, string> = {
   refresh: "pages.schedules.type.refresh",
   update: "pages.schedules.type.update",
+  autoremove: "pages.schedules.type.autoremove",
+  reboot: "pages.schedules.type.reboot",
   notification_digest: "pages.schedules.type.notification",
 };
 
@@ -160,7 +166,11 @@ function describeSchedule(
     });
   }
 
-  if (schedule.type === "update" && isUpdateConfig(schedule.config)) {
+  if (
+    (schedule.type === "update" && isUpdateConfig(schedule.config)) ||
+    (schedule.type === "autoremove" && isAutoremoveConfig(schedule.config)) ||
+    (schedule.type === "reboot" && isRebootConfig(schedule.config))
+  ) {
     return describeCronExpression(schedule.config.cron, t, language, use24HourTimeFormat);
   }
 
@@ -292,7 +302,15 @@ function ScheduleForm({
       ? initial.config
       : { cron: "*/15 * * * *", cacheDurationHours: 12 };
   const initialUpdateConfig =
-    initial?.config && isUpdateConfig(initial.config)
+    initial?.type === "update" && isUpdateConfig(initial.config)
+      ? initial.config
+      : { cron: "0 3 * * 0" };
+  const initialAutoremoveConfig =
+    initial?.type === "autoremove" && isAutoremoveConfig(initial.config)
+      ? initial.config
+      : { cron: "0 3 * * 0" };
+  const initialRebootConfig =
+    initial?.type === "reboot" && isRebootConfig(initial.config)
       ? initial.config
       : { cron: "0 3 * * 0" };
   const initialNotificationScheduleConfig =
@@ -304,7 +322,11 @@ function ScheduleForm({
       ? initialRefreshConfig.cron
       : initialType === "notification_digest"
         ? initialNotificationScheduleConfig.cron
-        : initialUpdateConfig.cron;
+        : initialType === "autoremove"
+          ? initialAutoremoveConfig.cron
+          : initialType === "reboot"
+            ? initialRebootConfig.cron
+            : initialUpdateConfig.cron;
   const initialCronPreset = CRON_PRESETS.find((preset) => preset.value === initialCron)
     ? initialCron
     : "custom";
@@ -333,6 +355,21 @@ function ScheduleForm({
     setSelectedNotificationIds((prev) =>
       prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id],
     );
+  };
+
+  const handleTypeChange = (nextType: ScheduleType) => {
+    setType(nextType);
+    const nextCron =
+      nextType === "refresh"
+        ? "*/15 * * * *"
+        : nextType === "notification_digest"
+          ? "0 9 * * 1"
+          : "0 3 * * 0";
+    const preset = CRON_PRESETS.some((item) => item.value === nextCron)
+      ? nextCron
+      : "custom";
+    setCronPreset(preset);
+    setCustomCron(preset === "custom" ? nextCron : "");
   };
 
   const parseBoundedInteger = (
@@ -450,11 +487,13 @@ function ScheduleForm({
           <label className={labelClass}>{t("pages.schedules.type")}</label>
           <select
             value={type}
-            onChange={(e) => setType(e.target.value as ScheduleType)}
+            onChange={(e) => handleTypeChange(e.target.value as ScheduleType)}
             className={inputClass}
           >
             <option value="refresh">{t("pages.schedules.type.refresh")}</option>
             <option value="update">{t("pages.schedules.type.update")}</option>
+            <option value="autoremove">{t("pages.schedules.type.autoremove")}</option>
+            <option value="reboot">{t("pages.schedules.type.reboot")}</option>
             <option value="notification_digest">{t("pages.schedules.type.notification")}</option>
           </select>
         </div>
@@ -557,7 +596,7 @@ function ScheduleForm({
           >
             {CRON_PRESETS.map((preset) => (
               <option key={preset.value} value={preset.value}>
-              {t(preset.labelKey)}
+                {t(preset.labelKey)}
               </option>
             ))}
           </select>
@@ -857,7 +896,14 @@ export default function Schedules() {
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell text-slate-500 dark:text-slate-400">
                     <div>
-                      <div>{describeSchedule(schedule, t, language, resolvedTimeFormat === "24h")}</div>
+                      <div>
+                        {describeSchedule(
+                          schedule,
+                          t,
+                          language,
+                          resolvedTimeFormat === "24h",
+                        )}
+                      </div>
                       {(() => {
                         const cron = getScheduleCron(schedule);
                         return cron ? <ScheduleMinimumWarning cron={cron} /> : null;

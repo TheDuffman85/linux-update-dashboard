@@ -463,7 +463,7 @@ describe("systems reorder route", () => {
     });
   });
 
-  test("persists upgrade-all exclusion from the modal", async () => {
+  test("persists the Upgrade All default preselection setting", async () => {
     const db = getDb();
     const inserted = db.insert(systems).values({
       name: "Excluded System",

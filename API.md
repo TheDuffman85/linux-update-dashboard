@@ -56,8 +56,13 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | ------ | ------------------------ | --------------------------------------- |
 | GET    | `/api/dashboard/stats`   | Summary statistics.                     |
 | GET    | `/api/dashboard/systems` | Systems with dashboard status metadata. |
+| GET    | `/api/app-update`        | Application update status.              |
 | GET    | `/api/settings`          | Current settings.                       |
 | PUT    | `/api/settings`          | Update settings.                        |
+
+`GET /api/app-update` is available to read-only and read/write API tokens. It
+returns the current version and branch, the latest remote version, whether an
+update is available, and release/repository URLs when available.
 
 ## Systems
 
@@ -70,7 +75,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | PUT    | `/api/systems/:id`                                 | Update system configuration. API tokens cannot use this route.                                                                |
 | PUT    | `/api/systems/:id/upgrade-mode`                    | Toggle the system's default full-upgrade/aggressive upgrade behavior where supported.                                         |
 | PUT    | `/api/systems/:id/update-priority`                 | Set the system's Upgrade All priority (0–99) within its dashboard group.                                                       |
-| PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Include or exclude a system from Upgrade All by default.                                                                      |
+| PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Set whether a system is preselected for Upgrade All by default (using the inverse `excluded` flag).                            |
 | POST   | `/api/systems/test-connection`                     | Test SSH connectivity, host-key trust, and package-manager detection for a proposed config. API tokens cannot use this route. |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system.                                                                                                              |
 | POST   | `/api/systems/:id/dismiss-needs-reboot`            | Dismiss a stale reboot-needed indicator.                                                                                      |
@@ -144,6 +149,10 @@ Long-running update routes usually return a job ID. Poll `GET /api/jobs/:id` for
 | POST   | `/api/schedules`         | Create a schedule. |
 | PUT    | `/api/schedules/:id`     | Update a schedule. |
 | DELETE | `/api/schedules/:id`     | Delete a schedule. |
+
+Schedule `type` can be `refresh`, `update`, `autoremove`, `reboot`, or
+`notification_digest`. All schedule types use `config.cron`. System-targeted
+schedules accept `systemIds: null` for all systems or an array of system IDs.
 
 ## Scripts
 

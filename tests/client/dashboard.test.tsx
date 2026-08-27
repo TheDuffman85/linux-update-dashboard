@@ -93,6 +93,7 @@ import Dashboard, {
   compareUpgradeModalGroups,
   compareUpgradeModalSystems,
   getDashboardUpgradeToast,
+  isPreselectedForUpgradeAll,
   isUpgradeAllSubmitDisabled,
   isUpgradePresetSelected,
   UpgradeModalGroupHeading,
@@ -209,6 +210,7 @@ describe("Dashboard", () => {
     });
     mockUseUpdateSystemUpgradeAllExclusion.mockReturnValue({
       mutate: vi.fn(),
+      mutateAsync: vi.fn(),
       isPending: false,
     });
     mockUseUpdateSystemUpgradeMode.mockReturnValue({
@@ -571,6 +573,11 @@ describe("Dashboard", () => {
     expect(canToggleUpgradePreset(systemWithUpdates)).toBe(true);
   });
 
+  test("derives the Upgrade All initial selection from the saved preselection", () => {
+    expect(isPreselectedForUpgradeAll({ excludeFromUpgradeAll: 0 })).toBe(true);
+    expect(isPreselectedForUpgradeAll({ excludeFromUpgradeAll: 1 })).toBe(false);
+  });
+
   test("shows the group upgrade priority in the Upgrade All modal heading", () => {
     const html = renderToStaticMarkup(
       <UpgradeModalGroupHeading
@@ -930,6 +937,7 @@ describe("Dashboard", () => {
         updatePriority: 6,
         sortOrder: 1,
         updateCount: 1,
+        excludeFromUpgradeAll: 0,
         isReachable: 1,
         needsReboot: 0,
         lastCheck: null,
@@ -957,6 +965,7 @@ describe("Dashboard", () => {
       saveGroupOrder: vi.fn().mockResolvedValue(undefined),
       saveGroupUpdatePriority: vi.fn().mockResolvedValue(undefined),
       saveSystemUpdatePriority: vi.fn().mockResolvedValue(undefined),
+      saveSystemUpgradeAllExclusion: vi.fn().mockResolvedValue(undefined),
       saveSystemPlacements: vi.fn().mockResolvedValue(undefined),
       onError: vi.fn(),
       renderSystem: (system: System) => <span>{system.name}</span>,
@@ -974,6 +983,7 @@ describe("Dashboard", () => {
     expect(viewHtml).not.toContain("Sort systems by name");
     expect(viewHtml).not.toContain("Priority: 3");
     expect(viewHtml).not.toContain("data-dashboard-system-upgrade-priority");
+    expect(viewHtml).not.toContain("data-dashboard-system-upgrade-all-preselection");
     expect(viewHtml).toContain('aria-controls="dashboard-group-content-1"');
     expect(viewHtml).not.toContain("data-dashboard-group-order-actions");
 
@@ -1018,6 +1028,10 @@ describe("Dashboard", () => {
       'aria-label="Increase upgrade priority for Primary"',
     );
     expect(editHtml).toContain('data-dashboard-system-upgrade-priority="true"');
+    expect(editHtml).toContain('data-dashboard-system-upgrade-all-preselection="true"');
+    expect(editHtml).toContain('aria-label="Preselect Alpha for Upgrade All"');
+    expect(editHtml).toContain("Upgrade All");
+    expect(editHtml).toContain("When off, this system starts unchecked but remains available for manual selection.");
     expect(editHtml).toContain('aria-label="Upgrade priority for Alpha"');
     expect(editHtml).toContain(
       'aria-label="Decrease upgrade priority for Alpha"',
@@ -1053,6 +1067,39 @@ describe("Dashboard", () => {
     expect(editHtml).toMatch(
       /<button[^>]*disabled=""[^>]*aria-label="Delete group"/,
     );
+  });
+
+  test("renders systems excluded from Upgrade All as not preselected", () => {
+    const html = renderToStaticMarkup(
+      <DashboardSystemGroups
+        systems={[{
+          id: 1,
+          name: "Manual only",
+          dashboardGroupId: null,
+          dashboardOrder: 1,
+          updatePriority: 1,
+          sortOrder: 1,
+          excludeFromUpgradeAll: 1,
+        } as System]}
+        groups={[]}
+        ungroupedSortOrder={0}
+        ungroupedUpdatePriority={1}
+        editMode
+        onToggleEditMode={vi.fn()}
+        onCreateGroup={vi.fn()}
+        onRenameGroup={vi.fn()}
+        onDeleteGroup={vi.fn()}
+        saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+        saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpgradeAllExclusion={vi.fn().mockResolvedValue(undefined)}
+        saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+        onError={vi.fn()}
+        renderSystem={(system) => <span>{system.name}</span>}
+      />,
+    );
+
+    expect(html).toMatch(/role="switch" aria-checked="false" aria-label="Preselect Manual only for Upgrade All"/);
   });
 
   test("sorts system names case-insensitively and with natural number ordering", () => {

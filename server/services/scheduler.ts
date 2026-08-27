@@ -9,7 +9,9 @@ import * as scheduleService from "./schedule-service";
 import * as updateService from "./update-service";
 import { logger } from "../logger";
 import type {
+  AutoremoveScheduleConfig,
   NotificationScheduleConfig,
+  RebootScheduleConfig,
   RefreshScheduleConfig,
   SerializedSchedule,
   UpdateScheduleConfig,
@@ -27,6 +29,16 @@ function isRefreshConfig(config: SerializedSchedule["config"]): config is Refres
 
 function isUpdateConfig(config: SerializedSchedule["config"]): config is UpdateScheduleConfig {
   return "cron" in config && !("cacheDurationHours" in config) && !("notificationIds" in config);
+}
+
+function isAutoremoveConfig(
+  config: SerializedSchedule["config"],
+): config is AutoremoveScheduleConfig {
+  return isUpdateConfig(config);
+}
+
+function isRebootConfig(config: SerializedSchedule["config"]): config is RebootScheduleConfig {
+  return isUpdateConfig(config);
 }
 
 function isNotificationScheduleConfig(
@@ -218,6 +230,114 @@ async function runUpdateSchedule(
   }
 }
 
+async function runAutoremoveSchedule(
+  schedule: SerializedSchedule,
+  generation: number,
+): Promise<void> {
+  if (generation !== schedulerGeneration || !isAutoremoveConfig(schedule.config)) return;
+
+  scheduleService.markScheduleStarted(schedule.id);
+  try {
+    const scopedIds = getScheduleSystemIds(schedule);
+    logger.info("Autoremove schedule running", {
+      scheduleId: schedule.id,
+      scheduleName: schedule.name,
+      count: scopedIds.length,
+    });
+
+    let completed = 0;
+    let warnings = 0;
+    let failed = 0;
+    for (const id of scopedIds) {
+      try {
+        const result = await updateService.applyAutoremove(id);
+        if (result.success) {
+          completed += 1;
+          if (result.warning) warnings += 1;
+        } else {
+          failed += 1;
+        }
+      } catch (error) {
+        failed += 1;
+        logger.error("Scheduled autoremove failed", {
+          scheduleId: schedule.id,
+          systemId: id,
+          error: String(error),
+        });
+      }
+    }
+
+    const status =
+      failed === 0 && warnings === 0
+        ? "success"
+        : completed > 0
+          ? "warning"
+          : "failed";
+    scheduleService.markScheduleFinished(
+      schedule.id,
+      status,
+      `Ran autoremove on ${completed} system${completed === 1 ? "" : "s"}${
+        failed ? `, ${failed} failed` : ""
+      }${warnings ? `, ${warnings} warning${warnings === 1 ? "" : "s"}` : ""}`,
+    );
+  } catch (error) {
+    logger.error("Autoremove schedule error", {
+      scheduleId: schedule.id,
+      error: String(error),
+    });
+    scheduleService.markScheduleFinished(schedule.id, "failed", String(error));
+  }
+}
+
+async function runRebootSchedule(
+  schedule: SerializedSchedule,
+  generation: number,
+): Promise<void> {
+  if (generation !== schedulerGeneration || !isRebootConfig(schedule.config)) return;
+  scheduleService.markScheduleStarted(schedule.id);
+
+  try {
+    const scopedIds = getScheduleSystemIds(schedule);
+    logger.info("Reboot schedule running", {
+      scheduleId: schedule.id,
+      scheduleName: schedule.name,
+      count: scopedIds.length,
+    });
+
+    let rebooted = 0;
+    let failed = 0;
+    for (const id of scopedIds) {
+      try {
+        const result = await updateService.rebootSystem(id);
+        if (result.success) rebooted += 1;
+        else failed += 1;
+      } catch (error) {
+        failed += 1;
+        logger.error("Scheduled reboot failed", {
+          scheduleId: schedule.id,
+          systemId: id,
+          error: String(error),
+        });
+      }
+    }
+
+    const status = failed === 0 ? "success" : rebooted > 0 ? "warning" : "failed";
+    scheduleService.markScheduleFinished(
+      schedule.id,
+      status,
+      `Sent reboot to ${rebooted} system${rebooted === 1 ? "" : "s"}${
+        failed ? `, ${failed} failed` : ""
+      }`,
+    );
+  } catch (error) {
+    logger.error("Reboot schedule error", {
+      scheduleId: schedule.id,
+      error: String(error),
+    });
+    scheduleService.markScheduleFinished(schedule.id, "failed", String(error));
+  }
+}
+
 async function runNotificationSchedule(
   schedule: SerializedSchedule,
   generation: number,
@@ -265,12 +385,16 @@ function startRuntime(options: { startupRefresh: boolean }): void {
   const generation = ++schedulerGeneration;
   const refreshSchedules = scheduleService.listEnabledSchedulesByType("refresh");
   const updateSchedules = scheduleService.listEnabledSchedulesByType("update");
+  const autoremoveSchedules = scheduleService.listEnabledSchedulesByType("autoremove");
+  const rebootSchedules = scheduleService.listEnabledSchedulesByType("reboot");
   const notificationSchedules = scheduleService.listEnabledSchedulesByType("notification_digest");
   const timeZone = getConfiguredTimeZone() ?? undefined;
 
   logger.info("Schedule runtime configured", {
     refreshSchedules: refreshSchedules.length,
     updateSchedules: updateSchedules.length,
+    autoremoveSchedules: autoremoveSchedules.length,
+    rebootSchedules: rebootSchedules.length,
     notificationSchedules: notificationSchedules.length,
   });
 
@@ -301,6 +425,40 @@ function startRuntime(options: { startupRefresh: boolean }): void {
       );
     } catch (error) {
       logger.error("Failed to start update schedule", {
+        scheduleId: schedule.id,
+        error: String(error),
+      });
+      scheduleService.markScheduleFinished(schedule.id, "failed", String(error));
+    }
+  }
+
+  for (const schedule of autoremoveSchedules) {
+    if (!isAutoremoveConfig(schedule.config)) continue;
+    try {
+      scheduleCrons.push(
+        new Cron(schedule.config.cron, { timezone: timeZone }, () => {
+          void runAutoremoveSchedule(schedule, generation);
+        }),
+      );
+    } catch (error) {
+      logger.error("Failed to start autoremove schedule", {
+        scheduleId: schedule.id,
+        error: String(error),
+      });
+      scheduleService.markScheduleFinished(schedule.id, "failed", String(error));
+    }
+  }
+
+  for (const schedule of rebootSchedules) {
+    if (!isRebootConfig(schedule.config)) continue;
+    try {
+      scheduleCrons.push(
+        new Cron(schedule.config.cron, { timezone: timeZone }, () => {
+          void runRebootSchedule(schedule, generation);
+        }),
+      );
+    } catch (error) {
+      logger.error("Failed to start reboot schedule", {
         scheduleId: schedule.id,
         error: String(error),
       });
@@ -354,3 +512,10 @@ export function stop(): void {
   }
   scheduleCrons = [];
 }
+
+export const schedulerTesting = {
+  runAutoremoveSchedule: (schedule: SerializedSchedule) =>
+    runAutoremoveSchedule(schedule, schedulerGeneration),
+  runRebootSchedule: (schedule: SerializedSchedule) =>
+    runRebootSchedule(schedule, schedulerGeneration),
+};

@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
-export type ScheduleType = "refresh" | "update" | "notification_digest";
+export type ScheduleType =
+  | "refresh"
+  | "update"
+  | "autoremove"
+  | "reboot"
+  | "notification_digest";
 export type ScheduleRunStatus = "success" | "warning" | "failed";
 
 export interface RefreshScheduleConfig {
@@ -13,12 +18,25 @@ export interface UpdateScheduleConfig {
   cron: string;
 }
 
+export interface AutoremoveScheduleConfig {
+  cron: string;
+}
+
+export interface RebootScheduleConfig {
+  cron: string;
+}
+
 export interface NotificationScheduleConfig {
   cron: string;
   notificationIds: number[];
 }
 
-export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig | NotificationScheduleConfig;
+export type ScheduleConfig =
+  | RefreshScheduleConfig
+  | UpdateScheduleConfig
+  | AutoremoveScheduleConfig
+  | RebootScheduleConfig
+  | NotificationScheduleConfig;
 
 export interface Schedule {
   id: number;
@@ -41,6 +59,14 @@ export function isRefreshConfig(config: ScheduleConfig): config is RefreshSchedu
 
 export function isUpdateConfig(config: ScheduleConfig): config is UpdateScheduleConfig {
   return "cron" in config && !("cacheDurationHours" in config) && !("notificationIds" in config);
+}
+
+export function isAutoremoveConfig(config: ScheduleConfig): config is AutoremoveScheduleConfig {
+  return isUpdateConfig(config);
+}
+
+export function isRebootConfig(config: ScheduleConfig): config is RebootScheduleConfig {
+  return isUpdateConfig(config);
 }
 
 export function isNotificationScheduleConfig(

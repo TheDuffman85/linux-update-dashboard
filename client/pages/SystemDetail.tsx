@@ -150,6 +150,7 @@ function UpdatesTable({
   updates,
   onHide,
   onTogglePackage,
+  onToggleAllPackages,
   selectedPackageNames,
   selectionDisabled,
   hideBusy,
@@ -157,11 +158,20 @@ function UpdatesTable({
   updates: CachedUpdate[];
   onHide: (update: CachedUpdate) => void;
   onTogglePackage: (packageName: string) => void;
+  onToggleAllPackages: () => void;
   selectedPackageNames: string[];
   selectionDisabled?: boolean;
   hideBusy?: boolean;
 }) {
   const { t } = useI18n();
+  const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionDisabled);
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useBrowserLayoutEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = packageSelectionState.indeterminate;
+    }
+  }, [packageSelectionState.indeterminate, packageSelectionState.totalCount]);
 
   if (!updates.length) {
     return (
@@ -176,7 +186,17 @@ function UpdatesTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
-            <th className="px-2 sm:px-4 py-2 w-10" />
+            <th className="px-2 sm:px-4 py-2 w-10">
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                aria-label={t("pages.systemDetail.selectAllPackages")}
+                checked={packageSelectionState.allSelected}
+                disabled={packageSelectionState.selectionDisabled}
+                onChange={onToggleAllPackages}
+                className="rounded border-border text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+              />
+            </th>
             <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.package")}</th>
             <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">{t("pages.systemDetail.current")}</th>
             <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.available")}</th>
@@ -2265,9 +2285,10 @@ export default function SystemDetail() {
   ].join(" ");
   const autoremoveSupport = system.autoremoveSupport ?? { supportedManagers: [], skippedManagers: [] };
   const hasAutoremoveAction = shouldShowAutoremoveAction(autoremoveSupport);
+  const hasRebootAction = true;
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
-  const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || autoremoving;
-  const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction;
+  const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || hasRebootAction || autoremoving;
+  const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction || hasRebootAction;
   const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport, t);
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
@@ -2495,6 +2516,13 @@ export default function SystemDetail() {
     setSelectedPackageNames((current) => toggleSelectedPackageName(current, packageName));
   };
 
+  const handleToggleAllPackageSelection = () => {
+    setSelectedPackageNames((current) => {
+      const selectionState = getPackageSelectionState(current, updates);
+      return selectionState.allSelected ? [] : selectionState.visiblePackageNames;
+    });
+  };
+
   const renderRunningCancelAction = (label: string, className: string) => (
     <button
       type="button"
@@ -2522,8 +2550,8 @@ export default function SystemDetail() {
     <Layout
       title={
         <span className="flex items-center gap-2 min-w-0">
-          {upgrading || autoremoving || checking || repairingPackageIssue ? (
-            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || autoremoving || repairingPackageIssue ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
+          {upgrading || autoremoving || checking || rebooting || repairingPackageIssue ? (
+            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || autoremoving || rebooting || repairingPackageIssue ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
           ) : (
             <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
           )}
@@ -2549,7 +2577,7 @@ export default function SystemDetail() {
           ) : (
             <button
               onClick={handleCheck}
-              disabled={checking || upgrading || autoremoving || repairingPackageIssue}
+              disabled={checking || upgrading || autoremoving || rebooting || repairingPackageIssue}
               className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 min-w-24"
             >
               {checking ? (
@@ -2615,6 +2643,21 @@ export default function SystemDetail() {
                         }`}
                       >
                         {t("pages.systemDetail.autoremove")}
+                      </button>
+                    )}
+                    {hasRebootAction && (
+                      <button
+                        onClick={() => {
+                          setShowUpgradeDropdown(false);
+                          setShowRebootConfirm(true);
+                        }}
+                        className={`w-full px-3 py-2 text-sm text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors ${
+                          system.supportsFullUpgrade || hasAutoremoveAction
+                            ? "border-t border-border"
+                            : ""
+                        }`}
+                      >
+                        {t("pages.systemDetail.reboot")}
                       </button>
                     )}
                   </div>
@@ -2806,6 +2849,7 @@ export default function SystemDetail() {
         <UpdatesTable
           updates={updates}
           onTogglePackage={handleTogglePackageSelection}
+          onToggleAllPackages={handleToggleAllPackageSelection}
           selectedPackageNames={selectedVisiblePackageNames}
           selectionDisabled={packageSelectionState.selectionDisabled}
           hideBusy={hideUpdate.isPending}

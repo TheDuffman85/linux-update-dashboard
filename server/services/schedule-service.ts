@@ -5,7 +5,12 @@ import { notifications, schedules, systems } from "../db/schema";
 import * as cacheService from "./cache-service";
 import * as systemService from "./system-service";
 
-export type ScheduleType = "refresh" | "update" | "notification_digest";
+export type ScheduleType =
+  | "refresh"
+  | "update"
+  | "autoremove"
+  | "reboot"
+  | "notification_digest";
 export type ScheduleRunStatus = "success" | "warning" | "failed";
 
 export interface RefreshScheduleConfig {
@@ -17,12 +22,25 @@ export interface UpdateScheduleConfig {
   cron: string;
 }
 
+export interface AutoremoveScheduleConfig {
+  cron: string;
+}
+
+export interface RebootScheduleConfig {
+  cron: string;
+}
+
 export interface NotificationScheduleConfig {
   cron: string;
   notificationIds: number[];
 }
 
-export type ScheduleConfig = RefreshScheduleConfig | UpdateScheduleConfig | NotificationScheduleConfig;
+export type ScheduleConfig =
+  | RefreshScheduleConfig
+  | UpdateScheduleConfig
+  | AutoremoveScheduleConfig
+  | RebootScheduleConfig
+  | NotificationScheduleConfig;
 
 export interface SerializedSchedule {
   id: number;
@@ -39,7 +57,13 @@ export interface SerializedSchedule {
   updatedAt: string;
 }
 
-const VALID_TYPES: ScheduleType[] = ["refresh", "update", "notification_digest"];
+const VALID_TYPES: ScheduleType[] = [
+  "refresh",
+  "update",
+  "autoremove",
+  "reboot",
+  "notification_digest",
+];
 const MAX_NAME_LENGTH = 100;
 const MAX_RUN_MESSAGE_LENGTH = 500;
 const DEFAULT_MIN_SCHEDULE_INTERVAL_MINUTES = 5;
@@ -48,6 +72,9 @@ const DEFAULT_REFRESH_CONFIG: RefreshScheduleConfig = {
   cacheDurationHours: 12,
 };
 const DEFAULT_UPDATE_CONFIG: UpdateScheduleConfig = {
+  cron: "0 3 * * 0",
+};
+const DEFAULT_AUTOREMOVE_CONFIG: AutoremoveScheduleConfig = {
   cron: "0 3 * * 0",
 };
 const DEFAULT_NOTIFICATION_SCHEDULE_CONFIG: NotificationScheduleConfig = {
@@ -166,7 +193,13 @@ function normalizeScheduleConfig(
     };
   }
 
-  return { cron: cron || DEFAULT_UPDATE_CONFIG.cron };
+  return {
+    cron:
+      cron ||
+      (type === "autoremove"
+        ? DEFAULT_AUTOREMOVE_CONFIG.cron
+        : DEFAULT_UPDATE_CONFIG.cron),
+  };
 }
 
 function serializeSchedule(row: typeof schedules.$inferSelect): SerializedSchedule {

@@ -35,7 +35,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
 - **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
-- **Per-system controls:** hidden systems, system duplication, default Upgrade All exclusion, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
+- **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
 - **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
@@ -285,6 +285,8 @@ Each group, including **Ungrouped**, has an **Upgrade priority** from `0` to `99
 - System priority is scoped to its group, so groups sharing a priority progress through their own system priorities independently.
 
 **Upgrade All** remains available whenever at least one system with updates is idle. Systems that are refreshing, queued, upgrading, rebooting, repairing package-manager issues, or running another maintenance operation are left out until that operation finishes.
+
+Each system has an **Upgrade All** switch in dashboard Edit mode. Turning it off leaves the system available in the **Upgrade All Systems** modal but unchecked by default. Checkbox changes made inside the modal apply only to that run and do not change the saved preselection.
 
 The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The preference is stored in the browser and is disabled by default. Groups can be collapsed outside Edit mode without changing their display or upgrade priority.
 

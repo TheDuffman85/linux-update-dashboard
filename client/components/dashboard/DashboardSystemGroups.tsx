@@ -195,6 +195,7 @@ export function DashboardSystemGroups({
   saveGroupOrder,
   saveGroupUpdatePriority,
   saveSystemUpdatePriority,
+  saveSystemUpgradeAllExclusion,
   saveSystemPlacements,
   busy = false,
   onError,
@@ -218,6 +219,10 @@ export function DashboardSystemGroups({
     systemId: number,
     updatePriority: number,
   ) => Promise<void>;
+  saveSystemUpgradeAllExclusion: (
+    systemId: number,
+    excluded: boolean,
+  ) => Promise<void>;
   saveSystemPlacements: (items: SystemPlacement[]) => Promise<void>;
   busy?: boolean;
   onError: (message: string) => void;
@@ -235,6 +240,10 @@ export function DashboardSystemGroups({
   const [groupBadgesEnabled, setGroupBadgesEnabled] = useState(
     readGroupBadgesEnabled,
   );
+  const [
+    savingUpgradeAllPreselectionSystemIds,
+    setSavingUpgradeAllPreselectionSystemIds,
+  ] = useState<Set<number>>(() => new Set());
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
 
   useEffect(() => setLocalGroups(groups), [groups]);
@@ -597,6 +606,76 @@ export function DashboardSystemGroups({
           : t("pages.dashboard.failedToSaveUpdatePriority"),
       );
     }
+  };
+
+  const persistSystemUpgradeAllPreselection = async (system: System) => {
+    if (busy || savingUpgradeAllPreselectionSystemIds.has(system.id)) return;
+    const wasExcluded = system.excludeFromUpgradeAll === 1;
+    const excluded = !wasExcluded;
+    setSavingUpgradeAllPreselectionSystemIds((current) => {
+      const next = new Set(current);
+      next.add(system.id);
+      return next;
+    });
+    setLocalSystems((current) =>
+      current.map((candidate) =>
+        candidate.id === system.id
+          ? { ...candidate, excludeFromUpgradeAll: excluded ? 1 : 0 }
+          : candidate,
+      ),
+    );
+    try {
+      await saveSystemUpgradeAllExclusion(system.id, excluded);
+    } catch (error) {
+      setLocalSystems((current) =>
+        current.map((candidate) =>
+          candidate.id === system.id
+            ? { ...candidate, excludeFromUpgradeAll: wasExcluded ? 1 : 0 }
+            : candidate,
+        ),
+      );
+      onError(
+        error instanceof Error
+          ? error.message
+          : t("pages.dashboard.failedToSaveUpgradeAllPreselection"),
+      );
+    } finally {
+      setSavingUpgradeAllPreselectionSystemIds((current) => {
+        const next = new Set(current);
+        next.delete(system.id);
+        return next;
+      });
+    }
+  };
+
+  const renderSystemUpgradeAllPreselectionControl = (system: System) => {
+    const preselected = system.excludeFromUpgradeAll !== 1;
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={preselected}
+        aria-label={t("pages.dashboard.preselectNameForUpgradeAll", {
+          name: system.name,
+        })}
+        title={t("pages.dashboard.preselectForUpgradeAllHelp")}
+        onClick={() => void persistSystemUpgradeAllPreselection(system)}
+        disabled={busy || savingUpgradeAllPreselectionSystemIds.has(system.id)}
+        data-dashboard-system-upgrade-all-preselection
+        draggable={false}
+        className="inline-flex h-7 min-w-0 max-w-full shrink items-center gap-1.5 rounded-md border border-border bg-white px-1.5 text-[10px] font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+      >
+        <span
+          className={`relative h-4 w-7 rounded-full transition-colors ${preselected ? "bg-blue-600" : "bg-slate-300 dark:bg-slate-600"}`}
+          aria-hidden="true"
+        >
+          <span
+            className={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${preselected ? "translate-x-3" : ""}`}
+          />
+        </span>
+        <span className="truncate">{t("pages.dashboard.upgradeAll")}</span>
+      </button>
+    );
   };
 
   const renderUpdatePriorityControl = (section: DashboardSection) => (
@@ -1014,7 +1093,7 @@ export function DashboardSystemGroups({
                 onDragStart={(event) => {
                   if (
                     (event.target as HTMLElement).closest(
-                      "[data-dashboard-system-actions], [data-dashboard-system-upgrade-priority]",
+                      "[data-dashboard-system-actions], [data-dashboard-system-upgrade-priority], [data-dashboard-system-upgrade-all-preselection]",
                     )
                   ) {
                     event.preventDefault();
@@ -1134,7 +1213,10 @@ export function DashboardSystemGroups({
                         </svg>
                       </button>
                     </div>
-                    {renderSystemUpdatePriorityControl(system)}
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      {renderSystemUpgradeAllPreselectionControl(system)}
+                      {renderSystemUpdatePriorityControl(system)}
+                    </div>
                   </div>
                 )}
                 {renderSystem(system)}
