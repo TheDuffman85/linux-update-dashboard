@@ -1,4 +1,4 @@
-ARG NODE_VERSION=24.18.0
+ARG NODE_VERSION=24.20.0
 FROM node:${NODE_VERSION}-trixie-slim AS base
 WORKDIR /app
 RUN apt-get update \

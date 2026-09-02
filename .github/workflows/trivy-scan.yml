@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Get image info
         id: image
@@ -45,7 +45,7 @@ jobs:
           fi
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -55,7 +55,7 @@ jobs:
         run: docker pull ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: '${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}'
           format: 'sarif'

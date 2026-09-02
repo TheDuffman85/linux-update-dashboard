@@ -85,7 +85,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 Prerequisites:
 
-- Node.js 24.18.0
+- Node.js 24.20.0
 - pnpm 11.9.0 through Corepack or global install
 - SSH access to at least one Linux server
 
