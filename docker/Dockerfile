@@ -31,7 +31,9 @@ ENV VITE_APP_REPOSITORY=$APP_REPOSITORY
 ENV VITE_APP_REPO_URL=$APP_REPO_URL
 
 COPY . .
-RUN pnpm run build \
+RUN pnpm run check \
+    && pnpm run test \
+    && pnpm run build \
     && pnpm prune --prod
 
 # Production image

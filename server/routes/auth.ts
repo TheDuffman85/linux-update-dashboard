@@ -16,6 +16,7 @@ import {
   initSession,
 } from "../auth/session";
 import * as wa from "../auth/webauthn";
+import { issueWebAuthnChallenge, consumeWebAuthnChallenge } from "../auth/webauthn-challenge";
 import * as oidc from "../auth/oidc";
 import { rateLimit } from "../middleware/rate-limit";
 import {
@@ -406,11 +407,13 @@ auth.post("/setup", rateLimit(3, 60_000), async (c) => {
   }
 
   const pwHash = await hashPassword(password);
-  const user = db
-    .insert(users)
-    .values({ username, passwordHash: pwHash, isAdmin: 1 })
-    .returning({ id: users.id })
-    .get();
+  const user = db.transaction((tx) => {
+    if ((tx.select({ count: countFn() }).from(users).get()?.count ?? 0) > 0) return null;
+    return tx.insert(users)
+      .values({ username, passwordHash: pwHash, isAdmin: 1 })
+      .returning({ id: users.id }).get();
+  });
+  if (!user) return c.json({ error: "Setup already completed" }, 400);
 
   await createSession(c, user.id, username, "password");
   return c.json({ status: "ok", userId: user.id });
@@ -801,7 +804,7 @@ auth.post("/webauthn/register/options", async (c) => {
     rpId,
   );
 
-  setCookie(c, "webauthn_challenge", options.challenge, {
+  setCookie(c, "webauthn_challenge", issueWebAuthnChallenge(options.challenge, "register", session.userId), {
     httpOnly: true,
     sameSite: "Strict",
     secure: isSecureRequest(c),
@@ -832,7 +835,8 @@ auth.post("/webauthn/register/verify", async (c) => {
   }
 
   const body = await c.req.json();
-  const challenge = getCookie(c, "webauthn_challenge");
+  const challenge = consumeWebAuthnChallenge(getCookie(c, "webauthn_challenge"), "register", session.userId);
+  deleteCookie(c, "webauthn_challenge", { path: "/" });
   if (!challenge) {
     return c.json({ error: "No registration challenge found" }, 400);
   }
@@ -900,7 +904,7 @@ auth.post("/webauthn/login/options", async (c) => {
   const { rpId } = getWebAuthnParams(c);
   const options = await wa.getAuthenticationOptions(credentials, rpId);
 
-  setCookie(c, "webauthn_challenge", options.challenge, {
+  setCookie(c, "webauthn_challenge", issueWebAuthnChallenge(options.challenge, "login"), {
     httpOnly: true,
     sameSite: "Strict",
     secure: isSecureRequest(c),
@@ -913,7 +917,8 @@ auth.post("/webauthn/login/options", async (c) => {
 
 auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
   const body = await c.req.json();
-  const challenge = getCookie(c, "webauthn_challenge");
+  const challenge = consumeWebAuthnChallenge(getCookie(c, "webauthn_challenge"), "login");
+  deleteCookie(c, "webauthn_challenge", { path: "/" });
   if (!challenge) {
     return c.json({ error: "No authentication challenge found" }, 400);
   }

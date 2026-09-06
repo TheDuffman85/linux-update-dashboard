@@ -1,0 +1,19 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The build stage type-checks source and tests, runs the test suite,
+      # and builds both bundles. Release images use the same checks.
+      - name: Check, test, and build
+        run: docker build --target build -f docker/Dockerfile .

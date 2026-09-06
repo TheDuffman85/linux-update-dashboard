@@ -35,6 +35,22 @@ describe("database startup cleanup", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  test("finalizes orphaned queued history while preserving an active batch", () => {
+    const db = getDb();
+    const system = db.insert(systems).values({ name: "Queued", hostname: "queued.local", username: "root" }).returning().get();
+    const rows = db.insert(updateHistory).values([
+      { systemId: system.id, action: "upgrade_all", pkgManager: "apt", status: "queued" },
+      { systemId: system.id, action: "upgrade_all", pkgManager: "apt", status: "queued" },
+    ]).returning().all();
+    const batch = db.insert(upgradeBatches).values({ status: "queued" }).returning().get();
+    db.insert(upgradeBatchItems).values({ batchId: batch.id, systemId: system.id, historyId: rows[1].id, status: "queued" }).run();
+    closeDatabase();
+    initDatabase(dbPath);
+    const actual = getDb().select().from(updateHistory).all();
+    expect(actual.find(row => row.id === rows[0].id)).toMatchObject({ status: "failed", error: "Queued operation is no longer active" });
+    expect(actual.find(row => row.id === rows[1].id)?.status).toBe("queued");
+  });
+
   test("marks orphaned SSH-safe maintenance rows as warning after restart", () => {
     const db = getDb();
     const inserted = db.insert(systems).values({

@@ -31,12 +31,10 @@ export function subscribe(systemId: number, ws: WSContext): void {
   const stream = getOrCreate(systemId);
   stream.subscribers.add(ws);
 
-  if (stream.buffer.length === 0) {
-    try {
-      ws.send(JSON.stringify({ type: "reset" }));
-    } catch {
-      // client disconnected during reset
-    }
+  try {
+    ws.send(JSON.stringify({ type: "reset" }));
+  } catch {
+    stream.subscribers.delete(ws);
     return;
   }
 

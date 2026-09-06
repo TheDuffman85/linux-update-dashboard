@@ -2227,6 +2227,21 @@ function withConfigDefaults(
   };
 }
 
+/** Keep all maintenance steps in one persistent process so restart recovery
+ * resumes the same script. Each step has its own shell state and must succeed
+ * before the next step can run. */
+export function buildMaintenanceCommand(steps: ScriptStep[]): string | null {
+  if (steps.length === 0) return null;
+  if (steps.length === 1) return steps[0].command;
+  return steps.map((step) => [
+    "(",
+    step.command,
+    ")",
+    "ludash_step_status=$?",
+    'if [ "$ludash_step_status" -ne 0 ]; then exit "$ludash_step_status"; fi',
+  ].join("\n")).join("\n");
+}
+
 export function resolveRuntimeSteps(args: {
   systemId: number;
   operation: ScriptOperation;

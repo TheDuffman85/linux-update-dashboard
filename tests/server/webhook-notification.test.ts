@@ -21,13 +21,13 @@ import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
 import { applyUpgradePackage } from "../../server/services/update-service";
 
 function buildPayload(): NotificationPayload {
-  const event = {
+  const event: NotificationPayload["event"] = {
     title: "Updates available",
     body: "web-1: 3 updates",
     priority: "default" as const,
     tags: ["package"],
     sentAt: "2026-03-09T10:00:00.000Z",
-    eventTypes: ["updates"] as const,
+    eventTypes: ["updates"],
     totals: {
       systemsWithUpdates: 1,
       totalUpdates: 3,

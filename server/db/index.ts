@@ -1111,6 +1111,19 @@ export function initDatabase(
           AND status IN ('queued', 'running')
       )`);
 
+  // Older failed batches could leave their initial activity row queued.
+  // Preserve only entries still owned by a resumable batch.
+  _db.run(sql`UPDATE update_history
+    SET status = 'failed', completed_at = datetime('now'),
+        error = 'Queued operation is no longer active'
+    WHERE status = 'queued' AND NOT EXISTS (
+      SELECT 1 FROM upgrade_batch_items AS item
+      JOIN upgrade_batches AS batch ON batch.id = item.batch_id
+      WHERE item.history_id = update_history.id
+        AND item.status IN ('queued', 'running')
+        AND batch.status IN ('queued', 'running')
+    )`);
+
   // Cleanup: remove obsolete settings
   _db.run(
     sql`DELETE FROM settings WHERE key IN ('check_flatpak', 'check_snap', 'auto_hide_kept_back_updates')`,

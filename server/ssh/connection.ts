@@ -107,11 +107,14 @@ export function buildPersistentSetupCommand(
   };
 }
 
-export function buildTailMonitorCommand(logFile: string, pid: number): string {
+export function buildTailMonitorCommand(logFile: string, pid: number, outputOffset = 0): string {
+  const offset = Number.isSafeInteger(outputOffset) && outputOffset > 0 ? outputOffset : 0;
   const monitorInner = [
     'LOGFILE="$1"',
     'PID="$2"',
-    'tail -F "$LOGFILE" 2>/dev/null &',
+    offset === 0
+      ? 'tail -n +1 -F "$LOGFILE" 2>/dev/null &'
+      : `tail -c +${offset + 1} -F "$LOGFILE" 2>/dev/null &`,
     'TAILPID=$!',
     'while [ -d "/proc/$PID" ]; do sleep 1; done',
     'sleep 1',
@@ -206,20 +209,6 @@ interface ResolvedSSHHop extends Record<string, unknown> {
   trustedHostKey?: string | null;
 }
 
-function sameApprovedHostKey(
-  left: ApprovedHostKeyInput,
-  right: ApprovedHostKeyInput
-): boolean {
-  return (
-    left.role === right.role &&
-    left.host === right.host &&
-    left.port === right.port &&
-    (left.systemId ?? null) === (right.systemId ?? null) &&
-    left.fingerprintSha256 === right.fingerprintSha256 &&
-    left.rawKey === right.rawKey
-  );
-}
-
 export class HostKeyVerificationError extends Error {
   challenges: ApprovedHostKeyInput[];
 
@@ -242,6 +231,7 @@ export class SSHConnectionManager {
   private defaultCmdTimeout: number;
   private encryptor: CredentialEncryptor;
   private chainedConnections = new WeakMap<Client, Client[]>();
+  private persistentOutput = new WeakMap<PersistentCommandInfo, { bytes: number; text: string }>();
 
   constructor(
     maxConcurrent: number,
@@ -308,58 +298,21 @@ export class SSHConnectionManager {
   ): Promise<Client> {
     await this.acquireSemaphore();
 
-    const chain = this.resolveChain(system, context);
     const clients: Client[] = [];
-    const transientApprovedHostKeys = [...(context.approvedHostKeys ?? [])];
-    const collectedChallenges: ApprovedHostKeyInput[] = [];
 
     try {
+      const chain = this.resolveChain(system, context);
       let forwardClient: Client | null = null;
 
       for (const [index, hop] of chain.entries()) {
-        while (true) {
-          const sock = forwardClient
-            ? await this.openForwardStream(forwardClient, hop.hostname, hop.port)
-            : undefined;
-
-          try {
-            const client = await this.connectSingleHop(
-              hop,
-              index,
-              chain.length,
-              {
-                ...context,
-                approvedHostKeys: transientApprovedHostKeys,
-              },
-              sock
-            );
-            clients.push(client);
-            forwardClient = client;
-            break;
-          } catch (error) {
-            if (!(error instanceof HostKeyVerificationError)) {
-              throw error;
-            }
-
-            const newChallenges = error.challenges.filter(
-              (challenge) =>
-                !transientApprovedHostKeys.some((approved) =>
-                  sameApprovedHostKey(approved, challenge)
-                )
-            );
-
-            if (newChallenges.length === 0) {
-              throw error;
-            }
-
-            transientApprovedHostKeys.push(...newChallenges);
-            collectedChallenges.push(...newChallenges);
-          }
-        }
-      }
-
-      if (collectedChallenges.length > 0) {
-        throw new HostKeyVerificationError(collectedChallenges);
+        const sock = forwardClient
+          ? await this.openForwardStream(forwardClient, hop.hostname, hop.port)
+          : undefined;
+        // An untrusted hop must be approved before authenticating or opening
+        // a tunnel through it. Discover subsequent keys on the next attempt.
+        const client = await this.connectSingleHop(hop, index, chain.length, context, sock);
+        clients.push(client);
+        forwardClient = client;
       }
 
       const leaf = clients.at(-1);
@@ -419,7 +372,7 @@ export class SSHConnectionManager {
       if (seen.has(currentProxyJumpId)) {
         throw new Error("ProxyJump configuration contains a cycle.");
       }
-      if (chain.length >= MAX_PROXY_JUMP_DEPTH) {
+      if (chain.length > MAX_PROXY_JUMP_DEPTH) {
         throw new Error(
           `ProxyJump chain exceeds the maximum depth of ${MAX_PROXY_JUMP_DEPTH}.`
         );
@@ -868,6 +821,7 @@ export class SSHConnectionManager {
       onData,
       signal
     );
+    this.persistentOutput.set(info, { bytes: tailResult.bytesRead, text: tailResult.stdout });
 
     if (tailResult.cancelled) {
       await this.cancelPersistentCommand(conn, info);
@@ -950,22 +904,26 @@ export class SSHConnectionManager {
     pid: number,
     timeout: number,
     onData?: (chunk: string, stream: "stdout" | "stderr") => void,
-    signal?: AbortSignal | null
-  ): Promise<{ stdout: string; monitoringLost: boolean; cancelled: boolean }> {
+    signal?: AbortSignal | null,
+    outputOffset = 0,
+  ): Promise<{ stdout: string; bytesRead: number; monitoringLost: boolean; cancelled: boolean }> {
     return new Promise((resolve) => {
       let resolved = false;
       let stream: ClientChannel | null = null;
       let stdout = "";
+      let bytesRead = 0;
       const finish = (stdout: string, lost: boolean, cancelled = false) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        resolve({ stdout, monitoringLost: lost, cancelled });
+        conn.removeListener("error", onConnError);
+        conn.removeListener("close", onConnClose);
+        resolve({ stdout, bytesRead, monitoringLost: lost, cancelled });
       };
 
       const timer = setTimeout(() => {
-        finish("", true);
+        finish(stdout, true);
       }, timeout * 1000);
 
       // If the connection itself drops, the process still runs under nohup
@@ -989,7 +947,7 @@ export class SSHConnectionManager {
       }
       signal?.addEventListener("abort", onAbort, { once: true });
 
-      const tailCommand = buildTailMonitorCommand(logFile, pid);
+      const tailCommand = buildTailMonitorCommand(logFile, pid, outputOffset);
       conn.exec(wrapRemoteCommand(tailCommand), (err, tailStream) => {
         if (err) {
           conn.removeListener("error", onConnError);
@@ -999,12 +957,19 @@ export class SSHConnectionManager {
         }
 
         stream = tailStream;
+        if (resolved) {
+          stream.close();
+          return;
+        }
         stream.on("data", (data: Buffer) => {
+          if (resolved) return;
+          bytesRead += data.length;
           const text = data.toString();
           stdout += text;
           onData?.(text, "stdout");
         });
         stream.stderr.on("data", (data: Buffer) => {
+          if (resolved) return;
           const text = data.toString();
           onData?.(text, "stderr");
         });
@@ -1034,6 +999,7 @@ export class SSHConnectionManager {
     onData?: (chunk: string, stream: "stdout" | "stderr") => void
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
+    const previousOutput = this.persistentOutput.get(info) ?? { bytes: 0, text: "" };
 
     // Check if the log file still exists (it won't if the server rebooted and /tmp was cleared)
     const checkLog = await this.runCommand(
@@ -1070,6 +1036,9 @@ export class SSHConnectionManager {
         `cat "${info.logFile}" 2>/dev/null`,
         30
       );
+      const remaining = Buffer.from(logResult.stdout).subarray(previousOutput.bytes).toString();
+      if (remaining) onData?.(remaining, "stdout");
+      this.persistentOutput.delete(info);
 
       // Cleanup temp files
       this.runCommand(
@@ -1099,12 +1068,19 @@ export class SSHConnectionManager {
         info.logFile,
         info.pid,
         cmdTimeout,
-        onData
+        onData,
+        undefined,
+        previousOutput.bytes,
       );
+      const combinedOutput = previousOutput.text + tailResult.stdout;
+      this.persistentOutput.set(info, {
+        bytes: previousOutput.bytes + tailResult.bytesRead,
+        text: combinedOutput,
+      });
 
       if (tailResult.monitoringLost) {
         return {
-          stdout: tailResult.stdout,
+          stdout: combinedOutput,
           stderr: "SSH connection lost again during monitoring.",
           exitCode: EXIT_MONITORING_LOST,
           persistentInfo: info,
@@ -1127,7 +1103,7 @@ export class SSHConnectionManager {
       ).catch(() => {});
 
       return {
-        stdout: tailResult.stdout,
+        stdout: combinedOutput,
         stderr: "",
         exitCode: isNaN(exitCode) ? -1 : exitCode,
       };

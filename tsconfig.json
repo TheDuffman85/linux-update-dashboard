@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "paths": {
       "@server/*": ["./server/*"],
       "@client/*": ["./client/*"]
@@ -22,6 +23,8 @@
     "server/**/*.ts",
     "client/**/*.ts",
     "client/**/*.tsx",
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
     "*.d.ts",
     "vite.config.ts",
     "vitest.config.ts",

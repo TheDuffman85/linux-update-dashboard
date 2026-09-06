@@ -1,3 +1,4 @@
+import { makeNotificationPayload } from "../helpers/notification-payload";
 import { afterEach, describe, expect, test } from "vitest";
 import nodemailer from "nodemailer";
 import {
@@ -143,12 +144,12 @@ describe("email provider sending", () => {
     };
 
     const result = await emailProvider.send(
-      {
+      makeNotificationPayload({
         title: "Updates",
         body: "hello",
         priority: "default",
         tags: ["warning"],
-      },
+      }),
       {
         smtpHost: "smtp.example.com",
         smtpPort: "587",
@@ -184,7 +185,7 @@ describe("email provider sending", () => {
     });
 
     const result = await emailProvider.send(
-      {
+      makeNotificationPayload({
         title: "Application update available",
         body: "Linux Update Dashboard: v2026.3.1 -> v2026.3.2",
         tags: ["arrow_up"],
@@ -212,7 +213,7 @@ describe("email provider sending", () => {
             repoUrl: "https://github.com/TheDuffman85/linux-update-dashboard",
           },
         },
-      },
+      }),
       {
         smtpHost: "smtp.example.com",
         smtpPort: "587",

@@ -106,6 +106,7 @@ describe("hidden update service", () => {
         architecture: null,
         repository: "stable",
         isSecurity: false,
+        isKeptBack: false,
       },
     ], ["apt"]);
 
@@ -127,6 +128,7 @@ describe("hidden update service", () => {
         architecture: null,
         repository: "stable",
         isSecurity: false,
+        isKeptBack: false,
       },
     ], ["apt"]);
 
@@ -173,6 +175,7 @@ describe("hidden update service", () => {
         architecture: null,
         repository: "stable",
         isSecurity: false,
+        isKeptBack: false,
       },
     ], ["apt"]);
 

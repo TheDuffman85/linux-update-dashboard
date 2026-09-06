@@ -14,6 +14,8 @@ function makeState(overrides: Partial<AuthState> = {}): AuthState {
     oidcEnabled: false,
     passwordLoginDisabled: false,
     passkeysEnabled: false,
+    passkeysAvailable: false,
+    totpEnabled: false,
     hasPassword: false,
     backendUnavailable: false,
     ...overrides,

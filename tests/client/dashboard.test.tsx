@@ -707,6 +707,8 @@ describe("Dashboard", () => {
         saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
         saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
         saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpgradeAllExclusion={vi.fn().mockResolvedValue(undefined)}
         onError={vi.fn()}
         renderSystem={(system) => <span>{system.name}</span>}
       />,
@@ -756,19 +758,24 @@ describe("Dashboard", () => {
             id: 2,
             name: "Production",
             sortOrder: 0,
+            updatePriority: 1,
             createdAt: "",
             updatedAt: "",
           },
-          { id: 3, name: "Edge", sortOrder: 2, createdAt: "", updatedAt: "" },
+          { id: 3, name: "Edge", sortOrder: 2, updatePriority: 1, createdAt: "", updatedAt: "" },
         ]}
         ungroupedSortOrder={1}
+        ungroupedUpdatePriority={1}
         editMode={false}
         onToggleEditMode={vi.fn()}
         onCreateGroup={vi.fn()}
         onRenameGroup={vi.fn()}
         onDeleteGroup={vi.fn()}
         saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+        saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
         saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpgradeAllExclusion={vi.fn().mockResolvedValue(undefined)}
         onError={vi.fn()}
         renderSystem={(system) => <span>{system.name}</span>}
       />,
@@ -804,18 +811,23 @@ describe("Dashboard", () => {
             id: 1,
             name: "Primary",
             sortOrder: 0,
+            updatePriority: 1,
             createdAt: "",
             updatedAt: "",
           },
         ]}
         ungroupedSortOrder={1}
+        ungroupedUpdatePriority={1}
         editMode={false}
         onToggleEditMode={vi.fn()}
         onCreateGroup={vi.fn()}
         onRenameGroup={vi.fn()}
         onDeleteGroup={vi.fn()}
         saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+        saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
         saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+        saveSystemUpgradeAllExclusion={vi.fn().mockResolvedValue(undefined)}
         onError={vi.fn()}
         renderSystem={(system) => <span>{system.name}</span>}
       />,
@@ -877,17 +889,22 @@ describe("Dashboard", () => {
             systems={systemsToRender}
             groups={groups.map((group) => ({
               ...group,
+              updatePriority: 1,
               createdAt: "",
               updatedAt: "",
             }))}
             ungroupedSortOrder={groups.length}
+            ungroupedUpdatePriority={1}
             editMode={false}
             onToggleEditMode={vi.fn()}
             onCreateGroup={vi.fn()}
             onRenameGroup={vi.fn()}
             onDeleteGroup={vi.fn()}
             saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+            saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
             saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+            saveSystemUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+            saveSystemUpgradeAllExclusion={vi.fn().mockResolvedValue(undefined)}
             onError={vi.fn()}
             renderSystem={(system) => <span>{system.name}</span>}
           />,
@@ -1147,18 +1164,23 @@ describe("Dashboard", () => {
               id: 1,
               name: "Primary",
               sortOrder: 0,
+              updatePriority: 1,
               createdAt: "",
               updatedAt: "",
             },
           ]}
           ungroupedSortOrder={1}
+          ungroupedUpdatePriority={1}
           editMode
           onToggleEditMode={vi.fn()}
           onCreateGroup={vi.fn()}
           onRenameGroup={vi.fn()}
           onDeleteGroup={vi.fn()}
           saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+          saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
           saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+          saveSystemUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+          saveSystemUpgradeAllExclusion={vi.fn().mockResolvedValue(undefined)}
           onError={vi.fn()}
           renderSystem={(system) => <span>{system.name}</span>}
         />,
