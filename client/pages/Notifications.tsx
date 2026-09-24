@@ -115,6 +115,7 @@ const EVENT_LABELS: Record<string, string> = {
   updates: "pages.notifications.event.updates",
   unreachable: "pages.notifications.event.unreachable",
   appUpdates: "pages.notifications.event.appUpdates",
+  rebootRequired: "pages.notifications.event.rebootRequired",
 };
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"];

@@ -306,7 +306,7 @@ Set a refresh schedule's cache duration to `0` to disable cache reuse. Manual re
 
 ## Notifications
 
-Notification channels are configured from the **Notifications** page. Each channel can choose event types (`updates`, `unreachable`, and `appUpdates`), system scope, immediate or scheduled delivery, and provider-specific settings. New channels default to `updates` and `appUpdates`. Secrets such as SMTP passwords, app tokens, bot tokens, command tokens, webhook credentials, and sensitive headers are encrypted at rest.
+Notification channels are configured from the **Notifications** page. Each channel can choose event types (`updates`, `unreachable`, `appUpdates`, and `rebootRequired`), system scope, immediate or scheduled delivery, and provider-specific settings. `rebootRequired` fires when a refresh first detects a pending reboot and includes the triggering packages when the host provides `/run/reboot-required.pkgs`; it can also be included in scheduled digests. New channels default to `updates` and `appUpdates`. Secrets such as SMTP passwords, app tokens, bot tokens, command tokens, webhook credentials, and sensitive headers are encrypted at rest.
 
 | Type | Best for | Notes |
 | --- | --- | --- |

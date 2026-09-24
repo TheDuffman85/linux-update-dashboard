@@ -34,7 +34,7 @@ import {
   type ActiveOperation,
 } from "./active-operation-store";
 import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
-import { syncSystemNotificationHash } from "./notification-service";
+import { processRebootRequiredResult, syncSystemNotificationHash } from "./notification-service";
 import {
   buildMaintenanceCommand,
   getCustomCheckErrorMessage,
@@ -871,11 +871,16 @@ async function checkUpdatesUnlocked(
     throwIfActiveOperationCancelled(systemId);
 
     // Update system info
-    await systemService.updateSystemInfo(
+    const rebootRequired = await systemService.updateSystemInfo(
       systemId,
       sshManager,
       conn
     );
+    if (rebootRequired) {
+      await processRebootRequiredResult(rebootRequired).catch((error) =>
+        logger.error("Reboot notification processing error", { systemId, error: String(error) }),
+      );
+    }
     throwIfActiveOperationCancelled(systemId);
 
     // Detect package managers if not yet detected

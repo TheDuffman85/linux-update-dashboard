@@ -14,6 +14,7 @@ import {
   type NotificationPayload,
   type NotificationPriority,
   type NotificationResult,
+  type RebootRequiredEvent,
 } from "./notifications";
 import { formatUpdateLine } from "./notifications/presentation";
 import { sanitizeOutput } from "../utils/sanitize";
@@ -384,6 +385,7 @@ function buildTestPayload(name?: string): NotificationPayload {
     updates: [],
     unreachable: [],
     appUpdate: null,
+    rebootRequired: [],
   };
 
   return {
@@ -483,6 +485,7 @@ interface PendingEvents {
   updates: PendingUpdateResult[];
   unreachable: CheckResult[];
   appUpdate: AppUpdateEvent | null;
+  rebootRequired: RebootRequiredEvent[];
 }
 
 function deliveredUpdateVersionKey(
@@ -694,6 +697,30 @@ export async function processScheduledResults(
   }
 }
 
+export async function processRebootRequiredResult(result: RebootRequiredEvent): Promise<void> {
+  if (systemService.getSystem(result.systemId)?.hidden !== 0) return;
+
+  const channels = getDb()
+    .select()
+    .from(notifications)
+    .where(eq(notifications.enabled, 1))
+    .all();
+  const scheduledNotificationIds = scheduleService.getEnabledScheduledNotificationIds();
+
+  for (const channel of channels) {
+    if (!parseNotifyOn(channel.notifyOn).includes("rebootRequired")) continue;
+    const scopedSystemIds = parseSystemIds(channel.systemIds);
+    if (scopedSystemIds !== null && !scopedSystemIds.includes(result.systemId)) continue;
+
+    if (scheduledNotificationIds.has(channel.id) || isScheduled(channel.schedule)) {
+      appendPendingRebootRequired(channel.id, result);
+      continue;
+    }
+
+    await sendChannelNotification(channel, [], [], null, [result]);
+  }
+}
+
 export async function processAppUpdateNotifications(): Promise<void> {
   const db = getDb();
   const channels = db
@@ -798,9 +825,10 @@ async function sendChannelNotification(
   updateResults: CheckResult[],
   unreachableResults: CheckResult[],
   appUpdate: AppUpdateEvent | null = null,
+  rebootRequired: RebootRequiredEvent[] = [],
 ): Promise<boolean> {
   const payload = {
-    ...buildBatchPayload(updateResults, unreachableResults, appUpdate),
+    ...buildBatchPayload(updateResults, unreachableResults, appUpdate, rebootRequired),
     channelId: channel.id,
     channelName: channel.name,
     systemIds: parseSystemIds("systemIds" in channel ? (channel as { systemIds?: string | null }).systemIds ?? null : null),
@@ -857,7 +885,7 @@ async function sendChannelNotification(
 }
 
 function parsePendingEvents(json: string | null): PendingEvents {
-  if (!json) return { updates: [], unreachable: [], appUpdate: null };
+  if (!json) return { updates: [], unreachable: [], appUpdate: null, rebootRequired: [] };
   try {
     const parsed = JSON.parse(json);
     const updates = Array.isArray(parsed.updates)
@@ -934,6 +962,22 @@ function parsePendingEvents(json: string | null): PendingEvents {
     return {
       updates,
       unreachable: Array.isArray(parsed.unreachable) ? parsed.unreachable : [],
+      rebootRequired: Array.isArray(parsed.rebootRequired)
+        ? parsed.rebootRequired.flatMap((value: unknown): RebootRequiredEvent[] => {
+            if (!value || typeof value !== "object") return [];
+            const systemId = Number((value as { systemId?: unknown }).systemId);
+            if (!Number.isInteger(systemId) || systemId <= 0) return [];
+            const systemName = (value as { systemName?: unknown }).systemName;
+            const packages = (value as { packages?: unknown }).packages;
+            return [{
+              systemId,
+              systemName: typeof systemName === "string" ? systemName : `System #${systemId}`,
+              packages: Array.isArray(packages)
+                ? packages.filter((entry): entry is string => typeof entry === "string").slice(0, 50)
+                : [],
+            }];
+          })
+        : [],
       appUpdate:
         parsed.appUpdate &&
         typeof parsed.appUpdate === "object" &&
@@ -942,7 +986,7 @@ function parsePendingEvents(json: string | null): PendingEvents {
           : null,
     };
   } catch {
-    return { updates: [], unreachable: [], appUpdate: null };
+    return { updates: [], unreachable: [], appUpdate: null, rebootRequired: [] };
   }
 }
 
@@ -1031,6 +1075,27 @@ function appendPendingEvents(
     .run();
 }
 
+function appendPendingRebootRequired(
+  channelId: number,
+  result: RebootRequiredEvent,
+): void {
+  const db = getDb();
+  const row = db
+    .select({ pendingEvents: notifications.pendingEvents })
+    .from(notifications)
+    .where(eq(notifications.id, channelId))
+    .get();
+  const pending = parsePendingEvents(row?.pendingEvents ?? null);
+  pending.rebootRequired = [
+    ...pending.rebootRequired.filter((entry) => entry.systemId !== result.systemId),
+    result,
+  ];
+  db.update(notifications)
+    .set({ pendingEvents: JSON.stringify(pending) })
+    .where(eq(notifications.id, channelId))
+    .run();
+}
+
 function appendPendingAppUpdate(
   channelId: number,
   appUpdate: AppUpdateEvent,
@@ -1096,6 +1161,11 @@ export async function processScheduledNotificationDeliveries(
     const pending = parsePendingEvents(channel.pendingEvents);
     const visibleUpdates = systemService.filterVisibleSystemItems(pending.updates);
     const visibleUnreachable = systemService.filterVisibleSystemItems(pending.unreachable);
+    const visibleRebootRequired = systemService.filterVisibleSystemItems(pending.rebootRequired)
+      .filter((result) => {
+        const scopedSystemIds = parseSystemIds(channel.systemIds);
+        return scopedSystemIds === null || scopedSystemIds.includes(result.systemId);
+      });
     const deliverableUpdates = hasUndeliveredUpdateVersions(channel.id, visibleUpdates)
       ? visibleUpdates
       : [];
@@ -1103,19 +1173,22 @@ export async function processScheduledNotificationDeliveries(
     if (
       visibleUpdates.length !== pending.updates.length ||
       deliverableUpdates.length !== visibleUpdates.length ||
-      visibleUnreachable.length !== pending.unreachable.length
+      visibleUnreachable.length !== pending.unreachable.length ||
+      visibleRebootRequired.length !== pending.rebootRequired.length
     ) {
       db.update(notifications)
         .set({
           pendingEvents:
             deliverableUpdates.length === 0 &&
             visibleUnreachable.length === 0 &&
+            visibleRebootRequired.length === 0 &&
             !pending.appUpdate
               ? null
               : JSON.stringify({
                   updates: deliverableUpdates,
                   unreachable: visibleUnreachable,
                   appUpdate: pending.appUpdate,
+                  rebootRequired: visibleRebootRequired,
                 }),
         })
         .where(eq(notifications.id, channel.id))
@@ -1125,6 +1198,7 @@ export async function processScheduledNotificationDeliveries(
     if (
       deliverableUpdates.length === 0 &&
       visibleUnreachable.length === 0 &&
+      visibleRebootRequired.length === 0 &&
       !pending.appUpdate
     ) {
       skippedCount += 1;
@@ -1140,7 +1214,8 @@ export async function processScheduledNotificationDeliveries(
       channel,
       deliverableUpdates.map(toCheckResult),
       visibleUnreachable,
-      pending.appUpdate
+      pending.appUpdate,
+      visibleRebootRequired,
     );
     if (!sent) {
       failedCount += 1;
@@ -1168,11 +1243,13 @@ function buildEventTypes(
   updateResults: CheckResult[],
   unreachableResults: CheckResult[],
   appUpdate: AppUpdateEvent | null,
+  rebootRequired: RebootRequiredEvent[],
 ): NotificationEventType[] {
   const eventTypes: NotificationEventType[] = [];
   if (updateResults.length > 0) eventTypes.push("updates");
   if (unreachableResults.length > 0) eventTypes.push("unreachable");
   if (appUpdate) eventTypes.push("appUpdates");
+  if (rebootRequired.length > 0) eventTypes.push("rebootRequired");
   return eventTypes;
 }
 
@@ -1188,6 +1265,7 @@ function buildBatchPayload(
   updateResults: CheckResult[],
   unreachableResults: CheckResult[],
   appUpdate: AppUpdateEvent | null = null,
+  rebootRequired: RebootRequiredEvent[] = [],
 ): NotificationPayload {
   const t = getServerTranslator();
   const totalUpdates = updateResults.reduce((sum, result) => sum + result.updateCount, 0);
@@ -1238,6 +1316,19 @@ function buildBatchPayload(
     if (!title) title = t("server.notifications.title.unreachable");
   }
 
+  if (rebootRequired.length > 0) {
+    tags.push("warning");
+    const lines = rebootRequired.map((result) => {
+      const line = t("server.notifications.line.rebootRequired", { name: result.systemName });
+      return result.packages.length > 0
+        ? `${line} (${t("server.notifications.line.rebootPackages", { packages: result.packages.join(", ") })})`
+        : line;
+    });
+    if (body) body += "\n\n";
+    body += lines.join("\n");
+    if (!title) title = t("server.notifications.title.rebootRequired");
+  }
+
   if (appUpdate) {
     tags.push("arrow_up");
     const prefix = appUpdate.currentBranch === "dev" ? "dev-" : "v";
@@ -1258,7 +1349,7 @@ function buildBatchPayload(
     priority: resolvePriority(totalSecurity, totalKeptBack),
     tags,
     sentAt,
-    eventTypes: buildEventTypes(updateResults, unreachableResults, appUpdate),
+    eventTypes: buildEventTypes(updateResults, unreachableResults, appUpdate, rebootRequired),
     totals: {
       systemsWithUpdates: updateResults.length,
       totalUpdates,
@@ -1272,6 +1363,7 @@ function buildBatchPayload(
       systemName: result.systemName,
     })),
     appUpdate,
+    rebootRequired,
   };
 
   return {

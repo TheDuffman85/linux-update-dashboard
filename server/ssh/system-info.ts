@@ -47,6 +47,13 @@ else
   echo "ABSENT"
 fi
 
+echo "===REBOOT_PACKAGES==="
+if [ -f /run/reboot-required.pkgs ]; then
+  head -100 /run/reboot-required.pkgs 2>/dev/null
+elif [ -f /var/run/reboot-required.pkgs ]; then
+  head -100 /var/run/reboot-required.pkgs 2>/dev/null
+fi
+
 echo "===NEEDS_RESTARTING==="
 if command -v needs-restarting >/dev/null 2>&1; then
   needs-restarting -r >/dev/null 2>&1
@@ -79,6 +86,7 @@ export interface SystemInfo {
   disk: string;
   bootId: string;
   rebootRequiredFilePresent: boolean;
+  rebootRequiredPackages: string[];
   needsRestartingStatus: NeedsRestartingStatus;
   installedKernels: string[];
   needsReboot: boolean;
@@ -335,6 +343,7 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     disk: "",
     bootId: "",
     rebootRequiredFilePresent: false,
+    rebootRequiredPackages: [],
     needsRestartingStatus: "unsupported",
     installedKernels: [],
     needsReboot: false,
@@ -416,6 +425,11 @@ export function parseSystemInfo(stdout: string): SystemInfo {
 
   info.bootId = (sections["BOOT_ID"] || "").trim();
   info.rebootRequiredFilePresent = (sections["REBOOT_FILE"] || "").trim() === "PRESENT";
+  info.rebootRequiredPackages = [...new Set((sections["REBOOT_PACKAGES"] || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9.+_:-]*$/.test(line)))]
+    .slice(0, 50);
 
   const needsRestartingLine = (sections["NEEDS_RESTARTING"] || "").trim();
   if (needsRestartingLine === "1") {

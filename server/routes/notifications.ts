@@ -14,7 +14,7 @@ import {
 import type { SessionData } from "../auth/session";
 
 const VALID_TYPES = getProviderNames();
-const VALID_EVENTS = ["updates", "unreachable", "appUpdates"];
+const VALID_EVENTS = ["updates", "unreachable", "appUpdates", "rebootRequired"];
 const MAX_NAME_LENGTH = 100;
 const MAX_CONFIG_JSON_LENGTH = 50_000;
 
