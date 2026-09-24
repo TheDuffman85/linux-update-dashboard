@@ -11,6 +11,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+    // Password hashing and key derivation are intentionally expensive and can
+    // take considerably longer when the arm64 image is built through QEMU.
+    testTimeout: 30_000,
     restoreMocks: true,
     clearMocks: true,
     setupFiles: ["./vitest.setup.ts"],

@@ -304,6 +304,9 @@ async function runBatchItem(itemId: number): Promise<ItemStatus> {
         : result.success
           ? "success"
           : "failed";
+    if (item.historyId && (status === "failed" || status === "cancelled")) {
+      updateService.finishPendingHistoryEntry(item.historyId, status, result.output);
+    }
     db.update(upgradeBatchItems)
       .set({
         status,
@@ -315,6 +318,7 @@ async function runBatchItem(itemId: number): Promise<ItemStatus> {
     return status;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (item.historyId) updateService.finishPendingHistoryEntry(item.historyId, "failed", message);
     db.update(upgradeBatchItems)
       .set({
         status: "failed",

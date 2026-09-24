@@ -948,7 +948,7 @@ export async function updateSystemInfo(
   systemId: number,
   sshManager: SSHConnectionManager,
   conn: Client
-): Promise<void> {
+): Promise<{ systemId: number; systemName: string; packages: string[] } | undefined> {
   const previous = getSystem(systemId);
   const script = resolveScript(systemId, "system_info", null);
   const steps = resolveRuntimeSteps({ systemId, operation: "system_info" });
@@ -961,7 +961,7 @@ export async function updateSystemInfo(
   // Don't bail on non-zero exit: individual sections may fail on minimal
   // containers (e.g. missing hostname) while the rest still provides data.
   const parsed = parseSystemInfoWithScript(stdout, script, previous);
-  if (!parsed) return;
+  if (!parsed) return undefined;
 
   const { info } = parsed;
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
@@ -999,6 +999,14 @@ export async function updateSystemInfo(
     })
     .where(eq(systems.id, systemId))
     .run();
+
+  return parsed.needsReboot && previous?.needsReboot !== 1
+    ? {
+        systemId,
+        systemName: previous?.name || `System #${systemId}`,
+        packages: info.rebootRequiredFilePresent ? info.rebootRequiredPackages : [],
+      }
+    : undefined;
 }
 
 export async function detectAndStorePkgManager(

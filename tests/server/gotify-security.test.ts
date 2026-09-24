@@ -1,3 +1,4 @@
+import { makeNotificationPayload } from "../helpers/notification-payload";
 import { afterEach, describe, expect, test } from "vitest";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import { gotifyProvider } from "../../server/services/notifications/gotify";
@@ -79,12 +80,12 @@ describe("gotify provider sending", () => {
       rememberTrustedPublicOrigin("https://dashboard.example.com");
 
       const result = await gotifyProvider.send(
-        {
+        makeNotificationPayload({
           title: "Updates",
           body: "hello",
           priority: "high",
           tags: ["package"],
-        },
+        }),
         {
           gotifyUrl: "https://gotify.example.com",
           gotifyToken: "token-123",
@@ -125,11 +126,11 @@ describe("gotify provider sending", () => {
 
     const encryptedToken = getEncryptor().encrypt("secret-token");
     const result = await gotifyProvider.send(
-      {
+      makeNotificationPayload({
         title: "Updates",
         body: "hello",
         priority: "default",
-      },
+      }),
       {
         gotifyUrl: "https://gotify.example.com",
         gotifyToken: encryptedToken,
@@ -150,7 +151,7 @@ describe("gotify provider sending", () => {
     }) as typeof fetch;
 
     const result = await gotifyProvider.send(
-      {
+      makeNotificationPayload({
         title: "Application update available",
         body: "Linux Update Dashboard: v2026.3.1 -> v2026.3.2",
         event: {
@@ -177,7 +178,7 @@ describe("gotify provider sending", () => {
             repoUrl: "https://github.com/TheDuffman85/linux-update-dashboard",
           },
         },
-      },
+      }),
       {
         gotifyUrl: "https://gotify.example.com",
         gotifyToken: "token-123",

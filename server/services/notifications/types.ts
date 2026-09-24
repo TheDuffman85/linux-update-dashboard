@@ -1,5 +1,5 @@
 export type NotificationPriority = "min" | "low" | "default" | "high" | "urgent";
-export type NotificationEventType = "updates" | "unreachable" | "appUpdates";
+export type NotificationEventType = "updates" | "unreachable" | "appUpdates" | "rebootRequired";
 export type NotificationConfig = Record<string, unknown>;
 
 export interface CheckResult {
@@ -18,6 +18,12 @@ export interface AppUpdateEvent {
   remoteVersion: string;
   releaseUrl: string | null;
   repoUrl: string | null;
+}
+
+export interface RebootRequiredEvent {
+  systemId: number;
+  systemName: string;
+  packages: string[];
 }
 
 export interface NotificationEventTotals {
@@ -39,6 +45,7 @@ export interface NotificationEventData {
   updates: CheckResult[];
   unreachable: Array<Pick<CheckResult, "systemId" | "systemName">>;
   appUpdate: AppUpdateEvent | null;
+  rebootRequired?: RebootRequiredEvent[];
 }
 
 export interface NotificationPayload {

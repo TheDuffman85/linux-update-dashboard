@@ -138,7 +138,7 @@ describe("buildTailMonitorCommand", () => {
   test("uses a BusyBox-compatible tail monitor", () => {
     const cmd = buildTailMonitorCommand("/tmp/ludash_abc.log", 1234);
 
-    expect(cmd).toContain('tail -F "$LOGFILE" 2>/dev/null &');
+    expect(cmd).toContain('tail -n +1 -F "$LOGFILE" 2>/dev/null &');
     expect(cmd).toContain('while [ -d "/proc/$PID" ]; do sleep 1; done');
     expect(cmd).toContain('kill "$TAILPID" 2>/dev/null || true');
     expect(cmd).not.toContain("tail --pid=");
@@ -189,7 +189,7 @@ describe("SSHConnectionManager.runCommand", () => {
     };
 
     const conn = new EventEmitter() as EventEmitter & {
-      exec: (command: string, callback: (err: Error | null, stream: typeof stream) => void) => void;
+      exec: (command: string, callback: (err: Error | null, channel: typeof stream) => void) => void;
     };
     conn.exec = (_command, callback) => {
       callback(null, stream);
@@ -216,7 +216,7 @@ describe("SSHConnectionManager.runCommand", () => {
     };
 
     const conn = new EventEmitter() as EventEmitter & {
-      exec: (command: string, callback: (err: Error | null, stream: typeof stream) => void) => void;
+      exec: (command: string, callback: (err: Error | null, channel: typeof stream) => void) => void;
     };
     conn.exec = (_command, callback) => {
       callback(null, stream);
@@ -257,7 +257,7 @@ describe("SSHConnectionManager.runCommand", () => {
 });
 
 describe("SSHConnectionManager host-key aggregation", () => {
-  test("collects jump and target host-key challenges in one review flow", async () => {
+  test("requires approval of each hop before connecting to the next", async () => {
     initEncryptor(randomBytes(32).toString("base64"));
     const manager = initSSHManager(1, 1, 1, getEncryptor());
 
@@ -309,10 +309,10 @@ describe("SSHConnectionManager host-key aggregation", () => {
       hop: { role: "jump" | "target" },
       _hopIndex: number,
       _hopCount: number,
-      context: { approvedHostKeys?: typeof jumpChallenge[] },
+      context: { approvedHostKeys?: Array<typeof jumpChallenge | typeof targetChallenge> },
     ) => {
       const approved = context.approvedHostKeys ?? [];
-      const hasApproval = (challenge: typeof jumpChallenge) =>
+      const hasApproval = (challenge: typeof jumpChallenge | typeof targetChallenge) =>
         approved.some((entry) => (
           entry.role === challenge.role &&
           entry.host === challenge.host &&
@@ -351,6 +351,17 @@ describe("SSHConnectionManager host-key aggregation", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toBe("SSH host key approval required");
-    expect(result.hostKeyChallenges).toEqual([jumpChallenge, targetChallenge]);
+    expect(result.hostKeyChallenges).toEqual([jumpChallenge]);
+
+    const next = await manager.testConnection(
+      { hostname: "target.local", port: 22, proxyJumpSystemId: 1 },
+      { systemId: 2, approvedHostKeys: [jumpChallenge] },
+    );
+    expect(next.hostKeyChallenges).toEqual([targetChallenge]);
+    const approved = await manager.testConnection(
+      { hostname: "target.local", port: 22, proxyJumpSystemId: 1 },
+      { systemId: 2, approvedHostKeys: [jumpChallenge, targetChallenge] },
+    );
+    expect(approved.success).toBe(true);
   });
 });

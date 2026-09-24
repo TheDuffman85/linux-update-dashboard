@@ -85,8 +85,12 @@ async function checkSystemsAndNotify(systemIds: number[]): Promise<{
   const results = await Promise.allSettled(
     systemIds.map((id) => updateService.checkUpdates(id)),
   );
-  const checkedIds = systemIds.filter((_, index) => results[index].status === "fulfilled");
-  const failedIds = systemIds.filter((_, index) => results[index].status === "rejected");
+  const completedChecks = updateService.getLatestCompletedChecks(systemIds);
+  const checkedIds = systemIds.filter((id, index) =>
+    results[index].status === "fulfilled" && completedChecks.get(id)?.status !== "failed",
+  );
+  const checkedSet = new Set(checkedIds);
+  const failedIds = systemIds.filter((id) => !checkedSet.has(id));
 
   const checkResults: notificationService.CheckResult[] = [];
   for (const id of systemIds) {

@@ -49,6 +49,7 @@ function mockHttpRequest(responseStatus: number, responseBody = "") {
         const res = new EventEmitter() as IncomingMessage;
         (res as unknown as { statusCode: number }).statusCode = responseStatus;
         (res as unknown as { setEncoding: () => IncomingMessage }).setEncoding = () => res;
+        if (typeof callback !== "function") throw new Error("Expected HTTP response callback");
         callback(res);
         if (responseBody) {
           res.emit("data", responseBody);

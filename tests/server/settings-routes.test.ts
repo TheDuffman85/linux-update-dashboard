@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { Hono } from "hono";
+import { Hono as BaseHono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -11,6 +11,8 @@ import { authMiddleware } from "../../server/middleware/auth";
 import settingsRoutes from "../../server/routes/settings";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { getSSHManager, initSSHManager } from "../../server/ssh/connection";
+
+const Hono = BaseHono<{ Variables: { user: { userId: number; username: string; isAdmin: boolean } } }>;
 
 describe("settings routes", () => {
   let tempDir: string;

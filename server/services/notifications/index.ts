@@ -16,6 +16,7 @@ export type {
   NotificationPriority,
   NotificationProvider,
   NotificationResult,
+  RebootRequiredEvent,
 } from "./types";
 
 const providers: Record<string, NotificationProvider> = {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { Hono } from "hono";
+import { Hono as BaseHono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -14,6 +14,9 @@ import {
   resolveTelegramCommandToken,
 } from "../../server/services/notifications/telegram";
 import { __testing as telegramBotTesting } from "../../server/services/telegram-bot";
+
+const Hono = BaseHono<{ Variables: { user: { userId: number; username: string; isAdmin?: boolean } } }>;
+type Hono = InstanceType<typeof Hono>;
 
 describe("telegram notification routes", () => {
   let tempDir: string;

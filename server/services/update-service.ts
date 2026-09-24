@@ -34,8 +34,9 @@ import {
   type ActiveOperation,
 } from "./active-operation-store";
 import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
-import { syncSystemNotificationHash } from "./notification-service";
+import { processRebootRequiredResult, syncSystemNotificationHash } from "./notification-service";
 import {
+  buildMaintenanceCommand,
   getCustomCheckErrorMessage,
   isCustomPackageManager,
   listPackageManagerDefinitions,
@@ -439,7 +440,7 @@ export function getUpgradeAllCommandSnapshot(
       pkgManager: pmName,
       pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
     });
-    const command = steps[0]?.command;
+    const command = buildMaintenanceCommand(steps);
     return command ? [{ pkgManager: pmName, command }] : [];
   });
   return {
@@ -825,6 +826,15 @@ function finishEntry(
     .run();
 }
 
+/** Finalize a queue entry even if setup failed before a command was started. */
+export function finishPendingHistoryEntry(id: number, status: "failed" | "cancelled", error: string): void {
+  const row = getDb().select({ status: updateHistory.status }).from(updateHistory)
+    .where(eq(updateHistory.id, id)).get();
+  if (row?.status === "queued" || row?.status === "started") {
+    finishEntry(id, status, { error });
+  }
+}
+
 async function checkUpdatesUnlocked(
   systemId: number,
   silent = false
@@ -861,11 +871,16 @@ async function checkUpdatesUnlocked(
     throwIfActiveOperationCancelled(systemId);
 
     // Update system info
-    await systemService.updateSystemInfo(
+    const rebootRequired = await systemService.updateSystemInfo(
       systemId,
       sshManager,
       conn
     );
+    if (rebootRequired) {
+      await processRebootRequiredResult(rebootRequired).catch((error) =>
+        logger.error("Reboot notification processing error", { systemId, error: String(error) }),
+      );
+    }
     throwIfActiveOperationCancelled(systemId);
 
     // Detect package managers if not yet detected
@@ -949,15 +964,8 @@ async function checkUpdatesUnlocked(
           const parserReportedError =
             parser?.getCheckErrorMessage?.(result.stdout, result.stderr, result.exitCode)
             ?? getCustomCheckErrorMessage(customScript?.parserConfig, result.stdout, result.stderr, result.exitCode);
-          let checkErrorMessage =
-            parserReportedError
-            || (result.exitCode !== 0
-              ? result.stderr
-                || result.stdout
-                || combinedOutput
-                || `Command exited with code ${result.exitCode}`
-              : null);
-          const commandFailed = result.exitCode !== 0 || checkErrorMessage !== null;
+          let checkErrorMessage = parserReportedError;
+          const commandFailed = checkErrorMessage !== null;
           const detectedIssue = detectPackageManagerIssue(
             systemId,
             pmName,
@@ -966,7 +974,7 @@ async function checkUpdatesUnlocked(
           if (detectedIssue) {
             detectedIssues.set(detectedIssue.issueKey, detectedIssue);
             packageIssueService.upsertPackageManagerIssue(systemId, detectedIssue);
-            if (result.exitCode !== 0 || checkErrorMessage !== null) {
+            if (commandFailed) {
               checkErrorMessage = detectedIssue.message;
             }
           }
@@ -1410,6 +1418,7 @@ export async function applyUpgradeAll(
   options?: UpgradeAllExecutionOptions,
 ): Promise<OperationResult> {
   return withLock(systemId, async () => {
+    let unfinishedHistoryId = options?.resume?.historyId ?? options?.queuedHistoryId;
     const now = getCurrentTimestamp();
     setActiveOperation(systemId, { type: "upgrade_all", startedAt: now });
     await requestNotificationRuntimeSystemSync(systemId);
@@ -1471,7 +1480,9 @@ export async function applyUpgradeAll(
           pkgManager: pmName,
           pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
         });
-        const cmd = steps[0]?.command;
+        const cmd = options?.resume?.pkgManager === pmName
+          ? options.resume.command
+          : buildMaintenanceCommand(steps);
         if (!cmd) continue;
         const isResumeStep = options?.resume?.pkgManager === pmName;
         if (!isResumeStep && !conn) {
@@ -1488,6 +1499,7 @@ export async function applyUpgradeAll(
             : options?.queuedHistoryId && allCommands.length === 1 && startIndex === 0
               ? options.queuedHistoryId
               : insertStartedEntry(systemId, "upgrade_all", pmName, cmd, stepStartedAt);
+        unfinishedHistoryId = histId;
         if (isResumeStep || histId === options?.queuedHistoryId) {
           markEntryStarted(histId, pmName, cmd, stepStartedAt);
         }
@@ -1610,6 +1622,7 @@ export async function applyUpgradeAll(
           output: stdout.slice(0, STEP_OUTPUT_LIMIT),
           error: success ? undefined : formattedError?.slice(0, 2000),
         });
+        unfinishedHistoryId = undefined;
 
         // If connection was lost, can't continue with remaining package managers
         if (reconnectionUsed) break;
@@ -1641,11 +1654,14 @@ export async function applyUpgradeAll(
       return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
     } catch (e) {
       if (isOperationCancelledError(e)) {
+        if (unfinishedHistoryId) finishEntry(unfinishedHistoryId, "cancelled", { error: e.message });
         outputStream.publish(systemId, { type: "warning", message: e.message });
         outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
         return { success: false, output: e.message, cancelled: true };
       }
-      logHistory(
+      if (unfinishedHistoryId) {
+        finishEntry(unfinishedHistoryId, "failed", { error: String(e) });
+      } else logHistory(
         systemId,
         "upgrade_all",
         pkgManagers.join(","),
@@ -1754,12 +1770,12 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
 
         for (const pmName of supportedManagers) {
           throwIfActiveOperationCancelled(systemId);
-          const cmd = resolveRuntimeSteps({
+          const cmd = buildMaintenanceCommand(resolveRuntimeSteps({
             systemId,
             operation: "autoremove",
             pkgManager: pmName,
             pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
-          })[0]?.command;
+          }));
           if (!cmd) continue;
 
           allCommands.push(cmd);
@@ -1971,7 +1987,7 @@ export async function applyFullUpgradeAll(
             pkgManagerConfig: managerConfig,
           });
         }
-        const cmd = steps[0]?.command;
+        const cmd = buildMaintenanceCommand(steps);
         if (!cmd) continue;
         allCommands.push(cmd);
         const stepStartedAt = getCurrentTimestamp();
@@ -2206,7 +2222,7 @@ export async function applyUpgradePackages(
             pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
             packages: packagesForManager,
           });
-          const cmd = steps[0]?.command;
+          const cmd = buildMaintenanceCommand(steps);
           if (!cmd) {
             overallSuccess = false;
             allOutputs.push(`[${pmName}] No selected-package upgrade script`);

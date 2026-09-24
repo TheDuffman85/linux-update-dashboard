@@ -157,7 +157,7 @@ fi
 # Check for Node.js and pnpm
 if ! command -v node &> /dev/null; then
     log "Error: 'node' is not installed."
-    log "Please install Node.js 24.18.0 to run this application locally."
+    log "Please install Node.js 24.20.0 to run this application locally."
     log "Alternatively, use Docker to run the containerized application."
     exit 1
 fi

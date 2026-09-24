@@ -25,6 +25,10 @@ export function useCommandOutput(systemId: number) {
 
   useEffect(() => {
     let disposed = false;
+    setMessages([]);
+    setConnected(false);
+    setIsActive(false);
+    setPhase(null);
 
     function connect() {
       if (disposed) return;

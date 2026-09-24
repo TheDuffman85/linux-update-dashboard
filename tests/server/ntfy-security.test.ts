@@ -1,3 +1,4 @@
+import { makeNotificationPayload } from "../helpers/notification-payload";
 import { afterEach, describe, expect, test } from "vitest";
 import { __testing as requestSecurityTesting, rememberTrustedPublicOrigin } from "../../server/request-security";
 import { buildNtfyActionHeader, ntfyProvider, sanitizeNtfyActionLabel } from "../../server/services/notifications/ntfy";
@@ -87,11 +88,11 @@ describe("ntfy provider sending", () => {
     }) as typeof fetch;
 
     const result = await ntfyProvider.send(
-      {
+      makeNotificationPayload({
         title: "Updates",
         body: "hello",
         priority: "high",
-      },
+      }),
       {
         ntfyUrl: "https://ntfy.sh",
         ntfyTopic: "updates",
@@ -111,12 +112,12 @@ describe("ntfy provider sending", () => {
     }) as typeof fetch;
 
     const result = await ntfyProvider.send(
-      {
+      makeNotificationPayload({
         title: "Updates",
         body: "hello",
         priority: "default",
         tags: ["package"],
-      },
+      }),
       {
         ntfyUrl: "https://ntfy.sh",
         ntfyTopic: "updates",
@@ -138,11 +139,11 @@ describe("ntfy provider sending", () => {
     }) as typeof fetch;
 
     const result = await ntfyProvider.send(
-      {
+      makeNotificationPayload({
         title: "2 updates available (⏸️ 1 kept back)",
         body: "hello",
         priority: "default",
-      },
+      }),
       {
         ntfyUrl: "https://ntfy.sh",
         ntfyTopic: "updates",
@@ -207,11 +208,11 @@ describe("ntfy provider sending", () => {
       rememberTrustedPublicOrigin("https://dashboard.example.com");
 
       const result = await ntfyProvider.send(
-        {
+        makeNotificationPayload({
           title: "Updates",
           body: "hello",
           priority: "default",
-        },
+        }),
         {
           ntfyUrl: "https://ntfy.sh",
           ntfyTopic: "updates",
@@ -238,7 +239,7 @@ describe("ntfy provider sending", () => {
     }) as typeof fetch;
 
     const result = await ntfyProvider.send(
-      {
+      makeNotificationPayload({
         title: "Application update available",
         body: "Linux Update Dashboard: v2026.3.1 -> v2026.3.2",
         priority: "default",
@@ -267,7 +268,7 @@ describe("ntfy provider sending", () => {
             repoUrl: "https://github.com/TheDuffman85/linux-update-dashboard",
           },
         },
-      },
+      }),
       {
         ntfyUrl: "https://ntfy.sh",
         ntfyTopic: "updates",

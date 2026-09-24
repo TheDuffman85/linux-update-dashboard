@@ -89,7 +89,7 @@ describe("i18n language resolution", () => {
 
     for (const [language, resource] of Object.entries(i18nResources)) {
       for (const [key, englishValue] of Object.entries(i18nResources.en.translation)) {
-        expect(getPlaceholders(resource.translation[key]), `${language}:${key}`)
+        expect(getPlaceholders((resource.translation as Record<string, string>)[key]), `${language}:${key}`)
           .toEqual(getPlaceholders(englishValue));
       }
     }

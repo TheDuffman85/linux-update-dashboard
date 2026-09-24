@@ -58,7 +58,7 @@ describe("credentials routes", () => {
       username: "browser-user",
       passwordHash: "unused",
       isAdmin: 1,
-    }).returning({ id: users.id }).get();
+    }).returning({ id: users.id, username: users.username }).get();
     initSession("credentials-routes-test-session-secret");
     const sessionApp = new Hono();
     sessionApp.get("/", async (c) => {
