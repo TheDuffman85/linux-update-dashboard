@@ -94,11 +94,11 @@ export default defineConfig({
   root: "client",
   resolve: {
     alias: {
-      "@client": path.resolve(__dirname, "client"),
+      "@client": path.resolve(import.meta.dirname, "client"),
     },
   },
   build: {
-    outDir: path.resolve(__dirname, "dist/client"),
+    outDir: path.resolve(import.meta.dirname, "dist/client"),
     emptyOutDir: true,
   },
   define: {

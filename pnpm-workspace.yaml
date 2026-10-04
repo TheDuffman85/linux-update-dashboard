@@ -4,4 +4,4 @@ allowBuilds:
   esbuild: true
   ssh2: true
 minimumReleaseAgeExclude:
-  - '@types/node@26.1.0'
+  - hono@4.13.13
