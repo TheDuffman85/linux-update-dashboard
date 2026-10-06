@@ -4,6 +4,7 @@ import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { SearchField } from "../components/SearchField";
 import { CopyableCodeBlock, CopyButton } from "../components/CopyableCodeBlock";
 import { useToast } from "../context/ToastContext";
 import { highlightShell } from "../lib/shell-highlight";
@@ -35,6 +36,7 @@ import {
   type CustomPackageManagerConfigEntry,
 } from "../lib/package-manager-configs";
 import { useI18n } from "../lib/i18n";
+import { filterBySearch } from "../lib/list-search";
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -2040,6 +2042,7 @@ export default function Scripts() {
   const [typeFilter, setTypeFilter] = useState<"all" | ScriptType>("all");
   const [sourceFilter, setSourceFilter] = useState<"all" | "builtin" | "custom">("all");
   const [managerFilter, setManagerFilter] = useState("all");
+  const [search, setSearch] = useState("");
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [packageManagersOpen, setPackageManagersOpen] = useState(readPackageManagersPanelOpen);
   const [editing, setEditing] = useState<ScriptDefinition | null>(null);
@@ -2063,7 +2066,16 @@ export default function Scripts() {
   }, [packageManagersOpen]);
 
   const scripts = useMemo(() => {
-    const all = data?.scripts ?? [];
+    const all = filterBySearch(data?.scripts ?? [], search, (script) => [
+      script.name,
+      script.description,
+      script.pkgManager,
+      data?.packageManagers.find((manager) => manager.name === script.pkgManager)?.label,
+      script.pkgManager ? BUILTIN_PACKAGE_MANAGER_LABELS[script.pkgManager] : null,
+      script.operation,
+      t(OPERATION_LABEL_KEYS[script.operation]),
+      ...script.steps.flatMap((step) => [step.label, step.command]),
+    ]);
     return all
       .filter((script) => {
         if (typeFilter !== "all" && script.type !== typeFilter) return false;
@@ -2076,7 +2088,7 @@ export default function Scripts() {
         if (a.readonly !== b.readonly) return a.readonly ? 1 : -1;
         return a.name.localeCompare(b.name);
       });
-  }, [data, typeFilter, sourceFilter, managerFilter]);
+  }, [data, typeFilter, sourceFilter, managerFilter, search, t]);
   const managedPackageManagers = useMemo<ManagedPackageManager[]>(() => {
     const managerMap = new Map<string, ManagedPackageManager>();
     const ensureManager = (manager: string, patch: Partial<ManagedPackageManager> = {}) => {
@@ -2422,12 +2434,18 @@ export default function Scripts() {
               <option value="builtin">{t("pages.scripts.builtIn")}</option>
               <option value="custom">{t("pages.scripts.custom")}</option>
             </select>
+            <SearchField
+              value={search}
+              onChange={setSearch}
+              label={t("pages.scripts.search")}
+              clearLabel={t("pages.scripts.clearSearch")}
+            />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {scripts.length === 0 && (
               <div className="xl:col-span-2 rounded-lg border border-border p-6 text-sm text-slate-500 dark:text-slate-400">
-                <div>{t("pages.scripts.noScriptsMatchTheseFilters")}</div>
+                <div>{t(search.trim() ? "pages.scripts.noSearchMatches" : "pages.scripts.noScriptsMatchTheseFilters")}</div>
                 {sourceFilter === "custom" && (
                   <button
                     type="button"

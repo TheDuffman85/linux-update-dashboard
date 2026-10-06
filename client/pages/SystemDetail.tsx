@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, type ComponentProps } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Layout } from "../components/Layout";
+import { SearchField } from "../components/SearchField";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { CopyableCodeBlock } from "../components/CopyableCodeBlock";
@@ -29,6 +30,7 @@ import type { WsMessage } from "../hooks/useCommandOutput";
 import { deriveLiveActivitySteps, getActivityStepLabel } from "../lib/activity-steps";
 import type {
   CachedUpdate,
+  System,
   InstalledPackage,
   HiddenUpdate,
   HistoryEntry,
@@ -154,6 +156,7 @@ function UpdatesTable({
   selectedPackageNames,
   selectionDisabled,
   hideBusy,
+  searchActive = false,
 }: {
   updates: CachedUpdate[];
   onHide: (update: CachedUpdate) => void;
@@ -162,6 +165,7 @@ function UpdatesTable({
   selectedPackageNames: string[];
   selectionDisabled?: boolean;
   hideBusy?: boolean;
+  searchActive?: boolean;
 }) {
   const { t } = useI18n();
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionDisabled);
@@ -176,7 +180,7 @@ function UpdatesTable({
   if (!updates.length) {
     return (
       <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
-        {t("pages.systemDetail.noUpdatesAvailable")}
+        {t(searchActive ? "pages.systemDetail.noUpdatesMatchSearch" : "pages.systemDetail.noUpdatesAvailable")}
       </div>
     );
   }
@@ -259,6 +263,136 @@ function UpdatesTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+export function filterAvailableUpdates(
+  updates: CachedUpdate[],
+  search: string,
+  t: Translate,
+): CachedUpdate[] {
+  const query = search.trim().replace(/\s+/g, " ").toLowerCase();
+  if (!query) return updates;
+  return updates.filter((update) =>
+    [
+      update.packageName,
+      update.currentVersion,
+      update.newVersion,
+      update.pkgManager,
+      update.repository,
+      update.isSecurity ? t("pages.systemDetail.security") : null,
+      update.isKeptBack ? t("pages.systemDetail.keptBack") : null,
+    ].some((value) =>
+      value?.replace(/\s+/g, " ").toLowerCase().includes(query),
+    ),
+  );
+}
+
+export function toggleMatchingPackageNames(
+  selectedPackageNames: string[],
+  matchingUpdates: Array<Pick<CachedUpdate, "packageName">>,
+): string[] {
+  const matching = getSelectablePackageNames(matchingUpdates);
+  const selected = new Set(selectedPackageNames);
+  const allSelected =
+    matching.length > 0 && matching.every((name) => selected.has(name));
+  for (const name of matching) {
+    if (allSelected) selected.delete(name);
+    else selected.add(name);
+  }
+  return Array.from(selected);
+}
+
+export function AvailableUpdatesSection({
+  system,
+  updates,
+  search,
+  onSearchChange,
+  ...tableProps
+}: {
+  system: Pick<
+    System,
+    "securityCount" | "keptBackCount" | "cacheTimestamp" | "isStale"
+  >;
+  updates: CachedUpdate[];
+  search: string;
+  onSearchChange: (search: string) => void;
+} & Omit<ComponentProps<typeof UpdatesTable>, "updates" | "searchActive">) {
+  const { t } = useI18n();
+  const matchingUpdates = filterAvailableUpdates(updates, search, t);
+  const selectedCount = getPackageSelectionState(
+    tableProps.selectedPackageNames,
+    updates,
+  ).selectedCount;
+  const matchingSelectedCount = getPackageSelectionState(
+    tableProps.selectedPackageNames,
+    matchingUpdates,
+  ).selectedCount;
+  const selectedOutsideSearch = selectedCount - matchingSelectedCount;
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
+      <div className="px-4 py-3 border-b border-border flex flex-wrap gap-2 items-center justify-between">
+        <h2 className="text-sm font-semibold">
+          {t("pages.systemDetail.availableUpdates")}
+          {updates.length > 0 && (
+            <Badge variant="warning" small>
+              {updates.length}
+            </Badge>
+          )}
+          {system.securityCount > 0 && (
+            <Badge variant="danger" small>
+              {t("pages.systemDetail.countSecurity", {
+                count: system.securityCount,
+              })}
+            </Badge>
+          )}
+          {system.keptBackCount > 0 && (
+            <Badge variant="muted" small>
+              {t("pages.systemDetail.countKeptBack", {
+                count: system.keptBackCount,
+              })}
+            </Badge>
+          )}
+        </h2>
+        {system.cacheTimestamp && (
+          <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
+        )}
+      </div>
+      <div className="p-4 border-b border-border space-y-2">
+        <div>
+          <SearchField
+            value={search}
+            onChange={onSearchChange}
+            label={t("pages.systemDetail.searchAvailableUpdates")}
+            clearLabel={t("pages.systemDetail.clearAvailableUpdateSearch")}
+          />
+        </div>
+        {selectedCount > 0 && (
+          <div
+            className="text-sm text-slate-500 dark:text-slate-400"
+            role="status"
+          >
+            <p>
+              {t("pages.systemDetail.selectedPackagesCount", {
+                count: selectedCount,
+              })}
+            </p>
+            {selectedOutsideSearch > 0 && (
+              <p>
+                {t("pages.systemDetail.selectedOutsideSearch", {
+                  count: selectedOutsideSearch,
+                })}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      <UpdatesTable
+        {...tableProps}
+        updates={matchingUpdates}
+        searchActive={updates.length > 0 && search.trim().length > 0}
+      />
     </div>
   );
 }
@@ -389,29 +523,12 @@ export function InstalledPackagesSection({
         ) : (
           <>
             <div className="p-4 border-b border-border">
-              <div className="relative w-full max-w-md">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t("pages.systemDetail.searchInstalledPackages")}
-                  aria-label={t("pages.systemDetail.searchInstalledPackages")}
-                  className="w-full px-3 py-2 pr-9 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                />
-                {search && (
-                  <button
-                    type="button"
-                    onClick={() => setSearch("")}
-                    aria-label={t("pages.systemDetail.clearInstalledPackageSearch")}
-                    title={t("pages.systemDetail.clearSearch")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
+              <SearchField
+                value={search}
+                onChange={setSearch}
+                label={t("pages.systemDetail.searchInstalledPackages")}
+                clearLabel={t("pages.systemDetail.clearInstalledPackageSearch")}
+              />
             </div>
             {filteredPackages.length === 0 ? (
               <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
@@ -2161,6 +2278,7 @@ export default function SystemDetail() {
   const [pendingDismissIssue, setPendingDismissIssue] = useState<PackageManagerIssue | null>(null);
   const [pendingHideUpdate, setPendingHideUpdate] = useState<CachedUpdate | null>(null);
   const [selectedPackageNames, setSelectedPackageNames] = useState<string[]>([]);
+  const [updateSearch, setUpdateSearch] = useState("");
   const [showUpgradeDropdown, setShowUpgradeDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const updatesSignatureRef = useRef<string | null>(null);
@@ -2168,6 +2286,12 @@ export default function SystemDetail() {
   const sudoersPreview = useSudoersPreview(systemId, { enabled: showSudoersModal });
   const qc = useQueryClient();
   const wasCommandActiveRef = useRef(false);
+
+  useEffect(() => {
+    setUpdateSearch("");
+    setSelectedPackageNames([]);
+    updatesSignatureRef.current = null;
+  }, [systemId]);
 
   // When the WebSocket signals an active operation, kick the query into polling mode
   // (refetchInterval only activates when activeOperation is already in cached data)
@@ -2259,7 +2383,9 @@ export default function SystemDetail() {
   const visiblePackageIssues = getVisiblePackageIssuesForCurrentCheck(packageIssues, system.lastCheck);
   const selectionBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue || hideUpdate.isPending || unhideUpdate.isPending;
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionBusy);
-  const selectedVisiblePackageNames = packageSelectionState.selectedPackageNames;
+  const selectedAvailablePackageNames = packageSelectionState.selectedPackageNames;
+  const matchingUpdates = filterAvailableUpdates(updates, updateSearch, t);
+  const selectedOutsideSearch = packageSelectionState.selectedCount - getPackageSelectionState(selectedAvailablePackageNames, matchingUpdates).selectedCount;
   const updatesPanelState = translateUpdatesPanelState(getUpdatesPanelState(system, updates.length), updates.length, t);
   const latestOperationNoticeState: OperationNoticeState | null = history.length > 0
     ? getOperationNoticeState(history[0], updates.length, t)
@@ -2372,9 +2498,9 @@ export default function SystemDetail() {
   };
 
   const handleUpgradeSelected = () => {
-    if (selectedVisiblePackageNames.length === 0) return;
+    if (selectedAvailablePackageNames.length === 0) return;
 
-    const selectedNames = selectedVisiblePackageNames;
+    const selectedNames = selectedAvailablePackageNames;
     setShowUpgradeSelectedConfirm(false);
     setSelectedPackageNames([]);
     upgradePackages(systemId, selectedNames, {
@@ -2518,8 +2644,7 @@ export default function SystemDetail() {
 
   const handleToggleAllPackageSelection = () => {
     setSelectedPackageNames((current) => {
-      const selectionState = getPackageSelectionState(current, updates);
-      return selectionState.allSelected ? [] : selectionState.visiblePackageNames;
+      return toggleMatchingPackageNames(normalizeSelectedPackageNames(current, updates), matchingUpdates);
     });
   };
 
@@ -2828,34 +2953,18 @@ export default function SystemDetail() {
       )}
 
       {/* Available updates */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h2 className="text-sm font-semibold">
-            {t("pages.systemDetail.availableUpdates")}
-            {updates.length > 0 && (
-              <Badge variant="warning" small>{updates.length}</Badge>
-            )}
-            {system.securityCount > 0 && (
-              <Badge variant="danger" small>{t("pages.systemDetail.countSecurity", { count: system.securityCount })}</Badge>
-            )}
-            {system.keptBackCount > 0 && (
-              <Badge variant="muted" small>{t("pages.systemDetail.countKeptBack", { count: system.keptBackCount })}</Badge>
-            )}
-          </h2>
-          {system.cacheTimestamp && (
-            <AgoLabel timestamp={system.cacheTimestamp} stale={system.isStale} />
-          )}
-        </div>
-        <UpdatesTable
-          updates={updates}
-          onTogglePackage={handleTogglePackageSelection}
-          onToggleAllPackages={handleToggleAllPackageSelection}
-          selectedPackageNames={selectedVisiblePackageNames}
-          selectionDisabled={packageSelectionState.selectionDisabled}
-          hideBusy={hideUpdate.isPending}
-          onHide={setPendingHideUpdate}
-        />
-      </div>
+      <AvailableUpdatesSection
+        system={system}
+        updates={updates}
+        search={updateSearch}
+        onSearchChange={setUpdateSearch}
+        onTogglePackage={handleTogglePackageSelection}
+        onToggleAllPackages={handleToggleAllPackageSelection}
+        selectedPackageNames={selectedAvailablePackageNames}
+        selectionDisabled={packageSelectionState.selectionDisabled}
+        hideBusy={hideUpdate.isPending}
+        onHide={setPendingHideUpdate}
+      />
 
       <InstalledPackagesSection
         installedPackages={installedPackages}
@@ -2910,10 +3019,13 @@ export default function SystemDetail() {
         onConfirm={handleUpgradeSelected}
         title={t("pages.systemDetail.upgradeSelectedPackages")}
         message={
-          t("pages.systemDetail.upgradeSelectedMessage", {
-            count: packageSelectionState.selectedCount,
-            systemName: system.name,
-          })
+          [
+            t("pages.systemDetail.upgradeSelectedMessage", {
+              count: packageSelectionState.selectedCount,
+              systemName: system.name,
+            }),
+            ...(selectedOutsideSearch > 0 ? [t("pages.systemDetail.selectedOutsideSearch", { count: selectedOutsideSearch })] : []),
+          ].join(" ")
         }
         confirmLabel={t("pages.systemDetail.upgradeSelectedCount", { count: packageSelectionState.selectedCount })}
         loading={upgrading}

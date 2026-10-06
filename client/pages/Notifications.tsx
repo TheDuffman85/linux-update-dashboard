@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Sortable from "sortablejs";
+import { SearchField } from "../components/SearchField";
+import { filterBySearch } from "../lib/list-search";
 import { Cron } from "croner";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
@@ -2040,6 +2042,9 @@ export default function Notifications() {
   const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [resetDedupeId, setResetDedupeId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const searchActive = search.trim().length > 0;
+  const reorderDisabled = searchActive || reorderNotifications.isPending;
   const [orderedChannels, setOrderedChannels] = useState<NotificationChannel[]>([]);
   const orderedChannelsRef = useRef<NotificationChannel[]>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
@@ -2067,7 +2072,7 @@ export default function Notifications() {
 
   useEffect(() => {
     const tbody = tbodyRef.current;
-    if (!tbody || orderedChannels.length <= 1) {
+    if (!tbody || orderedChannels.length <= 1 || searchActive) {
       sortableRef.current?.destroy();
       sortableRef.current = null;
       return;
@@ -2075,11 +2080,13 @@ export default function Notifications() {
 
     sortableRef.current?.destroy();
     sortableRef.current = new Sortable(tbody, {
+      disabled: reorderDisabled,
       animation: 150,
       handle: ".drag-handle",
       ghostClass: "sortable-ghost",
       chosenClass: "sortable-chosen",
       onEnd: (evt) => {
+        if (reorderDisabled) return;
         if (
           evt.oldIndex === undefined ||
           evt.newIndex === undefined ||
@@ -2105,11 +2112,11 @@ export default function Notifications() {
       sortableRef.current?.destroy();
       sortableRef.current = null;
     };
-  }, [orderedChannels.length, reorderNotifications, addToast]);
+  }, [orderedChannels.length, searchActive, reorderDisabled, reorderNotifications, addToast]);
 
   useEffect(() => {
-    sortableRef.current?.option("disabled", reorderNotifications.isPending);
-  }, [reorderNotifications.isPending]);
+    sortableRef.current?.option("disabled", reorderDisabled);
+  }, [reorderDisabled]);
 
   const handleCreate = (data: {
     name: string;
@@ -2229,6 +2236,22 @@ export default function Notifications() {
   const canResetUpdateDedupe = (channel: NotificationChannel): boolean =>
     channel.notifyOn.includes("updates");
 
+  const filteredItems = filterBySearch(orderedChannels, search, (channel) => [
+    channel.name,
+    TYPE_LABELS[channel.type] ? t(TYPE_LABELS[channel.type]) : channel.type,
+    getEventLabel(channel),
+    getSystemScopeLabel(channel.systemIds),
+    ...(channel.systemIds ?? []).map((id) => systemsList?.find((system) => system.id === id)?.name),
+    describeNotificationSchedule(channel, t),
+    ...(channel.scheduleNames ?? []),
+    channel.scheduleName,
+    channel.schedule,
+    ...(channel.schedules ?? []).flatMap((schedule) => [schedule.name, schedule.cron]),
+    channel.lastDeliveryStatus,
+    channel.lastDeliveryMessage,
+    t(channel.enabled ? "pages.notifications.enabled" : "common.disabled"),
+  ]);
+
   return (
     <Layout
       title={t("pages.notifications.notifications")}
@@ -2246,6 +2269,10 @@ export default function Notifications() {
           <span className="spinner !w-6 !h-6 text-blue-500" />
         </div>
       ) : channels && channels.length > 0 ? (
+        <>
+          <div className="mb-4">
+            <SearchField value={search} onChange={setSearch} label={t("pages.notifications.search")} clearLabel={t("pages.notifications.clearSearch")} />
+          </div>
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-x-auto overflow-y-hidden">
           <table className="min-w-full text-sm">
             <thead>
@@ -2260,7 +2287,10 @@ export default function Notifications() {
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedChannels.map((channel) => (
+              {filteredItems.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{t("pages.notifications.noMatches")}</td></tr>
+              )}
+              {filteredItems.map((channel) => (
                 <tr
                   key={channel.id}
                   className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
@@ -2269,11 +2299,12 @@ export default function Notifications() {
                     <div className="flex items-start gap-2 min-w-0">
                       <span
                         className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
-                          reorderNotifications.isPending || orderedChannels.length < 2
+                          reorderDisabled || orderedChannels.length < 2
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title={t("pages.notifications.dragToReorder")}
+                        aria-disabled={reorderDisabled || orderedChannels.length < 2}
+                        title={searchActive ? undefined : t("pages.notifications.dragToReorder")}
                         aria-label={t("pages.notifications.dragToReorderName", { name: channel.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2396,6 +2427,7 @@ export default function Notifications() {
             </tbody>
           </table>
         </div>
+        </>
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">

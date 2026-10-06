@@ -17,6 +17,10 @@ import { buildOperationKey, createScript, getSystemOverrides, setSystemOverrides
 import { issueValidatedConfigToken } from "../../server/services/system-connection-validation";
 import { initSSHManager } from "../../server/ssh/connection";
 
+vi.mock("../../server/generated/distro-lifecycle-data.json", async () => ({
+  default: { catalog: (await import("../fixtures/distro-lifecycle-catalog.json")).default },
+}));
+
 function createSystemCredential(username: string): number {
   const db = getDb();
   const inserted = db.insert(credentials).values({

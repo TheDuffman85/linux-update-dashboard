@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Sortable from "sortablejs";
+import { SearchField } from "../components/SearchField";
+import { filterBySearch } from "../lib/list-search";
 import { CredentialForm } from "../components/credentials/CredentialForm";
 import { Layout } from "../components/Layout";
 import { Modal } from "../components/Modal";
@@ -43,11 +45,21 @@ export default function Credentials() {
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteCredentialItem, setDeleteCredentialItem] = useState<CredentialSummary | null>(null);
+  const [search, setSearch] = useState("");
+  const searchActive = search.trim().length > 0;
+  const reorderDisabled = searchActive || reorderCredentials.isPending;
   const [orderedCredentials, setOrderedCredentials] = useState<CredentialSummary[]>([]);
   const orderedCredentialsRef = useRef<CredentialSummary[]>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
   const { data: editCredential } = useCredential(editId);
+  const filteredItems = filterBySearch(orderedCredentials, search, (credential) => [
+    credential.name,
+    t(CREDENTIAL_KIND_LABEL_KEYS[credential.kind]),
+    ...(credential.referenceCount === 0
+      ? [t("pages.credentials.unused")]
+      : credential.references.map((reference) => reference.name)),
+  ]);
 
   useEffect(() => {
     setOrderedCredentials(credentials ?? []);
@@ -59,7 +71,7 @@ export default function Credentials() {
 
   useEffect(() => {
     const tbody = tbodyRef.current;
-    if (!tbody || orderedCredentials.length <= 1) {
+    if (!tbody || orderedCredentials.length <= 1 || searchActive) {
       sortableRef.current?.destroy();
       sortableRef.current = null;
       return;
@@ -67,11 +79,13 @@ export default function Credentials() {
 
     sortableRef.current?.destroy();
     sortableRef.current = new Sortable(tbody, {
+      disabled: reorderDisabled,
       animation: 150,
       handle: ".drag-handle",
       ghostClass: "sortable-ghost",
       chosenClass: "sortable-chosen",
       onEnd: (evt) => {
+        if (reorderDisabled) return;
         if (
           evt.oldIndex === undefined ||
           evt.newIndex === undefined ||
@@ -97,11 +111,11 @@ export default function Credentials() {
       sortableRef.current?.destroy();
       sortableRef.current = null;
     };
-  }, [orderedCredentials.length, reorderCredentials, addToast]);
+  }, [orderedCredentials.length, searchActive, reorderDisabled, reorderCredentials, addToast]);
 
   useEffect(() => {
-    sortableRef.current?.option("disabled", reorderCredentials.isPending);
-  }, [reorderCredentials.isPending]);
+    sortableRef.current?.option("disabled", reorderDisabled);
+  }, [reorderDisabled]);
 
   const handleCreate = (data: {
     name: string;
@@ -167,6 +181,10 @@ export default function Credentials() {
           <span className="spinner !w-6 !h-6 text-blue-500" />
         </div>
       ) : credentials && credentials.length > 0 ? (
+        <>
+          <div className="mb-4">
+            <SearchField value={search} onChange={setSearch} label={t("pages.credentials.search")} clearLabel={t("pages.credentials.clearSearch")} />
+          </div>
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-x-auto overflow-y-hidden">
           <table className="min-w-full text-sm">
             <thead>
@@ -178,7 +196,10 @@ export default function Credentials() {
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedCredentials.map((credential) => (
+              {filteredItems.length === 0 && (
+                <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{t("pages.credentials.noMatches")}</td></tr>
+              )}
+              {filteredItems.map((credential) => (
                 <tr
                   key={credential.id}
                   className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
@@ -187,11 +208,12 @@ export default function Credentials() {
                     <div className="flex items-center gap-2 min-w-0">
                       <span
                         className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
-                          reorderCredentials.isPending || orderedCredentials.length < 2
+                          reorderDisabled || orderedCredentials.length < 2
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title={t("pages.credentials.dragToReorder")}
+                        aria-disabled={reorderDisabled || orderedCredentials.length < 2}
+                        title={searchActive ? undefined : t("pages.credentials.dragToReorder")}
                         aria-label={t("pages.credentials.dragToReorderName", { name: credential.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -252,6 +274,7 @@ export default function Credentials() {
             </tbody>
           </table>
         </div>
+        </>
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">{t("pages.credentials.noReusableCredentialsYet")}</p>

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sortable from "sortablejs";
+import { SearchField } from "../components/SearchField";
+import { filterBySearch } from "../lib/list-search";
 import { Cron } from "croner";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Layout } from "../components/Layout";
@@ -671,6 +673,9 @@ export default function Schedules() {
   const [duplicateSchedule, setDuplicateSchedule] = useState<Schedule | null>(null);
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const searchActive = search.trim().length > 0;
+  const reorderDisabled = searchActive || reorderSchedules.isPending;
   const [orderedSchedules, setOrderedSchedules] = useState<Schedule[]>([]);
   const orderedSchedulesRef = useRef<Schedule[]>([]);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
@@ -698,7 +703,7 @@ export default function Schedules() {
 
   useEffect(() => {
     const tbody = tbodyRef.current;
-    if (!tbody || orderedSchedules.length <= 1) {
+    if (!tbody || orderedSchedules.length <= 1 || searchActive) {
       sortableRef.current?.destroy();
       sortableRef.current = null;
       return;
@@ -706,11 +711,13 @@ export default function Schedules() {
 
     sortableRef.current?.destroy();
     sortableRef.current = new Sortable(tbody, {
+      disabled: reorderDisabled,
       animation: 150,
       handle: ".drag-handle",
       ghostClass: "sortable-ghost",
       chosenClass: "sortable-chosen",
       onEnd: (evt) => {
+        if (reorderDisabled) return;
         if (
           evt.oldIndex === undefined ||
           evt.newIndex === undefined ||
@@ -735,11 +742,11 @@ export default function Schedules() {
       sortableRef.current?.destroy();
       sortableRef.current = null;
     };
-  }, [orderedSchedules.length, reorderSchedules, addToast]);
+  }, [orderedSchedules.length, searchActive, reorderDisabled, reorderSchedules, addToast]);
 
   useEffect(() => {
-    sortableRef.current?.option("disabled", reorderSchedules.isPending);
-  }, [reorderSchedules.isPending]);
+    sortableRef.current?.option("disabled", reorderDisabled);
+  }, [reorderDisabled]);
 
   const getSystemScopeLabel = (systemIds: number[] | null): string => {
     if (systemIds === null) return t("pages.schedules.all");
@@ -781,6 +788,20 @@ export default function Schedules() {
     if (names.length <= 2) return names.join(", ");
     return t("pages.schedules.countChannels", { count: names.length });
   };
+
+  const filteredItems = filterBySearch(orderedSchedules, search, (schedule) => [
+    schedule.name,
+    t(TYPE_LABEL_KEYS[schedule.type]),
+    getTargetLabel(schedule),
+    ...(schedule.type === "notification_digest" && isNotificationScheduleConfig(schedule.config)
+      ? schedule.config.notificationIds.map((id) => notificationsList?.find((channel) => channel.id === id)?.name)
+      : (schedule.systemIds ?? []).map((id) => systemsList?.find((system) => system.id === id)?.name)),
+    getScheduleCron(schedule),
+    describeSchedule(schedule, t, language, resolvedTimeFormat === "24h"),
+    schedule.lastRunStatus ? t(`pages.schedules.status.${schedule.lastRunStatus}`) : t("pages.schedules.none"),
+    schedule.lastRunMessage,
+    t(schedule.enabled ? "pages.schedules.enabled" : "common.disabled"),
+  ]);
 
   const handleCreate = (data: ScheduleFormData) => {
     createSchedule.mutate(data, {
@@ -842,6 +863,10 @@ export default function Schedules() {
           <span className="spinner !w-6 !h-6 text-blue-500" />
         </div>
       ) : schedules && schedules.length > 0 ? (
+        <>
+          <div className="mb-4">
+            <SearchField value={search} onChange={setSearch} label={t("pages.schedules.search")} clearLabel={t("pages.schedules.clearSearch")} />
+          </div>
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-x-auto overflow-y-hidden">
           <table className="min-w-full text-sm">
             <thead>
@@ -856,7 +881,10 @@ export default function Schedules() {
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedSchedules.map((schedule) => (
+              {filteredItems.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{t("pages.schedules.noMatches")}</td></tr>
+              )}
+              {filteredItems.map((schedule) => (
                 <tr
                   key={schedule.id}
                   className="border-b border-border last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
@@ -865,11 +893,12 @@ export default function Schedules() {
                     <div className="flex items-start gap-2 min-w-0">
                       <span
                         className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
-                          reorderSchedules.isPending || orderedSchedules.length < 2
+                          reorderDisabled || orderedSchedules.length < 2
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title={t("pages.schedules.dragToReorder")}
+                        aria-disabled={reorderDisabled || orderedSchedules.length < 2}
+                        title={searchActive ? undefined : t("pages.schedules.dragToReorder")}
                         aria-label={t("pages.schedules.dragToReorderName", { name: schedule.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -975,6 +1004,7 @@ export default function Schedules() {
             </tbody>
           </table>
         </div>
+        </>
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">
