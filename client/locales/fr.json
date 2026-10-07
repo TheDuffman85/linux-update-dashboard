@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "Modifier la notification",
   "pages.notifications.editNotification2": "Modifier la notification",
   "pages.notifications.eGOpsTeamEmail": "ex. E-mail équipe Ops",
+  "pages.notifications.emailSubjectPrefix": "Préfixe de l’objet des e-mails",
+  "pages.notifications.emailSubjectPrefixHelp": "Texte facultatif ajouté au début de chaque objet d’e-mail. Laissez vide pour ne pas utiliser de préfixe.",
   "pages.notifications.enabled": "Activé",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "Activer la découverte Home Assistant et la synchronisation de l'état conservé",
   "pages.notifications.enableHomeAssistantInstallCommands": "Activer les commandes d'installation Home Assistant pour les entités par système",

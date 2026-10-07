@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "Редактировать уведомление",
   "pages.notifications.editNotification2": "Редактировать уведомление",
   "pages.notifications.eGOpsTeamEmail": "например, Email команды Ops",
+  "pages.notifications.emailSubjectPrefix": "Префикс темы письма",
+  "pages.notifications.emailSubjectPrefixHelp": "Необязательный текст перед темой каждого письма. Оставьте поле пустым, чтобы не использовать префикс.",
   "pages.notifications.enabled": "Включено",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "Включить обнаружение Home Assistant и синхронизацию retained-состояния",
   "pages.notifications.enableHomeAssistantInstallCommands": "Включить команды установки Home Assistant для сущностей отдельных систем",

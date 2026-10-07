@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "Edit notification",
   "pages.notifications.editNotification2": "Edit Notification",
   "pages.notifications.eGOpsTeamEmail": "e.g. Ops Team Email",
+  "pages.notifications.emailSubjectPrefix": "Email subject prefix",
+  "pages.notifications.emailSubjectPrefixHelp": "Optional text added before every email subject. Leave blank for no prefix.",
   "pages.notifications.enabled": "Enabled",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "Enable Home Assistant discovery and retained state sync",
   "pages.notifications.enableHomeAssistantInstallCommands": "Enable Home Assistant install commands for per-system entities",

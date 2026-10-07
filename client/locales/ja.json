@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "通知を編集",
   "pages.notifications.editNotification2": "通知を編集",
   "pages.notifications.eGOpsTeamEmail": "例: 運用チームメール",
+  "pages.notifications.emailSubjectPrefix": "メール件名の接頭辞",
+  "pages.notifications.emailSubjectPrefixHelp": "すべてのメール件名の先頭に追加する任意のテキストです。接頭辞を使用しない場合は空欄にしてください。",
   "pages.notifications.enabled": "有効",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "Home Assistant 検出と保持状態同期を有効化",
   "pages.notifications.enableHomeAssistantInstallCommands": "システムごとのエンティティで Home Assistant インストールコマンドを有効化",

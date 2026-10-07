@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "Benachrichtigung bearbeiten",
   "pages.notifications.editNotification2": "Benachrichtigung bearbeiten",
   "pages.notifications.eGOpsTeamEmail": "z. B. Ops-Team-E-Mail",
+  "pages.notifications.emailSubjectPrefix": "E-Mail-Betreffpräfix",
+  "pages.notifications.emailSubjectPrefixHelp": "Optionaler Text vor jedem E-Mail-Betreff. Leer lassen, um kein Präfix zu verwenden.",
   "pages.notifications.enabled": "Aktiviert",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "Home-Assistant-Discovery und beibehaltene Status-Synchronisierung aktivieren",
   "pages.notifications.enableHomeAssistantInstallCommands": "Home-Assistant-Installationsbefehle für System-Entities aktivieren",

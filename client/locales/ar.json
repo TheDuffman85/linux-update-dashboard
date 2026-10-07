@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "تعديل الإشعار",
   "pages.notifications.editNotification2": "تعديل الإشعار",
   "pages.notifications.eGOpsTeamEmail": "مثال: بريد فريق العمليات",
+  "pages.notifications.emailSubjectPrefix": "بادئة موضوع البريد الإلكتروني",
+  "pages.notifications.emailSubjectPrefixHelp": "نص اختياري يُضاف قبل موضوع كل رسالة بريد إلكتروني. اتركه فارغًا لعدم استخدام بادئة.",
   "pages.notifications.enabled": "مفعل",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "تفعيل اكتشاف Home Assistant ومزامنة الحالة المحتفظ بها",
   "pages.notifications.enableHomeAssistantInstallCommands": "تفعيل أوامر تثبيت Home Assistant لكيانات كل نظام",

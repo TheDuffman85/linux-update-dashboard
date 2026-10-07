@@ -90,6 +90,64 @@ describe("notifications routes validation", () => {
     expect(stored?.config).not.toContain("smtp-secret");
   });
 
+  test("persists, updates, tests, and clears email subject prefixes", async () => {
+    const originalCreateTransport = nodemailer.createTransport;
+    const subjects: string[] = [];
+    (nodemailer as any).createTransport = () => ({
+      sendMail: async (mail: { subject: string }) => { subjects.push(mail.subject); },
+    });
+
+    try {
+      const config = {
+        smtpHost: "smtp.example.com",
+        smtpFrom: "dashboard@example.com",
+        emailTo: "admin@example.com",
+        emailSubjectPrefix: "[LINUX-UPDATE]",
+      };
+      const createRes = await app.request("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Ops email", type: "email", config }),
+      });
+      expect(createRes.status).toBe(201);
+      const { id } = await createRes.json();
+      const url = `/api/notifications/${id}`;
+
+      const readRes = await app.request(url);
+      expect((await readRes.json()).config.emailSubjectPrefix).toBe("[LINUX-UPDATE]");
+      const listRes = await app.request("/api/notifications");
+      expect((await listRes.json()).notifications[0].config.emailSubjectPrefix).toBe("[LINUX-UPDATE]");
+
+      const savedTestRes = await app.request(`${url}/test`, { method: "POST" });
+      expect((await savedTestRes.json()).success).toBe(true);
+      expect(subjects[0]).toBe("[LINUX-UPDATE] ✅ Test Notification");
+
+      const inlineTestRes = await app.request("/api/notifications/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "email", config: { ...config, emailSubjectPrefix: "[PREVIEW]" } }),
+      });
+      expect((await inlineTestRes.json()).success).toBe(true);
+      expect(subjects[1]).toBe("[PREVIEW] ✅ Test Notification");
+
+      for (const prefix of ["[OPS]", ""]) {
+        const updateRes = await app.request(url, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config: { emailSubjectPrefix: prefix } }),
+        });
+        expect(updateRes.status).toBe(200);
+        const updatedRes = await app.request(url);
+        expect((await updatedRes.json()).config.emailSubjectPrefix).toBe(prefix);
+        const testRes = await app.request(`${url}/test`, { method: "POST" });
+        expect((await testRes.json()).success).toBe(true);
+        expect(subjects.at(-1)).toBe(prefix ? `${prefix} ✅ Test Notification` : "✅ Test Notification");
+      }
+    } finally {
+      (nodemailer as any).createTransport = originalCreateTransport;
+    }
+  });
+
   test("defaults new notifications to updates and app updates", async () => {
     const res = await app.request("/api/notifications", {
       method: "POST",

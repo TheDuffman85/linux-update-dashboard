@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "编辑通知",
   "pages.notifications.editNotification2": "编辑通知",
   "pages.notifications.eGOpsTeamEmail": "例如 Ops 团队邮箱",
+  "pages.notifications.emailSubjectPrefix": "邮件主题前缀",
+  "pages.notifications.emailSubjectPrefixHelp": "在每封邮件主题前添加的可选文本。留空则不使用前缀。",
   "pages.notifications.enabled": "已启用",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "启用 Home Assistant 发现和保留状态同步",
   "pages.notifications.enableHomeAssistantInstallCommands": "为每个系统实体启用 Home Assistant 安装命令",

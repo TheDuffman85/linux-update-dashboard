@@ -783,6 +783,9 @@ function NotificationForm({
   const [smtpPassword, setSmtpPassword] = useState("");
   const [smtpFrom, setSmtpFrom] = useState(readString(initial?.config || {}, "smtpFrom"));
   const [emailTo, setEmailTo] = useState(readString(initial?.config || {}, "emailTo"));
+  const [emailSubjectPrefix, setEmailSubjectPrefix] = useState(
+    readString(initial?.config || {}, "emailSubjectPrefix")
+  );
   const [emailImportanceOverride, setEmailImportanceOverride] = useState(
     readString(initial?.config || {}, "emailImportanceOverride", "auto")
   );
@@ -912,6 +915,7 @@ function NotificationForm({
           smtpPassword || (readString(initial?.config || {}, "smtpPassword") === MASKED_VALUE ? MASKED_VALUE : ""),
         smtpFrom,
         emailTo,
+        emailSubjectPrefix,
         emailImportanceOverride,
       };
     }
@@ -1284,6 +1288,20 @@ function NotificationForm({
               <div>
                 <label className={labelClass}>{t("pages.notifications.toAddresses")}</label>
                 <input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} className={inputClass} />
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="emailSubjectPrefix" className={labelClass}>{t("pages.notifications.emailSubjectPrefix")}</label>
+                <input
+                  id="emailSubjectPrefix"
+                  value={emailSubjectPrefix}
+                  onChange={(e) => setEmailSubjectPrefix(e.target.value)}
+                  className={inputClass}
+                  placeholder="[LINUX-UPDATE]"
+                  aria-describedby="emailSubjectPrefixHelp"
+                />
+                <p id="emailSubjectPrefixHelp" className={mutedTextClass}>
+                  {t("pages.notifications.emailSubjectPrefixHelp")}
+                </p>
               </div>
               <div>
                 <label className={labelClass}>{t("pages.notifications.importance")}</label>

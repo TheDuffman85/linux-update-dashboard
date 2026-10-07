@@ -307,6 +307,8 @@
   "pages.notifications.editNotification": "सूचना संपादित करें",
   "pages.notifications.editNotification2": "सूचना संपादित करें",
   "pages.notifications.eGOpsTeamEmail": "जैसे ऑप्स टीम ईमेल",
+  "pages.notifications.emailSubjectPrefix": "ईमेल विषय का उपसर्ग",
+  "pages.notifications.emailSubjectPrefixHelp": "हर ईमेल विषय से पहले जोड़ा जाने वाला वैकल्पिक पाठ। उपसर्ग न जोड़ने के लिए खाली छोड़ें।",
   "pages.notifications.enabled": "सक्षम",
   "pages.notifications.enableHomeAssistantDiscoveryAndRetainedStateSync": "Home Assistant discovery और retained state sync सक्षम करें",
   "pages.notifications.enableHomeAssistantInstallCommands": "प्रति-सिस्टम एंटिटी के लिए Home Assistant स्थापना आदेश सक्षम करें",
