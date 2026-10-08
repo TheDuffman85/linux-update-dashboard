@@ -59,7 +59,6 @@ function getMajor(value: string): string {
 
 function getProductKey(input: OsLifecycleInput): string | null {
   const osId = normalize(input.osId);
-  const osIdLike = normalize(input.osIdLike);
   const osName = normalize(input.osName);
 
   if (osId === "proxmox" || osName.includes("proxmox")) return "proxmox";
@@ -70,7 +69,11 @@ function getProductKey(input: OsLifecycleInput): string | null {
   if (osId === "almalinux" || osName.includes("almalinux")) return "almalinux";
   if (osId === "centos" || osName.includes("centos")) return "centos";
   if (osId === "ubuntu" || osName.includes("ubuntu")) return "ubuntu";
-  if (osId === "debian" || osName.includes("debian") || osIdLike.split(/\s+/).includes("debian")) return "debian";
+  // Checked before Debian: Devuan sets ID_LIKE=debian but has its own release numbering.
+  if (osId === "devuan" || osName.includes("devuan")) return "devuan";
+  // ID_LIKE is deliberately not used: derivatives (LMDE, elementary OS, ...) report their own
+  // version numbers, which would be matched against unrelated Debian releases.
+  if (osId === "debian" || osName.includes("debian")) return "debian";
   if (osId === "fedora" || osName.includes("fedora")) return "fedora";
   if (osId === "alpine" || osName.includes("alpine")) return "alpine";
   return null;

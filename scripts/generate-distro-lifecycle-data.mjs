@@ -10,6 +10,8 @@ const PRODUCTS = [
   { key: "ubuntu", product: "ubuntu", label: "Ubuntu", cycle: "majorMinor" },
   // Debian's eol is the end of LTS; extendedSupport is paid third-party ELTS.
   { key: "debian", product: "debian", label: "Debian", cycle: "major", supportField: "support", supportLabel: "security support", finalSupportLabel: "LTS" },
+  // Devuan's lts field is the date security support ends and LTS begins.
+  { key: "devuan", product: "devuan", label: "Devuan", cycle: "major", supportField: "lts", supportLabel: "security support", finalSupportLabel: "LTS" },
   { key: "fedora", product: "fedora", label: "Fedora", cycle: "major" },
   { key: "rhel", product: "rhel", label: "Red Hat Enterprise Linux", cycle: "major", supportField: "support" },
   { key: "rocky", product: "rocky-linux", label: "Rocky Linux", cycle: "major", supportField: "support" },

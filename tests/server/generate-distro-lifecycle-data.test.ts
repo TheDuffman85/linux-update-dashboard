@@ -18,7 +18,9 @@ describe("distro lifecycle generator", () => {
     writeFileSync(preloadPath, `
       globalThis.fetch = async (url) => ({
         ok: true,
-        json: async () => url.endsWith("/debian.json") ? [
+        json: async () => url.endsWith("/devuan.json") ? [
+          { cycle: "6", codename: "Excalibur", lts: "2028-08-09", eol: "2030-06-30" },
+        ] : url.endsWith("/debian.json") ? [
           { cycle: "13", support: "2028-08-09", eol: "2030-06-30", extendedSupport: "2035-06-30" },
           { cycle: "12", support: "2026-07-11", eol: "2028-06-30", extendedSupport: "2033-06-30" },
           { cycle: "10", support: "2022-09-10", eol: "2024-06-30", extendedSupport: "2029-06-30" },
@@ -50,6 +52,12 @@ describe("distro lifecycle generator", () => {
         { cycle: "10", supportEnd: "2022-09-10", eol: "2024-06-30" },
         { cycle: "6", supportEnd: "2014-05-31", eol: "2016-02-29" },
       ],
+    });
+    expect(generated.catalog.devuan).toEqual({
+      label: "Devuan",
+      supportLabel: "security support",
+      finalSupportLabel: "LTS",
+      entries: [{ cycle: "6", supportEnd: "2028-08-09", eol: "2030-06-30" }],
     });
   });
 });
