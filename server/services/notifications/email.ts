@@ -136,6 +136,7 @@ export const emailProvider = createFlatProvider({
     "smtpPassword",
     "smtpFrom",
     "emailTo",
+    "emailSubjectPrefix",
     "emailImportanceOverride",
   ],
   sensitiveKeys: ["smtpPassword"],
@@ -196,11 +197,13 @@ export const emailProvider = createFlatProvider({
       .filter(Boolean)
       .join(", ");
     const importance = resolveEmailImportance(payload.priority, config.emailImportanceOverride);
+    const subjectPrefix = config.emailSubjectPrefix?.trim();
+    const title = decorateNotificationTitle(payload);
 
     await transport.sendMail({
       from: config.smtpFrom,
       to: recipients,
-      subject: decorateNotificationTitle(payload),
+      subject: subjectPrefix ? `${subjectPrefix} ${title}` : title,
       text: payload.body,
       html: buildEmailHtmlBody(payload),
       priority: importance.mailPriority,

@@ -62,6 +62,11 @@ vi.mock("../../client/components/Layout", () => ({
   ),
 }));
 
+import { translateForLanguage } from "../../client/lib/i18n";
+import type { System } from "../../client/lib/systems";
+
+import { filterSystems } from "../../client/lib/system-search";
+
 import SystemsList, { getEditSystemIdFromRouteState } from "../../client/pages/SystemsList";
 
 describe("SystemsList", () => {
@@ -138,6 +143,63 @@ describe("SystemsList", () => {
     mockUseToast.mockReturnValue({ toasts: [], addToast: vi.fn(), removeToast: vi.fn() });
     mockUseUpgrade.mockReturnValue({ isUpgrading: () => false, upgradingCount: 0 });
     mockUseAuth.mockReturnValue({ user: { username: "tester" } });
+  });
+
+  test("renders accessible search without a matching count", () => {
+    const html = renderToStaticMarkup(<MemoryRouter><SystemsList /></MemoryRouter>);
+    expect(html).toContain('aria-label="Search systems"');
+    expect(html).not.toContain("Showing 1 of 1 systems");
+  });
+
+  test("matches identities, OS, and displayed status badges in the active language", () => {
+    const base: System = mockUseSystems().data[0];
+    const systems: System[] = [
+      { ...base, osLifecycleStatus: "supported", osLifecycleLabel: "", hostKeyStatus: "verified" },
+      { ...base, id: 2, name: "Beta", hostname: "192.0.2.20", port: 2222, osName: null, isReachable: -1, hidden: 1, osLifecycleStatus: "eol", osLifecycleLabel: "", hostKeyStatus: "needs_approval", proxyJumpChain: [{ id: 3, name: "Gateway" }], needsReboot: 1, packageIssueCount: 1 },
+      { ...base, id: 3, name: "Gamma", hostname: "gamma.local", osName: "Alpine", isReachable: 0, hidden: 0, osLifecycleStatus: "supported", osLifecycleLabel: "", hostKeyStatus: "verification_disabled" },
+    ];
+    const t = (key: string, values?: Record<string, string | number>) => translateForLanguage("en", key, values);
+    for (const query of ["  ALPha  ", "alpha.local", "debian", "online", "approved"]) {
+      expect(filterSystems(systems, query, t).map((system) => system.id), query).toEqual([1]);
+    }
+    for (const query of ["192.0.2.20:2222", "offline", "hidden", "eol", "needs approval", "via Gateway", "reboot required", "pkg issue"]) {
+      expect(filterSystems(systems, query, t).map((system) => system.id), query).toEqual([2]);
+    }
+    expect(filterSystems(systems, "verification off", t).map((system) => system.id)).toEqual([3]);
+    expect(filterSystems(systems, "unknown", t).map((system) => system.id)).toEqual([3]);
+    expect(filterSystems(systems, "", t)).toBe(systems);
+    expect(filterSystems(systems, "  ", t)).toBe(systems);
+    expect(filterSystems([...systems].reverse(), "a", t).map((system) => system.id)).toEqual([3, 2, 1]);
+    expect(filterSystems(systems, "nonexistent", t)).toEqual([]);
+    expect(filterSystems(systems, "Reihenfolge", t)).toEqual([]);
+    const de = (key: string, values?: Record<string, string | number>) => translateForLanguage("de", key, values);
+    expect(filterSystems(systems, de("pages.systemsList.hidden"), de).map((system) => system.id)).toEqual([2]);
+  });
+
+  test("keeps the original empty repository message separate from search results", () => {
+    mockUseSystems.mockReturnValue({ data: [], isLoading: false, refetch: vi.fn() });
+    const html = renderToStaticMarkup(<MemoryRouter><SystemsList /></MemoryRouter>);
+    expect(html).toContain("No systems configured yet");
+    expect(html).not.toContain("No systems match your search");
+    expect(html).not.toContain('aria-label="Search systems"');
+  });
+
+  test("searches dashboard payloads without ProxyJump or host-key status metadata", () => {
+    const systems = [
+      { id: 1, name: "Alpha", hostname: "alpha.local", port: 22, osName: "Debian", isReachable: 1 },
+      { id: 2, name: "Beta", hostname: "192.0.2.20", port: 2222, osName: null, isReachable: -1 },
+    ];
+    const t = vi.fn((key: string, values?: Record<string, string | number>) => {
+      expect(typeof key).toBe("string");
+      return translateForLanguage("en", key, values);
+    });
+    expect(filterSystems(systems, "alpha", t).map((system) => system.id)).toEqual([1]);
+    expect(filterSystems(systems, "192.0.2.20:2222", t).map((system) => system.id)).toEqual([2]);
+    expect(filterSystems(systems, "offline", t).map((system) => system.id)).toEqual([2]);
+    expect(filterSystems(systems, "debian", t).map((system) => system.id)).toEqual([1]);
+    expect(filterSystems(systems, "approved", t)).toEqual([]);
+    expect(filterSystems(systems, "missing", t)).toEqual([]);
+    expect(filterSystems(systems, "", t)).toBe(systems);
   });
 
   test("renders a sudoers setup action and keeps its modal closed by default", () => {

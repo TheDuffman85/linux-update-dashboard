@@ -9,6 +9,10 @@ import { hiddenUpdates, systems, updateCache, updateHistory } from "../../server
 import dashboardRoutes from "../../server/routes/dashboard";
 import { initEncryptor } from "../../server/security";
 
+vi.mock("../../server/generated/distro-lifecycle-data.json", async () => ({
+  default: { catalog: (await import("../fixtures/distro-lifecycle-catalog.json")).default },
+}));
+
 describe("dashboard routes", () => {
   let tempDir: string;
 

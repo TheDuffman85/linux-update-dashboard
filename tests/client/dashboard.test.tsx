@@ -270,6 +270,61 @@ describe("Dashboard", () => {
     expect(html).toContain("Total Systems");
     expect(html).toContain("Total Updates");
     expect(html).toContain("Need Updates");
+    expect(html).toContain('aria-label="Search systems"');
+    expect(html.indexOf("data-dashboard-edit-toolbar")).toBeLessThan(html.indexOf('aria-label="Search systems"'));
+    expect(html.indexOf('aria-label="Search systems"')).toBeLessThan(html.indexOf("Edit mode"));
+    expect(html).not.toContain("Showing 1 of 1 systems");
+  });
+
+  test("filters dashboard groups, reveals collapsed matches, and disables editing during search", () => {
+    const base: System = mockUseDashboardSystems().data[0];
+    const systems = [
+      { ...base, dashboardGroupId: 1, osLifecycleStatus: "supported" as const, osLifecycleLabel: "" },
+      { ...base, id: 2, name: "Beta", hostname: "192.0.2.20", port: 2222, dashboardGroupId: 2, osLifecycleStatus: "supported" as const, osLifecycleLabel: "" },
+    ];
+    const renderSearch = (search: string, editMode = false, grouped = true) => renderToStaticMarkup(
+      <DashboardSystemGroups
+        systems={systems}
+        groups={grouped ? [
+          { id: 1, name: "Primary", sortOrder: 0, updatePriority: 1, createdAt: "", updatedAt: "" },
+          { id: 2, name: "Secondary", sortOrder: 1, updatePriority: 2, createdAt: "", updatedAt: "" },
+        ] : []}
+        ungroupedSortOrder={2}
+        ungroupedUpdatePriority={99}
+        editMode={editMode}
+        search={search}
+        onToggleEditMode={vi.fn()}
+        onCreateGroup={vi.fn()}
+        onRenameGroup={vi.fn()}
+        onDeleteGroup={vi.fn()}
+        saveGroupOrder={vi.fn()}
+        saveGroupUpdatePriority={vi.fn()}
+        saveSystemUpdatePriority={vi.fn()}
+        saveSystemUpgradeAllExclusion={vi.fn()}
+        saveSystemPlacements={vi.fn()}
+        onError={vi.fn()}
+        renderSystem={(system) => <span data-test-system={system.id}>{system.name}</span>}
+      />,
+    );
+    vi.stubGlobal("window", { localStorage: { getItem: (key: string) => key.endsWith("collapsed-groups") ? '["1"]' : null } });
+    try {
+      const matches = renderSearch("  ALPHA  ", true);
+      expect(matches).toContain('data-test-system="1"');
+      expect(matches).not.toContain('data-test-system="2"');
+      expect(matches).toContain("Primary");
+      expect(matches).not.toContain("Secondary");
+      expect(matches).not.toContain('draggable="true"');
+      expect(hasDisabledAttribute(getOpeningButtonTag(matches, "Edit mode"))).toBe(true);
+      expect(renderSearch("")).not.toContain('data-test-system="1"');
+      expect(renderSearch("")).toContain('data-test-system="2"');
+      expect(renderSearch("192.0.2.20:2222")).toContain('data-test-system="2"');
+      expect(renderSearch("missing")).toContain("No systems match your search.");
+      expect(renderSearch("missing")).not.toContain("No systems configured yet");
+      expect(renderSearch("alpha", false, false)).toContain('data-test-system="1"');
+      expect(renderSearch("alpha", false, false)).not.toContain('data-test-system="2"');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test("shows OS warnings as amber and labels Debian LTS warnings without dates", () => {

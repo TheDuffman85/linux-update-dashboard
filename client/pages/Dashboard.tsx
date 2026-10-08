@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router";
 import { Layout } from "../components/Layout";
+import { SearchField } from "../components/SearchField";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
@@ -397,6 +398,7 @@ export default function Dashboard() {
   const updateSystemUpgradeMode = useUpdateSystemUpgradeMode();
   const { addToast } = useToast();
   const { t } = useI18n();
+  const [systemSearch, setSystemSearch] = useState("");
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
   const [fullUpgradeSelections, setFullUpgradeSelections] = useState<Record<number, boolean>>({});
@@ -709,6 +711,15 @@ export default function Dashboard() {
       {/* System cards grid */}
       {systems && systems.length > 0 ? (
         <DashboardSystemGroups
+          search={systemSearch}
+          searchControl={
+            <SearchField
+              value={systemSearch}
+              onChange={setSystemSearch}
+              label={t("pages.systemsList.searchSystems")}
+              clearLabel={t("pages.systemsList.clearSystemSearch")}
+            />
+          }
           systems={systems}
           groups={dashboardGroups}
           ungroupedSortOrder={dashboardGroupConfig.ungroupedSortOrder}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
+import { SearchField } from "../components/SearchField";
 import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
@@ -19,6 +20,7 @@ import { useToast } from "../context/ToastContext";
 import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
+import { filterSystems, getLifecycleBadge } from "../lib/system-search";
 import { useSettings } from "../lib/settings";
 import { useI18n } from "../lib/i18n";
 
@@ -29,38 +31,6 @@ function moveSystem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   const [movedItem] = nextItems.splice(fromIndex, 1);
   nextItems.splice(toIndex, 0, movedItem);
   return nextItems;
-}
-
-function hasLtsLifecycleLabel(system: Pick<System, "osLifecycleLabel">): boolean {
-  return /\bLTS\b/.test(system.osLifecycleLabel);
-}
-
-function getLifecycleBadge(
-  system: Pick<System, "osLifecycleStatus" | "osLifecycleLabel">,
-  t: (key: string) => string,
-): { label: string; variant: "warning" | "danger" } | null {
-  if (system.osLifecycleStatus === "eol") return { label: t("pages.systemDetail.lifecycle.eol"), variant: "danger" };
-  if (system.osLifecycleStatus === "support_ended") {
-    return {
-      label: hasLtsLifecycleLabel(system)
-        ? t("pages.systemDetail.lifecycle.lts")
-        : t("pages.systemDetail.lifecycle.regularSupportEndedLower"),
-      variant: "warning",
-    };
-  }
-  if (system.osLifecycleStatus === "support_ending") {
-    return {
-      label: t("pages.systemDetail.lifecycle.securitySupportEndingSoonLower"),
-      variant: "warning",
-    };
-  }
-  if (system.osLifecycleStatus === "approaching_eol") {
-    return {
-      label: t("pages.systemDetail.lifecycle.eolSoon"),
-      variant: "warning",
-    };
-  }
-  return null;
 }
 
 export function getEditSystemIdFromRouteState(state: unknown): number | null {
@@ -81,6 +51,8 @@ export default function SystemsList() {
   const reorderSystems = useReorderSystems();
   const { addToast } = useToast();
   const { t } = useI18n();
+  const [search, setSearch] = useState("");
+  const searchActive = search.trim().length > 0;
   const [showForm, setShowForm] = useState(false);
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
   const [editSystem, setEditSystem] = useState<System | null>(
@@ -96,6 +68,8 @@ export default function SystemsList() {
   const sudoersPreview = useSudoersPreview(sudoersSystem?.id ?? 0, {
     enabled: sudoersSystem !== null,
   });
+  const filteredSystems = filterSystems(orderedSystems, search, t);
+  const reorderDisabled = searchActive || reorderSystems.isPending;
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
 
   useEffect(() => {
@@ -119,7 +93,7 @@ export default function SystemsList() {
 
   useEffect(() => {
     const tbody = tbodyRef.current;
-    if (!tbody || orderedSystems.length <= 1) {
+    if (!tbody || orderedSystems.length <= 1 || searchActive) {
       sortableRef.current?.destroy();
       sortableRef.current = null;
       return;
@@ -132,6 +106,7 @@ export default function SystemsList() {
       ghostClass: "sortable-ghost",
       chosenClass: "sortable-chosen",
       onEnd: (evt) => {
+        if (reorderDisabled) return;
         if (
           evt.oldIndex === undefined ||
           evt.newIndex === undefined ||
@@ -157,11 +132,11 @@ export default function SystemsList() {
       sortableRef.current?.destroy();
       sortableRef.current = null;
     };
-  }, [orderedSystems.length, reorderSystems, addToast]);
+  }, [orderedSystems.length, searchActive, reorderDisabled, reorderSystems, addToast]);
 
   useEffect(() => {
-    sortableRef.current?.option("disabled", reorderSystems.isPending);
-  }, [reorderSystems.isPending]);
+    sortableRef.current?.option("disabled", reorderDisabled);
+  }, [reorderDisabled]);
 
   const handleCreate = (data: Parameters<typeof createSystem.mutate>[0]) => {
     createSystem.mutate(data, {
@@ -224,6 +199,10 @@ export default function SystemsList() {
           <span className="spinner !w-6 !h-6 text-blue-500" />
         </div>
       ) : systems && systems.length > 0 ? (
+        <>
+          <div className="mb-4">
+            <SearchField value={search} onChange={setSearch} label={t("pages.systemsList.searchSystems")} clearLabel={t("pages.systemsList.clearSystemSearch")} />
+          </div>
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-border overflow-x-auto overflow-y-hidden">
           <table className="min-w-full w-max text-sm">
             <thead>
@@ -232,12 +211,16 @@ export default function SystemsList() {
                 <th className="px-2 sm:px-4 py-3 hidden sm:table-cell">{t("pages.systemsList.host")}</th>
                 <th className="px-2 sm:px-4 py-3 hidden md:table-cell">OS</th>
                 <th className="px-2 sm:px-4 py-3">{t("pages.systemsList.status")}</th>
+                <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">{t("pages.systemsList.availableUpdates")}</th>
                 <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">{t("pages.systemsList.lastChecked")}</th>
                 <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">{t("pages.systemsList.actions")}</th>
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {orderedSystems.map((s) => {
+              {filteredSystems.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{t("pages.systemsList.noSystemsMatchSearch")}</td></tr>
+              )}
+              {filteredSystems.map((s) => {
                 const lifecycleBadge = getLifecycleBadge(s, t);
                 return (
                   <tr
@@ -248,11 +231,12 @@ export default function SystemsList() {
                     <div className="flex items-center gap-2 min-w-0">
                       <span
                         className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
-                          reorderSystems.isPending || orderedSystems.length < 2
+                          reorderDisabled || orderedSystems.length < 2
                             ? "cursor-not-allowed opacity-40"
                             : "cursor-grab hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
                         }`}
-                        title={t("pages.systemsList.dragToReorder")}
+                        aria-disabled={reorderDisabled || orderedSystems.length < 2}
+                        title={searchActive ? undefined : t("pages.systemsList.dragToReorder")}
                         aria-label={t("pages.systemsList.dragToReorderName", { name: s.name })}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -309,6 +293,11 @@ export default function SystemsList() {
                       )}
                     </div>
                   </td>
+                  <td className="px-2 sm:px-4 py-3 text-right tabular-nums">
+                    <Badge variant={s.updateCount > 0 ? "warning" : "muted"}>
+                      {s.updateCount}
+                    </Badge>
+                  </td>
                   <td className="px-2 sm:px-4 py-3 hidden lg:table-cell">
                     {s.cacheTimestamp ? (
                       <AgoLabel timestamp={s.cacheTimestamp} stale={s.isStale} />
@@ -363,6 +352,7 @@ export default function SystemsList() {
             </tbody>
           </table>
         </div>
+        </>
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">{t("pages.systemsList.noSystemsConfiguredYet")}</p>

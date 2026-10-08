@@ -131,6 +131,51 @@ describe("email provider sending", () => {
     (nodemailer as any).createTransport = originalCreateTransport;
   });
 
+  test.each([
+    [undefined, "⚠️ Updates"],
+    ["", "⚠️ Updates"],
+    ["   ", "⚠️ Updates"],
+    ["[LINUX-UPDATE]", "[LINUX-UPDATE] ⚠️ Updates"],
+    ["  Ops Team  ", "Ops Team ⚠️ Updates"],
+    ["[更新]", "[更新] ⚠️ Updates"],
+  ])("sends the expected subject for prefix %j", async (prefix, expectedSubject) => {
+    let sentMail: Record<string, unknown> | undefined;
+    (nodemailer as any).createTransport = () => ({
+      sendMail: async (mailOptions: Record<string, unknown>) => {
+        sentMail = mailOptions;
+      },
+    });
+
+    const result = await emailProvider.send(
+      makeNotificationPayload({ title: "Updates", body: "hello", tags: ["warning"] }),
+      {
+        smtpHost: "smtp.example.com",
+        smtpFrom: "dashboard@example.com",
+        emailTo: "admin@example.com",
+        ...(prefix === undefined ? {} : { emailSubjectPrefix: prefix }),
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(sentMail?.subject).toBe(expectedSubject);
+    expect(sentMail?.text).toBe("hello");
+    expect(String(sentMail?.html)).toContain("<strong>⚠️ Updates</strong>");
+  });
+
+  test("prepends the prefix to subjects without an icon", async () => {
+    let subject: unknown;
+    (nodemailer as any).createTransport = () => ({
+      sendMail: async (mail: Record<string, unknown>) => { subject = mail.subject; },
+    });
+
+    await emailProvider.send(
+      makeNotificationPayload({ title: "Updates", body: "hello", tags: [] }),
+      { emailTo: "admin@example.com", emailSubjectPrefix: "[LINUX-UPDATE]" },
+    );
+
+    expect(subject).toBe("[LINUX-UPDATE] Updates");
+  });
+
   test("sends important metadata when override is important", async () => {
     let sentMail: Record<string, unknown> | undefined;
     let transportOptions: Record<string, unknown> | undefined;

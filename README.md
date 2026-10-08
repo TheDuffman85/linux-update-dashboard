@@ -310,12 +310,14 @@ Notification channels are configured from the **Notifications** page. Each chann
 
 | Type | Best for | Notes |
 | --- | --- | --- |
-| `Email` | inbox alerts | SMTP with optional auth, Plain SMTP, STARTTLS, or implicit TLS. Prefer `NODE_EXTRA_CA_CERTS` for private CAs. |
+| `Email` | inbox alerts | SMTP with optional auth, a customizable subject prefix, Plain SMTP, STARTTLS, or implicit TLS. Prefer `NODE_EXTRA_CA_CERTS` for private CAs. |
 | `Gotify` | self-hosted/mobile push | App token stored encrypted. |
 | `MQTT` | brokers, automations, Home Assistant | Generic event publishing plus optional Home Assistant MQTT Update entities. |
 | `ntfy` | lightweight push topics | Topic delivery with optional bearer token. |
 | `Telegram` | chat alerts and optional commands | Private-chat binding only. Commands are off by default and require confirmations for mutating actions. |
 | `Webhook` | custom integrations, chat ops, n8n, Node-RED, Discord | POST/PUT/PATCH, templates, query params, headers, auth, retries, timeout, and Discord preset. |
+
+For email channels, set **Email subject prefix** to a label such as `[LINUX-UPDATE]` to prepend it to every subject, including test emails and scheduled digests. Leave it blank to keep the original subjects.
 
 ### MQTT and Home Assistant
 

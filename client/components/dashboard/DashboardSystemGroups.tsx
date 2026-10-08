@@ -8,6 +8,7 @@ import {
 import type { DashboardGroup, System } from "../../lib/systems";
 import { useI18n } from "../../lib/i18n";
 import { Badge } from "../Badge";
+import { filterSystems } from "../../lib/system-search";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "ludash.dashboard.collapsed-groups";
 const GROUP_BADGES_STORAGE_KEY = "ludash.dashboard.group-badges";
@@ -187,7 +188,9 @@ export function DashboardSystemGroups({
   groups,
   ungroupedSortOrder,
   ungroupedUpdatePriority = Math.min(99, Math.max(1, ungroupedSortOrder + 1)),
-  editMode,
+  editMode: requestedEditMode,
+  search = "",
+  searchControl,
   onToggleEditMode,
   onCreateGroup,
   onRenameGroup,
@@ -206,6 +209,8 @@ export function DashboardSystemGroups({
   ungroupedSortOrder: number;
   ungroupedUpdatePriority: number;
   editMode: boolean;
+  search?: string;
+  searchControl?: ReactNode;
   onToggleEditMode: () => void;
   onCreateGroup: () => void;
   onRenameGroup: (group: DashboardGroup) => void;
@@ -229,6 +234,8 @@ export function DashboardSystemGroups({
   renderSystem: (system: System) => ReactNode;
 }) {
   const { t } = useI18n();
+  const searchActive = search.trim().length > 0;
+  const editMode = requestedEditMode && !searchActive;
   const [localGroups, setLocalGroups] = useState<DashboardGroup[]>(groups);
   const [localUngroupedSortOrder, setLocalUngroupedSortOrder] =
     useState(ungroupedSortOrder);
@@ -301,9 +308,20 @@ export function DashboardSystemGroups({
     localUngroupedUpdatePriority,
     t,
   ]);
+  const matchingSystems = useMemo(
+    () => filterSystems(localSystems, search, t),
+    [localSystems, search, t],
+  );
+  const matchingSystemIds = new Set(matchingSystems.map((system) => system.id));
+  const visibleSections = searchActive
+    ? sections.map((section) => ({
+        ...section,
+        systems: section.systems.filter((system) => matchingSystemIds.has(system.id)),
+      }))
+    : sections;
   const displayedSections = editMode
-    ? sections
-    : sections.filter((section) => section.systems.length > 0);
+    ? visibleSections
+    : visibleSections.filter((section) => section.systems.length > 0);
   const persistCollapsedGroups = (next: Set<string>) => {
     setCollapsedGroups(next);
     if (typeof window !== "undefined") {
@@ -315,7 +333,7 @@ export function DashboardSystemGroups({
   };
 
   const toggleCollapsed = (key: string) => {
-    if (editMode) return;
+    if (editMode || searchActive) return;
     const next = new Set(collapsedGroups);
     if (next.has(key)) next.delete(key);
     else next.add(key);
@@ -833,7 +851,7 @@ export function DashboardSystemGroups({
   };
 
   const renderSection = (section: DashboardSection, sectionIndex: number) => {
-    const isCollapsed = !editMode && collapsedGroups.has(section.key);
+    const isCollapsed = !editMode && !searchActive && collapsedGroups.has(section.key);
     const statusBadges = getGroupStatusBadges(section.systems, t);
     return (
       <section
@@ -969,6 +987,7 @@ export function DashboardSystemGroups({
               <button
                 type="button"
                 onClick={() => toggleCollapsed(section.key)}
+                disabled={searchActive}
                 aria-expanded={!isCollapsed}
                 aria-controls={`dashboard-group-content-${section.key}`}
                 className="flex min-w-0 items-center gap-2 text-left"
@@ -1265,7 +1284,12 @@ export function DashboardSystemGroups({
             </span>
           </div>
         )}
-        <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+        {searchControl && (
+          <div className="min-w-0 flex-1 basis-48 sm:max-w-md">
+            {searchControl}
+          </div>
+        )}
+        <div className={`flex flex-wrap items-center justify-end gap-2 ${searchControl ? "ml-auto shrink-0" : "flex-1"}`}>
           {editMode && (
             <button
               type="button"
@@ -1312,8 +1336,8 @@ export function DashboardSystemGroups({
           <button
             type="button"
             aria-pressed={editMode}
-            onClick={onToggleEditMode}
-            disabled={busy}
+            onClick={() => !searchActive && onToggleEditMode()}
+            disabled={busy || searchActive}
             className={`inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               editMode
                 ? "h-9 bg-blue-600 px-3 text-xs text-white shadow-sm hover:bg-blue-700"
@@ -1344,9 +1368,13 @@ export function DashboardSystemGroups({
           </button>
         </div>
       </div>
-      {flatMode ? (
+      {searchActive && matchingSystems.length === 0 ? (
+        <div className="py-16 text-center text-sm text-slate-500 dark:text-slate-400">
+          {t("pages.systemsList.noSystemsMatchSearch")}
+        </div>
+      ) : flatMode ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {[...localSystems].sort(compareSystems).map((system) => (
+          {[...matchingSystems].sort(compareSystems).map((system) => (
             <div
               key={system.id}
               onDragStart={(event) => event.preventDefault()}

@@ -1,5 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { resolveOsLifecycle } from "../../server/distro-lifecycle";
+
+// Lifecycle behavior must not depend on a changing build-time API snapshot.
+vi.mock("../../server/generated/distro-lifecycle-data.json", async () => ({
+  default: { catalog: (await import("../fixtures/distro-lifecycle-catalog.json")).default },
+}));
 
 describe("resolveOsLifecycle", () => {
   test("marks supported releases outside the warning window", () => {

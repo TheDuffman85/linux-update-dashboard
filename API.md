@@ -139,6 +139,11 @@ Long-running update routes usually return a job ID. Poll `GET /api/jobs/:id` for
 | POST   | `/api/notifications/test`                               | Test a notification config inline before saving.                              |
 | POST   | `/api/notifications/:id/test`                           | Send a test notification for a saved channel.                                 |
 
+Email channels accept an optional `config.emailSubjectPrefix` string, for example
+`"[LINUX-UPDATE]"`. It is prepended to every email subject with a separating space,
+including test emails and scheduled digests. Surrounding whitespace is trimmed;
+an omitted, empty, or whitespace-only prefix leaves the subject unchanged.
+
 ## Schedules
 
 | Method | Endpoint                 | Description        |
