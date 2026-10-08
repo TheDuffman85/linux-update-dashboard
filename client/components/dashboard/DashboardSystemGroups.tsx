@@ -12,6 +12,7 @@ import { filterSystems } from "../../lib/system-search";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "ludash.dashboard.collapsed-groups";
 const GROUP_BADGES_STORAGE_KEY = "ludash.dashboard.group-badges";
+const GROUP_UPGRADE_STORAGE_KEY = "ludash.dashboard.group-upgrade";
 const UNGROUPED_KEY = "ungrouped";
 
 type DragItem = { kind: "system"; id: number } | { kind: "group"; id: string };
@@ -55,12 +56,21 @@ function readCollapsedGroups(): Set<string> {
   }
 }
 
-function readGroupBadgesEnabled(): boolean {
+function readStoredFlag(key: string): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem(GROUP_BADGES_STORAGE_KEY) === "true";
+    return window.localStorage.getItem(key) === "true";
   } catch {
     return false;
+  }
+}
+
+function persistStoredFlag(key: string, value: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // The preference still applies for this session when storage is unavailable.
   }
 }
 
@@ -195,6 +205,7 @@ export function DashboardSystemGroups({
   onCreateGroup,
   onRenameGroup,
   onDeleteGroup,
+  onUpgradeGroup,
   saveGroupOrder,
   saveGroupUpdatePriority,
   saveSystemUpdatePriority,
@@ -215,6 +226,7 @@ export function DashboardSystemGroups({
   onCreateGroup: () => void;
   onRenameGroup: (group: DashboardGroup) => void;
   onDeleteGroup: (group: DashboardGroup) => void;
+  onUpgradeGroup?: (groupId: number | null, name: string) => void;
   saveGroupOrder: (groupKeys: Array<number | "ungrouped">) => Promise<void>;
   saveGroupUpdatePriority: (
     groupId: number | null,
@@ -244,8 +256,11 @@ export function DashboardSystemGroups({
   const [localSystems, setLocalSystems] = useState<System[]>(systems);
   const [collapsedGroups, setCollapsedGroups] =
     useState<Set<string>>(readCollapsedGroups);
-  const [groupBadgesEnabled, setGroupBadgesEnabled] = useState(
-    readGroupBadgesEnabled,
+  const [groupBadgesEnabled, setGroupBadgesEnabled] = useState(() =>
+    readStoredFlag(GROUP_BADGES_STORAGE_KEY),
+  );
+  const [groupUpgradeEnabled, setGroupUpgradeEnabled] = useState(() =>
+    readStoredFlag(GROUP_UPGRADE_STORAGE_KEY),
   );
   const [
     savingUpgradeAllPreselectionSystemIds,
@@ -343,13 +358,13 @@ export function DashboardSystemGroups({
   const toggleGroupBadges = () => {
     const next = !groupBadgesEnabled;
     setGroupBadgesEnabled(next);
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(GROUP_BADGES_STORAGE_KEY, String(next));
-      } catch {
-        // The preference still applies for this session when storage is unavailable.
-      }
-    }
+    persistStoredFlag(GROUP_BADGES_STORAGE_KEY, next);
+  };
+
+  const toggleGroupUpgrade = () => {
+    const next = !groupUpgradeEnabled;
+    setGroupUpgradeEnabled(next);
+    persistStoredFlag(GROUP_UPGRADE_STORAGE_KEY, next);
   };
 
   const beginDrag = (event: DragEvent, item: DragItem) => {
@@ -1098,6 +1113,27 @@ export function DashboardSystemGroups({
               {renderUpdatePriorityControl(section)}
             </div>
           )}
+          {!editMode &&
+            groupUpgradeEnabled &&
+            onUpgradeGroup &&
+            section.systems.some(
+              (system) => system.updateCount > 0 && !system.activeOperation,
+            ) && (
+              <button
+                type="button"
+                data-dashboard-group-upgrade
+                onClick={() => onUpgradeGroup(section.groupId, section.name)}
+                className="shrink-0 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                title={t("pages.dashboard.upgradeSystemsInName", {
+                  name: section.name,
+                })}
+                aria-label={t("pages.dashboard.upgradeSystemsInName", {
+                  name: section.name,
+                })}
+              >
+                {t("pages.dashboard.upgrade")}
+              </button>
+            )}
         </div>
         {!isCollapsed && (
           <div
@@ -1307,6 +1343,26 @@ export function DashboardSystemGroups({
                 />
               </span>
               {t("pages.dashboard.groupBadges")}
+            </button>
+          )}
+          {editMode && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={groupUpgradeEnabled}
+              onClick={toggleGroupUpgrade}
+              title={t("pages.dashboard.groupUpgradeHelp")}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-blue-200 bg-white/80 px-2.5 text-xs font-medium text-slate-600 transition-colors hover:bg-white dark:border-blue-800 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:bg-slate-900"
+            >
+              <span
+                className={`relative h-4 w-7 rounded-full transition-colors ${groupUpgradeEnabled ? "bg-blue-600" : "bg-slate-300 dark:bg-slate-600"}`}
+                aria-hidden="true"
+              >
+                <span
+                  className={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${groupUpgradeEnabled ? "translate-x-3" : ""}`}
+                />
+              </span>
+              {t("pages.dashboard.groupUpgrade")}
             </button>
           )}
           {editMode && (

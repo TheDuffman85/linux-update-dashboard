@@ -69,19 +69,69 @@ export function compareUpgradeModalGroups(
   );
 }
 
+export type UpgradeScope = { groupId: number | null; name: string };
+
+export function isSystemInUpgradeScope(
+  system: Pick<System, "dashboardGroupId">,
+  scope: UpgradeScope | null,
+  knownGroupIds: ReadonlySet<number>,
+): boolean {
+  if (!scope) return true;
+  if (scope.groupId === null) {
+    return system.dashboardGroupId === null || !knownGroupIds.has(system.dashboardGroupId);
+  }
+  return system.dashboardGroupId === scope.groupId;
+}
+
+export function getGroupSelectionState(
+  systemIds: number[],
+  selectedSystemIds: number[],
+): "all" | "some" | "none" {
+  const selectedCount = systemIds.filter((id) => selectedSystemIds.includes(id)).length;
+  if (selectedCount === 0) return "none";
+  return selectedCount === systemIds.length ? "all" : "some";
+}
+
 export function UpgradeModalGroupHeading({
   name,
   systemCount,
   updatePriority,
+  selectionState,
+  onToggleSelection,
 }: {
   name: string;
   systemCount: number;
   updatePriority: number;
+  selectionState?: "all" | "some" | "none";
+  onToggleSelection?: () => void;
 }) {
   const { t } = useI18n();
 
   return (
     <div className="mb-2 flex items-center gap-2">
+      {selectionState && onToggleSelection && (
+        <input
+          type="checkbox"
+          checked={selectionState === "all"}
+          ref={(element) => {
+            if (element) element.indeterminate = selectionState === "some";
+          }}
+          onChange={onToggleSelection}
+          className="ml-1 shrink-0 rounded"
+          aria-label={t(
+            selectionState === "all"
+              ? "pages.dashboard.deselectAllSystemsInName"
+              : "pages.dashboard.selectAllSystemsInName",
+            { name },
+          )}
+          title={t(
+            selectionState === "all"
+              ? "pages.dashboard.deselectAllSystemsInName"
+              : "pages.dashboard.selectAllSystemsInName",
+            { name },
+          )}
+        />
+      )}
       <h3 className="min-w-0 truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
         {name}
       </h3>
@@ -403,6 +453,7 @@ export default function Dashboard() {
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
   const [fullUpgradeSelections, setFullUpgradeSelections] = useState<Record<number, boolean>>({});
   const [upgradeModalSystems, setUpgradeModalSystems] = useState<System[]>([]);
+  const [upgradeScope, setUpgradeScope] = useState<UpgradeScope | null>(null);
   const [dashboardGroupEditMode, setDashboardGroupEditMode] = useState(false);
   const [renameDashboardGroup, setRenameDashboardGroup] = useState<DashboardGroup | null>(null);
   const [deleteDashboardGroupTarget, setDeleteDashboardGroupTarget] = useState<DashboardGroup | null>(null);
@@ -540,17 +591,24 @@ export default function Dashboard() {
     ungroupedUpdatePriority,
   ]);
 
-  const openUpgradeConfirm = () => {
-    setSelectedSystemIds(defaultSelectedSystemIds);
-    setUpgradeModalSystems(orderedModalCandidateSystems);
+  const openUpgradeConfirm = (scope: UpgradeScope | null = null) => {
+    const knownGroupIds = new Set(dashboardGroups.map((group) => group.id));
+    const candidates = orderedModalCandidateSystems.filter((system) =>
+      isSystemInUpgradeScope(system, scope, knownGroupIds)
+    );
+    const candidateIds = new Set(candidates.map((system) => system.id));
+    setUpgradeScope(scope);
+    setSelectedSystemIds(defaultSelectedSystemIds.filter((id) => candidateIds.has(id)));
+    setUpgradeModalSystems(candidates);
     setFullUpgradeSelections(Object.fromEntries(
-      orderedModalCandidateSystems.map((s) => [s.id, isDefaultFullUpgradeEnabled(s)])
+      candidates.map((s) => [s.id, isDefaultFullUpgradeEnabled(s)])
     ));
     setShowUpgradeConfirm(true);
   };
 
   const closeUpgradeConfirm = () => {
     setShowUpgradeConfirm(false);
+    setUpgradeScope(null);
     setSelectedSystemIds([]);
     setUpgradeModalSystems([]);
     setFullUpgradeSelections({});
@@ -561,6 +619,14 @@ export default function Dashboard() {
       current.includes(systemId)
         ? current.filter((id) => id !== systemId)
         : [...current, systemId]
+    );
+  };
+
+  const toggleGroupSelection = (systemIds: number[]) => {
+    setSelectedSystemIds((current) =>
+      getGroupSelectionState(systemIds, current) === "all"
+        ? current.filter((id) => !systemIds.includes(id))
+        : [...current, ...systemIds.filter((id) => !current.includes(id))]
     );
   };
 
@@ -681,7 +747,7 @@ export default function Dashboard() {
             )}
           </button>
           <button
-            onClick={openUpgradeConfirm}
+            onClick={() => openUpgradeConfirm()}
             disabled={disableUpgradeLauncher}
             className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
           >
@@ -729,6 +795,11 @@ export default function Dashboard() {
           onCreateGroup={handleCreateDashboardGroup}
           onRenameGroup={handleRenameDashboardGroup}
           onDeleteGroup={handleDeleteDashboardGroup}
+          onUpgradeGroup={
+            disableUpgradeLauncher
+              ? undefined
+              : (groupId, name) => openUpgradeConfirm({ groupId, name })
+          }
           saveGroupOrder={(groupKeys) => reorderDashboardGroups.mutateAsync(groupKeys).then(() => undefined)}
           saveGroupUpdatePriority={(groupId, updatePriority) =>
             updateDashboardGroupPriority
@@ -776,7 +847,15 @@ export default function Dashboard() {
         </div>
       )}
 
-      <Modal open={showUpgradeConfirm} onClose={closeUpgradeConfirm} title={t("pages.dashboard.upgradeAllSystems")}>
+      <Modal
+        open={showUpgradeConfirm}
+        onClose={closeUpgradeConfirm}
+        title={
+          upgradeScope
+            ? t("pages.dashboard.upgradeGroupName", { name: upgradeScope.name })
+            : t("pages.dashboard.upgradeAllSystems")
+        }
+      >
         <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">
           {t("pages.dashboard.applyUpdatesUpdatelabelAcrossSystemsSystemlabel", {
             updates: selectedUpdateCount,
@@ -802,6 +881,13 @@ export default function Dashboard() {
                       name={group.name}
                       systemCount={group.systems.length}
                       updatePriority={group.updatePriority}
+                      selectionState={getGroupSelectionState(
+                        group.systems.map((system) => system.id),
+                        selectedSystemIds,
+                      )}
+                      onToggleSelection={() =>
+                        toggleGroupSelection(group.systems.map((system) => system.id))
+                      }
                     />
                     <ul className="min-h-6 space-y-2">
                       {group.systems.map((s) => {
@@ -899,7 +985,7 @@ export default function Dashboard() {
             disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, upgradeAllBatch.isPending)}
             className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:w-auto"
           >
-            {t("pages.dashboard.upgradeAll")}
+            {upgradeScope ? t("pages.dashboard.upgradeGroup") : t("pages.dashboard.upgradeAll")}
           </button>
         </div>
       </Modal>
