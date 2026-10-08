@@ -390,7 +390,7 @@ If a sudo password is configured, it is sent only over the live SSH stdin stream
 
 The dashboard records `/etc/os-release` fields during refreshes and compares them with a bundled lifecycle catalog. Warnings appear on the dashboard, systems list, and system detail page when a release is near EOL, fully EOL, or in reduced support such as Debian LTS after regular Debian Security Support.
 
-The warning window is configurable from **Settings > Lifecycle Warnings** and defaults to 180 days. Supported catalog keys are `ubuntu`, `debian`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`.
+The warning window is configurable from **Settings > Lifecycle Warnings** and defaults to 180 days. Supported catalog keys are `ubuntu`, `debian`, `devuan`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Derivatives are matched only by their own `ID`; a distribution that is merely `ID_LIKE=debian` shows an unknown lifecycle status instead of being compared against unrelated Debian releases.
 
 Lifecycle data is generated at build time by `scripts/generate-distro-lifecycle-data.mjs` from `https://endoflife.date/api`. The generated data lives in `server/generated/distro-lifecycle-data.json`, with `server/default-distro-lifecycle-catalog.json` as an offline fallback. `pnpm run build` runs the generator before compiling and keeps or falls back to local data if the remote API is unavailable.
 

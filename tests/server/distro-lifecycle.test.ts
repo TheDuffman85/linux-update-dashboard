@@ -92,6 +92,28 @@ describe("resolveOsLifecycle", () => {
     expect(lifecycle.osLifecycleEolDate).toBe("2028-06-30");
   });
 
+  test("uses Devuan's own lifecycle instead of matching Debian by version", () => {
+    const lifecycle = resolveOsLifecycle(
+      { osId: "devuan", osIdLike: "debian", osName: "Devuan GNU/Linux 6 (excalibur)", osVersion: "6" },
+      { now: new Date("2026-06-16T12:00:00Z"), warningDays: 180 },
+    );
+
+    expect(lifecycle.osLifecycleStatus).toBe("supported");
+    expect(lifecycle.osLifecycleSupportEndDate).toBe("2028-08-09");
+    expect(lifecycle.osLifecycleEolDate).toBe("2030-06-30");
+    expect(lifecycle.osLifecycleLabel).toBe("Devuan 6 security support until 2028-08-09; LTS until 2030-06-30");
+  });
+
+  test("does not match Debian-like derivatives against Debian releases", () => {
+    const lifecycle = resolveOsLifecycle(
+      { osId: "linuxmint", osIdLike: "debian", osName: "LMDE 6 (faye)", osVersion: "6" },
+      { now: new Date("2026-06-16T12:00:00Z"), warningDays: 180 },
+    );
+
+    expect(lifecycle.osLifecycleStatus).toBe("unknown");
+    expect(lifecycle.osLifecycleEolDate).toBeNull();
+  });
+
   test("returns unknown for unsupported distro identities", () => {
     const lifecycle = resolveOsLifecycle(
       { osId: "arch", osName: "Arch Linux", osVersion: "" },

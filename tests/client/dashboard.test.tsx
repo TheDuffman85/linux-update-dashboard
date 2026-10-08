@@ -93,7 +93,9 @@ import Dashboard, {
   compareUpgradeModalGroups,
   compareUpgradeModalSystems,
   getDashboardUpgradeToast,
+  getGroupSelectionState,
   isPreselectedForUpgradeAll,
+  isSystemInUpgradeScope,
   isUpgradeAllSubmitDisabled,
   isUpgradePresetSelected,
   UpgradeModalGroupHeading,
@@ -274,6 +276,9 @@ describe("Dashboard", () => {
     expect(html.indexOf("data-dashboard-edit-toolbar")).toBeLessThan(html.indexOf('aria-label="Search systems"'));
     expect(html.indexOf('aria-label="Search systems"')).toBeLessThan(html.indexOf("Edit mode"));
     expect(html).not.toContain("Showing 1 of 1 systems");
+    expect(getOpeningButtonTag(html, "Need Updates")).toContain('aria-pressed="false"');
+    expect(html).toContain('placeholder="Search systems or filter, e.g. is:updates"');
+    expect(html).not.toMatch(/<button[^>]*>(?:(?!<\/button>).)*Total Updates/);
   });
 
   test("filters dashboard groups, reveals collapsed matches, and disables editing during search", () => {
@@ -322,6 +327,12 @@ describe("Dashboard", () => {
       expect(renderSearch("missing")).not.toContain("No systems configured yet");
       expect(renderSearch("alpha", false, false)).toContain('data-test-system="1"');
       expect(renderSearch("alpha", false, false)).not.toContain('data-test-system="2"');
+      systems[1] = { ...systems[1], updateCount: 0 };
+      const updatesOnly = renderSearch("is:updates");
+      expect(updatesOnly).toContain('data-test-system="1"');
+      expect(updatesOnly).not.toContain('data-test-system="2"');
+      expect(renderSearch("-is:updates")).toContain('data-test-system="2"');
+      expect(renderSearch("is:updates beta")).toContain("No systems match your search.");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -631,6 +642,50 @@ describe("Dashboard", () => {
   test("derives the Upgrade All initial selection from the saved preselection", () => {
     expect(isPreselectedForUpgradeAll({ excludeFromUpgradeAll: 0 })).toBe(true);
     expect(isPreselectedForUpgradeAll({ excludeFromUpgradeAll: 1 })).toBe(false);
+  });
+
+  test("limits upgrade candidates to the requested group scope", () => {
+    const knownGroupIds = new Set([1, 2]);
+
+    expect(isSystemInUpgradeScope({ dashboardGroupId: 2 }, null, knownGroupIds)).toBe(true);
+    expect(isSystemInUpgradeScope({ dashboardGroupId: 1 }, { groupId: 1, name: "Prod" }, knownGroupIds)).toBe(true);
+    expect(isSystemInUpgradeScope({ dashboardGroupId: 2 }, { groupId: 1, name: "Prod" }, knownGroupIds)).toBe(false);
+    expect(isSystemInUpgradeScope({ dashboardGroupId: null }, { groupId: 1, name: "Prod" }, knownGroupIds)).toBe(false);
+    expect(isSystemInUpgradeScope({ dashboardGroupId: null }, { groupId: null, name: "Ungrouped" }, knownGroupIds)).toBe(true);
+    expect(isSystemInUpgradeScope({ dashboardGroupId: 9 }, { groupId: null, name: "Ungrouped" }, knownGroupIds)).toBe(true);
+    expect(isSystemInUpgradeScope({ dashboardGroupId: 1 }, { groupId: null, name: "Ungrouped" }, knownGroupIds)).toBe(false);
+  });
+
+  test("derives the per-group selection state in the Upgrade All modal", () => {
+    expect(getGroupSelectionState([1, 2], [1, 2, 3])).toBe("all");
+    expect(getGroupSelectionState([1, 2], [2])).toBe("some");
+    expect(getGroupSelectionState([1, 2], [3])).toBe("none");
+  });
+
+  test("renders a select-all checkbox in the Upgrade All modal heading", () => {
+    const partial = renderToStaticMarkup(
+      <UpgradeModalGroupHeading
+        name="Production"
+        systemCount={2}
+        updatePriority={1}
+        selectionState="some"
+        onToggleSelection={vi.fn()}
+      />,
+    );
+    const all = renderToStaticMarkup(
+      <UpgradeModalGroupHeading
+        name="Production"
+        systemCount={2}
+        updatePriority={1}
+        selectionState="all"
+        onToggleSelection={vi.fn()}
+      />,
+    );
+
+    expect(partial).toContain('type="checkbox"');
+    expect(partial).toContain('aria-label="Select all systems in Production"');
+    expect(all).toContain('aria-label="Deselect all systems in Production"');
+    expect(all).toMatch(/checked=""/);
   });
 
   test("shows the group upgrade priority in the Upgrade All modal heading", () => {
@@ -1172,6 +1227,66 @@ describe("Dashboard", () => {
     );
 
     expect(html).toMatch(/role="switch" aria-checked="false" aria-label="Preselect Manual only for Upgrade All"/);
+  });
+
+  test("shows group Upgrade only when enabled and for groups with idle systems that have updates", () => {
+    const renderGroups = (
+      onUpgradeGroup?: (groupId: number | null, name: string) => void,
+      editMode = false,
+    ) =>
+      renderToStaticMarkup(
+        <DashboardSystemGroups
+          systems={[
+            { id: 1, name: "web-1", dashboardGroupId: 1, dashboardOrder: 1, updatePriority: 1, sortOrder: 1, updateCount: 3, activeOperation: null },
+            { id: 2, name: "db-1", dashboardGroupId: 2, dashboardOrder: 1, updatePriority: 1, sortOrder: 2, updateCount: 0, activeOperation: null },
+            { id: 3, name: "db-2", dashboardGroupId: 2, dashboardOrder: 2, updatePriority: 1, sortOrder: 3, updateCount: 2, activeOperation: { type: "upgrade_all", startedAt: "2026-01-01 00:00:00" } },
+          ] as System[]}
+          groups={[
+            { id: 1, name: "Web", sortOrder: 0, updatePriority: 1 },
+            { id: 2, name: "Databases", sortOrder: 1, updatePriority: 1 },
+          ] as never}
+          ungroupedSortOrder={2}
+          ungroupedUpdatePriority={1}
+          editMode={editMode}
+          onToggleEditMode={vi.fn()}
+          onCreateGroup={vi.fn()}
+          onRenameGroup={vi.fn()}
+          onDeleteGroup={vi.fn()}
+          onUpgradeGroup={onUpgradeGroup}
+          saveGroupOrder={vi.fn().mockResolvedValue(undefined)}
+          saveGroupUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+          saveSystemUpdatePriority={vi.fn().mockResolvedValue(undefined)}
+          saveSystemUpgradeAllExclusion={vi.fn().mockResolvedValue(undefined)}
+          saveSystemPlacements={vi.fn().mockResolvedValue(undefined)}
+          onError={vi.fn()}
+          renderSystem={(system) => <span>{system.name}</span>}
+        />,
+      );
+
+    // Disabled by default: no button, and the edit-mode switch is off.
+    expect(renderGroups(vi.fn())).not.toContain("data-dashboard-group-upgrade");
+    expect(renderGroups(vi.fn(), true)).toMatch(
+      /role="switch" aria-checked="false" title="Show an Upgrade button on each group"/,
+    );
+
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: vi.fn((key: string) =>
+          key === "ludash.dashboard.group-upgrade" ? "true" : null,
+        ),
+        setItem: vi.fn(),
+      },
+    });
+    try {
+      const html = renderGroups(vi.fn());
+      expect(html).toContain('aria-label="Upgrade systems in Web"');
+      expect(html).not.toContain('aria-label="Upgrade systems in Databases"');
+      expect(html).not.toContain('aria-label="Upgrade systems in Ungrouped"');
+      expect(renderGroups(undefined)).not.toContain("data-dashboard-group-upgrade");
+      expect(renderGroups(vi.fn(), true)).not.toContain("data-dashboard-group-upgrade");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test("sorts system names case-insensitively and with natural number ordering", () => {

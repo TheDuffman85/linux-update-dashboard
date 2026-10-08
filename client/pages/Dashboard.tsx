@@ -24,6 +24,8 @@ import type { DashboardGroup, System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useI18n } from "../lib/i18n";
+import { isDashboardStatusFilterActive, toggleDashboardStatusFilter } from "../lib/dashboard-search";
+import type { DashboardStatusFilter } from "../lib/dashboard-search";
 import { deriveSystemUpdateState, getSystemStatusDotClass, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 function compareDashboardOrder(a: System, b: System): number {
@@ -69,19 +71,69 @@ export function compareUpgradeModalGroups(
   );
 }
 
+export type UpgradeScope = { groupId: number | null; name: string };
+
+export function isSystemInUpgradeScope(
+  system: Pick<System, "dashboardGroupId">,
+  scope: UpgradeScope | null,
+  knownGroupIds: ReadonlySet<number>,
+): boolean {
+  if (!scope) return true;
+  if (scope.groupId === null) {
+    return system.dashboardGroupId === null || !knownGroupIds.has(system.dashboardGroupId);
+  }
+  return system.dashboardGroupId === scope.groupId;
+}
+
+export function getGroupSelectionState(
+  systemIds: number[],
+  selectedSystemIds: number[],
+): "all" | "some" | "none" {
+  const selectedCount = systemIds.filter((id) => selectedSystemIds.includes(id)).length;
+  if (selectedCount === 0) return "none";
+  return selectedCount === systemIds.length ? "all" : "some";
+}
+
 export function UpgradeModalGroupHeading({
   name,
   systemCount,
   updatePriority,
+  selectionState,
+  onToggleSelection,
 }: {
   name: string;
   systemCount: number;
   updatePriority: number;
+  selectionState?: "all" | "some" | "none";
+  onToggleSelection?: () => void;
 }) {
   const { t } = useI18n();
 
   return (
     <div className="mb-2 flex items-center gap-2">
+      {selectionState && onToggleSelection && (
+        <input
+          type="checkbox"
+          checked={selectionState === "all"}
+          ref={(element) => {
+            if (element) element.indeterminate = selectionState === "some";
+          }}
+          onChange={onToggleSelection}
+          className="ml-1 shrink-0 rounded"
+          aria-label={t(
+            selectionState === "all"
+              ? "pages.dashboard.deselectAllSystemsInName"
+              : "pages.dashboard.selectAllSystemsInName",
+            { name },
+          )}
+          title={t(
+            selectionState === "all"
+              ? "pages.dashboard.deselectAllSystemsInName"
+              : "pages.dashboard.selectAllSystemsInName",
+            { name },
+          )}
+        />
+      )}
       <h3 className="min-w-0 truncate text-sm font-semibold text-slate-700 dark:text-slate-100">
         {name}
       </h3>
@@ -256,12 +308,43 @@ export function getDashboardUpgradeToast(
   return { message: `${systemName}: Upgrade failed`, type: "danger" };
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 text-center">
+function StatCard({
+  label,
+  value,
+  color,
+  active = false,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <div className={`text-2xl font-semibold ${color}`}>{value}</div>
       <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{label}</div>
-    </div>
+    </>
+  );
+  if (!onClick) {
+    return (
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 text-center">
+        {content}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`bg-white dark:bg-slate-800 rounded-xl border p-4 text-center transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+        active ? "border-blue-500 ring-1 ring-blue-500" : "border-border"
+      }`}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -399,10 +482,15 @@ export default function Dashboard() {
   const { addToast } = useToast();
   const { t } = useI18n();
   const [systemSearch, setSystemSearch] = useState("");
+  const statFilterProps = (filter: DashboardStatusFilter) => ({
+    active: isDashboardStatusFilterActive(systemSearch, filter),
+    onClick: () => setSystemSearch((current) => toggleDashboardStatusFilter(current, filter)),
+  });
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
   const [fullUpgradeSelections, setFullUpgradeSelections] = useState<Record<number, boolean>>({});
   const [upgradeModalSystems, setUpgradeModalSystems] = useState<System[]>([]);
+  const [upgradeScope, setUpgradeScope] = useState<UpgradeScope | null>(null);
   const [dashboardGroupEditMode, setDashboardGroupEditMode] = useState(false);
   const [renameDashboardGroup, setRenameDashboardGroup] = useState<DashboardGroup | null>(null);
   const [deleteDashboardGroupTarget, setDeleteDashboardGroupTarget] = useState<DashboardGroup | null>(null);
@@ -540,17 +628,24 @@ export default function Dashboard() {
     ungroupedUpdatePriority,
   ]);
 
-  const openUpgradeConfirm = () => {
-    setSelectedSystemIds(defaultSelectedSystemIds);
-    setUpgradeModalSystems(orderedModalCandidateSystems);
+  const openUpgradeConfirm = (scope: UpgradeScope | null = null) => {
+    const knownGroupIds = new Set(dashboardGroups.map((group) => group.id));
+    const candidates = orderedModalCandidateSystems.filter((system) =>
+      isSystemInUpgradeScope(system, scope, knownGroupIds)
+    );
+    const candidateIds = new Set(candidates.map((system) => system.id));
+    setUpgradeScope(scope);
+    setSelectedSystemIds(defaultSelectedSystemIds.filter((id) => candidateIds.has(id)));
+    setUpgradeModalSystems(candidates);
     setFullUpgradeSelections(Object.fromEntries(
-      orderedModalCandidateSystems.map((s) => [s.id, isDefaultFullUpgradeEnabled(s)])
+      candidates.map((s) => [s.id, isDefaultFullUpgradeEnabled(s)])
     ));
     setShowUpgradeConfirm(true);
   };
 
   const closeUpgradeConfirm = () => {
     setShowUpgradeConfirm(false);
+    setUpgradeScope(null);
     setSelectedSystemIds([]);
     setUpgradeModalSystems([]);
     setFullUpgradeSelections({});
@@ -561,6 +656,14 @@ export default function Dashboard() {
       current.includes(systemId)
         ? current.filter((id) => id !== systemId)
         : [...current, systemId]
+    );
+  };
+
+  const toggleGroupSelection = (systemIds: number[]) => {
+    setSelectedSystemIds((current) =>
+      getGroupSelectionState(systemIds, current) === "all"
+        ? current.filter((id) => !systemIds.includes(id))
+        : [...current, ...systemIds.filter((id) => !current.includes(id))]
     );
   };
 
@@ -681,7 +784,7 @@ export default function Dashboard() {
             )}
           </button>
           <button
-            onClick={openUpgradeConfirm}
+            onClick={() => openUpgradeConfirm()}
             disabled={disableUpgradeLauncher}
             className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
           >
@@ -693,17 +796,17 @@ export default function Dashboard() {
       {/* Stats */}
       {stats && (
         <div className={`grid grid-cols-2 sm:grid-cols-3 ${getStatsGridClass(stats)} gap-3 mb-6`}>
-          <StatCard label={t("pages.dashboard.totalSystems")} value={stats.total} color="text-slate-700 dark:text-slate-100" />
-          <StatCard label={t("pages.dashboard.upToDate2")} value={stats.upToDate} color="text-slate-700 dark:text-slate-100" />
-          <StatCard label={t("pages.dashboard.needUpdates")} value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" />
+          <StatCard label={t("pages.dashboard.totalSystems")} value={stats.total} color="text-slate-700 dark:text-slate-100" onClick={() => setSystemSearch((current) => toggleDashboardStatusFilter(current, null))} />
+          <StatCard label={t("pages.dashboard.upToDate2")} value={stats.upToDate} color="text-slate-700 dark:text-slate-100" {...statFilterProps("uptodate")} />
+          <StatCard label={t("pages.dashboard.needUpdates")} value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" {...statFilterProps("updates")} />
           {stats.needsReboot > 0 && (
-            <StatCard label={t("pages.dashboard.needsReboot")} value={stats.needsReboot} color="text-amber-600 dark:text-amber-500" />
+            <StatCard label={t("pages.dashboard.needsReboot")} value={stats.needsReboot} color="text-amber-600 dark:text-amber-500" {...statFilterProps("reboot")} />
           )}
           {stats.lifecycleWarnings > 0 && (
-            <StatCard label={t("pages.dashboard.osWarnings")} value={stats.lifecycleWarnings} color="text-amber-600 dark:text-amber-500" />
+            <StatCard label={t("pages.dashboard.osWarnings")} value={stats.lifecycleWarnings} color="text-amber-600 dark:text-amber-500" {...statFilterProps("os-warning")} />
           )}
-          <StatCard label={t("pages.dashboard.checkIssues")} value={stats.checkIssues} color="text-amber-600 dark:text-amber-500" />
-          <StatCard label={t("pages.dashboard.unreachable")} value={stats.unreachable} color="text-red-600 dark:text-red-500" />
+          <StatCard label={t("pages.dashboard.checkIssues")} value={stats.checkIssues} color="text-amber-600 dark:text-amber-500" {...statFilterProps("issues")} />
+          <StatCard label={t("pages.dashboard.unreachable")} value={stats.unreachable} color="text-red-600 dark:text-red-500" {...statFilterProps("unreachable")} />
           <StatCard label={t("pages.dashboard.totalUpdates")} value={stats.totalUpdates} color="text-slate-700 dark:text-slate-100" />
         </div>
       )}
@@ -717,6 +820,7 @@ export default function Dashboard() {
               value={systemSearch}
               onChange={setSystemSearch}
               label={t("pages.systemsList.searchSystems")}
+              placeholder={t("pages.dashboard.searchSystemsHint")}
               clearLabel={t("pages.systemsList.clearSystemSearch")}
             />
           }
@@ -729,6 +833,11 @@ export default function Dashboard() {
           onCreateGroup={handleCreateDashboardGroup}
           onRenameGroup={handleRenameDashboardGroup}
           onDeleteGroup={handleDeleteDashboardGroup}
+          onUpgradeGroup={
+            disableUpgradeLauncher
+              ? undefined
+              : (groupId, name) => openUpgradeConfirm({ groupId, name })
+          }
           saveGroupOrder={(groupKeys) => reorderDashboardGroups.mutateAsync(groupKeys).then(() => undefined)}
           saveGroupUpdatePriority={(groupId, updatePriority) =>
             updateDashboardGroupPriority
@@ -776,7 +885,15 @@ export default function Dashboard() {
         </div>
       )}
 
-      <Modal open={showUpgradeConfirm} onClose={closeUpgradeConfirm} title={t("pages.dashboard.upgradeAllSystems")}>
+      <Modal
+        open={showUpgradeConfirm}
+        onClose={closeUpgradeConfirm}
+        title={
+          upgradeScope
+            ? t("pages.dashboard.upgradeGroupName", { name: upgradeScope.name })
+            : t("pages.dashboard.upgradeAllSystems")
+        }
+      >
         <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">
           {t("pages.dashboard.applyUpdatesUpdatelabelAcrossSystemsSystemlabel", {
             updates: selectedUpdateCount,
@@ -802,6 +919,13 @@ export default function Dashboard() {
                       name={group.name}
                       systemCount={group.systems.length}
                       updatePriority={group.updatePriority}
+                      selectionState={getGroupSelectionState(
+                        group.systems.map((system) => system.id),
+                        selectedSystemIds,
+                      )}
+                      onToggleSelection={() =>
+                        toggleGroupSelection(group.systems.map((system) => system.id))
+                      }
                     />
                     <ul className="min-h-6 space-y-2">
                       {group.systems.map((s) => {
@@ -899,7 +1023,7 @@ export default function Dashboard() {
             disabled={isUpgradeAllSubmitDisabled(selectedSystems.length, upgradeAllBatch.isPending)}
             className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:w-auto"
           >
-            {t("pages.dashboard.upgradeAll")}
+            {upgradeScope ? t("pages.dashboard.upgradeGroup") : t("pages.dashboard.upgradeAll")}
           </button>
         </div>
       </Modal>
