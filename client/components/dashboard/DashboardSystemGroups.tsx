@@ -9,6 +9,7 @@ import type { DashboardGroup, System } from "../../lib/systems";
 import { useI18n } from "../../lib/i18n";
 import { Badge } from "../Badge";
 import { filterSystems } from "../../lib/system-search";
+import { filterSystemsByStatus, parseDashboardSearch } from "../../lib/dashboard-search";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "ludash.dashboard.collapsed-groups";
 const GROUP_BADGES_STORAGE_KEY = "ludash.dashboard.group-badges";
@@ -323,10 +324,10 @@ export function DashboardSystemGroups({
     localUngroupedUpdatePriority,
     t,
   ]);
-  const matchingSystems = useMemo(
-    () => filterSystems(localSystems, search, t),
-    [localSystems, search, t],
-  );
+  const matchingSystems = useMemo(() => {
+    const { filters, text } = parseDashboardSearch(search);
+    return filterSystems(filterSystemsByStatus(localSystems, filters), text, t);
+  }, [localSystems, search, t]);
   const matchingSystemIds = new Set(matchingSystems.map((system) => system.id));
   const visibleSections = searchActive
     ? sections.map((section) => ({

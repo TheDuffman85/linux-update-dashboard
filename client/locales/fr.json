@@ -231,6 +231,7 @@
   "pages.dashboard.maintaining": "Maintenance...",
   "pages.dashboard.needsReboot": "Redémarrage nécessaire",
   "pages.dashboard.needUpdates": "Mises à jour nécessaires",
+  "pages.dashboard.searchSystemsHint": "Rechercher ou filtrer des systèmes, p. ex. is:updates",
   "pages.dashboard.noSystemsConfiguredYet": "Aucun système configuré pour l'instant",
   "pages.dashboard.noSystemsHaveUpdates": "Aucun système n'a de mises à jour pour le moment.",
   "pages.dashboard.noUpdates": "aucune mise à jour",

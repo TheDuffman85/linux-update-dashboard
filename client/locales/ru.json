@@ -231,6 +231,7 @@
   "pages.dashboard.maintaining": "Обслуживание...",
   "pages.dashboard.needsReboot": "Нужна перезагрузка",
   "pages.dashboard.needUpdates": "Нужны обновления",
+  "pages.dashboard.searchSystemsHint": "Поиск или фильтр систем, напр. is:updates",
   "pages.dashboard.noSystemsConfiguredYet": "Системы пока не настроены",
   "pages.dashboard.noSystemsHaveUpdates": "Сейчас ни у одной системы нет обновлений.",
   "pages.dashboard.noUpdates": "нет обновлений",

@@ -231,6 +231,7 @@
   "pages.dashboard.maintaining": "मेंटेनेंस हो रहा है...",
   "pages.dashboard.needsReboot": "रीबूट चाहिए",
   "pages.dashboard.needUpdates": "अपडेट चाहिए",
+  "pages.dashboard.searchSystemsHint": "सिस्टम खोजें या फ़िल्टर करें, जैसे is:updates",
   "pages.dashboard.noSystemsConfiguredYet": "अभी कोई सिस्टम कॉन्फ़िगर नहीं",
   "pages.dashboard.noSystemsHaveUpdates": "अभी किसी सिस्टम में अपडेट नहीं हैं.",
   "pages.dashboard.noUpdates": "कोई अपडेट नहीं",

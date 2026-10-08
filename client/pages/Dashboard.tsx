@@ -24,6 +24,8 @@ import type { DashboardGroup, System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useI18n } from "../lib/i18n";
+import { isDashboardStatusFilterActive, toggleDashboardStatusFilter } from "../lib/dashboard-search";
+import type { DashboardStatusFilter } from "../lib/dashboard-search";
 import { deriveSystemUpdateState, getSystemStatusDotClass, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 function compareDashboardOrder(a: System, b: System): number {
@@ -306,12 +308,43 @@ export function getDashboardUpgradeToast(
   return { message: `${systemName}: Upgrade failed`, type: "danger" };
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 text-center">
+function StatCard({
+  label,
+  value,
+  color,
+  active = false,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <div className={`text-2xl font-semibold ${color}`}>{value}</div>
       <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{label}</div>
-    </div>
+    </>
+  );
+  if (!onClick) {
+    return (
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 text-center">
+        {content}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`bg-white dark:bg-slate-800 rounded-xl border p-4 text-center transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+        active ? "border-blue-500 ring-1 ring-blue-500" : "border-border"
+      }`}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -449,6 +482,10 @@ export default function Dashboard() {
   const { addToast } = useToast();
   const { t } = useI18n();
   const [systemSearch, setSystemSearch] = useState("");
+  const statFilterProps = (filter: DashboardStatusFilter) => ({
+    active: isDashboardStatusFilterActive(systemSearch, filter),
+    onClick: () => setSystemSearch((current) => toggleDashboardStatusFilter(current, filter)),
+  });
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<number[]>([]);
   const [fullUpgradeSelections, setFullUpgradeSelections] = useState<Record<number, boolean>>({});
@@ -759,17 +796,17 @@ export default function Dashboard() {
       {/* Stats */}
       {stats && (
         <div className={`grid grid-cols-2 sm:grid-cols-3 ${getStatsGridClass(stats)} gap-3 mb-6`}>
-          <StatCard label={t("pages.dashboard.totalSystems")} value={stats.total} color="text-slate-700 dark:text-slate-100" />
-          <StatCard label={t("pages.dashboard.upToDate2")} value={stats.upToDate} color="text-slate-700 dark:text-slate-100" />
-          <StatCard label={t("pages.dashboard.needUpdates")} value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" />
+          <StatCard label={t("pages.dashboard.totalSystems")} value={stats.total} color="text-slate-700 dark:text-slate-100" onClick={() => setSystemSearch((current) => toggleDashboardStatusFilter(current, null))} />
+          <StatCard label={t("pages.dashboard.upToDate2")} value={stats.upToDate} color="text-slate-700 dark:text-slate-100" {...statFilterProps("uptodate")} />
+          <StatCard label={t("pages.dashboard.needUpdates")} value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" {...statFilterProps("updates")} />
           {stats.needsReboot > 0 && (
-            <StatCard label={t("pages.dashboard.needsReboot")} value={stats.needsReboot} color="text-amber-600 dark:text-amber-500" />
+            <StatCard label={t("pages.dashboard.needsReboot")} value={stats.needsReboot} color="text-amber-600 dark:text-amber-500" {...statFilterProps("reboot")} />
           )}
           {stats.lifecycleWarnings > 0 && (
-            <StatCard label={t("pages.dashboard.osWarnings")} value={stats.lifecycleWarnings} color="text-amber-600 dark:text-amber-500" />
+            <StatCard label={t("pages.dashboard.osWarnings")} value={stats.lifecycleWarnings} color="text-amber-600 dark:text-amber-500" {...statFilterProps("os-warning")} />
           )}
-          <StatCard label={t("pages.dashboard.checkIssues")} value={stats.checkIssues} color="text-amber-600 dark:text-amber-500" />
-          <StatCard label={t("pages.dashboard.unreachable")} value={stats.unreachable} color="text-red-600 dark:text-red-500" />
+          <StatCard label={t("pages.dashboard.checkIssues")} value={stats.checkIssues} color="text-amber-600 dark:text-amber-500" {...statFilterProps("issues")} />
+          <StatCard label={t("pages.dashboard.unreachable")} value={stats.unreachable} color="text-red-600 dark:text-red-500" {...statFilterProps("unreachable")} />
           <StatCard label={t("pages.dashboard.totalUpdates")} value={stats.totalUpdates} color="text-slate-700 dark:text-slate-100" />
         </div>
       )}
@@ -783,6 +820,7 @@ export default function Dashboard() {
               value={systemSearch}
               onChange={setSystemSearch}
               label={t("pages.systemsList.searchSystems")}
+              placeholder={t("pages.dashboard.searchSystemsHint")}
               clearLabel={t("pages.systemsList.clearSystemSearch")}
             />
           }

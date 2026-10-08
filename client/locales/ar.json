@@ -231,6 +231,7 @@
   "pages.dashboard.maintaining": "جار الصيانة...",
   "pages.dashboard.needsReboot": "يحتاج إلى إعادة تشغيل",
   "pages.dashboard.needUpdates": "تحتاج إلى تحديثات",
+  "pages.dashboard.searchSystemsHint": "ابحث عن الأنظمة أو صفّها، مثل is:updates",
   "pages.dashboard.noSystemsConfiguredYet": "لم تتم تهيئة أي أنظمة بعد",
   "pages.dashboard.noSystemsHaveUpdates": "لا توجد أنظمة لديها تحديثات الآن.",
   "pages.dashboard.noUpdates": "لا توجد تحديثات",

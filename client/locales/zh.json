@@ -231,6 +231,7 @@
   "pages.dashboard.maintaining": "正在维护...",
   "pages.dashboard.needsReboot": "需要重启",
   "pages.dashboard.needUpdates": "需要更新",
+  "pages.dashboard.searchSystemsHint": "搜索或筛选系统，例如 is:updates",
   "pages.dashboard.noSystemsConfiguredYet": "还没有配置系统",
   "pages.dashboard.noSystemsHaveUpdates": "当前没有系统有更新。",
   "pages.dashboard.noUpdates": "无更新",

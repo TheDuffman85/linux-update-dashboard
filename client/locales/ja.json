@@ -231,6 +231,7 @@
   "pages.dashboard.maintaining": "メンテナンス中...",
   "pages.dashboard.needsReboot": "再起動が必要",
   "pages.dashboard.needUpdates": "更新が必要",
+  "pages.dashboard.searchSystemsHint": "システムを検索または絞り込み (例: is:updates)",
   "pages.dashboard.noSystemsConfiguredYet": "システムはまだ設定されていません",
   "pages.dashboard.noSystemsHaveUpdates": "現在、更新があるシステムはありません。",
   "pages.dashboard.noUpdates": "更新なし",

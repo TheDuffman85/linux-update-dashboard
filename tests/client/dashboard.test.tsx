@@ -276,6 +276,9 @@ describe("Dashboard", () => {
     expect(html.indexOf("data-dashboard-edit-toolbar")).toBeLessThan(html.indexOf('aria-label="Search systems"'));
     expect(html.indexOf('aria-label="Search systems"')).toBeLessThan(html.indexOf("Edit mode"));
     expect(html).not.toContain("Showing 1 of 1 systems");
+    expect(getOpeningButtonTag(html, "Need Updates")).toContain('aria-pressed="false"');
+    expect(html).toContain('placeholder="Search systems or filter, e.g. is:updates"');
+    expect(html).not.toMatch(/<button[^>]*>(?:(?!<\/button>).)*Total Updates/);
   });
 
   test("filters dashboard groups, reveals collapsed matches, and disables editing during search", () => {
@@ -324,6 +327,12 @@ describe("Dashboard", () => {
       expect(renderSearch("missing")).not.toContain("No systems configured yet");
       expect(renderSearch("alpha", false, false)).toContain('data-test-system="1"');
       expect(renderSearch("alpha", false, false)).not.toContain('data-test-system="2"');
+      systems[1] = { ...systems[1], updateCount: 0 };
+      const updatesOnly = renderSearch("is:updates");
+      expect(updatesOnly).toContain('data-test-system="1"');
+      expect(updatesOnly).not.toContain('data-test-system="2"');
+      expect(renderSearch("-is:updates")).toContain('data-test-system="2"');
+      expect(renderSearch("is:updates beta")).toContain("No systems match your search.");
     } finally {
       vi.unstubAllGlobals();
     }
