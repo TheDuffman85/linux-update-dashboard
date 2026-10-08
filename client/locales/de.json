@@ -1119,6 +1119,7 @@
   "pages.systemsList.addSystem": "System hinzufügen",
   "pages.systemsList.addYourFirstSystem": "Erstes System hinzufügen",
   "pages.systemsList.areYouSureYouWantToDeleteThis": "Möchtest du dieses System wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
+  "pages.systemsList.availableUpdates": "Verfügbare Updates",
   "pages.systemsList.delete": "Löschen",
   "pages.systemsList.deleteSystem": "System löschen",
   "pages.systemsList.deleteSystem2": "System löschen",

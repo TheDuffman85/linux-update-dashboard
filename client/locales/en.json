@@ -1119,6 +1119,7 @@
   "pages.systemsList.addSystem": "Add System",
   "pages.systemsList.addYourFirstSystem": "Add Your First System",
   "pages.systemsList.areYouSureYouWantToDeleteThis": "Are you sure you want to delete this system? This action cannot be undone.",
+  "pages.systemsList.availableUpdates": "Available Updates",
   "pages.systemsList.delete": "Delete",
   "pages.systemsList.deleteSystem": "Delete system",
   "pages.systemsList.deleteSystem2": "Delete System",

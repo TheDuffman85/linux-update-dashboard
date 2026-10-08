@@ -211,13 +211,14 @@ export default function SystemsList() {
                 <th className="px-2 sm:px-4 py-3 hidden sm:table-cell">{t("pages.systemsList.host")}</th>
                 <th className="px-2 sm:px-4 py-3 hidden md:table-cell">OS</th>
                 <th className="px-2 sm:px-4 py-3">{t("pages.systemsList.status")}</th>
+                <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">{t("pages.systemsList.availableUpdates")}</th>
                 <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">{t("pages.systemsList.lastChecked")}</th>
                 <th className="px-2 sm:px-4 py-3 text-right whitespace-nowrap">{t("pages.systemsList.actions")}</th>
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
               {filteredSystems.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{t("pages.systemsList.noSystemsMatchSearch")}</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">{t("pages.systemsList.noSystemsMatchSearch")}</td></tr>
               )}
               {filteredSystems.map((s) => {
                 const lifecycleBadge = getLifecycleBadge(s, t);
@@ -291,6 +292,11 @@ export default function SystemsList() {
                         <Badge variant="danger" small>{t("pages.systemsList.pkgIssue")}</Badge>
                       )}
                     </div>
+                  </td>
+                  <td className="px-2 sm:px-4 py-3 text-right tabular-nums">
+                    <Badge variant={s.updateCount > 0 ? "warning" : "muted"}>
+                      {s.updateCount}
+                    </Badge>
                   </td>
                   <td className="px-2 sm:px-4 py-3 hidden lg:table-cell">
                     {s.cacheTimestamp ? (

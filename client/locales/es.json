@@ -1119,6 +1119,7 @@
   "pages.systemsList.addSystem": "Añadir sistema",
   "pages.systemsList.addYourFirstSystem": "Añadir tu primer sistema",
   "pages.systemsList.areYouSureYouWantToDeleteThis": "¿Seguro que quieres eliminar este sistema? Esta acción no se puede deshacer.",
+  "pages.systemsList.availableUpdates": "Actualizaciones disponibles",
   "pages.systemsList.delete": "Eliminar",
   "pages.systemsList.deleteSystem": "Eliminar sistema",
   "pages.systemsList.deleteSystem2": "Eliminar sistema",

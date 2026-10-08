@@ -1119,6 +1119,7 @@
   "pages.systemsList.addSystem": "システムを追加",
   "pages.systemsList.addYourFirstSystem": "最初のシステムを追加",
   "pages.systemsList.areYouSureYouWantToDeleteThis": "この システム? この操作は元に戻せません。",
+  "pages.systemsList.availableUpdates": "利用可能な更新",
   "pages.systemsList.delete": "削除",
   "pages.systemsList.deleteSystem": "システムを削除",
   "pages.systemsList.deleteSystem2": "システムを削除",

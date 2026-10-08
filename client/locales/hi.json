@@ -1119,6 +1119,7 @@
   "pages.systemsList.addSystem": "सिस्टम जोड़ें",
   "pages.systemsList.addYourFirstSystem": "पहला सिस्टम जोड़ें",
   "pages.systemsList.areYouSureYouWantToDeleteThis": "क्या आप वाकई यह सिस्टम हटाना चाहते हैं? यह कार्रवाई वापस नहीं ली जा सकती.",
+  "pages.systemsList.availableUpdates": "उपलब्ध अपडेट",
   "pages.systemsList.delete": "हटाएं",
   "pages.systemsList.deleteSystem": "सिस्टम हटाएं",
   "pages.systemsList.deleteSystem2": "सिस्टम हटाएं",

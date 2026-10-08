@@ -1119,6 +1119,7 @@
   "pages.systemsList.addSystem": "Добавить систему",
   "pages.systemsList.addYourFirstSystem": "Добавить первую систему",
   "pages.systemsList.areYouSureYouWantToDeleteThis": "Вы уверены, что хотите удалить эту систему? Это действие нельзя отменить.",
+  "pages.systemsList.availableUpdates": "Доступные обновления",
   "pages.systemsList.delete": "Удалить",
   "pages.systemsList.deleteSystem": "Удалить систему",
   "pages.systemsList.deleteSystem2": "Удалить систему",

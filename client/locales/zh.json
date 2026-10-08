@@ -1119,6 +1119,7 @@
   "pages.systemsList.addSystem": "添加系统",
   "pages.systemsList.addYourFirstSystem": "添加第一个系统",
   "pages.systemsList.areYouSureYouWantToDeleteThis": "确定要删除此系统吗？此操作无法撤销。",
+  "pages.systemsList.availableUpdates": "可用更新",
   "pages.systemsList.delete": "删除",
   "pages.systemsList.deleteSystem": "删除系统",
   "pages.systemsList.deleteSystem2": "删除系统",
