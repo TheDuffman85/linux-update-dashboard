@@ -24,7 +24,7 @@ import type { DashboardGroup, System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useI18n } from "../lib/i18n";
-import { isDashboardStatusFilterActive, toggleDashboardStatusFilter } from "../lib/dashboard-search";
+import { isDashboardStatusFilterActive, parseDashboardSearch, toggleDashboardStatusFilter } from "../lib/dashboard-search";
 import type { DashboardStatusFilter } from "../lib/dashboard-search";
 import { deriveSystemUpdateState, getSystemStatusDotClass, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
@@ -339,7 +339,7 @@ function StatCard({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`bg-white dark:bg-slate-800 rounded-xl border p-4 text-center transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+      className={`bg-white dark:bg-slate-800 rounded-xl border p-4 text-center cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
         active ? "border-blue-500 ring-1 ring-blue-500" : "border-border"
       }`}
     >
@@ -482,6 +482,7 @@ export default function Dashboard() {
   const { addToast } = useToast();
   const { t } = useI18n();
   const [systemSearch, setSystemSearch] = useState("");
+  const hasStatusFilter = parseDashboardSearch(systemSearch).filters.length > 0;
   const statFilterProps = (filter: DashboardStatusFilter) => ({
     active: isDashboardStatusFilterActive(systemSearch, filter),
     onClick: () => setSystemSearch((current) => toggleDashboardStatusFilter(current, filter)),
@@ -796,7 +797,7 @@ export default function Dashboard() {
       {/* Stats */}
       {stats && (
         <div className={`grid grid-cols-2 sm:grid-cols-3 ${getStatsGridClass(stats)} gap-3 mb-6`}>
-          <StatCard label={t("pages.dashboard.totalSystems")} value={stats.total} color="text-slate-700 dark:text-slate-100" onClick={() => setSystemSearch((current) => toggleDashboardStatusFilter(current, null))} />
+          <StatCard label={t("pages.dashboard.totalSystems")} value={stats.total} color="text-slate-700 dark:text-slate-100" onClick={hasStatusFilter ? () => setSystemSearch((current) => toggleDashboardStatusFilter(current, null)) : undefined} />
           <StatCard label={t("pages.dashboard.upToDate2")} value={stats.upToDate} color="text-slate-700 dark:text-slate-100" {...statFilterProps("uptodate")} />
           <StatCard label={t("pages.dashboard.needUpdates")} value={stats.needsUpdates} color="text-amber-600 dark:text-amber-500" {...statFilterProps("updates")} />
           {stats.needsReboot > 0 && (
