@@ -42,6 +42,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
+- **Branding:** replace the application name and logo shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**.
 - **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, version/build info, and Docker-ready production packaging.
 
 ## Screenshots
@@ -346,7 +347,7 @@ Optional commands are private-chat-only, disabled by default, scoped to the chan
 
 Webhook channels support `POST`, `PUT`, and `PATCH`; custom or Discord presets; no auth, bearer auth, or basic auth; text, JSON template, or form bodies; query params; custom headers; timeout; retries; retry delay; and optional insecure TLS for trusted internal targets.
 
-Templates use simple Mustache variable tags. Only dotted `event.*` paths are allowed; sections, loops, and other Mustache control tags are rejected. Common variables include `{{event.title}}`, `{{event.body}}`, `{{event.priority}}`, `{{event.sentAt}}`, totals under `{{event.totals.*}}`, text summaries, JSON payload helpers, and JSON-safe variants such as `{{event.titleJson}}` and `{{event.decoratedTitleJson}}`.
+Templates use simple Mustache variable tags. Only dotted `event.*` paths are allowed; sections, loops, and other Mustache control tags are rejected. Common variables include `{{event.title}}`, `{{event.body}}`, `{{event.priority}}`, `{{event.sentAt}}`, `{{event.appName}}` (the configured branding name), totals under `{{event.totals.*}}`, text summaries, JSON payload helpers, and JSON-safe variants such as `{{event.titleJson}}` and `{{event.decoratedTitleJson}}`.
 
 Webhook delivery defaults to a 10-second timeout, 2 retries, and a 30-second retry delay. URLs must be `http` or `https`, embedded URL credentials are rejected, cloud metadata endpoints are blocked, and reserved headers such as `Authorization`, `Host`, `Content-Length`, `Connection`, and `Cookie` cannot be set manually.
 

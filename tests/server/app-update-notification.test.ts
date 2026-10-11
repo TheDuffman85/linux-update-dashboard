@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { notifications } from "../../server/db/schema";
+import { notifications, settings } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import {
   processAppUpdateNotifications,
@@ -154,5 +154,39 @@ describe("app update notifications", () => {
     expect(ntfyPosts).toBe(1);
     expect(row?.pendingEvents).toBeNull();
     expect(row?.lastAppVersionNotified).toBe("2026.3.2");
+  });
+
+  test("uses the configured application name in app update notifications", async () => {
+    const db = getDb();
+    db.insert(settings).values({ key: "app_name", value: "Acme Patch Center" }).run();
+    db.insert(notifications).values({
+      name: "Ops ntfy",
+      type: "ntfy",
+      enabled: 1,
+      notifyOn: '["appUpdates"]',
+      config: JSON.stringify({
+        ntfyUrl: "https://ntfy.sh",
+        ntfyTopic: "ops",
+      }),
+    }).run();
+
+    const sentBodies: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes("/releases/latest")) {
+        return new Response(JSON.stringify({ tag_name: "2026.3.2" }), { status: 200 });
+      }
+      if (url === "https://ntfy.sh/ops") {
+        sentBodies.push(String(init?.body ?? ""));
+        return new Response("", { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await processAppUpdateNotifications();
+
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0]).toContain("Acme Patch Center: v2026.3.1 -> v2026.3.2");
+    expect(sentBodies[0]).not.toContain("Linux Update Dashboard");
   });
 });

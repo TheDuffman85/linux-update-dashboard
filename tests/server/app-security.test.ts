@@ -7,6 +7,7 @@ import { closeDatabase, initDatabase } from "../../server/db";
 import { createApp } from "../../server/app";
 import { initSession } from "../../server/auth/session";
 import { initEncryptor } from "../../server/security";
+import { getAppLogo, saveAppLogo } from "../../server/services/branding-service";
 
 const incoming = {
   socket: {
@@ -39,6 +40,29 @@ describe("API security middleware", () => {
       "default-src 'self'",
     );
     expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  test("keeps the strict CSP and caching of the public branding logo", async () => {
+    saveAppLogo({
+      contentType: "image/svg+xml",
+      data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
+    });
+    const version = getAppLogo()?.version;
+
+    const response = await createApp().request(
+      `/api/settings/public/logo?v=${version}`,
+      {},
+      { incoming },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+    );
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
   test("rejects cross-origin API mutations before CSRF handling", async () => {

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import crypto from "crypto";
+import { readFile } from "fs/promises";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -25,6 +26,7 @@ import apiTokensRoutes from "./routes/api-tokens";
 import credentialsRoutes from "./routes/credentials";
 import scriptsRoutes from "./routes/scripts";
 import appUpdateRoutes from "./routes/app-update";
+import { applyBrandingToIndexHtml } from "./services/branding-service";
 
 export function createApp() {
   const app = new Hono();
@@ -37,11 +39,18 @@ export function createApp() {
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
     c.header("X-Permitted-Cross-Domain-Policies", "none");
-    c.header(
-      "Content-Security-Policy",
-      `default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:`,
-    );
-    if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
+    // Handlers serving user-supplied content (e.g. the branding logo) set a
+    // stricter policy and their own caching; keep those intact.
+    if (!c.res.headers.has("Content-Security-Policy")) {
+      c.header(
+        "Content-Security-Policy",
+        `default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:`,
+      );
+    }
+    if (
+      (c.req.path === "/api" || c.req.path.startsWith("/api/")) &&
+      !c.res.headers.has("Cache-Control")
+    ) {
       c.header("Cache-Control", "private, no-store");
       c.header("Pragma", "no-cache");
       c.header("Expires", "0");
@@ -167,7 +176,21 @@ export function createApp() {
   // In production, serve built SPA files
   if (process.env.NODE_ENV === "production") {
     app.use("/assets/*", serveStatic({ root: "./dist/client" }));
-    app.get("*", serveStatic({ root: "./dist/client", path: "index.html" }));
+
+    // Serve the SPA shell with the branded title and favicon injected.
+    let indexTemplate: Promise<string> | null = null;
+    app.get("*", async (c) => {
+      indexTemplate ??= readFile("./dist/client/index.html", "utf8");
+      let html: string;
+      try {
+        html = await indexTemplate;
+      } catch {
+        indexTemplate = null;
+        return c.text("Not Found", 404);
+      }
+      c.header("Cache-Control", "no-cache");
+      return c.html(applyBrandingToIndexHtml(html));
+    });
   }
 
   return app;

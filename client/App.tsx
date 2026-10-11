@@ -10,6 +10,7 @@ import {
   useI18n,
 } from "./lib/i18n";
 import { useUpdateSettings } from "./lib/settings";
+import { useDocumentBranding } from "./lib/branding";
 
 const Login = lazy(() => import("./pages/Login"));
 const Setup = lazy(() => import("./pages/Setup"));
@@ -138,6 +139,7 @@ export default function App() {
   const { loading, setupRequired, user, backendUnavailable } = useAuth();
   const { t } = useI18n();
   const pageTopRef = useRef<HTMLDivElement | null>(null);
+  useDocumentBranding();
 
   if (loading) {
     return <PageLoader message={backendUnavailable ? t("app.reconnectingToBackend") : undefined} />;

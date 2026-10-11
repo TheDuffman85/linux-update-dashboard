@@ -41,6 +41,7 @@ import {
 import { getMinScheduleIntervalMinutes } from "../lib/schedule-interval";
 import { useToast } from "../context/ToastContext";
 import { useI18n } from "../lib/i18n";
+import { useBranding } from "../lib/branding";
 import { useDateTime } from "../lib/date-time";
 
 const inputClass =
@@ -422,7 +423,7 @@ function defaultWebhookConfig(): WebhookConfig {
   };
 }
 
-function defaultMqttConfig(): MqttConfig {
+function defaultMqttConfig(appName: string): MqttConfig {
   return {
     brokerUrl: "",
     username: "",
@@ -435,7 +436,7 @@ function defaultMqttConfig(): MqttConfig {
     topic: "",
     retainEvents: false,
     homeAssistantEnabled: false,
-    deviceName: "Linux Update Dashboard",
+    deviceName: appName,
     discoveryPrefix: "homeassistant",
     baseTopic: "ludash",
     publishAppEntity: true,
@@ -516,8 +517,8 @@ function coerceWebhookConfig(config: NotificationConfig): WebhookConfig {
   };
 }
 
-function coerceMqttConfig(config: NotificationConfig): MqttConfig {
-  const defaults = defaultMqttConfig();
+function coerceMqttConfig(config: NotificationConfig, appName: string): MqttConfig {
+  const defaults = defaultMqttConfig(appName);
   return {
     brokerUrl: readString(config, "brokerUrl"),
     username: readString(config, "username"),
@@ -749,6 +750,7 @@ function NotificationForm({
   loading: boolean;
 }) {
   const { t } = useI18n();
+  const { appName } = useBranding();
   const { formatDateTime } = useDateTime();
   const { data: systemsList } = useVisibleSystems();
   const { data: schedules } = useSchedules();
@@ -759,7 +761,9 @@ function NotificationForm({
   const unlinkTelegramChat = useUnlinkTelegramChat();
   const { addToast } = useToast();
   const initialWebhook = initial ? coerceWebhookConfig(initial.config) : defaultWebhookConfig();
-  const initialMqtt = initial ? coerceMqttConfig(initial.config) : defaultMqttConfig();
+  const initialMqtt = initial
+    ? coerceMqttConfig(initial.config, appName)
+    : defaultMqttConfig(appName);
   const initialTelegram: TelegramConfig = initial
     ? coerceTelegramConfig(initial.config)
     : { chatBindingStatus: "unbound", commandsEnabled: false };
@@ -1533,7 +1537,7 @@ function NotificationForm({
                         value={mqttConfig.deviceName}
                         onChange={(e) => setMqttConfig((prev) => ({ ...prev, deviceName: e.target.value }))}
                         className={inputClass}
-                        placeholder="Linux Update Dashboard"
+                        placeholder={appName}
                       />
                     </div>
                     <div>
@@ -1563,7 +1567,7 @@ function NotificationForm({
                       onChange={(e) => setMqttConfig((prev) => ({ ...prev, publishAppEntity: e.target.checked }))}
                       className={checkboxClass}
                     />
-                    <span className="text-sm">{t("pages.notifications.publishAppUpdateEntity")}</span>
+                    <span className="text-sm">{t("pages.notifications.publishAppUpdateEntity", { appName })}</span>
                   </label>
 
                   <label className="flex items-center gap-2">

@@ -26,6 +26,7 @@ import {
   isTrustedReturnOrigin,
   rememberTrustedPublicOrigin,
 } from "../request-security";
+import { getAppName } from "../services/branding-service";
 
 // Pre-computed dummy hash for timing-safe login (L1)
 const DUMMY_HASH = await hashPassword("timing-safe-dummy-password-pad");
@@ -561,7 +562,7 @@ auth.post("/totp/setup", rateLimit(5, 60_000), async (c) => {
 
   const secret = generateSecret();
   const otpauthUrl = generateURI({
-    issuer: "Linux Update Dashboard",
+    issuer: getAppName(),
     label: user.username,
     secret,
   });

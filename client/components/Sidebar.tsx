@@ -1,8 +1,9 @@
 import { NavLink } from "react-router";
 import { useAuth } from "../context/AuthContext";
-import { PenguinLogo } from "./PenguinLogo";
+import { AppLogo } from "./AppLogo";
 import { ThemeToggle } from "./ThemeToggle";
 import { useI18n } from "../lib/i18n";
+import { useBranding } from "../lib/branding";
 
 const navItems: Array<{ path: string; label: string; icon: string; adminOnly?: boolean }> = [
   { path: "/dashboard", label: "components.sidebar.nav.dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
@@ -17,6 +18,7 @@ const navItems: Array<{ path: string; label: string; icon: string; adminOnly?: b
 export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const { user, logout, isReadOnly } = useAuth();
   const { t } = useI18n();
+  const { appName } = useBranding();
   const hasRepoUrl = Boolean(__APP_REPO_URL__);
 
   return (
@@ -33,9 +35,11 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
         }`}
       >
         <div className="p-4">
-          <div className="flex items-center gap-2">
-            <PenguinLogo size={28} />
-            <span className="font-semibold text-sm">Linux Update Dashboard</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <AppLogo size={28} />
+            <span className="font-semibold text-sm truncate" title={appName}>
+              {appName}
+            </span>
           </div>
         </div>
 

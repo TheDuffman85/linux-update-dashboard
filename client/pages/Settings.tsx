@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import QRCode from "qrcode";
 import { Layout } from "../components/Layout";
 import { useSettingsResponse, useUpdateSettings } from "../lib/settings";
@@ -22,6 +22,17 @@ import {
   useRenameApiToken,
   useDeleteApiToken,
 } from "../lib/api-tokens";
+import {
+  ACCEPTED_APP_LOGO_TYPES,
+  APP_NAME_SETTING_KEY,
+  DEFAULT_APP_NAME,
+  MAX_APP_LOGO_BYTES,
+  MAX_APP_NAME_LENGTH,
+  useBranding,
+  useResetAppLogo,
+  useUploadAppLogo,
+} from "../lib/branding";
+import { AppLogo } from "../components/AppLogo";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { useToast } from "../context/ToastContext";
@@ -211,6 +222,12 @@ export default function Settings() {
   } = useAuth();
   const { browserLanguage, t } = useI18n();
   const { browserTimeFormat, formatDate } = useDateTime();
+  const { logoUrl } = useBranding();
+  const uploadAppLogo = useUploadAppLogo();
+  const resetAppLogo = useResetAppLogo();
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const logoBusy = uploadAppLogo.isPending || resetAppLogo.isPending;
+  const maxLogoSize = `${MAX_APP_LOGO_BYTES / 1024} KB`;
 
   const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
   const deletePasskey = useDeletePasskey();
@@ -505,6 +522,31 @@ export default function Settings() {
     } finally {
       setTotpSaving(false);
     }
+  };
+
+  const handleLogoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.type && !ACCEPTED_APP_LOGO_TYPES.includes(file.type)) {
+      addToast(t("pages.settings.logoUnsupportedType"), "danger");
+      return;
+    }
+    if (file.size > MAX_APP_LOGO_BYTES) {
+      addToast(t("pages.settings.logoTooLarge", { size: maxLogoSize }), "danger");
+      return;
+    }
+    uploadAppLogo.mutate(file, {
+      onSuccess: () => addToast(t("pages.settings.logoUpdated"), "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleResetLogo = () => {
+    resetAppLogo.mutate(undefined, {
+      onSuccess: () => addToast(t("pages.settings.logoReset"), "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
   };
 
   const copyTotpSecret = async () => {
@@ -1735,6 +1777,80 @@ export default function Settings() {
           danger
           loading={deleteApiToken.isPending}
         />
+      </SettingSection>
+
+      {/* Branding */}
+      <SettingSection
+        title={t("pages.settings.branding")}
+        description={t("pages.settings.brandingDescription")}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
+          <div>
+            <label className={labelClass}>{t("pages.settings.appName")}</label>
+            <input
+              type="text"
+              value={form[APP_NAME_SETTING_KEY] || ""}
+              maxLength={MAX_APP_NAME_LENGTH}
+              placeholder={DEFAULT_APP_NAME}
+              onChange={(e) =>
+                setForm({ ...form, [APP_NAME_SETTING_KEY]: e.target.value })
+              }
+              className={inputClass}
+            />
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              {t("pages.settings.appNameHelp")}
+            </p>
+            <button
+              onClick={() => handleSave([APP_NAME_SETTING_KEY])}
+              disabled={updateSettings.isPending}
+              className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+            >
+              {t("pages.settings.save")}
+            </button>
+          </div>
+          <div>
+            <label className={labelClass}>{t("pages.settings.logo")}</label>
+            <div className="flex items-center gap-4">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-border bg-slate-50 dark:bg-slate-900">
+                <AppLogo size={48} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept={ACCEPTED_APP_LOGO_TYPES.join(",")}
+                  onChange={handleLogoSelected}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => logoInputRef.current?.click()}
+                  disabled={logoBusy}
+                  className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                >
+                  {uploadAppLogo.isPending ? (
+                    <span className="spinner spinner-sm" />
+                  ) : (
+                    t("pages.settings.uploadLogo")
+                  )}
+                </button>
+                {logoUrl && (
+                  <button
+                    type="button"
+                    onClick={handleResetLogo}
+                    disabled={logoBusy}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                  >
+                    {t("pages.settings.resetLogo")}
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              {t("pages.settings.logoHelp", { size: maxLogoSize })}
+            </p>
+          </div>
+        </div>
       </SettingSection>
     </Layout>
   );

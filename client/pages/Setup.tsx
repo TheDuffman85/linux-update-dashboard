@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { PenguinLogo } from "../components/PenguinLogo";
+import { AppLogo } from "../components/AppLogo";
 import { useAuth } from "../context/AuthContext";
 import { validatePassword } from "../lib/form-validation";
 import { useI18n } from "../lib/i18n";
+import { useBranding } from "../lib/branding";
 
 export default function Setup() {
   const { setup } = useAuth();
   const { t } = useI18n();
+  const { appName } = useBranding();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -34,8 +36,13 @@ export default function Setup() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-4">
       <div className="w-full max-w-sm bg-white dark:bg-slate-800 rounded-xl shadow-lg p-8">
         <div className="text-center mb-6">
-          <PenguinLogo size={48} />
-          <h1 className="mt-3 text-xl font-semibold">{t("pages.setup.initialSetup")}</h1>
+          <div className="flex justify-center">
+            <AppLogo size={48} />
+          </div>
+          <p className="mt-3 text-sm font-medium text-slate-500 dark:text-slate-400 break-words">
+            {appName}
+          </p>
+          <h1 className="mt-1 text-xl font-semibold">{t("pages.setup.initialSetup")}</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             {t("pages.setup.createYourAdminAccount")}
           </p>

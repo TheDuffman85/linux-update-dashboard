@@ -22,6 +22,7 @@ import {
   describeUpgradeBehaviors,
   type PackageManagerConfigs,
 } from "../package-manager-configs";
+import { getAppLogoJpeg, getAppName } from "./branding-service";
 
 const TELEGRAM_TYPE = "telegram";
 const LINK_TTL_MS = 10 * 60_000;
@@ -139,7 +140,9 @@ class DashboardApiError extends Error {
 const linkRequests = new Map<string, LinkRequest>();
 const pendingConfirmations = new Map<string, PendingConfirmation>();
 const workers = new Map<string, WorkerState>();
-const syncedProfilePhotos = new Set<string>();
+// Bot token -> version of the profile photo last uploaded for that bot.
+const syncedProfilePhotos = new Map<string, string>();
+const DEFAULT_PROFILE_PHOTO_VERSION = "default";
 let started = false;
 const COMMAND_TOKEN_AUTH_FAILURE_MESSAGE =
   "Telegram bot command authentication failed. The command token is missing, expired, or revoked. Reissue it in the Telegram notification settings.";
@@ -311,25 +314,33 @@ function resolveBotProfilePhotoPath(): string | null {
   return null;
 }
 
-async function syncBotProfilePhoto(botToken: string): Promise<void> {
-  if (syncedProfilePhotos.has(botToken)) return;
+/** The branding logo's JPEG rendition, or the bundled default photo. */
+async function resolveBotProfilePhoto(): Promise<{ data: Buffer; version: string } | null> {
+  const brandedPhoto = getAppLogoJpeg();
+  if (brandedPhoto) return brandedPhoto;
 
   const photoPath = resolveBotProfilePhotoPath();
   if (!photoPath) {
     logger.warn("Telegram bot profile photo asset not found", {
       file: TELEGRAM_PROFILE_PHOTO_FILENAME,
     });
-    return;
+    return null;
   }
+  return { data: await readFile(photoPath), version: DEFAULT_PROFILE_PHOTO_VERSION };
+}
 
+async function syncBotProfilePhoto(botToken: string): Promise<void> {
   try {
-    const photoBuffer = await readFile(photoPath);
+    const photo = await resolveBotProfilePhoto();
+    if (!photo || syncedProfilePhotos.get(botToken) === photo.version) return;
+
+    const photoBuffer = photo.data;
     const form = new FormData();
     form.set("photo", JSON.stringify({
       type: "static",
       photo: "attach://avatar",
     }));
-    form.set("avatar", new File([photoBuffer], TELEGRAM_PROFILE_PHOTO_FILENAME, {
+    form.set("avatar", new File([new Uint8Array(photoBuffer)], TELEGRAM_PROFILE_PHOTO_FILENAME, {
       type: "image/jpeg",
     }));
 
@@ -339,7 +350,7 @@ async function syncBotProfilePhoto(botToken: string): Promise<void> {
       throw new Error(body?.description || `Telegram setMyProfilePhoto failed (${res.status})`);
     }
 
-    syncedProfilePhotos.add(botToken);
+    syncedProfilePhotos.set(botToken, photo.version);
   } catch (error) {
     logger.warn("Telegram bot profile photo sync failed", {
       error: String(error),
@@ -535,7 +546,7 @@ async function handleLinkStart(
   writeTelegramConfig(row.id, nextConfig);
   await reconcileTelegramConfig(row.id, currentConfig, nextConfig, request.actorUserId);
   await sync();
-  await sendTelegramText(botToken, chatId, "Telegram chat connected to Linux Update Dashboard.");
+  await sendTelegramText(botToken, chatId, `Telegram chat connected to ${getAppName()}.`);
 }
 
 async function fetchAllowedSystems(channel: NotificationRow): Promise<AllowedSystem[]> {
@@ -960,7 +971,7 @@ async function sendVersion(botToken: string, chatId: string): Promise<void> {
   await sendTelegramText(
     botToken,
     chatId,
-    `Linux Update Dashboard version: ${versionLabel}\nBranch: ${currentBranch}`,
+    `${getAppName()} version: ${versionLabel}\nBranch: ${currentBranch}`,
   );
 }
 
@@ -1798,6 +1809,25 @@ export async function sync(): Promise<void> {
   }
 }
 
+/** Re-uploads the profile photo of every linked bot after a logo change. */
+export async function syncBrandingProfilePhotos(): Promise<void> {
+  if (!started) return;
+
+  const linkedTokens = new Set<string>();
+  for (const row of getTelegramRows()) {
+    if (row.enabled !== 1) continue;
+    const config = parseConfig(row.config);
+    const token = resolveTelegramBotToken(config);
+    if (token && typeof config.chatId === "string" && config.chatId) {
+      linkedTokens.add(token);
+    }
+  }
+
+  for (const token of linkedTokens) {
+    await syncBotProfilePhoto(token);
+  }
+}
+
 export async function start(): Promise<void> {
   started = true;
   await sync();
@@ -1922,4 +1952,7 @@ function resetTestingState(): void {
 export const __testing = {
   processUpdate,
   resetTestingState,
+  setStarted(value: boolean) {
+    started = value;
+  },
 };

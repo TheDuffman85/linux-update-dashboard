@@ -11,6 +11,7 @@ import {
 } from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as updateService from "../services/update-service";
+import * as notificationRuntime from "../services/notification-runtime";
 import {
   getNumericSettingRules,
   isNumericSettingKey,
@@ -19,6 +20,19 @@ import {
 } from "../services/settings-service";
 import type { SessionData } from "../auth/session";
 import { getConfiguredTimeZone } from "../time-zone";
+import {
+  APP_LOGO_JPEG_SETTING_KEY,
+  APP_LOGO_SETTING_KEY,
+  APP_NAME_SETTING_KEY,
+  BrandingValidationError,
+  clearAppLogo,
+  getAppLogo,
+  getPublicBranding,
+  normalizeAppName,
+  parseAppLogoJpegUpload,
+  parseAppLogoUpload,
+  saveAppLogo,
+} from "../services/branding-service";
 
 type AuthEnv = {
   Variables: {
@@ -28,6 +42,8 @@ type AuthEnv = {
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
 const PUBLIC_SETTING_KEYS = ["language"] as const;
+// Managed through dedicated endpoints and too large to ship with every settings read.
+const HIDDEN_KEYS = [APP_LOGO_SETTING_KEY, APP_LOGO_JPEG_SETTING_KEY];
 
 const settingsRouter = new Hono<AuthEnv>();
 
@@ -49,7 +65,58 @@ settingsRouter.get("/public", (c) => {
     }
   }
 
-  return c.json({ settings: publicSettings });
+  return c.json({ settings: publicSettings, branding: getPublicBranding() });
+});
+
+settingsRouter.get("/public/logo", (c) => {
+  const logo = getAppLogo();
+  if (!logo) {
+    return c.json({ error: "No custom logo configured" }, 404);
+  }
+
+  const versioned = c.req.query("v") === logo.version;
+  c.header("Content-Type", logo.contentType);
+  c.header(
+    "Cache-Control",
+    versioned ? "public, max-age=31536000, immutable" : "no-cache",
+  );
+  // SVG logos are rendered via <img>, but lock them down in case one is
+  // opened directly so embedded scripts can never run on this origin.
+  c.header(
+    "Content-Security-Policy",
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+  );
+  c.header("Content-Disposition", "inline");
+  return c.body(new Uint8Array(logo.data));
+});
+
+settingsRouter.put("/branding/logo", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  try {
+    const { dataUrl, jpegDataUrl } = body as { dataUrl?: unknown; jpegDataUrl?: unknown };
+    const logo = parseAppLogoUpload(dataUrl);
+    const jpeg = jpegDataUrl == null ? null : parseAppLogoJpegUpload(jpegDataUrl);
+    saveAppLogo(logo, jpeg);
+  } catch (error) {
+    if (error instanceof BrandingValidationError) {
+      return c.json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+
+  // Home Assistant entity pictures and Telegram bot photos follow the logo.
+  void notificationRuntime.syncBranding();
+  return c.json({ status: "ok", branding: getPublicBranding() });
+});
+
+settingsRouter.delete("/branding/logo", (c) => {
+  clearAppLogo();
+  void notificationRuntime.syncBranding();
+  return c.json({ status: "ok", branding: getPublicBranding() });
 });
 
 // Get all settings
@@ -58,6 +125,7 @@ settingsRouter.get("/", (c) => {
   const allSettings = db.select().from(settings).orderBy(settings.key).all();
   const settingsMap: Record<string, string> = {};
   for (const s of allSettings) {
+    if (HIDDEN_KEYS.includes(s.key)) continue;
     if (SENSITIVE_KEYS.includes(s.key) && s.value) {
       settingsMap[s.key] = "(stored)";
     } else if (isNumericSettingKey(s.key)) {
@@ -88,6 +156,21 @@ settingsRouter.put("/", async (c) => {
     ]),
   );
 
+  if (HIDDEN_KEYS.some((key) => key in normalizedBody)) {
+    return c.json({ error: "Use the branding logo endpoint to change the logo" }, 400);
+  }
+  if (APP_NAME_SETTING_KEY in normalizedBody) {
+    try {
+      normalizedBody[APP_NAME_SETTING_KEY] = normalizeAppName(
+        normalizedBody[APP_NAME_SETTING_KEY],
+      );
+    } catch (error) {
+      if (error instanceof BrandingValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+  }
   if ("oidc_scope" in normalizedBody) {
     try {
       normalizedBody.oidc_scope = parseOidcScope(
@@ -174,6 +257,11 @@ settingsRouter.put("/", async (c) => {
         },
       })
       .run();
+  }
+
+  if (APP_NAME_SETTING_KEY in normalizedBody) {
+    // Republish Home Assistant discovery so device and entity names follow.
+    void notificationRuntime.syncAppUpdateState();
   }
 
   if ("activity_history_limit" in normalizedBody) {

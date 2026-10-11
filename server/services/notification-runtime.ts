@@ -42,6 +42,14 @@ export async function syncAppUpdateState(): Promise<void> {
   await mqttRuntime.syncAppUpdateState();
 }
 
+/** Pushes a changed branding logo to integrations that mirror it. */
+export async function syncBranding(): Promise<void> {
+  await Promise.all([
+    telegramBot.syncBrandingProfilePhotos(),
+    mqttRuntime.syncAppUpdateState(),
+  ]);
+}
+
 export async function createBindingLink(notificationId: number, actorUserId: number) {
   return telegramBot.createBindingLink(notificationId, actorUserId);
 }
