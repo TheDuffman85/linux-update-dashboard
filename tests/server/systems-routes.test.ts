@@ -13,7 +13,8 @@ import { authMiddleware } from "../../server/middleware/auth";
 import { hashToken } from "../../server/auth/api-token";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { listSystems } from "../../server/services/system-service";
-import { buildOperationKey, createScript, getSystemOverrides, setSystemOverrides } from "../../server/services/script-service";
+import { buildOperationKey, createCustomPackageManager, createScript, getSystemOverrides, setSystemOverrides } from "../../server/services/script-service";
+import { createCredential } from "../../server/services/credential-service";
 import { issueValidatedConfigToken } from "../../server/services/system-connection-validation";
 import { initSSHManager } from "../../server/ssh/connection";
 
@@ -853,6 +854,71 @@ describe("systems reorder route", () => {
     const updated = listSystems().find((system) => system.id === created!.id);
     expect(updated?.autoHideKeptBackUpdates).toBe(0);
     expect(updated?.hidden).toBe(0);
+  });
+
+  test("assigns secret credentials to secret config entries without exposing values", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const credentialId = createSystemCredential("root");
+    createCustomPackageManager({
+      name: "release-tool",
+      label: "release-tool",
+      configEntries: [{
+        key: "githubToken",
+        defaultValue: "",
+        secret: true,
+        envVar: "RELEASE_TOOL_TOKEN",
+        sudoEnvKeep: true,
+      }],
+    });
+    const token = "ghp_routeTestTokenValue123456";
+    const secretId = createCredential({ name: "token", kind: "secret", payload: { value: token } });
+    const baseBody = {
+      name: "Secret System",
+      hostname: "secret.local",
+      port: 22,
+      credentialId,
+      hostKeyVerificationEnabled: false,
+    };
+
+    const createRes = await app.request("/api/systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...baseBody,
+        pkgManagerSecretRefs: { "release-tool": { githubToken: secretId } },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const { id } = await createRes.json();
+
+    const detailRes = await app.request(`/api/systems/${id}`);
+    const detailText = await detailRes.text();
+    expect(JSON.parse(detailText).system.pkgManagerSecretRefs).toEqual({ "release-tool": { githubToken: secretId } });
+    expect(detailText).not.toContain(token);
+
+    const plaintextRes = await app.request(`/api/systems/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...baseBody, pkgManagerConfigs: { "release-tool": { githubToken: token } } }),
+    });
+    expect(plaintextRes.status).toBe(400);
+
+    const sshCredentialRes = await app.request(`/api/systems/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...baseBody, pkgManagerSecretRefs: { "release-tool": { githubToken: credentialId } } }),
+    });
+    expect(sshCredentialRes.status).toBe(400);
+    expect((await sshCredentialRes.json()).error).toContain("not a secret credential");
+
+    const clearRes = await app.request(`/api/systems/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...baseBody, pkgManagerSecretRefs: {} }),
+    });
+    expect(clearRes.status).toBe(200);
+    expect(getDb().select().from(systems).where(eq(systems.id, id)).get()?.pkgManagerSecretRefs).toBeNull();
   });
 
   test("persists and serializes package manager configs on create and update", async () => {

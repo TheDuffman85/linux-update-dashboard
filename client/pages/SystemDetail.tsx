@@ -3169,6 +3169,7 @@ export default function SystemDetail() {
             detectedPkgManagers: system.detectedPkgManagers ?? undefined,
             disabledPkgManagers: system.disabledPkgManagers ?? undefined,
             pkgManagerConfigs: system.pkgManagerConfigs ?? undefined,
+            pkgManagerSecretRefs: system.pkgManagerSecretRefs ?? null,
             autoHideKeptBackUpdates: system.autoHideKeptBackUpdates,
             hidden: system.hidden === 1,
             hostKeyStatus: system.hostKeyStatus,

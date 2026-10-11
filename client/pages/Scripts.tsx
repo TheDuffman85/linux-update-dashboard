@@ -33,6 +33,8 @@ import {
 } from "../lib/scripts";
 import {
   getLegacyCustomConfigKey,
+  SECRET_ENV_VAR_PATTERN,
+  suggestSecretEnvVar,
   type CustomPackageManagerConfigEntry,
 } from "../lib/package-manager-configs";
 import { useI18n } from "../lib/i18n";
@@ -195,7 +197,7 @@ const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
   "upgrade_selected",
 ];
 const SYSTEM_OPERATIONS: ScriptOperation[] = ["system_info", "reboot"];
-const BUILTIN_PACKAGE_MANAGERS = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
+const BUILTIN_PACKAGE_MANAGERS = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap", "deb-get"];
 const BUILTIN_PACKAGE_MANAGER_LABELS: Record<string, string> = {
   apt: "APT",
   dnf: "DNF",
@@ -204,6 +206,7 @@ const BUILTIN_PACKAGE_MANAGER_LABELS: Record<string, string> = {
   apk: "APK",
   flatpak: "Flatpak",
   snap: "Snap",
+  "deb-get": "deb-get",
 };
 const PACKAGE_MANAGER_CONFIG_KEYS: Record<
   string,
@@ -334,12 +337,22 @@ function emptyPackageManager(): PackageManagerDraft {
 
 function normalizeConfigEntries(entries: CustomPackageManagerConfigEntry[]): CustomPackageManagerConfigEntry[] {
   return entries
-    .map((entry) => ({
-      key: entry.key.trim(),
-      description: entry.description?.trim() || undefined,
-      defaultValue: entry.defaultValue,
-    }))
-    .filter((entry) => entry.key || entry.description || entry.defaultValue);
+    .map((entry): CustomPackageManagerConfigEntry => {
+      const normalized = {
+        key: entry.key.trim(),
+        description: entry.description?.trim() || undefined,
+        defaultValue: entry.defaultValue,
+      };
+      if (!entry.secret) return normalized;
+      return {
+        ...normalized,
+        defaultValue: "",
+        secret: true,
+        envVar: entry.envVar?.trim() ?? "",
+        sudoEnvKeep: entry.sudoEnvKeep === true,
+      };
+    })
+    .filter((entry) => entry.key || entry.description || entry.defaultValue || entry.secret);
 }
 
 function normalizeConfigEntriesForManager(
@@ -360,6 +373,7 @@ function validateConfigEntries(
   t: Translate,
 ): string | null {
   const seen = new Set<string>();
+  const seenEnvVars = new Set<string>();
   const keyPattern = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
   for (const entry of entries) {
     if (!keyPattern.test(entry.key)) {
@@ -370,6 +384,15 @@ function validateConfigEntries(
     }
     if (seen.has(entry.key)) return t("pages.scripts.error.duplicateConfigKey", { key: entry.key });
     seen.add(entry.key);
+    if (entry.secret) {
+      if (!SECRET_ENV_VAR_PATTERN.test(entry.envVar ?? "")) {
+        return t("pages.scripts.error.secretEnvVarPattern", { key: entry.key });
+      }
+      if (seenEnvVars.has(entry.envVar!)) {
+        return t("pages.scripts.error.duplicateSecretEnvVar", { envVar: entry.envVar! });
+      }
+      seenEnvVars.add(entry.envVar!);
+    }
   }
   return null;
 }
@@ -1012,14 +1035,23 @@ export function ScriptEditor({
     : [];
   const customConfigKeys = packageManagers
     .find((manager) => manager.name === selectedPackageManager)
-    ?.configEntries?.map((entry) => ({
-      id: `config.${entry.key}`,
-      token: `{{config.${entry.key}}}`,
-      description: entry.description?.trim()
-        || (entry.defaultValue
-          ? t("pages.scripts.defaultValueInline", { value: entry.defaultValue })
-          : t("pages.scripts.customConfigValue")),
-    })) ?? [];
+    ?.configEntries?.map((entry) => entry.secret
+      ? {
+          id: `secret.${entry.key}`,
+          token: `"$${entry.envVar ?? ""}"`,
+          description: [
+            entry.description?.trim(),
+            t("pages.scripts.secretConfigValue"),
+          ].filter(Boolean).join(" "),
+        }
+      : {
+          id: `config.${entry.key}`,
+          token: `{{config.${entry.key}}}`,
+          description: entry.description?.trim()
+            || (entry.defaultValue
+              ? t("pages.scripts.defaultValueInline", { value: entry.defaultValue })
+              : t("pages.scripts.customConfigValue")),
+        }) ?? [];
   const configReferenceEntries = [...builtinConfigKeys, ...customConfigKeys];
   const placeholderReferenceEntries = placeholders
     .filter((placeholder) => !isGeneratedConfigPlaceholder(placeholder))
@@ -1819,15 +1851,27 @@ export function PackageManagerEditor({
                     placeholder="channel"
                   />
                 </div>
-                <div>
-                  <label className={labelClass}>{t("pages.scripts.defaultValue")}</label>
-                  <input
-                    value={entry.defaultValue}
-                    onChange={(e) => updateConfigEntry(index, { defaultValue: e.target.value })}
-                    className={inputClass}
-                    placeholder="stable"
-                  />
-                </div>
+                {entry.secret ? (
+                  <div>
+                    <label className={labelClass}>{t("pages.scripts.secretEnvVar")}</label>
+                    <input
+                      value={entry.envVar ?? ""}
+                      onChange={(e) => updateConfigEntry(index, { envVar: e.target.value.toUpperCase() })}
+                      className={`${inputClass} font-mono`}
+                      placeholder="TOOL_TOKEN"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label className={labelClass}>{t("pages.scripts.defaultValue")}</label>
+                    <input
+                      value={entry.defaultValue}
+                      onChange={(e) => updateConfigEntry(index, { defaultValue: e.target.value })}
+                      className={inputClass}
+                      placeholder="stable"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className={labelClass}>{t("pages.scripts.description")}</label>
                   <input
@@ -1847,6 +1891,40 @@ export function PackageManagerEditor({
                   >
                     -
                   </button>
+                </div>
+                <div className="flex flex-col gap-2 text-sm md:col-span-4 sm:flex-row sm:flex-wrap sm:gap-x-6">
+                  <label className="inline-flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={entry.secret === true}
+                      onChange={(e) => updateConfigEntry(index, e.target.checked
+                        ? {
+                            secret: true,
+                            defaultValue: "",
+                            envVar: entry.envVar || suggestSecretEnvVar(entry.key),
+                            sudoEnvKeep: entry.sudoEnvKeep ?? false,
+                          }
+                        : { secret: undefined, envVar: undefined, sudoEnvKeep: undefined })}
+                      className="rounded"
+                    />
+                    <span>{t("pages.scripts.secretEntry")}</span>
+                  </label>
+                  {entry.secret && (
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={entry.sudoEnvKeep === true}
+                        onChange={(e) => updateConfigEntry(index, { sudoEnvKeep: e.target.checked })}
+                        className="rounded"
+                      />
+                      <span>{t("pages.scripts.secretSudoEnvKeep")}</span>
+                    </label>
+                  )}
+                  {entry.secret && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 sm:basis-full">
+                      {t("pages.scripts.secretEntryHint")}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
@@ -2300,7 +2378,10 @@ export default function Scripts() {
       name: existing.name,
       label: existing.label,
       parserConfig: existing.parserConfig ? { ...existing.parserConfig } : null,
-      configEntries: (existing.configEntries ?? []).map((entry) => ({ ...entry })),
+      // Entries shipped with a built-in manager are fixed; only user entries are editable.
+      configEntries: (existing.configEntries ?? [])
+        .filter((entry) => !entry.builtin)
+        .map((entry) => ({ ...entry })),
       builtin: existing.builtin,
     });
     setShowPackageManager(true);

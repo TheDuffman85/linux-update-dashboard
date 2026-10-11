@@ -9,10 +9,11 @@ import * as hiddenUpdateService from "./hidden-update-service";
 import type { ApprovedHostKeyInput } from "./system-connection-validation";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
-import type { PackageManagerConfigs } from "../package-manager-configs";
+import type { PackageManagerConfigs, PackageManagerSecretRefs } from "../package-manager-configs";
 import {
   parsePackageManagerConfigs,
   serializePackageManagerConfigs,
+  serializePackageManagerSecretRefs,
 } from "../package-manager-configs";
 import {
   detectPackageManagersWithScripts,
@@ -579,6 +580,7 @@ export function createSystem(data: {
   disabledPkgManagers?: string[];
   detectedPkgManagers?: string[];
   pkgManagerConfigs?: PackageManagerConfigs | null;
+  pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
@@ -625,6 +627,14 @@ export function createSystem(data: {
     }
   }
 
+  // Secret assignments are credential references, so duplicates can share them.
+  if (data.sourceSystemId && data.pkgManagerSecretRefs === undefined) {
+    const source = getSystem(data.sourceSystemId);
+    if (source?.pkgManagerSecretRefs) {
+      values.pkgManagerSecretRefs = source.pkgManagerSecretRefs;
+    }
+  }
+
   if (data.disabledPkgManagers) {
     values.disabledPkgManagers = JSON.stringify(data.disabledPkgManagers);
   }
@@ -635,6 +645,9 @@ export function createSystem(data: {
   }
   if (data.pkgManagerConfigs !== undefined) {
     values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listPackageManagerDefinitions());
+  }
+  if (data.pkgManagerSecretRefs !== undefined) {
+    values.pkgManagerSecretRefs = serializePackageManagerSecretRefs(data.pkgManagerSecretRefs, listPackageManagerDefinitions());
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;
@@ -680,6 +693,7 @@ export function updateSystem(
     disabledPkgManagers?: string[];
     detectedPkgManagers?: string[];
     pkgManagerConfigs?: PackageManagerConfigs | null;
+    pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
     autoHideKeptBackUpdates?: boolean;
     excludeFromUpgradeAll?: boolean;
     hidden?: boolean;
@@ -737,6 +751,9 @@ export function updateSystem(
   }
   if (data.pkgManagerConfigs !== undefined) {
     values.pkgManagerConfigs = serializePackageManagerConfigs(data.pkgManagerConfigs, listPackageManagerDefinitions());
+  }
+  if (data.pkgManagerSecretRefs !== undefined) {
+    values.pkgManagerSecretRefs = serializePackageManagerSecretRefs(data.pkgManagerSecretRefs, listPackageManagerDefinitions());
   }
   if (data.autoHideKeptBackUpdates !== undefined) {
     values.autoHideKeptBackUpdates = data.autoHideKeptBackUpdates ? 1 : 0;

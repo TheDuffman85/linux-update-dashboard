@@ -1,0 +1,42 @@
+FROM debian:12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install SSH and sudo, then drop the package sources so APT checks run offline
+# and only the deb-get fixture apps change versions.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssh-server sudo && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* && \
+    mkdir -p /run/sshd
+
+# Configure SSH
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/10-allow-password.conf
+
+# Build fixture packages and install the deb-get stand-in.
+COPY deb-get/ /opt/deb-get-fixture/src/
+RUN sh /opt/deb-get-fixture/src/build-fixtures.sh && \
+    install -m 755 /opt/deb-get-fixture/src/deb-get /usr/local/bin/deb-get && \
+    install -m 755 /opt/deb-get-fixture/src/reset-fixtures.sh /opt/deb-get-fixture/reset-fixtures.sh && \
+    /opt/deb-get-fixture/reset-fixtures.sh
+
+# Restricted package-maintenance user with the least-privilege deb-get rules.
+COPY sudoers/deb-get-nopasswd /etc/sudoers.d/testuser
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd && \
+    chmod 440 /etc/sudoers.d/testuser && \
+    visudo -cf /etc/sudoers.d/testuser
+
+# Verify the read-only wildcard rule works and arbitrary sudo fails.
+RUN su - testuser -c "sudo -n /usr/local/bin/deb-get show drawio" && \
+    su - testuser -c "! sudo -n /usr/local/bin/deb-get upgrade" && \
+    su - testuser -c "! sudo -n true"
+
+# Generate host keys
+RUN ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]

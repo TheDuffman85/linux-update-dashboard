@@ -12,6 +12,8 @@ import {
   type ScriptStep,
 } from "./script-service";
 import * as systemService from "./system-service";
+import { listSudoEnvKeepEntries, type SudoEnvKeepEntry } from "./package-manager-secret-service";
+import { DEB_GET_SHOW_COMMAND } from "../ssh/parsers/deb-get";
 
 export type PotentialCommandCategory =
   | "detection"
@@ -33,7 +35,7 @@ export interface PotentialCommandEntry {
   pkgManager: string | null;
   command: string;
   sourceCommand?: string;
-  sudoersSafety?: "exact" | "package_placeholder" | "unsafe";
+  sudoersSafety?: "exact" | "package_placeholder" | "read_only_wildcard" | "unsafe";
   requiresWildcard?: boolean;
   requiresPasswordLauncher?: boolean;
   warnings?: string[];
@@ -52,6 +54,8 @@ export interface CommandReference {
   exact: PotentialCommandEntry[];
   sudoers: PotentialCommandEntry[];
   warnings: CommandReferenceWarning[];
+  /** Secret environment variables that must survive sudo's env_reset. */
+  envKeep: SudoEnvKeepEntry[];
 }
 
 interface CommandReferenceSystem {
@@ -138,6 +142,26 @@ function extractSudoCommands(command: string): string[] {
   return commands;
 }
 
+/**
+ * Commands that only read state but take a variable argument list, such as a
+ * per-app lookup. Each is allowed as an active `<command> *` sudoers rule when
+ * a check or inventory step calls it with a single shell variable as its
+ * arguments. Anything not listed here keeps the strict exact-rule behavior.
+ */
+export const READ_ONLY_WILDCARD_COMMANDS: readonly string[] = [DEB_GET_SHOW_COMMAND];
+const READ_ONLY_WILDCARD_CATEGORIES = new Set<PotentialCommandCategory>(["check", "list_installed_packages"]);
+const SHELL_VARIABLE_ARGUMENT = /^"?\$(?:@|\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)"?$/;
+
+function readOnlyWildcardCommand(category: PotentialCommandCategory, command: string): string | null {
+  if (!READ_ONLY_WILDCARD_CATEGORIES.has(category)) return null;
+  for (const prefix of READ_ONLY_WILDCARD_COMMANDS) {
+    if (!command.startsWith(`${prefix} `)) continue;
+    const args = command.slice(prefix.length).trim();
+    if (SHELL_VARIABLE_ARGUMENT.test(args)) return `${prefix} *`;
+  }
+  return null;
+}
+
 function getSudoersWarnings(command: string): string[] {
   const warnings: string[] = [];
   if (/^(?:sh|bash|dash|zsh|fish)\s/.test(command)) {
@@ -146,7 +170,7 @@ function getSudoersWarnings(command: string): string[] {
   if (/(?:^|\s)(?:\/tmp\/|\$\(|`)/.test(command)) {
     warnings.push("Contains a writable path or command substitution, so it cannot be represented as a narrow sudoers rule safely.");
   }
-  if (/\$(?:\{[^}]+\}|[a-zA-Z_][a-zA-Z0-9_]*)/.test(command)) {
+  if (/\$(?:\{[^}]+\}|[a-zA-Z_][a-zA-Z0-9_]*|[@*#?!$0-9])/.test(command)) {
     warnings.push("Contains a shell variable expansion, so it cannot be represented as an exact sudoers rule safely.");
   }
   if (/\*/.test(command)) {
@@ -167,8 +191,22 @@ function normalizeForSudoers(entry: PotentialCommandEntry): {
   for (const [index, rawCommand] of sudoCommands.entries()) {
     const command = normalizeCommandTemplate(rawCommand);
     if (command === "-v") continue;
-    const commandWarnings = getSudoersWarnings(command);
     const warningId = `${entry.id}:sudo:${index}`;
+    const readOnlyCommand = readOnlyWildcardCommand(entry.category, command);
+    if (readOnlyCommand) {
+      entries.push({
+        ...entry,
+        id: warningId,
+        command: readOnlyCommand,
+        sourceCommand: entry.command,
+        sudoersSafety: "read_only_wildcard",
+        requiresWildcard: false,
+        requiresPasswordLauncher: false,
+        warnings: ["Read-only lookup: the argument wildcard only selects which items are shown."],
+      });
+      continue;
+    }
+    const commandWarnings = getSudoersWarnings(command);
     if (commandWarnings.length > 0) {
       for (const message of commandWarnings) {
         warnings.push({
@@ -540,6 +578,7 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
     exact,
     sudoers,
     warnings,
+    envKeep: listSudoEnvKeepEntries(activeManagers),
   };
 }
 

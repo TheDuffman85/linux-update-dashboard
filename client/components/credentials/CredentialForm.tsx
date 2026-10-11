@@ -1,9 +1,10 @@
 import { useState } from "react";
 import type { CredentialDetail, CredentialKind } from "../../lib/credentials";
 import {
+  ALL_CREDENTIAL_KINDS,
   buildCredentialPayload,
   CREDENTIAL_KIND_LABEL_KEYS,
-  SSH_CREDENTIAL_KINDS,
+  MAX_SECRET_VALUE_LENGTH,
   validateCredentialForm,
 } from "../../lib/credential-form";
 import { useI18n } from "../../lib/i18n";
@@ -15,11 +16,14 @@ const labelClass =
 
 export function CredentialForm({
   initial,
+  kinds = ALL_CREDENTIAL_KINDS,
   onSubmit,
   onCancel,
   loading,
 }: {
   initial?: CredentialDetail;
+  /** Kinds offered when creating; defaults to every kind. */
+  kinds?: CredentialKind[];
   onSubmit: (data: {
     name: string;
     kind: CredentialKind;
@@ -31,7 +35,7 @@ export function CredentialForm({
   const { t } = useI18n();
   const [name, setName] = useState(initial?.name || "");
   const [kind, setKind] = useState<CredentialKind>(
-    initial?.kind || "usernamePassword"
+    initial?.kind || kinds[0] || "usernamePassword"
   );
   const [username, setUsername] = useState(initial?.payload.username || "");
   const [password, setPassword] = useState("");
@@ -40,7 +44,18 @@ export function CredentialForm({
   const [certificatePem, setCertificatePem] = useState("");
   const [privateKeyPem, setPrivateKeyPem] = useState("");
   const [privateKeyPassword, setPrivateKeyPassword] = useState("");
+  const [secretValue, setSecretValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const formValues = {
+    username,
+    password,
+    privateKey,
+    passphrase,
+    certificatePem,
+    privateKeyPem,
+    privateKeyPassword,
+    secretValue,
+  };
 
   return (
     <form
@@ -49,15 +64,7 @@ export function CredentialForm({
         const validationError = validateCredentialForm(
           name,
           kind,
-          {
-            username,
-            password,
-            privateKey,
-            passphrase,
-            certificatePem,
-            privateKeyPem,
-            privateKeyPassword,
-          },
+          formValues,
           initial,
         );
         if (validationError) {
@@ -71,15 +78,7 @@ export function CredentialForm({
           kind,
           payload: buildCredentialPayload(
             kind,
-            {
-              username,
-              password,
-              privateKey,
-              passphrase,
-              certificatePem,
-              privateKeyPem,
-              privateKeyPassword,
-            },
+            formValues,
             initial
           ),
         });
@@ -119,7 +118,7 @@ export function CredentialForm({
             className={inputClass}
             disabled={!!initial}
           >
-            {SSH_CREDENTIAL_KINDS.map(
+            {(initial ? [initial.kind] : kinds).map(
               (value) => (
                 <option key={value} value={value}>
                   {t(CREDENTIAL_KIND_LABEL_KEYS[value])}
@@ -130,20 +129,45 @@ export function CredentialForm({
         </div>
       </div>
 
-      <div>
-        <label className={labelClass}>{t("common.username")}</label>
-        <input
-          type="text"
-          value={username}
-          onChange={(e) => {
-            setUsername(e.target.value);
-            if (error) setError(null);
-          }}
-          className={inputClass}
-          placeholder="root"
-          required
-        />
-      </div>
+      {kind !== "secret" && (
+        <div>
+          <label className={labelClass}>{t("common.username")}</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => {
+              setUsername(e.target.value);
+              if (error) setError(null);
+            }}
+            className={inputClass}
+            placeholder="root"
+            required
+          />
+        </div>
+      )}
+
+      {kind === "secret" && (
+        <div>
+          <label className={labelClass}>{t("components.credentialForm.secretValue")}</label>
+          <input
+            type="password"
+            autoComplete="off"
+            value={secretValue}
+            onChange={(e) => {
+              setSecretValue(e.target.value);
+              if (error) setError(null);
+            }}
+            className={inputClass}
+            maxLength={MAX_SECRET_VALUE_LENGTH}
+            placeholder={
+              initial?.payload.value === "(stored)" ? t("common.unchanged") : ""
+            }
+          />
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {t("components.credentialForm.secretValueHint")}
+          </p>
+        </div>
+      )}
 
       {kind === "usernamePassword" && (
         <div>

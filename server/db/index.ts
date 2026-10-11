@@ -135,6 +135,7 @@ const NOTIFICATION_SCHEDULE_MIGRATION_KEY =
   "notification_digest_schedules_migrated";
 const HIDDEN_UPDATE_HIDE_REASON_MIGRATION_KEY =
   "hidden_update_hide_reason_migrated";
+const BUILTIN_DEB_GET_MIGRATION_KEY = "builtin_deb_get_name_migrated";
 const MAX_SCHEDULE_NAME_LENGTH = 100;
 
 export function initDatabase(
@@ -219,6 +220,7 @@ export function initDatabase(
     detected_pkg_managers TEXT,
     disabled_pkg_managers TEXT,
     pkg_manager_configs TEXT,
+    pkg_manager_secret_refs TEXT,
     auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
     os_id TEXT,
     os_id_like TEXT,
@@ -568,6 +570,11 @@ export function initDatabase(
   }
   try {
     _db.run(sql`ALTER TABLE systems ADD COLUMN pkg_manager_configs TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN pkg_manager_secret_refs TEXT`);
   } catch {
     // Column already exists
   }
@@ -1164,6 +1171,7 @@ export function initDatabase(
   migrateCustomPackageManagerConfigKeys();
   migrateLegacyAptAutoHideIntoPackageManagerConfigs();
   migrateHiddenUpdateHideReasons();
+  migrateCustomDebGetPackageManagerName();
 
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
@@ -1487,6 +1495,102 @@ function migrateLegacyAptAutoHideIntoPackageManagerConfigs(): void {
   }
 }
 
+/**
+ * deb-get became a built-in package manager. A custom manager that already used
+ * the name would otherwise be parsed by the built-in parser, so it is renamed
+ * once (to deb-get-custom) together with everything that references it.
+ */
+function migrateCustomDebGetPackageManagerName(): void {
+  if (!_sqlite) return;
+  const sqlite = _sqlite;
+  const alreadyMigrated = sqlite
+    .prepare("SELECT 1 FROM settings WHERE key = ?")
+    .get(BUILTIN_DEB_GET_MIGRATION_KEY);
+  if (alreadyMigrated) return;
+
+  const from = "deb-get";
+  const existing = sqlite
+    .prepare("SELECT id FROM custom_package_managers WHERE name = ?")
+    .get(from);
+  const markMigrated = sqlite.prepare(
+    "INSERT OR IGNORE INTO settings (key, value, description) VALUES (?, '1', ?)",
+  );
+  if (!existing) {
+    markMigrated.run(BUILTIN_DEB_GET_MIGRATION_KEY, "deb-get custom manager rename check completed");
+    return;
+  }
+
+  let to = "deb-get-custom";
+  for (let suffix = 2; sqlite.prepare("SELECT 1 FROM custom_package_managers WHERE name = ?").get(to); suffix++) {
+    to = `deb-get-custom-${suffix}`;
+  }
+
+  const renameInJsonArray = (value: string | null): string | null => {
+    if (!value) return value;
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? JSON.stringify(parsed.map((entry) => (entry === from ? to : entry)))
+        : value;
+    } catch {
+      return value;
+    }
+  };
+  const renameObjectKey = (value: string | null): string | null => {
+    if (!value) return value;
+    try {
+      const parsed = JSON.parse(value);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !(from in parsed)) return value;
+      const { [from]: moved, ...rest } = parsed as Record<string, unknown>;
+      return JSON.stringify({ ...rest, [to]: moved });
+    } catch {
+      return value;
+    }
+  };
+
+  sqlite.transaction(() => {
+    sqlite.prepare("UPDATE custom_package_managers SET name = ? WHERE name = ?").run(to, from);
+    sqlite.prepare("UPDATE custom_scripts SET pkg_manager = ? WHERE pkg_manager = ?").run(to, from);
+    sqlite
+      .prepare("UPDATE system_script_overrides SET operation_key = ? || substr(operation_key, ?) WHERE operation_key LIKE ?")
+      .run(`${to}/`, from.length + 2, `${from}/%`);
+    for (const table of [
+      "update_cache",
+      "installed_package_cache",
+      "hidden_updates",
+      "package_manager_issues",
+      "notification_delivered_updates",
+    ]) {
+      sqlite.prepare(`UPDATE ${table} SET pkg_manager = ? WHERE pkg_manager = ?`).run(to, from);
+    }
+    const rows = sqlite
+      .prepare("SELECT id, pkg_manager, detected_pkg_managers, disabled_pkg_managers, pkg_manager_configs, pkg_manager_secret_refs FROM systems")
+      .all() as Array<{
+        id: number;
+        pkg_manager: string | null;
+        detected_pkg_managers: string | null;
+        disabled_pkg_managers: string | null;
+        pkg_manager_configs: string | null;
+        pkg_manager_secret_refs: string | null;
+      }>;
+    const updateSystem = sqlite.prepare(`UPDATE systems SET
+      pkg_manager = ?, detected_pkg_managers = ?, disabled_pkg_managers = ?,
+      pkg_manager_configs = ?, pkg_manager_secret_refs = ?
+      WHERE id = ?`);
+    for (const row of rows) {
+      updateSystem.run(
+        row.pkg_manager === from ? to : row.pkg_manager,
+        renameInJsonArray(row.detected_pkg_managers),
+        renameInJsonArray(row.disabled_pkg_managers),
+        renameObjectKey(row.pkg_manager_configs),
+        renameObjectKey(row.pkg_manager_secret_refs),
+        row.id,
+      );
+    }
+    markMigrated.run(BUILTIN_DEB_GET_MIGRATION_KEY, `Renamed custom deb-get package manager to ${to}`);
+  })();
+}
+
 function migrateHiddenUpdateHideReasons(): void {
   if (!_db) return;
 
@@ -1772,6 +1876,7 @@ function rebuildSystemsTableWithinTransaction(
       detected_pkg_managers TEXT,
       disabled_pkg_managers TEXT,
       pkg_manager_configs TEXT,
+      pkg_manager_secret_refs TEXT,
       auto_hide_kept_back_updates INTEGER NOT NULL DEFAULT 0,
       os_id TEXT,
       os_id_like TEXT,
@@ -1831,6 +1936,7 @@ function rebuildSystemsTableWithinTransaction(
     "detected_pkg_managers",
     "disabled_pkg_managers",
     "pkg_manager_configs",
+    "pkg_manager_secret_refs",
     "auto_hide_kept_back_updates",
     "os_id",
     "os_id_like",
@@ -1889,6 +1995,7 @@ function rebuildSystemsTableWithinTransaction(
     "detected_pkg_managers",
     "disabled_pkg_managers",
     "pkg_manager_configs",
+    "pkg_manager_secret_refs",
     opts.hasAutoHideKeptBackUpdates
       ? "auto_hide_kept_back_updates"
       : opts.hasIgnoreKeptBackPackages

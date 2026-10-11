@@ -43,13 +43,16 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/
 # Create a restricted package-maintenance user with fish and password-based sudo.
 COPY sudoers/apt-password /etc/sudoers.d/testuser
 COPY sudoers/persistent-monitor-password /etc/sudoers.d/testuser-persistent-monitor
+COPY sudoers/secret-env-password /etc/sudoers.d/testuser-secret-env
 COPY ludash-persistent-sudo-test /usr/local/bin/ludash-persistent-sudo-test
+COPY ludash-secret-env-test /usr/local/bin/ludash-secret-env-test
 RUN useradd -m -s /usr/bin/fish testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    chmod 440 /etc/sudoers.d/testuser /etc/sudoers.d/testuser-persistent-monitor && \
-    chmod 755 /usr/local/bin/ludash-persistent-sudo-test && \
+    chmod 440 /etc/sudoers.d/testuser /etc/sudoers.d/testuser-persistent-monitor /etc/sudoers.d/testuser-secret-env && \
+    chmod 755 /usr/local/bin/ludash-persistent-sudo-test /usr/local/bin/ludash-secret-env-test && \
     visudo -cf /etc/sudoers.d/testuser && \
-    visudo -cf /etc/sudoers.d/testuser-persistent-monitor
+    visudo -cf /etc/sudoers.d/testuser-persistent-monitor && \
+    visudo -cf /etc/sudoers.d/testuser-secret-env
 
 # Verify fish is the login shell, required sudo works, and arbitrary sudo fails.
 RUN getent passwd testuser | grep -q '/usr/bin/fish$' && \

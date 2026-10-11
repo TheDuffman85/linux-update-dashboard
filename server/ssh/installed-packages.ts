@@ -1,3 +1,5 @@
+import { debGetInstalledPackagesCommand } from "./parsers/deb-get";
+
 export interface InstalledPackage {
   pkgManager: string;
   packageName: string;
@@ -124,6 +126,11 @@ function parsePacmanPackages(stdout: string): InstalledPackage[] {
 }
 
 const BUILTIN_INSTALLED_PACKAGE_DEFINITIONS: Record<string, BuiltinInstalledPackageDefinition> = {
+  "deb-get": {
+    command: debGetInstalledPackagesCommand(),
+    parse: (stdout) => parseTabularPackages("deb-get", stdout)
+      .map((pkg) => ({ ...pkg, repository: "deb-get" })),
+  },
   apt: {
     command: "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n' 2>/dev/null",
     parse: (stdout) => parseTabularPackages("apt", stdout),

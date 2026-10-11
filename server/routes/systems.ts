@@ -29,9 +29,13 @@ import {
   getAptAutoHideKeptBackUpdates,
   mergeLegacyAutoHideKeptBackUpdates,
   normalizePackageManagerConfigs,
+  normalizePackageManagerSecretRefs,
   parsePackageManagerConfigs,
+  parsePackageManagerSecretRefs,
   validatePackageManagerConfigsInput,
+  validatePackageManagerSecretRefsInput,
 } from "../package-manager-configs";
+import { validateSecretRefCredentials } from "../services/package-manager-secret-service";
 
 type SystemsEnv = {
   Variables: {
@@ -125,6 +129,15 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
   );
   if (pkgManagerConfigError) {
     return pkgManagerConfigError;
+  }
+  const secretRefsError = validatePackageManagerSecretRefsInput(
+    body.pkgManagerSecretRefs,
+    scriptService.listPackageManagerDefinitions(),
+  ) ?? validateSecretRefCredentials(
+    normalizePackageManagerSecretRefs(body.pkgManagerSecretRefs, scriptService.listPackageManagerDefinitions()),
+  );
+  if (secretRefsError) {
+    return secretRefsError;
   }
   if (
     body.validatedConfigToken !== undefined &&
@@ -305,6 +318,11 @@ function serializeSystem(s: Record<string, unknown>) {
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
     pkgManagerConfigs,
+    // Credential IDs only; secret values are never serialized.
+    pkgManagerSecretRefs: parsePackageManagerSecretRefs(
+      s.pkgManagerSecretRefs as string | null,
+      scriptService.listPackageManagerDefinitions(),
+    ),
     hostKeyStatus: systemService.deriveConnectionHostKeyStatus({
       id: s.id as number | undefined,
       hostKeyVerificationEnabled: s.hostKeyVerificationEnabled as number | null,
@@ -801,6 +819,10 @@ systems.post("/", async (c) => {
       body.pkgManagerConfigs !== undefined
         ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
+    const pkgManagerSecretRefs =
+      body.pkgManagerSecretRefs !== undefined
+        ? normalizePackageManagerSecretRefs(body.pkgManagerSecretRefs, scriptService.listPackageManagerDefinitions())
+        : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
     if (autoHideKeptBackUpdates !== undefined) {
@@ -826,6 +848,7 @@ systems.post("/", async (c) => {
       disabledPkgManagers,
       detectedPkgManagers,
       pkgManagerConfigs,
+      pkgManagerSecretRefs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,
@@ -985,6 +1008,10 @@ systems.put("/:id", async (c) => {
       body.pkgManagerConfigs !== undefined
         ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
+    const pkgManagerSecretRefs =
+      body.pkgManagerSecretRefs !== undefined
+        ? normalizePackageManagerSecretRefs(body.pkgManagerSecretRefs, scriptService.listPackageManagerDefinitions())
+        : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
     if (autoHideKeptBackUpdates !== undefined) {
@@ -1010,6 +1037,7 @@ systems.put("/:id", async (c) => {
       disabledPkgManagers,
       detectedPkgManagers,
       pkgManagerConfigs,
+      pkgManagerSecretRefs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,

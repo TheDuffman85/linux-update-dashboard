@@ -4,13 +4,22 @@ import { apiFetch } from "./client";
 export type CredentialKind =
   | "usernamePassword"
   | "sshKey"
-  | "certificate";
+  | "certificate"
+  | "secret";
 
-export interface CredentialReference {
-  type: "system";
-  id: number;
-  name: string;
-}
+export type CredentialReference =
+  | {
+      type: "system";
+      id: number;
+      name: string;
+    }
+  | {
+      type: "packageManagerSecret";
+      id: number;
+      name: string;
+      pkgManager: string;
+      key: string;
+    };
 
 export interface CredentialSummary {
   id: number;

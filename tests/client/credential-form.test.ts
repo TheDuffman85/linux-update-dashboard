@@ -117,3 +117,27 @@ describe("validateCredentialForm", () => {
     ).toBeNull();
   });
 });
+
+describe("secret credentials", () => {
+  const empty = {
+    username: "",
+    password: "",
+    privateKey: "",
+    passphrase: "",
+    certificatePem: "",
+    privateKeyPem: "",
+    privateKeyPassword: "",
+  };
+
+  test("validates without a username and keeps the stored value on edit", () => {
+    expect(validateCredentialForm("token", "secret", { ...empty, secretValue: "ghp_x" })).toBeNull();
+    expect(validateCredentialForm("token", "secret", empty)).toBe("Secret value is required");
+    expect(validateCredentialForm("token", "secret", { ...empty, secretValue: "a\nb" }))
+      .toBe("Secret value must be a single line");
+    expect(validateCredentialForm("token", "secret", empty, makeInitial({ value: "(stored)" }))).toBeNull();
+    expect(buildCredentialPayload("secret", empty, makeInitial({ value: "(stored)" })))
+      .toEqual({ value: "(stored)" });
+    expect(buildCredentialPayload("secret", { ...empty, secretValue: "ghp_new" }))
+      .toEqual({ value: "ghp_new" });
+  });
+});

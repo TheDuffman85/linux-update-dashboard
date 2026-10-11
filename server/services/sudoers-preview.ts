@@ -146,8 +146,18 @@ function buildContent(
     }
   }
 
+  const isReadOnlyWildcard = (entry: PotentialCommandEntry) =>
+    entry.sudoersSafety === "read_only_wildcard";
   const rules = dedupe(commandReference.sudoers
-    .filter((entry) => !entry.requiresWildcard)
+    .filter((entry) => !entry.requiresWildcard && !isReadOnlyWildcard(entry))
+    .map((entry) => formatRule(
+      username,
+      entry,
+      executablePaths,
+    ))
+    .filter((rule): rule is string => !!rule));
+  const readOnlyRules = dedupe(commandReference.sudoers
+    .filter(isReadOnlyWildcard)
     .map((entry) => formatRule(
       username,
       entry,
@@ -162,6 +172,14 @@ function buildContent(
       executablePaths,
     ))
     .filter((rule): rule is string => !!rule));
+  const readOnlySection = readOnlyRules.length > 0
+    ? [
+        "",
+        "# Read-only lookups. The argument wildcard only selects which items are shown;",
+        "# these commands do not change the system.",
+        ...readOnlyRules,
+      ]
+    : [];
   const selectedPackageSection = selectedPackageRules.length > 0
     ? [
         "",
@@ -171,12 +189,25 @@ function buildContent(
       ]
     : [];
 
+  const envKeep = commandReference.envKeep ?? [];
+  const envKeepSection = envKeep.length > 0
+    ? [
+        "# Secret environment variables are passed through sudo by name only;",
+        "# their values never appear in a command line.",
+        ...envKeep.map((entry) =>
+          `# ${entry.envVar}: ${sanitizeComment(entry.pkgManager)} config entry ${sanitizeComment(entry.key)}`),
+        `Defaults:${escapeSudoersUser(username)} env_keep += "${envKeep.map((entry) => entry.envVar).join(" ")}"`,
+      ]
+    : [];
+
   return [
     ...header,
     "",
     `Defaults:${escapeSudoersUser(username)} !requiretty`,
+    ...envKeepSection,
     "",
     ...rules,
+    ...readOnlySection,
     ...selectedPackageSection,
   ].join("\n") + "\n";
 }

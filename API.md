@@ -100,6 +100,14 @@ update is available, and release/repository URLs when available.
 | DELETE | `/api/systems/:id/hidden-updates/:hiddenUpdateId`  | Unhide an update.                                                                                                             |
 | POST   | `/api/systems/:id/package-issues/:issueId/dismiss` | Dismiss a visible package-manager issue.                                                                                      |
 
+`POST /api/systems` and `PUT /api/systems/:id` accept `pkgManagerSecretRefs`, which
+assigns secret credentials to secret config entries:
+`{ "deb-get": { "githubToken": 12 } }`. Each ID must reference a credential of
+kind `secret`. Send `{}` to clear all assignments, or omit the field to keep the
+current ones. Plaintext values for secret entries are rejected in
+`pkgManagerConfigs`. System responses include `pkgManagerSecretRefs` as
+credential IDs only.
+
 ## Dashboard Groups
 
 | Method | Endpoint                                  | Description                                                        |
@@ -186,14 +194,21 @@ schedules accept `systemIds: null` for all systems or an array of system IDs.
 
 ## Credentials
 
-| Method | Endpoint                   | Description                           |
-| ------ | -------------------------- | ------------------------------------- |
-| GET    | `/api/credentials`         | List saved SSH credentials.           |
-| PUT    | `/api/credentials/reorder` | Reorder credentials.                  |
-| GET    | `/api/credentials/:id`     | Get a credential with masked secrets. |
-| POST   | `/api/credentials`         | Create a credential.                  |
-| PUT    | `/api/credentials/:id`     | Update a credential.                  |
-| DELETE | `/api/credentials/:id`     | Delete a credential.                  |
+| Method | Endpoint                   | Description                            |
+| ------ | -------------------------- | -------------------------------------- |
+| GET    | `/api/credentials`         | List saved SSH and secret credentials. |
+| PUT    | `/api/credentials/reorder` | Reorder credentials.                   |
+| GET    | `/api/credentials/:id`     | Get a credential with masked secrets.  |
+| POST   | `/api/credentials`         | Create a credential.                   |
+| PUT    | `/api/credentials/:id`     | Update a credential.                   |
+| DELETE | `/api/credentials/:id`     | Delete a credential.                   |
+
+Credential kinds are `usernamePassword`, `sshKey`, `certificate`, and `secret`.
+A `secret` credential has a single `value` field. It must be one line of at
+most 4096 characters, and responses mask it as `(stored)`. A credential that a
+system references, either for SSH or for a secret config entry, cannot be
+deleted. Its references list the system, plus `pkgManager` and `key` for secret
+entries.
 
 ## Passkeys
 

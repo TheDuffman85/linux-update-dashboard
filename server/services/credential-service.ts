@@ -11,14 +11,23 @@ export const CREDENTIAL_KINDS = [
   "usernamePassword",
   "sshKey",
   "certificate",
+  "secret",
 ] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 
-export interface CredentialReference {
-  type: "system";
-  id: number;
-  name: string;
-}
+export type CredentialReference =
+  | {
+      type: "system";
+      id: number;
+      name: string;
+    }
+  | {
+      type: "packageManagerSecret";
+      id: number;
+      name: string;
+      pkgManager: string;
+      key: string;
+    };
 
 export interface CredentialSummary {
   id: number;
@@ -39,13 +48,17 @@ const SECRET_FIELDS: Record<CredentialKind, string[]> = {
   usernamePassword: ["password"],
   sshKey: ["privateKey", "passphrase"],
   certificate: ["certificatePem", "privateKeyPem", "privateKeyPassword"],
+  secret: ["value"],
 };
 
 const ALLOWED_FIELDS: Record<CredentialKind, string[]> = {
   usernamePassword: ["username", "password"],
   sshKey: ["username", "privateKey", "passphrase"],
   certificate: ["username", "certificatePem", "privateKeyPem", "privateKeyPassword"],
+  secret: ["value"],
 };
+
+export const MAX_SECRET_VALUE_LENGTH = 4096;
 
 export interface ResolvedSystemCredential {
   credentialId: number;
@@ -71,12 +84,44 @@ export function parseCredentialPayload(raw: string): Record<string, string> {
 
 function getReferences(credentialId: number): CredentialReference[] {
   const db = getDb();
-  return db
+  const systemRefs: CredentialReference[] = db
     .select({ id: systems.id, name: systems.name })
     .from(systems)
     .where(eq(systems.credentialId, credentialId))
     .all()
     .map((item) => ({ ...item, type: "system" as const }));
+  return [...systemRefs, ...getSecretReferences(credentialId)];
+}
+
+function getSecretReferences(credentialId: number): CredentialReference[] {
+  const refs: CredentialReference[] = [];
+  const rows = getDb()
+    .select({
+      id: systems.id,
+      name: systems.name,
+      pkgManagerSecretRefs: systems.pkgManagerSecretRefs,
+    })
+    .from(systems)
+    .all();
+  for (const row of rows) {
+    if (!row.pkgManagerSecretRefs) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.pkgManagerSecretRefs);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    for (const [pkgManager, managerRefs] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!managerRefs || typeof managerRefs !== "object" || Array.isArray(managerRefs)) continue;
+      for (const [key, id] of Object.entries(managerRefs as Record<string, unknown>)) {
+        if (id === credentialId) {
+          refs.push({ type: "packageManagerSecret", id: row.id, name: row.name, pkgManager, key });
+        }
+      }
+    }
+  }
+  return refs;
 }
 
 function maskPayload(
@@ -126,6 +171,9 @@ function buildSummary(
     return payload.username
       ? `${payload.username} • SSH key${payload.passphrase ? " + passphrase" : ""}`
       : `SSH key${payload.passphrase ? " + passphrase" : ""}`;
+  }
+  if (kind === "secret") {
+    return "Secret value";
   }
   return payload.username
     ? `${payload.username} • SSH certificate${payload.privateKeyPassword ? " + password" : ""}`
@@ -211,6 +259,21 @@ export function validateCredentialInput(data: {
     const hasKey = !!payload.privateKeyPem || existing?.privateKeyPem !== undefined;
     if (!hasCert) return "payload.certificatePem is required";
     if (!hasKey) return "payload.privateKeyPem is required";
+  }
+
+  if (data.kind === "secret") {
+    const value = payload.value;
+    if (value === "(stored)" && existing?.value !== undefined) return null;
+    if (!value && existing?.value === undefined) return "payload.value is required";
+    if (value) {
+      if (value.length > MAX_SECRET_VALUE_LENGTH) {
+        return `payload.value must be at most ${MAX_SECRET_VALUE_LENGTH} characters`;
+      }
+      // Secrets are delivered line-by-line over SSH stdin.
+      if (/[\r\n\0]/.test(value)) {
+        return "payload.value must be a single line";
+      }
+    }
   }
 
   return null;
@@ -346,6 +409,19 @@ export function reorderCredentials(credentialIds: number[]): void {
       .where(eq(credentials.id, id))
       .run();
   }
+}
+
+export function isSecretCredential(id: number): boolean {
+  return getCredentialRow(id)?.kind === "secret";
+}
+
+/** Server-side only: never send the result to clients or logs. */
+export function resolveSecretCredentialValue(id: number): string | null {
+  const row = getCredentialRow(id);
+  if (!row || row.kind !== "secret") return null;
+  const encrypted = parseCredentialPayload(row.payload).value;
+  if (!encrypted) return null;
+  return getEncryptor().decrypt(encrypted);
 }
 
 export function isSystemCredentialKind(kind: CredentialKind): boolean {

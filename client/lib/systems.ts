@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, pollJob } from "./client";
-import type { PackageManagerConfigs } from "./package-manager-configs";
+import type { PackageManagerConfigs, PackageManagerSecretRefs } from "./package-manager-configs";
 import type { HostKeyStatus } from "./host-key-status";
 
 export interface ActiveOperation {
@@ -40,6 +40,7 @@ export interface System {
   detectedPkgManagers: string[] | null;
   disabledPkgManagers: string[] | null;
   pkgManagerConfigs: PackageManagerConfigs | null;
+  pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
   autoHideKeptBackUpdates: number;
   osId: string | null;
   osIdLike: string | null;
@@ -212,7 +213,7 @@ export interface PotentialCommandEntry {
   pkgManager: string | null;
   command: string;
   sourceCommand?: string;
-  sudoersSafety?: "exact" | "package_placeholder" | "unsafe";
+  sudoersSafety?: "exact" | "package_placeholder" | "read_only_wildcard" | "unsafe";
   requiresWildcard?: boolean;
   requiresPasswordLauncher?: boolean;
   warnings?: string[];
@@ -340,6 +341,7 @@ export function useCreateSystem() {
       disabledPkgManagers?: string[];
       detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
+      pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
@@ -369,6 +371,7 @@ export function useUpdateSystem() {
       disabledPkgManagers?: string[];
       detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
+      pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;

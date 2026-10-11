@@ -12,6 +12,9 @@ import { checkUpdates } from "../../server/services/update-service";
 import { getVisibleCachedUpdates, getVisibleUpdateSummary } from "../../server/services/hidden-update-service";
 import { createSystem } from "../../server/services/system-service";
 import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
+import { createCustomPackageManager, createScript } from "../../server/services/script-service";
+import { createCredential } from "../../server/services/credential-service";
+import type { RunCommandOptions } from "../../server/ssh/connection";
 
 const SYSTEM_INFO_OUTPUT = `===OS===
 NAME="Debian GNU/Linux"
@@ -752,5 +755,68 @@ describe("checkUpdates", () => {
       .at(-1);
     expect(history?.status).toBe("warning");
     expect(history?.error).toContain("[apt installed packages] dpkg-query failed");
+  });
+  test("delivers secret config entries over stdin without storing them in history", async () => {
+    const db = getDb();
+    const systemId = createAptSystem();
+    const token = "ghp_checkTestTokenValue123456";
+    createCustomPackageManager({
+      name: "release-tool",
+      label: "release-tool",
+      configEntries: [{ key: "githubToken", defaultValue: "", secret: true, envVar: "RELEASE_TOOL_TOKEN", sudoEnvKeep: true }],
+    });
+    createScript({
+      name: "Check release-tool",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "release-tool",
+      isDefault: true,
+      steps: [{ label: "Check release-tool", command: "{{sudo:release-tool-check}}" }],
+      parserConfig: {
+        updateRegex: "^LUDASH_UPDATE\\s+(?<packageName>\\S+)\\s+(?<currentVersion>\\S+)\\s+(?<newVersion>\\S+)$",
+      },
+    });
+    const secretId = createCredential({ name: "token", kind: "secret", payload: { value: token } });
+    db.update(systems)
+      .set({
+        pkgManager: "release-tool",
+        detectedPkgManagers: JSON.stringify(["release-tool"]),
+        pkgManagerSecretRefs: JSON.stringify({ "release-tool": { githubToken: secretId } }),
+      })
+      .where(eq(systems.id, systemId))
+      .run();
+
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    const secretEnvVars: string[][] = [];
+    (sshManager as any).connect = async () => ({});
+    (sshManager as any).disconnect = () => {};
+    (sshManager as any).runCommand = async (
+      _conn: unknown,
+      command: string,
+      _timeout?: number,
+      _sudoPassword?: string,
+      _onData?: unknown,
+      _signal?: unknown,
+      options?: RunCommandOptions,
+    ) => {
+      if (command === SYSTEM_INFO_CMD) {
+        return { stdout: SYSTEM_INFO_OUTPUT, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("release-tool-check")) {
+        secretEnvVars.push(options?.secretInput?.envVars ?? []);
+        expect(command).not.toContain(token);
+        return { stdout: "LUDASH_UPDATE obsidian 1.12.7 1.13.4\n", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+
+    const updates = await checkUpdates(systemId);
+
+    expect(updates.map((update) => update.packageName)).toEqual(["obsidian"]);
+    expect(secretEnvVars).toEqual([["RELEASE_TOOL_TOKEN"]]);
+    const history = db.select().from(updateHistory).where(eq(updateHistory.systemId, systemId)).all().at(-1);
+    const serializedHistory = JSON.stringify(history);
+    expect(serializedHistory).toContain("Secret environment (via stdin): RELEASE_TOOL_TOKEN");
+    expect(serializedHistory).not.toContain(token);
   });
 });

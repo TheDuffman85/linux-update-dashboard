@@ -114,6 +114,7 @@ describe("sudoers preview generation", () => {
             command: "sh /tmp/custom-upgrade.sh",
           },
         ],
+        envKeep: [],
       },
     });
 

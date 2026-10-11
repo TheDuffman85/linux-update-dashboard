@@ -30,7 +30,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 ## Features
 
-- **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, and custom package managers.
+- **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, and custom package managers.
 - **SSH credential vault:** reusable password, key, and OpenSSH certificate credentials encrypted at rest with AES-256-GCM.
 - **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
 - **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
@@ -270,11 +270,24 @@ The endpoint catalog lives in [API.md](API.md).
 | APK | Alpine Linux |
 | Flatpak | Any cross-distribution host |
 | Snap | Any cross-distribution host |
+| [deb-get](https://github.com/wimpysworld/deb-get) | Debian and Ubuntu hosts with deb-get installed |
 | Custom | User-defined scripts and parser rules |
 
 Managers are detected over SSH when testing a connection or running the first check. Detected managers are enabled by default and can be toggled per system. Security updates are identified where the package manager exposes enough information.
 
 Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Snap does not currently expose manager-specific settings.
+
+### deb-get
+
+deb-get installs apps that publish `.deb` files on GitHub, GitLab, or a website but have no APT repository, such as Obsidian or draw.io. The dashboard manages the apps that deb-get installed itself (methods `direct`, `github`, `gitlab`, and `website` in `/etc/deb-get/installed`). Apps that deb-get set up from an APT repository or PPA stay with APT.
+
+- **Check:** runs the read-only `deb-get show <app>` for each app and compares versions with `dpkg --compare-versions`. It does not run `deb-get update`, because that also runs `apt-get update` and re-checks every app deb-get knows about in the background, which uses up GitHub API limits.
+- **Upgrade all:** `deb-get upgrade --dg-only`. deb-get also upgrades the apt and ppa apps it installed in this step.
+- **Upgrade selected:** `deb-get install <app...>`.
+- **No duplicates:** deb-get installs its apps through dpkg. While deb-get is enabled, its apps are removed from the APT inventory and from APT updates.
+- **GitHub token:** assign a **Secret** credential to the built-in `githubToken` entry. deb-get receives it as `DEBGET_TOKEN`, which raises the GitHub API rate limit. Without it, GitHub-hosted apps can fail to report a published version, and the check output names them. See [Secret config entries](#secret-config-entries).
+
+deb-get needs root for every action, including `show`. The generated sudoers file therefore has an exact `deb-get upgrade --dg-only` rule, an active `deb-get show *` rule (see the read-only lookups below), a commented `deb-get install *` rule for selected upgrades, and `env_keep` for `DEBGET_TOKEN`. Any sudo access to deb-get is effectively root: deb-get runs its app definitions as shell code and installs whatever packages they point to.
 
 ## Dashboard groups and Upgrade All priorities
 
@@ -357,15 +370,18 @@ The **Scripts** page exposes the SSH command templates for package-manager detec
 
 Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
 
-- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot are read-only and can be copied.
+- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, system-info, and reboot are read-only and can be copied.
 - Custom scripts can define shell steps, operation type, parser settings, installed-package inventory parsing, and system-info section mapping.
 - Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`.
 - Custom package managers can define display labels, parser regexes, optional config entries, and import/export bundles.
+- Config entries can be marked **secret** for tokens and passwords. See [Secret config entries](#secret-config-entries).
 - Used scripts and package managers are protected from accidental deletion.
 
 Command placeholders include `{{package}}`, `{{packages}}`, `{{quotedPackage}}`, `{{quotedPackages}}`, `{{manager}}`, `{{config.someKey}}`, and `{{sudo:COMMAND}}`. Custom parser regexes should use named capture groups such as `packageName`, `newVersion`, `currentVersion`, `architecture`, and `repository`.
 
 For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Sudoers setup** action that generates a least-privilege `/etc/sudoers.d` allowlist for the selected system. Review generated files before installing them, keep commands exact, prefer absolute executable paths, leave selected-package wildcard rules commented unless needed, and avoid broad rules such as `NOPASSWD: ALL` or `sudo sh <writable-script>`.
+
+**Read-only lookups** are the one exception to exact, active rules. Some lookups must run as root and take a different argument list every time, such as `deb-get show <app>`. The generated file lists these in their own active section as `<command> *`. Only commands on a fixed allowlist in the dashboard qualify, and only in check or inventory steps. A custom script that passes a variable to any other sudo command still gets a warning instead of a rule.
 
 Example validation after installing a generated file:
 
@@ -375,6 +391,18 @@ sudo visudo -cf /etc/sudoers.d/updater-updater
 ```
 
 Package maintenance remains privileged because package scripts run as root. The goal is to limit the dashboard account to the required maintenance commands.
+
+### Secret config entries
+
+Mark a config entry as secret when a script needs a token or password, for example a GitHub token that raises API rate limits. A secret entry has no default value. Instead, it names the environment variable the script reads, such as `DEBGET_TOKEN`. Each system then assigns a **Secret** credential from the **Credentials** page.
+
+- The value is stored encrypted, like every other credential. It is never returned by the API, included in bundle exports, or copied anywhere except the systems that reference it.
+- At run time the dashboard sends the value over the SSH channel's stdin, ahead of the sudo password. A short preamble reads it into the environment variable. The command text, the process list on the host, the detached script in `/tmp`, the activity history, and the command shown in the browser contain only the variable name.
+- Command output is redacted of the value before it is streamed, stored, or logged. Values shorter than 6 characters are not redacted.
+- Scripts reference the variable, for example `"$DEBGET_TOKEN"`. `{{config.<key>}}` placeholders are rejected for secret entries.
+- Enable **Keep through sudo** on the entry when a root command needs the variable. sudo's default `env_reset` drops it otherwise, so the generated sudoers file adds `Defaults:<user> env_keep += "DEBGET_TOKEN"`. Command rules stay exact, and the value never appears in sudo's command line or auth log. Accounts with full sudo access need this line too. Names that change shell, loader, interpreter, or sudo behavior, such as `PATH`, `LD_*`, `BASH_ENV`, `PYTHONPATH`, or `SUDO_*`, are rejected.
+
+The tool that receives the secret decides what happens next. A tool that passes it to `curl` on the command line makes it visible in the host's process list while that command runs.
 
 ## SSH-Safe Maintenance
 
@@ -513,6 +541,7 @@ Shared credentials:
 | `ludash-test-apt-dpkg-interrupted` | 2015 | APT interrupted dpkg fixture | Debian 12 |
 | `ludash-test-ubuntu-root` | 2016 | APT root-login/full sudo fixture | Ubuntu 24.04 |
 | `ludash-test-custom-package-managers` | 2017 | All custom package-manager examples | Ubuntu 24.04 |
+| `ludash-test-deb-get` | 2018 | deb-get stand-in with local `.deb` apps, least-privilege sudoers | Debian 12 |
 
 Fixtures pin older package versions from archived or local repositories while current repos stay active, so package-manager checks report deterministic pending updates. Special fixtures cover kept-back packages, partial multi-manager failures, DNF GPG prompts, DNF EULA prompts, interrupted dpkg repair, root-login behavior, and custom package manager examples in [`examples/`](examples/).
 
@@ -536,6 +565,8 @@ Docker integration tests are opt-in, for example:
 
 ```bash
 LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/apt-sudo-password.integration.test.ts
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/secret-env.integration.test.ts
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/deb-get.integration.test.ts
 ```
 
 ### Branch Management
