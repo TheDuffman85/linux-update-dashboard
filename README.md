@@ -33,6 +33,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, and custom package managers.
 - **SSH credential vault:** reusable password, key, and OpenSSH certificate credentials encrypted at rest with AES-256-GCM.
 - **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
+- **Repository sources:** view each system's APT, DNF/YUM, Pacman, APK, and Flatpak repository files with credentials masked, and optionally edit them through `sudoedit` with a diff review and activity history.
 - **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
@@ -403,6 +404,38 @@ Mark a config entry as secret when a script needs a token or password, for examp
 - Enable **Keep through sudo** on the entry when a root command needs the variable. sudo's default `env_reset` drops it otherwise, so the generated sudoers file adds `Defaults:<user> env_keep += "DEBGET_TOKEN"`. Command rules stay exact, and the value never appears in sudo's command line or auth log. Accounts with full sudo access need this line too. Names that change shell, loader, interpreter, or sudo behavior, such as `PATH`, `LD_*`, `BASH_ENV`, `PYTHONPATH`, or `SUDO_*`, are rejected.
 
 The tool that receives the secret decides what happens next. A tool that passes it to `curl` on the command line makes it visible in the host's process list while that command runs.
+
+## Repository Sources
+
+The **Repository sources** action on the **Systems** page opens a modal with the repository files of the system's active package managers. The files are read over SSH as the SSH user, without sudo, each time the modal is opened or refreshed.
+
+| Manager | Files |
+| ------- | ----- |
+| APT | `/etc/apt/sources.list`, `/etc/apt/sources.list.d/*.list`, `/etc/apt/sources.list.d/*.sources` |
+| DNF | `/etc/yum.repos.d/*.repo`, `/etc/distro.repos.d/*.repo`, `/usr/share/dnf5/repos.d/*.repo` (view only) |
+| YUM | `/etc/yum.repos.d/*.repo` |
+| Pacman | `/etc/pacman.conf`, `/etc/pacman.d/*mirrorlist` |
+| APK | `/etc/apk/repositories`, `/etc/apk/repositories.d/*.list` |
+| Flatpak | `/var/lib/flatpak/repo/config`, `/etc/flatpak/remotes.d/*.flatpakrepo` (view only; use `flatpak remote-*`) |
+
+Credentials in URLs (`https://user:pass@...`) and `password`, `token`, or `secret` fields are masked before content leaves the server.
+
+Editing is off by default. Turn on **Allow repository source editing** in the system settings to edit existing files of that system; while it is off, the modal links to the system settings. Read-only users and API tokens cannot edit or change the setting.
+
+- **One file at a time:** while a file is being edited, the modal can only be closed with **Cancel**, so an unsaved edit is not lost to Escape or a click outside.
+- **Review before writing:** saving first validates the syntax of one-line APT entries, deb822 stanzas, and INI section headers, then shows a diff of the change against the file currently on the host. The file is written only after you confirm.
+- **Concurrent changes:** if the file changed on the host since it was loaded, the save is rejected and the file must be reloaded.
+- **How it is written:** the new content travels base64-encoded over the SSH channel's stdin. Root writes the file directly. Other users go through `sudoedit`, which copies the file to a temporary file owned by the SSH user, lets a throwaway editor script in `/tmp/ludash_*` replace that copy, and installs it as root. `sudoedit` refuses symlinks and keeps the file's owner and mode. The dashboard reads the file back afterwards to confirm that it changed. Nothing is installed on the host.
+- **History:** each save is recorded in the activity history with a unified diff.
+- **Not editable from the dashboard:** files with masked credentials (they would be lost), files over 64 KiB, files that are not valid UTF-8, vendor files, and Flatpak remotes. New files cannot be created yet.
+
+For restricted SSH users, each file needs an exact `sudoedit` rule. When editing is enabled, the **Sudoers setup** output lists one commented rule per file found on the host:
+
+```sudoers
+# updater ALL=(root) NOPASSWD: sudoedit /etc/apt/sources.list.d/debian.sources
+```
+
+Uncomment only the files you want to edit. Write access to repository sources is root-equivalent: a repository decides which packages the next upgrade installs, and package scripts run as root. Only add repositories you trust, and run **Check for updates** after an edit to confirm the package manager accepts the new configuration.
 
 ## SSH-Safe Maintenance
 

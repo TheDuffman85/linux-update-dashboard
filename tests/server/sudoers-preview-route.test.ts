@@ -65,6 +65,32 @@ describe("sudoers preview route", () => {
     expect((sshManager as any).runCommand).toHaveBeenCalledTimes(1);
   });
 
+  test("lists editable repository sources when editing is enabled", async () => {
+    const systemId = createSystem();
+    getDb().update(systems).set({ repositorySourceEditingEnabled: 1 }).where(eq(systems.id, systemId)).run();
+    const sshManager = initSSHManager(1, 1, 1, getEncryptor());
+    (sshManager as any).connect = vi.fn(async () => ({}));
+    (sshManager as any).disconnect = vi.fn();
+    (sshManager as any).runCommand = vi.fn(async (_conn: unknown, command: string) => ({
+      stdout: command.includes("repository source")
+        ? `F\t2\t${Buffer.from("/etc/apt/sources.list.d/debian.sources").toString("base64")}\tok\t`
+        : ["dpkg\t/usr/bin/dpkg", "apt-get\t/usr/bin/apt-get", "reboot\t/usr/sbin/reboot"].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+
+    const response = await app.request(`/api/systems/${systemId}/sudoers-preview`);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.resolution).toBe("resolved");
+    expect(body.content).toContain("# updater ALL=(root) NOPASSWD: sudoedit /etc/apt/sources.list.d/debian.sources");
+    expect((sshManager as any).runCommand).toHaveBeenCalledTimes(2);
+    expect((sshManager as any).connect).toHaveBeenCalledTimes(1);
+  });
+
   test("returns a fallback template when required reboot is unavailable", async () => {
     const systemId = createSystem();
     const sshManager = initSSHManager(1, 1, 1, getEncryptor());

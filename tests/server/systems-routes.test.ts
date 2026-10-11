@@ -829,6 +829,7 @@ describe("systems reorder route", () => {
         credentialId,
         autoHideKeptBackUpdates: true,
         hidden: true,
+        repositorySourceEditingEnabled: true,
       }),
     });
 
@@ -836,6 +837,7 @@ describe("systems reorder route", () => {
     const created = listSystems().find((system) => system.name === "Hidden System");
     expect(created?.autoHideKeptBackUpdates).toBe(1);
     expect(created?.hidden).toBe(1);
+    expect(created?.repositorySourceEditingEnabled).toBe(1);
 
     const updateRes = await app.request(`/api/systems/${created!.id}`, {
       method: "PUT",
@@ -847,6 +849,7 @@ describe("systems reorder route", () => {
         credentialId,
         autoHideKeptBackUpdates: false,
         hidden: false,
+        repositorySourceEditingEnabled: false,
       }),
     });
 
@@ -854,6 +857,22 @@ describe("systems reorder route", () => {
     const updated = listSystems().find((system) => system.id === created!.id);
     expect(updated?.autoHideKeptBackUpdates).toBe(0);
     expect(updated?.hidden).toBe(0);
+    expect(updated?.repositorySourceEditingEnabled).toBe(0);
+
+    const invalidRes = await app.request(`/api/systems/${created!.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Hidden System",
+        hostname: "hidden.local",
+        port: 22,
+        credentialId,
+        repositorySourceEditingEnabled: "yes",
+      }),
+    });
+
+    expect(invalidRes.status).toBe(400);
+    expect(listSystems().find((system) => system.id === created!.id)?.repositorySourceEditingEnabled).toBe(0);
   });
 
   test("assigns secret credentials to secret config entries without exposing values", async () => {

@@ -693,7 +693,7 @@ function getOperationNoticeCopy(
         };
   }
 
-  const copies: Record<string, Record<"failed" | "warning", Pick<OperationNoticeState, "title" | "message">>> = {
+  const copies: Record<string, Partial<Record<"failed" | "warning", Pick<OperationNoticeState, "title" | "message">>>> = {
     autoremove: {
       failed: {
         title: translateOrFallback(t, "pages.systemDetail.notice.autoremoveFailedTitle", "Autoremove failed"),
@@ -742,6 +742,12 @@ function getOperationNoticeCopy(
       warning: {
         title: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningTitle", "Reboot completed with warnings"),
         message: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningMessage", "The reboot operation completed with warnings."),
+      },
+    },
+    repository_source_edit: {
+      failed: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.repositorySourceEditFailedTitle", "Repository source update failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.repositorySourceEditFailedMessage", "The repository source file could not be saved."),
       },
     },
     package_manager_repair: {
@@ -1215,6 +1221,10 @@ export function getActivityTitle(
   if (action === "full_upgrade_all") return translateOrFallback(t, "pages.systemDetail.activity.fullUpgradedAllPackages", "Full upgraded all packages");
   if (action === "reboot") return translateOrFallback(t, "pages.systemDetail.activity.rebootedSystem", "Rebooted system");
   if (action === "package_manager_repair") return translateOrFallback(t, "pages.systemDetail.activity.repairedPackageManager", "Repaired package manager");
+  if (action === "repository_source_edit") {
+    const path = packagesList.join(", ") || "repository source";
+    return translateOrFallback(t, "pages.systemDetail.activity.editedRepositorySource", `Edited ${path}`, { path });
+  }
   return translateOrFallback(t, "pages.systemDetail.activity.upgradedPackageList", `Upgraded ${packagesList.join(", ") || packageName || "package"}`, {
     packages: packagesList.join(", ") || packageName || "package",
   });
@@ -1310,7 +1320,7 @@ export function getPackageSelectionState(
 }
 
 function isSshSafeActivity(action: string): boolean {
-  return action !== "check" && action !== "reboot";
+  return action !== "check" && action !== "reboot" && action !== "repository_source_edit";
 }
 
 type ActivityDisplayRow = {
@@ -3172,6 +3182,7 @@ export default function SystemDetail() {
             pkgManagerSecretRefs: system.pkgManagerSecretRefs ?? null,
             autoHideKeptBackUpdates: system.autoHideKeptBackUpdates,
             hidden: system.hidden === 1,
+            repositorySourceEditingEnabled: system.repositorySourceEditingEnabled === 1,
             hostKeyStatus: system.hostKeyStatus,
             scriptOverrides: system.scriptOverrides,
           }}

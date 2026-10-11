@@ -768,6 +768,22 @@ function logHistory(
   pruneHistoryForSystem(systemId);
 }
 
+/** Record a repository source edit; the unified diff is kept as its output. */
+export function recordRepositorySourceEdit(
+  systemId: number,
+  pkgManager: string,
+  status: "success" | "failed",
+  opts: { path: string; command: string; diff?: string; error?: string; startedAt: string },
+): void {
+  logHistory(systemId, "repository_source_edit", pkgManager, status, {
+    packages: JSON.stringify([opts.path]),
+    command: opts.command,
+    output: opts.diff || undefined,
+    error: opts.error,
+    startedAt: opts.startedAt,
+  });
+}
+
 /** Insert a "started" history row and return its ID. */
 function insertStartedEntry(
   systemId: number,

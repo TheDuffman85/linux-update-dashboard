@@ -71,6 +71,44 @@ describe("sudoers preview generation", () => {
     expect(preview.content).toContain("root ALL=(root) NOPASSWD: /usr/bin/apt-get");
   });
 
+  test("adds commented sudoedit rules for editable repository sources", () => {
+    const preview = buildSudoersPreview({
+      username: "updater",
+      commandReference: createAptReference(),
+      executablePaths: aptPaths(),
+      repositorySourcePaths: ["/etc/apt/sources.list", "/etc/apt/sources.list.d/debian.sources"],
+    });
+
+    expect(preview.content).toContain("Writing repository sources is root-equivalent");
+    expect(preview.content).toContain("# updater ALL=(root) NOPASSWD: sudoedit /etc/apt/sources.list\n");
+    expect(preview.content).toContain("# updater ALL=(root) NOPASSWD: sudoedit /etc/apt/sources.list.d/debian.sources\n");
+    expect(preview.content).not.toMatch(/^updater .*sudoedit/m);
+  });
+
+  test("explains repository source rules when the files are unknown or absent", () => {
+    const unknown = buildSudoersPreview({
+      username: "updater",
+      commandReference: createAptReference(),
+      executablePaths: aptPaths(),
+      repositorySourcePaths: null,
+    });
+    const none = buildSudoersPreview({
+      username: "updater",
+      commandReference: createAptReference(),
+      executablePaths: aptPaths(),
+      repositorySourcePaths: [],
+    });
+    const disabled = buildSudoersPreview({
+      username: "updater",
+      commandReference: createAptReference(),
+      executablePaths: aptPaths(),
+    });
+
+    expect(unknown.content).toContain("# updater ALL=(root) NOPASSWD: sudoedit /absolute/path/to/file");
+    expect(none.content).toContain("No editable repository source files were found on this host.");
+    expect(disabled.content).not.toContain("sudoedit");
+  });
+
   test("sanitizes file names and sudoers arguments", () => {
     expect(sanitizeSudoersFileSegment("ops team/blue")).toBe("ops-team-blue");
     expect(sanitizeSudoersFileSegment("..")).toBe("user");

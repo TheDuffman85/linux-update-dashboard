@@ -20,6 +20,7 @@ import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
+import { RepositorySourcesPanel } from "../components/systems/RepositorySourcesPanel";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 import { filterSystems, getLifecycleBadge } from "../lib/system-search";
 import { useSettings } from "../lib/settings";
@@ -61,6 +62,8 @@ export default function SystemsList() {
     () => systems?.find((system) => system.id === routeEditSystemId) ?? null,
   );
   const [sudoersSystem, setSudoersSystem] = useState<System | null>(null);
+  const [repositorySourcesSystem, setRepositorySourcesSystem] = useState<System | null>(null);
+  const [editingRepositorySource, setEditingRepositorySource] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [orderedSystems, setOrderedSystems] = useState<System[]>(() => systems ?? []);
   const systemsRef = useRef<System[]>([]);
@@ -323,6 +326,16 @@ export default function SystemsList() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                         </svg>
                       </button>
+                      <button
+                        onClick={() => setRepositorySourcesSystem(s)}
+                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        title={t("components.repositorySources.title")}
+                        aria-label={t("components.repositorySources.titleForName", { name: s.name })}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </button>
                       {!isReadOnly && (
                       <>
                       <button
@@ -405,6 +418,7 @@ export default function SystemsList() {
             pkgManagerSecretRefs: duplicateSource.pkgManagerSecretRefs ?? null,
             autoHideKeptBackUpdates: duplicateSource.autoHideKeptBackUpdates,
             hidden: duplicateSource.hidden === 1,
+            repositorySourceEditingEnabled: duplicateSource.repositorySourceEditingEnabled === 1,
             hostKeyStatus: duplicateSource.hostKeyStatus,
             scriptOverrides: duplicateSource.scriptOverrides,
           } : undefined}
@@ -440,6 +454,7 @@ export default function SystemsList() {
               pkgManagerSecretRefs: editSystem.pkgManagerSecretRefs ?? null,
               autoHideKeptBackUpdates: editSystem.autoHideKeptBackUpdates,
               hidden: editSystem.hidden === 1,
+              repositorySourceEditingEnabled: editSystem.repositorySourceEditingEnabled === 1,
               hostKeyStatus: editSystem.hostKeyStatus,
               scriptOverrides: editSystem.scriptOverrides,
             }}
@@ -470,6 +485,33 @@ export default function SystemsList() {
             {t("pages.systemsList.unableToLoadSudoersSetupForThisSystem")}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={repositorySourcesSystem !== null}
+        onClose={() => {
+          setRepositorySourcesSystem(null);
+          setEditingRepositorySource(false);
+        }}
+        title={repositorySourcesSystem
+          ? t("components.repositorySources.titleForName", { name: repositorySourcesSystem.name })
+          : t("components.repositorySources.title")}
+        // Keep an unsaved edit from being lost to Escape or a backdrop click.
+        dismissible={!editingRepositorySource}
+      >
+        {repositorySourcesSystem ? (
+          <RepositorySourcesPanel
+            key={repositorySourcesSystem.id}
+            systemId={repositorySourcesSystem.id}
+            readOnly={isReadOnly}
+            onEditingChange={setEditingRepositorySource}
+            onOpenSystemSettings={isReadOnly ? undefined : () => {
+              setEditSystem(repositorySourcesSystem);
+              setRepositorySourcesSystem(null);
+              setEditingRepositorySource(false);
+            }}
+          />
+        ) : null}
       </Modal>
 
       <ConfirmDialog

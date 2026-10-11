@@ -47,6 +47,7 @@ interface SystemFormData {
   pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
   autoHideKeptBackUpdates?: boolean;
   hidden?: boolean;
+  repositorySourceEditingEnabled?: boolean;
   scriptOverrides?: Record<string, string | null | undefined>;
   sourceSystemId?: number;
 }
@@ -172,6 +173,9 @@ export function SystemForm({
     initial?.pkgManagerSecretRefs ?? {}
   );
   const [hidden, setHidden] = useState(initial?.hidden === true);
+  const [repositorySourceEditingEnabled, setRepositorySourceEditingEnabled] = useState(
+    initial?.repositorySourceEditingEnabled === true
+  );
   const [scriptOverrides, setScriptOverrides] = useState<Record<string, string>>(
     initial?.scriptOverrides ?? {}
   );
@@ -400,6 +404,7 @@ export function SystemForm({
         customPackageManagers,
       ) ?? {},
       hidden,
+      repositorySourceEditingEnabled,
       scriptOverrides: activeScriptOverrides,
       sourceSystemId,
     });
@@ -954,6 +959,25 @@ export function SystemForm({
             </span>
             <span className="block text-xs text-slate-400 mt-0.5">
               {t("components.systemForm.hideFromDashboardDescription")}
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={repositorySourceEditingEnabled}
+            onChange={(e) => setRepositorySourceEditingEnabled(e.target.checked)}
+            className="rounded mt-0.5"
+          />
+          <span className="min-w-0">
+            <span className="block text-slate-700 dark:text-slate-200">
+              {t("components.repositorySources.allowEditing")}
+            </span>
+            <span className={`block text-xs mt-0.5 ${repositorySourceEditingEnabled ? "text-amber-700 dark:text-amber-300" : "text-slate-400"}`}>
+              {repositorySourceEditingEnabled
+                ? t("components.repositorySources.editingWarning")
+                : t("components.repositorySources.allowEditingDescription")}
             </span>
           </span>
         </label>

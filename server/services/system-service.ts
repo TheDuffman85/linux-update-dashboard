@@ -584,6 +584,7 @@ export function createSystem(data: {
   autoHideKeptBackUpdates?: boolean;
   excludeFromUpgradeAll?: boolean;
   hidden?: boolean;
+  repositorySourceEditingEnabled?: boolean;
   sourceSystemId?: number;
   trustedHostKeyData?: ApprovedHostKeyInput;
 }): number {
@@ -658,6 +659,9 @@ export function createSystem(data: {
   if (data.hidden !== undefined) {
     values.hidden = data.hidden ? 1 : 0;
   }
+  if (data.repositorySourceEditingEnabled !== undefined) {
+    values.repositorySourceEditingEnabled = data.repositorySourceEditingEnabled ? 1 : 0;
+  }
   if (data.hostKeyVerificationEnabled !== false && data.trustedHostKeyData) {
     values.trustedHostKey = data.trustedHostKeyData.rawKey;
     values.trustedHostKeyAlgorithm = data.trustedHostKeyData.algorithm;
@@ -697,6 +701,7 @@ export function updateSystem(
     autoHideKeptBackUpdates?: boolean;
     excludeFromUpgradeAll?: boolean;
     hidden?: boolean;
+    repositorySourceEditingEnabled?: boolean;
     trustedHostKeyData?: ApprovedHostKeyInput;
   }
 ): void {
@@ -763,6 +768,9 @@ export function updateSystem(
   }
   if (data.hidden !== undefined) {
     values.hidden = data.hidden ? 1 : 0;
+  }
+  if (data.repositorySourceEditingEnabled !== undefined) {
+    values.repositorySourceEditingEnabled = data.repositorySourceEditingEnabled ? 1 : 0;
   }
   if (hostChanged) {
     values.trustedHostKey = null;

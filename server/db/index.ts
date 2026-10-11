@@ -249,6 +249,7 @@ export function initDatabase(
     os_lifecycle_dismissed_at TEXT,
     root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0,
     root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT,
+    repository_source_editing_enabled INTEGER NOT NULL DEFAULT 0,
     system_info_updated_at TEXT,
     is_reachable INTEGER NOT NULL DEFAULT 0,
     last_seen_at TEXT,
@@ -801,6 +802,13 @@ export function initDatabase(
   try {
     _db.run(
       sql`ALTER TABLE systems ADD COLUMN root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(
+      sql`ALTER TABLE systems ADD COLUMN repository_source_editing_enabled INTEGER NOT NULL DEFAULT 0`,
     );
   } catch {
     // Column already exists
@@ -1905,6 +1913,7 @@ function rebuildSystemsTableWithinTransaction(
       os_lifecycle_dismissed_at TEXT,
       root_user_banner_dismissed INTEGER NOT NULL DEFAULT 0,
       root_user_banner_dismissed_host_key_fingerprint_sha256 TEXT,
+      repository_source_editing_enabled INTEGER NOT NULL DEFAULT 0,
       system_info_updated_at TEXT,
       is_reachable INTEGER NOT NULL DEFAULT 0,
       last_seen_at TEXT,
@@ -1965,6 +1974,7 @@ function rebuildSystemsTableWithinTransaction(
     "os_lifecycle_dismissed_at",
     "root_user_banner_dismissed",
     "root_user_banner_dismissed_host_key_fingerprint_sha256",
+    "repository_source_editing_enabled",
     "system_info_updated_at",
     "is_reachable",
     "last_seen_at",
@@ -2028,6 +2038,7 @@ function rebuildSystemsTableWithinTransaction(
     "os_lifecycle_dismissed_at",
     "root_user_banner_dismissed",
     "root_user_banner_dismissed_host_key_fingerprint_sha256",
+    "repository_source_editing_enabled",
     "system_info_updated_at",
     "is_reachable",
     "last_seen_at",
