@@ -2,7 +2,13 @@ import { Hono } from "hono";
 import { eq, count } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings, webauthnCredentials } from "../db/schema";
-import { configureOidc } from "../auth/oidc";
+import {
+  configureOidc,
+  DEFAULT_OIDC_GROUPS_CLAIM,
+  parseCsvList,
+  parseOidcScope,
+  parseOidcUnmatchedRole,
+} from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as updateService from "../services/update-service";
 import {
@@ -75,12 +81,47 @@ settingsRouter.put("/", async (c) => {
   }
 
   const db = getDb();
-  const normalizedBody = Object.fromEntries(
+  const normalizedBody: Record<string, unknown> = Object.fromEntries(
     Object.entries(body).map(([key, value]) => [
       key,
       isNumericSettingKey(key) ? normalizeNumericSetting(key, value) : value,
     ]),
   );
+
+  if ("oidc_scope" in normalizedBody) {
+    try {
+      normalizedBody.oidc_scope = parseOidcScope(
+        typeof normalizedBody.oidc_scope === "string" ? normalizedBody.oidc_scope : "",
+      );
+    } catch {
+      return c.json({ error: "OIDC scopes must include openid" }, 400);
+    }
+  }
+  if ("oidc_unmatched_role" in normalizedBody) {
+    try {
+      if (typeof normalizedBody.oidc_unmatched_role !== "string") {
+        throw new Error("Invalid role");
+      }
+      normalizedBody.oidc_unmatched_role = parseOidcUnmatchedRole(
+        normalizedBody.oidc_unmatched_role,
+      );
+    } catch {
+      return c.json({ error: "Invalid OIDC unmatched role" }, 400);
+    }
+  }
+  if ("oidc_groups_claim" in normalizedBody) {
+    const claim = normalizedBody.oidc_groups_claim;
+    normalizedBody.oidc_groups_claim =
+      typeof claim === "string" && claim.trim()
+        ? claim.trim()
+        : DEFAULT_OIDC_GROUPS_CLAIM;
+  }
+  for (const key of ["oidc_admin_groups", "oidc_read_only_groups"]) {
+    if (key in normalizedBody) {
+      const value = normalizedBody[key];
+      normalizedBody[key] = parseCsvList(typeof value === "string" ? value : "").join(",");
+    }
+  }
 
   // Prevent disabling password login without an alternative auth method
   if (normalizedBody.disable_password_login === "true") {

@@ -46,15 +46,155 @@ import {
 
 function SettingSection({
   title,
+  description,
   children,
 }: {
   title: string;
+  description?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-border p-4 md:p-6 mb-4">
-      <h2 className="text-sm font-semibold mb-4">{title}</h2>
+      <h2 className={`text-sm font-semibold ${description ? "mb-1" : "mb-4"}`}>
+        {title}
+      </h2>
+      {description && (
+        <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+          {description}
+        </p>
+      )}
       {children}
+    </div>
+  );
+}
+
+const DEFAULT_OIDC_SCOPE = "openid profile email";
+const OIDC_SETTING_KEYS = [
+  "oidc_issuer",
+  "oidc_client_id",
+  "oidc_client_secret",
+  "oidc_scope",
+  "oidc_groups_claim",
+  "oidc_admin_groups",
+  "oidc_read_only_groups",
+  "oidc_unmatched_role",
+];
+
+type OidcListField = "oidc_scope" | "oidc_admin_groups" | "oidc_read_only_groups";
+
+function parseOidcList(field: OidcListField, value: string | undefined): string[] {
+  const items =
+    field === "oidc_scope"
+      ? (value ?? "").trim().split(/\s+/)
+      : (value ?? "").split(",");
+  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
+}
+
+function serializeOidcList(field: OidcListField, items: string[]): string {
+  return items.join(field === "oidc_scope" ? " " : ",");
+}
+
+function ListEditor({
+  id,
+  label,
+  items,
+  draft,
+  onDraftChange,
+  onAdd,
+  onRemove,
+  placeholder,
+  addLabel,
+  emptyLabel,
+  removeLabel,
+  canRemove = () => true,
+  labelClass,
+}: {
+  id: string;
+  label: string;
+  items: string[];
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onAdd: () => void;
+  onRemove: (item: string) => void;
+  placeholder: string;
+  addLabel: string;
+  emptyLabel: string;
+  removeLabel: (item: string) => string;
+  canRemove?: (item: string) => boolean;
+  labelClass: string;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className={labelClass}>
+        {label}
+      </label>
+      <form
+        className="flex min-h-11 overflow-hidden rounded-lg border border-border bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-blue-500"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onAdd();
+        }}
+        autoComplete="off"
+        data-1p-ignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+        data-lpignore="true"
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-2 py-1.5">
+          {items.map((item) => (
+            <span
+              key={item}
+              className="inline-flex max-w-full items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-sm font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-100"
+            >
+              <span className="truncate">{item}</span>
+              {canRemove(item) && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(item)}
+                  className="rounded p-0.5 text-blue-700 hover:bg-blue-100 dark:text-blue-200 dark:hover:bg-blue-800"
+                  aria-label={removeLabel(item)}
+                  title={removeLabel(item)}
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </span>
+          ))}
+          {items.length === 0 && !draft.trim() && (
+            <span className="px-1 py-1 text-sm text-slate-500 dark:text-slate-400">
+              {emptyLabel}
+            </span>
+          )}
+          <input
+            id={id}
+            name="list-token"
+            type="text"
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            placeholder={items.length === 0 ? placeholder : ""}
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            data-1p-ignore="true"
+            data-bwignore="true"
+            data-form-type="other"
+            data-lpignore="true"
+            className="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={!draft.trim()}
+          className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 border-l border-border bg-slate-50 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          <span>{addLabel}</span>
+        </button>
+      </form>
     </div>
   );
 }
@@ -113,6 +253,9 @@ export default function Settings() {
   const [totpDisablePassword, setTotpDisablePassword] = useState("");
 
   const [form, setForm] = useState<Record<string, string>>({});
+  const [oidcListDrafts, setOidcListDrafts] = useState<
+    Record<OidcListField, string>
+  >({ oidc_scope: "", oidc_admin_groups: "", oidc_read_only_groups: "" });
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>(
     {},
   );
@@ -222,6 +365,32 @@ export default function Settings() {
       },
       onError: (err) => addToast(err.message, "danger"),
     });
+  };
+
+  const addOidcListItem = (field: OidcListField) => {
+    const draft = oidcListDrafts[field].trim();
+    if (!draft) return;
+    const additions =
+      field === "oidc_scope" ? draft.split(/\s+/) : [draft];
+    setForm((prev) => {
+      const current = parseOidcList(field, prev[field]);
+      const next = [
+        ...current,
+        ...additions.filter((item) => !current.includes(item)),
+      ];
+      return { ...prev, [field]: serializeOidcList(field, next) };
+    });
+    setOidcListDrafts((prev) => ({ ...prev, [field]: "" }));
+  };
+
+  const removeOidcListItem = (field: OidcListField, item: string) => {
+    setForm((prev) => ({
+      ...prev,
+      [field]: serializeOidcList(
+        field,
+        parseOidcList(field, prev[field]).filter((entry) => entry !== item),
+      ),
+    }));
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -1081,13 +1250,17 @@ export default function Settings() {
       )}
 
       {/* OIDC */}
-      <SettingSection title={t("pages.settings.oidcSso")}>
-        <div className="space-y-4">
-          <div>
-            <label className={labelClass}>
+      <SettingSection
+        title={t("pages.settings.oidcSso")}
+        description={t("pages.settings.oidcDescription")}
+      >
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="lg:col-span-2">
+            <label htmlFor="oidc-issuer" className={labelClass}>
               {t("pages.settings.issuerUrl")}
             </label>
             <input
+              id="oidc-issuer"
               type="url"
               value={form.oidc_issuer || ""}
               onChange={(e) =>
@@ -1098,8 +1271,11 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>{t("pages.settings.clientId")}</label>
+            <label htmlFor="oidc-client-id" className={labelClass}>
+              {t("pages.settings.clientId")}
+            </label>
             <input
+              id="oidc-client-id"
               type="text"
               value={form.oidc_client_id || ""}
               onChange={(e) =>
@@ -1109,10 +1285,11 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className={labelClass}>
+            <label htmlFor="oidc-client-secret" className={labelClass}>
               {t("pages.settings.clientSecret")}
             </label>
             <input
+              id="oidc-client-secret"
               type="password"
               value={form.oidc_client_secret || ""}
               onChange={(e) =>
@@ -1126,15 +1303,127 @@ export default function Settings() {
               }
             />
           </div>
+          <div className="lg:col-span-2">
+            <ListEditor
+              id="oidc-scopes"
+              label={t("pages.settings.oidcScopes")}
+              items={parseOidcList("oidc_scope", form.oidc_scope)}
+              draft={oidcListDrafts.oidc_scope}
+              onDraftChange={(value) =>
+                setOidcListDrafts((prev) => ({ ...prev, oidc_scope: value }))
+              }
+              onAdd={() => addOidcListItem("oidc_scope")}
+              onRemove={(scope) => removeOidcListItem("oidc_scope", scope)}
+              canRemove={(scope) => scope !== "openid"}
+              placeholder={DEFAULT_OIDC_SCOPE}
+              addLabel={t("pages.settings.add")}
+              emptyLabel={t("pages.settings.noScopesConfigured")}
+              removeLabel={(scope) =>
+                t("pages.settings.removeScope", { scope })
+              }
+              labelClass={labelClass}
+            />
+          </div>
+          <div>
+            <label htmlFor="oidc-groups-claim" className={labelClass}>
+              {t("pages.settings.oidcGroupsClaim")}
+            </label>
+            <input
+              id="oidc-groups-claim"
+              type="text"
+              value={form.oidc_groups_claim ?? ""}
+              onChange={(e) =>
+                setForm({ ...form, oidc_groups_claim: e.target.value })
+              }
+              className={inputClass}
+              placeholder="groups"
+            />
+          </div>
+          <div>
+            <label htmlFor="oidc-unmatched-role" className={labelClass}>
+              {t("pages.settings.oidcUnmatchedRole")}
+            </label>
+            <select
+              id="oidc-unmatched-role"
+              aria-describedby="oidc-unmatched-role-help"
+              value={form.oidc_unmatched_role || "deny"}
+              onChange={(e) =>
+                setForm({ ...form, oidc_unmatched_role: e.target.value })
+              }
+              className={inputClass}
+            >
+              <option value="deny">
+                {t("pages.settings.oidcUnmatchedRoleDeny")}
+              </option>
+              <option value="admin">
+                {t("pages.settings.oidcUnmatchedRoleAdmin")}
+              </option>
+              <option value="read-only">
+                {t("pages.settings.oidcUnmatchedRoleReadOnly")}
+              </option>
+            </select>
+            <p
+              id="oidc-unmatched-role-help"
+              className="mt-1 text-xs text-slate-500 dark:text-slate-400"
+            >
+              {t("pages.settings.oidcUnmatchedRoleHelp")}
+            </p>
+          </div>
+          <ListEditor
+            id="oidc-admin-groups"
+            label={t("pages.settings.oidcAdminGroups")}
+            items={parseOidcList("oidc_admin_groups", form.oidc_admin_groups)}
+            draft={oidcListDrafts.oidc_admin_groups}
+            onDraftChange={(value) =>
+              setOidcListDrafts((prev) => ({
+                ...prev,
+                oidc_admin_groups: value,
+              }))
+            }
+            onAdd={() => addOidcListItem("oidc_admin_groups")}
+            onRemove={(group) =>
+              removeOidcListItem("oidc_admin_groups", group)
+            }
+            placeholder="ludash-admins"
+            addLabel={t("pages.settings.add")}
+            emptyLabel={t("pages.settings.noGroupsConfigured")}
+            removeLabel={(group) => t("pages.settings.removeGroup", { group })}
+            labelClass={labelClass}
+          />
+          <ListEditor
+            id="oidc-read-only-groups"
+            label={t("pages.settings.oidcReadOnlyGroups")}
+            items={parseOidcList(
+              "oidc_read_only_groups",
+              form.oidc_read_only_groups,
+            )}
+            draft={oidcListDrafts.oidc_read_only_groups}
+            onDraftChange={(value) =>
+              setOidcListDrafts((prev) => ({
+                ...prev,
+                oidc_read_only_groups: value,
+              }))
+            }
+            onAdd={() => addOidcListItem("oidc_read_only_groups")}
+            onRemove={(group) =>
+              removeOidcListItem("oidc_read_only_groups", group)
+            }
+            placeholder="ludash-viewers"
+            addLabel={t("pages.settings.add")}
+            emptyLabel={t("pages.settings.noGroupsConfigured")}
+            removeLabel={(group) => t("pages.settings.removeGroup", { group })}
+            labelClass={labelClass}
+          />
         </div>
         <button
-          onClick={() =>
-            handleSave(["oidc_issuer", "oidc_client_id", "oidc_client_secret"])
-          }
+          onClick={() => handleSave(OIDC_SETTING_KEYS)}
           disabled={updateSettings.isPending}
-          className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+          className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
         >
-          {t("pages.settings.save")}
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+          {t("pages.settings.saveOidcSettings")}
         </button>
       </SettingSection>
 

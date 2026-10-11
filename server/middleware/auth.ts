@@ -6,6 +6,28 @@ import { getDb } from "../db";
 import { users } from "../db/schema";
 import { isLoopbackRequest, getClientIp } from "../request-security";
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Management areas closed to API tokens and read-only users. Read-only users
+// may still read general settings because the UI needs them (language, time format).
+const MANAGEMENT_PREFIXES = [
+  "/api/auth", "/api/settings", "/api/tokens",
+  "/api/passkeys", "/api/notifications", "/api/schedules",
+  "/api/scripts", "/api/credentials",
+];
+
+function isManagementPath(path: string): boolean {
+  return MANAGEMENT_PREFIXES.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
+}
+
+function isReadOnlyAllowedPath(path: string, method: string): boolean {
+  if (!SAFE_METHODS.has(method)) return false;
+  if (path === "/api/settings" || path === "/api/settings/") return true;
+  return !isManagementPath(path);
+}
+
 // Rate-limit failed bearer token attempts: max 20 failures per IP per minute
 const BEARER_FAIL_WINDOW_MS = 60_000;
 const BEARER_FAIL_MAX = 20;
@@ -85,22 +107,20 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       }
 
       // Block management endpoints — tokens are for data API only
-      const managementPrefixes = [
-        "/api/auth", "/api/settings", "/api/tokens",
-        "/api/passkeys", "/api/notifications", "/api/schedules",
-        "/api/scripts", "/api/credentials",
-      ];
-      if (managementPrefixes.some((p) => path.startsWith(p))) {
+      if (MANAGEMENT_PREFIXES.some((p) => path.startsWith(p))) {
         return c.json({ error: "API tokens cannot access management endpoints" }, 403);
       }
 
       // Enforce read-only permission
-      const method = c.req.method;
-      if (tokenData.readOnly && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      if (tokenData.readOnly && !SAFE_METHODS.has(c.req.method)) {
         return c.json({ error: "This token is read-only" }, 403);
       }
 
-      c.set("user", { userId: tokenData.userId, username: tokenData.username });
+      c.set("user", {
+        userId: tokenData.userId,
+        username: tokenData.username,
+        role: tokenData.role,
+      });
       c.set("apiToken", true);
       return next();
     }
@@ -109,6 +129,13 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     const session = await getSession(c);
     if (!session) {
       return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    if (
+      session.role === "read-only" &&
+      !isReadOnlyAllowedPath(path, c.req.method)
+    ) {
+      return c.json({ error: "Read-only access", code: "READ_ONLY" }, 403);
     }
 
     c.set("user", session);

@@ -20,6 +20,7 @@ export const users = sqliteTable("users", {
   oidcIssuer: text("oidc_issuer"),
   oidcSubject: text("oidc_subject"),
   isAdmin: integer("is_admin").notNull().default(0),
+  role: text("role").notNull().default("admin"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

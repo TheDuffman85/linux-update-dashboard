@@ -1,10 +1,13 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { apiTokens, users } from "../db/schema";
+import { normalizeUserRole } from "./session";
+import type { UserRole } from "./oidc";
 
 export interface ApiTokenData {
   userId: number;
   username: string;
+  role: UserRole;
   readOnly: boolean;
 }
 
@@ -48,6 +51,7 @@ export async function validateToken(
       readOnly: apiTokens.readOnly,
       expiresAt: apiTokens.expiresAt,
       username: users.username,
+      role: users.role,
     })
     .from(apiTokens)
     .innerJoin(users, eq(apiTokens.userId, users.id))
@@ -68,9 +72,12 @@ export async function validateToken(
     .where(eq(apiTokens.id, row.id))
     .run();
 
+  const role = normalizeUserRole(row.role);
   return {
     userId: row.userId,
     username: row.username,
-    readOnly: row.readOnly === 1,
+    role,
+    // A token never grants more than its owner's role allows.
+    readOnly: row.readOnly === 1 || role === "read-only",
   };
 }

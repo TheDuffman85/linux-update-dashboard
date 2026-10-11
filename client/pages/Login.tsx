@@ -36,7 +36,13 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState("");
   const [requiresTotp, setRequiresTotp] = useState(false);
 
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() =>
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("error") ===
+      "oidc_unauthorized"
+      ? t("pages.login.oidcUnauthorized")
+      : "",
+  );
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 

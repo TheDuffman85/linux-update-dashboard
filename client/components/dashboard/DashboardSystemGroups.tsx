@@ -200,6 +200,7 @@ export function DashboardSystemGroups({
   ungroupedSortOrder,
   ungroupedUpdatePriority = Math.min(99, Math.max(1, ungroupedSortOrder + 1)),
   editMode: requestedEditMode,
+  canEdit = true,
   search = "",
   searchControl,
   onToggleEditMode,
@@ -221,6 +222,8 @@ export function DashboardSystemGroups({
   ungroupedSortOrder: number;
   ungroupedUpdatePriority: number;
   editMode: boolean;
+  /** False hides edit mode entirely (read-only users). */
+  canEdit?: boolean;
   search?: string;
   searchControl?: ReactNode;
   onToggleEditMode: () => void;
@@ -248,7 +251,7 @@ export function DashboardSystemGroups({
 }) {
   const { t } = useI18n();
   const searchActive = search.trim().length > 0;
-  const editMode = requestedEditMode && !searchActive;
+  const editMode = canEdit && requestedEditMode && !searchActive;
   const [localGroups, setLocalGroups] = useState<DashboardGroup[]>(groups);
   const [localUngroupedSortOrder, setLocalUngroupedSortOrder] =
     useState(ungroupedSortOrder);
@@ -1390,6 +1393,7 @@ export function DashboardSystemGroups({
               {t("pages.dashboard.addGroup")}
             </button>
           )}
+          {canEdit && (
           <button
             type="button"
             aria-pressed={editMode}
@@ -1423,6 +1427,7 @@ export function DashboardSystemGroups({
               ? t("pages.dashboard.done")
               : t("pages.dashboard.editMode")}
           </button>
+          )}
         </div>
       </div>
       {searchActive && matchingSystems.length === 0 ? (

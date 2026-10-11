@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { users } from "../db/schema";
 import { isSecureRequest } from "../request-security";
+import type { UserRole } from "./oidc";
 
 const SESSION_COOKIE = "ludash_session";
 const SESSION_LIFETIME = 86400 * 30; // 30 days — JWT expiration
@@ -20,9 +21,14 @@ export function initSession(secretKey: string): void {
 export interface SessionData {
   userId: number;
   username: string;
+  role: UserRole;
   authMethod?: "password" | "passkey" | "oidc";
   sessionVersion?: number;
   issuedAt?: number;
+}
+
+export function normalizeUserRole(value: string | null | undefined): UserRole {
+  return value === "read-only" ? "read-only" : "admin";
 }
 
 export async function createSession(
@@ -78,6 +84,7 @@ export async function getSession(c: Context): Promise<SessionData | null> {
         sessionVersion: users.sessionVersion,
         authProvider: users.authProvider,
         passwordHash: users.passwordHash,
+        role: users.role,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -98,6 +105,7 @@ export async function getSession(c: Context): Promise<SessionData | null> {
     return {
       userId,
       username: payload.username as string,
+      role: normalizeUserRole(user.role),
       authMethod,
       sessionVersion: tokenSessionVersion,
       issuedAt: payload.iat,

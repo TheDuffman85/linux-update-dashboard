@@ -20,6 +20,7 @@ const {
   mockUseUpdateSystemUpgradeMode,
   mockUseToast,
   mockUseUpgrade,
+  mockUseAuth,
 } = vi.hoisted(() => ({
   mockUseDashboardStats: vi.fn(),
   mockUseDashboardSystems: vi.fn(),
@@ -37,6 +38,7 @@ const {
   mockUseUpdateSystemUpgradeMode: vi.fn(),
   mockUseToast: vi.fn(),
   mockUseUpgrade: vi.fn(),
+  mockUseAuth: vi.fn(),
 }));
 
 vi.mock("../../client/lib/dashboard", () => ({
@@ -68,6 +70,10 @@ vi.mock("../../client/context/ToastContext", () => ({
 
 vi.mock("../../client/context/UpgradeContext", () => ({
   useUpgrade: mockUseUpgrade,
+}));
+
+vi.mock("../../client/context/AuthContext", () => ({
+  useAuth: mockUseAuth,
 }));
 
 vi.mock("../../client/components/Layout", () => ({
@@ -122,6 +128,7 @@ function hasDisabledAttribute(tag: string): boolean {
 
 describe("Dashboard", () => {
   beforeEach(() => {
+    mockUseAuth.mockReturnValue({ isReadOnly: false });
     mockUseDashboardStats.mockReturnValue({
       data: {
         total: 1,
@@ -239,6 +246,21 @@ describe("Dashboard", () => {
 
     expect(html).toContain("Upgrade All");
     expect(html).not.toContain("Upgrade All (7)");
+  });
+
+  test("hides upgrade, refresh, and edit controls for read-only users", () => {
+    mockUseAuth.mockReturnValue({ isReadOnly: true });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Alpha");
+    expect(html).not.toContain("Upgrade All");
+    expect(html).not.toContain("Refresh All");
+    expect(html).not.toContain("Edit mode");
   });
 
   test("keeps the Upgrade All launcher available when no systems currently qualify", () => {

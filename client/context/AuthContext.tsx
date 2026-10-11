@@ -9,9 +9,12 @@ import {
 } from "react";
 import { ApiError, apiFetch } from "../lib/client";
 
+export type UserRole = "admin" | "read-only";
+
 interface User {
   userId: number;
   username: string;
+  role?: UserRole;
 }
 
 export interface AuthState {
@@ -28,6 +31,7 @@ export interface AuthState {
 }
 
 interface AuthContextType extends AuthState {
+  isReadOnly: boolean;
   login: (
     username: string,
     password: string,
@@ -145,7 +149,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout, setup, refresh }}>
+    <AuthContext.Provider
+      value={{
+        ...state,
+        isReadOnly: state.user?.role === "read-only",
+        login,
+        logout,
+        setup,
+        refresh,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

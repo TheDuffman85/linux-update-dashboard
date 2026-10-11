@@ -246,6 +246,10 @@ TOTP can be enabled from **Settings > Password** after signing in with the accou
 
 For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oidc/callback`. Set `LUDASH_BASE_URL` before configuring OIDC so callback and origin validation match the public URL.
 
+OIDC settings also control the requested scopes (must include `openid`), the claim that carries group membership (default `groups`, read from the ID token and the UserInfo endpoint), and which groups get admin or read-only access. Admin groups take precedence over read-only groups. Users that match no configured group are denied by default; you can instead grant them admin or read-only access. Installations that already used OIDC before group mapping existed keep granting admin access to unmatched users, so existing SSO accounts are not locked out after upgrading. Role changes apply on the next SSO sign-in, and OIDC sessions expire after one day.
+
+Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, scripts, or settings. API tokens owned by a read-only user are always read-only. Local password accounts always have admin access.
+
 API tokens are for external integrations such as [gethomepage](https://gethomepage.dev/) widgets, scripts, monitoring, and Telegram command automation. Tokens can be read-only or read/write, expire after 30/60/90/365 days or never, are stored as SHA-256 hashes, are limited to 25 per user, and cannot access management endpoints or configure SSH connections.
 
 ```bash

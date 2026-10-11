@@ -86,6 +86,32 @@ const DEFAULT_SETTINGS = [
     description: "OIDC client secret (encrypted)",
   },
   {
+    key: "oidc_scope",
+    value: "openid profile email",
+    description: "OIDC scopes requested during sign-in (space separated, must include openid)",
+  },
+  {
+    key: "oidc_groups_claim",
+    value: "groups",
+    description: "OIDC claim that contains the user's groups",
+  },
+  {
+    key: "oidc_admin_groups",
+    value: "",
+    description: "Comma-separated OIDC groups that receive admin access",
+  },
+  {
+    key: "oidc_read_only_groups",
+    value: "",
+    description: "Comma-separated OIDC groups that receive read-only access",
+  },
+  {
+    key: "oidc_unmatched_role",
+    value: "deny",
+    description:
+      "Access for OIDC users that match no configured group: deny, admin, or read-only",
+  },
+  {
     key: "disable_password_login",
     value: "false",
     description: "Disable password-based login",
@@ -136,6 +162,7 @@ export function initDatabase(
     oidc_issuer TEXT,
     oidc_subject TEXT,
     is_admin INTEGER NOT NULL DEFAULT 0,
+    role TEXT NOT NULL DEFAULT 'admin',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
@@ -484,6 +511,11 @@ export function initDatabase(
   }
   try {
     _db.run(sql`ALTER TABLE users ADD COLUMN oidc_subject TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`);
   } catch {
     // Column already exists
   }
@@ -1138,6 +1170,8 @@ export function initDatabase(
   migrateLegacyEmailNotificationConfigs(_db);
   migrateLegacyCredentials(_db);
 
+  migrateOidcUnmatchedRole(_db);
+
   // Seed default settings
   for (const s of DEFAULT_SETTINGS) {
     _db.run(
@@ -1158,6 +1192,38 @@ export function initDatabase(
   migrateNotificationUpdateDedupeState(_db);
 
   return _db;
+}
+
+/**
+ * OIDC users used to receive full access unconditionally. Keep that behavior
+ * for installs that already use OIDC; new installs default to denying users
+ * that match no configured group.
+ */
+function migrateOidcUnmatchedRole(
+  db: BetterSQLite3Database<typeof schema>,
+): void {
+  const existing = db
+    .select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, "oidc_unmatched_role"))
+    .get();
+  if (existing) return;
+
+  const issuer = db
+    .select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, "oidc_issuer"))
+    .get();
+  const oidcUser = db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.authProvider, "oidc"))
+    .get();
+  if (!issuer?.value && !oidcUser) return;
+
+  db.run(
+    sql`INSERT OR IGNORE INTO settings (key, value, description) VALUES ('oidc_unmatched_role', 'admin', 'Access for OIDC users that match no configured group: deny, admin, or read-only')`,
+  );
 }
 
 function normalizeLegacyInteger(
