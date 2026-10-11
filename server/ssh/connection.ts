@@ -155,6 +155,32 @@ interface SSHConnectionError extends Error {
   level?: string;
   description?: string;
   debugRef?: string;
+  serverBanner?: string;
+}
+
+const MAX_SERVER_BANNER_LENGTH = 1000;
+
+/**
+ * Normalize a USERAUTH_BANNER for display: keep line breaks, drop terminal
+ * escape sequences and other control characters, redact secrets, and cap the
+ * length so a misbehaving server cannot flood the UI.
+ */
+export function normalizeServerBanner(message: unknown): string | undefined {
+  if (typeof message !== "string") return undefined;
+  const normalized = sanitizeOutput(
+    message
+      .replace(/\r\n?/g, "\n")
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+  ).trim();
+  if (!normalized) return undefined;
+  return normalized.length > MAX_SERVER_BANNER_LENGTH
+    ? `${normalized.slice(0, MAX_SERVER_BANNER_LENGTH)}…`
+    : normalized;
+}
+
+export function buildAuthenticationTimeoutMessage(timeoutSeconds: number): string {
+  return `Authentication did not complete within ${timeoutSeconds}s. The SSH handshake succeeded, but the server never accepted or rejected the login.`;
 }
 
 function getSSHErrorMessage(err: unknown): string {
@@ -169,6 +195,7 @@ export interface TestConnectionResult {
   success: boolean;
   message: string;
   debugRef?: string;
+  serverBanner?: string;
   hostKeyChallenges?: ApprovedHostKeyInput[];
 }
 
@@ -502,9 +529,9 @@ export class SSHConnectionManager {
   ): Promise<Client> {
     const attemptId = randomUUID();
     const startedAt = Date.now();
-    const meta = buildSSHAttemptLogMeta(hop, context);
     const conn = new SshClient();
     const connectConfig = this.buildConnectionConfig(hop);
+    const meta = buildSSHAttemptLogMeta(hop, context, connectConfig);
     const approvedHostKey = this.findApprovedHostKey(hop, context);
     let hostKeyError: HostKeyVerificationError | null = null;
 
@@ -544,7 +571,25 @@ export class SSHConnectionManager {
     });
 
     return new Promise<Client>((resolve, reject) => {
+      // ssh2 emits "handshake" once key exchange and host-key verification
+      // succeeded; a readyTimeout after that means authentication stalled.
+      let handshakeCompleted = false;
+      // Servers such as Tailscale SSH in "check" mode explain a held login
+      // (e.g. with a re-authentication URL) only via a USERAUTH_BANNER.
+      const bannerParts: string[] = [];
+      const onHandshake = () => {
+        handshakeCompleted = true;
+      };
+      const onBanner = (message: string) => {
+        bannerParts.push(message);
+      };
+      const removeAttemptListeners = () => {
+        conn.removeListener("handshake", onHandshake);
+        conn.removeListener("banner", onBanner);
+      };
+
       const onReady = () => {
+        removeAttemptListeners();
         conn.removeListener("error", onError);
         conn.on("error", (err: SSHConnectionError) => {
           logger.debug("SSH client error after connection ready", {
@@ -571,8 +616,18 @@ export class SSHConnectionManager {
       };
 
       const onError = (err: SSHConnectionError) => {
+        removeAttemptListeners();
         conn.removeListener("ready", onReady);
         err.debugRef = attemptId;
+        if (err.level === "client-timeout" && handshakeCompleted) {
+          err.message = buildAuthenticationTimeoutMessage(
+            Number(connectConfig.readyTimeout) / 1000
+          );
+        }
+        const serverBanner = normalizeServerBanner(bannerParts.join("\n"));
+        if (serverBanner) {
+          err.serverBanner = serverBanner;
+        }
         logger.warn("SSH connect attempt failed", {
           attemptId,
           hopIndex: hopIndex + 1,
@@ -580,6 +635,9 @@ export class SSHConnectionManager {
           hopRole: hop.role,
           elapsedMs: Date.now() - startedAt,
           ...meta,
+          handshakeCompleted,
+          // Banner text can carry one-time login links, so only log presence.
+          hasServerBanner: !!serverBanner,
           errorLevel: err.level,
           errorDescription: err.description
             ? sanitizeOutput(err.description)
@@ -589,6 +647,8 @@ export class SSHConnectionManager {
         reject(hostKeyError ?? err);
       };
 
+      conn.once("handshake", onHandshake);
+      conn.on("banner", onBanner);
       conn.once("ready", onReady);
       conn.once("error", onError);
       conn.connect(connectConfig as Parameters<Client["connect"]>[0]);
@@ -1158,12 +1218,14 @@ export class SSHConnectionManager {
           success: false,
           message: "Permission denied (check credentials)",
           debugRef: err.debugRef,
+          serverBanner: err.serverBanner,
         };
       }
       return {
         success: false,
         message: buildTestConnectionFailureMessage(system, err),
         debugRef: err.debugRef,
+        serverBanner: err.serverBanner,
       };
     } finally {
       if (conn) this.disconnect(conn);

@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "Review key",
   "components.systemForm.revoke": "Revoke",
   "components.systemForm.revoking": "Revoking...",
+  "components.systemForm.serverBanner": "Message from the SSH server:",
   "components.systemForm.saveAnyway": "Save Anyway",
   "components.systemForm.saveWithoutHostKeyApproval": "Save Without Host Key Approval",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "SSH host-key verification is enabled, but no host key has been approved yet. You can save now, but SSH actions will require host-key approval later from this dialog.",

@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "查看密钥",
   "components.systemForm.revoke": "撤销",
   "components.systemForm.revoking": "正在撤销...",
+  "components.systemForm.serverBanner": "来自 SSH 服务器的消息：",
   "components.systemForm.saveAnyway": "仍然保存",
   "components.systemForm.saveWithoutHostKeyApproval": "不批准主机密钥并保存",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "SSH 主机密钥验证已启用，但尚未批准任何主机密钥。你现在可以保存，但之后的 SSH 操作需要在此对话框中批准主机密钥。",

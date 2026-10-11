@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "Revisar chave",
   "components.systemForm.revoke": "Revogar",
   "components.systemForm.revoking": "Revogando...",
+  "components.systemForm.serverBanner": "Mensagem do servidor SSH:",
   "components.systemForm.saveAnyway": "Salvar mesmo assim",
   "components.systemForm.saveWithoutHostKeyApproval": "Salvar sem aprovação da chave de host",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "A verificação da chave de host SSH está ativada, mas nenhuma chave de host foi aprovada ainda. Você pode salvar agora, mas ações SSH exigirão aprovação da chave de host posteriormente nesta caixa de diálogo.",

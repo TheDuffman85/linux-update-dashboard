@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "キーを確認",
   "components.systemForm.revoke": "取り消す",
   "components.systemForm.revoking": "取り消し中...",
+  "components.systemForm.serverBanner": "SSH サーバーからのメッセージ:",
   "components.systemForm.saveAnyway": "このまま保存",
   "components.systemForm.saveWithoutHostKeyApproval": "ホストキー承認なしで保存",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "SSH ホストキー検証は有効ですが、承認済みのホストキーはまだありません。今すぐ保存できますが、SSH 操作には後でこのダイアログからホストキー承認が必要です。",

@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "कुंजी की समीक्षा",
   "components.systemForm.revoke": "रद्द करें",
   "components.systemForm.revoking": "रद्द किया जा रहा है...",
+  "components.systemForm.serverBanner": "SSH सर्वर का संदेश:",
   "components.systemForm.saveAnyway": "फिर भी सहेजें",
   "components.systemForm.saveWithoutHostKeyApproval": "होस्ट कुंजी स्वीकृति के बिना सहेजें",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "SSH होस्ट-कुंजी सत्यापन सक्षम है, लेकिन अभी कोई होस्ट कुंजी स्वीकृत नहीं है. आप अभी सहेज सकते हैं, लेकिन SSH कार्रवाइयों को बाद में इस डायलॉग से होस्ट-कुंजी स्वीकृति चाहिए होगी.",

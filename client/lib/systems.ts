@@ -662,6 +662,7 @@ export function useTestConnection() {
         success: boolean;
         message: string;
         debugRef?: string;
+        serverBanner?: string;
         detectedManagers?: string[];
         validatedConfigToken?: string;
         trustChallengeToken?: string;

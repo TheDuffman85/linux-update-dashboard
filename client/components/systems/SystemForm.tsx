@@ -133,6 +133,7 @@ export function SystemForm({
     success: boolean;
     message: string;
     debugRef?: string;
+    serverBanner?: string;
   } | null>(null);
   const [validatedConfigToken, setValidatedConfigToken] = useState<string | null>(null);
   const [name, setName] = useState(initial?.name || "");
@@ -483,6 +484,7 @@ export function SystemForm({
             success: data.success,
             message: data.message,
             debugRef: data.debugRef,
+            serverBanner: data.serverBanner,
           });
           setPendingTrustChallenge(null);
           if (data.success && data.validatedConfigToken) {
@@ -1294,6 +1296,14 @@ export function SystemForm({
         {testResult && (
           <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>
             <div>{testResult.message}</div>
+            {!testResult.success && testResult.serverBanner && (
+              <div className="mt-2">
+                <div className="text-xs opacity-80">{t("components.systemForm.serverBanner")}</div>
+                <pre className="mt-1 p-2 rounded bg-black/5 dark:bg-white/5 text-xs font-mono whitespace-pre-wrap break-words">
+                  {testResult.serverBanner}
+                </pre>
+              </div>
+            )}
             {!testResult.success && testResult.debugRef && (
               <div className="mt-2 text-xs opacity-80">
                 Check container logs with debug reference <span className="font-mono">{testResult.debugRef}</span>.

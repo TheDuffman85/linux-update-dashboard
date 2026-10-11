@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "Проверить ключ",
   "components.systemForm.revoke": "Отозвать",
   "components.systemForm.revoking": "Отзыв...",
+  "components.systemForm.serverBanner": "Сообщение от SSH-сервера:",
   "components.systemForm.saveAnyway": "Все равно сохранить",
   "components.systemForm.saveWithoutHostKeyApproval": "Сохранить без подтверждения ключа хоста",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "Проверка SSH-ключа хоста включена, но ключ хоста еще не подтвержден. Вы можете сохранить сейчас, но SSH-действия позже потребуют подтверждения ключа хоста в этом диалоге.",

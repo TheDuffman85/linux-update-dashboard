@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "مراجعة المفتاح",
   "components.systemForm.revoke": "إلغاء",
   "components.systemForm.revoking": "جار الإلغاء...",
+  "components.systemForm.serverBanner": "رسالة من خادم SSH:",
   "components.systemForm.saveAnyway": "حفظ على أي حال",
   "components.systemForm.saveWithoutHostKeyApproval": "حفظ دون اعتماد مفتاح المضيف",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "التحقق من مفتاح مضيف SSH مفعل، لكن لم يتم اعتماد أي مفتاح مضيف بعد. يمكنك الحفظ الآن، لكن إجراءات SSH ستتطلب اعتماد مفتاح المضيف لاحقا من هذا الحوار.",

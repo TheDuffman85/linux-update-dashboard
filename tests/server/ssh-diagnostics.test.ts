@@ -40,6 +40,52 @@ describe("buildSSHAttemptLogMeta", () => {
   });
 });
 
+describe("buildSSHAttemptLogMeta with resolved credentials", () => {
+  test("reports secrets resolved from a stored credential", () => {
+    const meta = buildSSHAttemptLogMeta(
+      {
+        hostname: "host.example",
+        username: "ops",
+        authType: "password",
+        credentialId: 7,
+      },
+      {},
+      { password: "resolved-password" }
+    );
+
+    expect(meta).toMatchObject({
+      credentialId: 7,
+      hasPassword: true,
+      hasPrivateKey: false,
+      hasKeyPassphrase: false,
+    });
+  });
+
+  test("treats a certificate auth handler as a private key", () => {
+    const meta = buildSSHAttemptLogMeta(
+      { hostname: "host.example", authType: "key", credentialId: 8 },
+      {},
+      { authHandler: [{ type: "publickey" }], passphrase: "pp" }
+    );
+
+    expect(meta).toMatchObject({
+      hasPassword: false,
+      hasPrivateKey: true,
+      hasKeyPassphrase: true,
+    });
+  });
+
+  test("reports missing secrets when a stored credential resolves to nothing", () => {
+    const meta = buildSSHAttemptLogMeta(
+      { hostname: "host.example", authType: "password", encryptedPassword: "ciphertext" },
+      {},
+      {}
+    );
+
+    expect(meta.hasPassword).toBe(false);
+  });
+});
+
 describe("filterSafeSshDebugMessage", () => {
   test("keeps only allowlisted auth and handshake events", () => {
     expect(filterSafeSshDebugMessage("Socket connected")).toEqual({

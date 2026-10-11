@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "Examiner la clé",
   "components.systemForm.revoke": "Révoquer",
   "components.systemForm.revoking": "Révocation...",
+  "components.systemForm.serverBanner": "Message du serveur SSH :",
   "components.systemForm.saveAnyway": "Enregistrer quand même",
   "components.systemForm.saveWithoutHostKeyApproval": "Enregistrer sans approbation de clé d'hôte",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "La vérification de clé d'hôte SSH est activée, mais aucune clé d'hôte n'a encore été approuvée. Vous pouvez enregistrer maintenant, mais les actions SSH demanderont plus tard l'approbation de la clé d'hôte depuis cette boîte de dialogue.",

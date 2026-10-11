@@ -423,6 +423,8 @@ At `info`, logs include startup, configuration, warnings, and errors. `debug` ad
 
 Logged SSH diagnostics are limited to safe metadata such as host, port, username, auth type, elapsed time, and filtered auth/debug events. Passwords, sudo passwords, private keys, passphrases, tokens, and raw SSH payloads are never logged. Avoid leaving debug logging enabled longer than needed.
 
+If a login banner is sent by the SSH server, Test Connection shows it below the error. The banner is not written to the logs because it can contain one-time links. "Authentication did not complete" means the handshake succeeded but the server held the login open until the timeout. A common cause is [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) with an ACL rule set to `"action": "check"`: it ignores the configured credentials and waits for a browser re-authentication that the dashboard cannot perform. Use `"action": "accept"` for the dashboard host, or disable Tailscale SSH on the target so its regular SSH server answers.
+
 ## Security
 
 - Credentials and notification secrets are encrypted at rest with AES-256-GCM and per-entry random IVs/auth tags.

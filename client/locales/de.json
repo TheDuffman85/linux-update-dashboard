@@ -126,6 +126,7 @@
   "components.systemForm.reviewKey": "Schlüssel prüfen",
   "components.systemForm.revoke": "Widerrufen",
   "components.systemForm.revoking": "Widerrufen...",
+  "components.systemForm.serverBanner": "Meldung des SSH-Servers:",
   "components.systemForm.saveAnyway": "Trotzdem speichern",
   "components.systemForm.saveWithoutHostKeyApproval": "Ohne Hostschlüssel-Genehmigung speichern",
   "components.systemForm.saveWithoutHostKeyApprovalMessage": "SSH-Hostschlüsselprüfung ist aktiviert, aber es wurde noch kein Hostschlüssel genehmigt. Du kannst jetzt speichern, aber SSH-Aktionen erfordern später in diesem Dialog eine Hostschlüssel-Genehmigung.",
