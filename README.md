@@ -38,7 +38,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
-- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
+- **Scheduling:** cron-based refresh, update, autoremove, reboot (optionally only when required), and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
@@ -315,6 +315,7 @@ Schedules are managed from the **Schedules** page. Existing installs migrate to 
 
 - **Refresh schedules** re-check scoped systems when cached results are stale.
 - **Update schedules** refresh scoped systems first, then run the normal per-system Upgrade action where visible updates remain.
+- **Reboot schedules** reboot every scoped system. With **Only reboot if required** enabled, they refresh scoped systems first and only reboot those that report a pending reboot; systems with a dismissed reboot warning are skipped.
 - **Notification schedules** deliver pending event batches for assigned notification channels.
 
 Schedules use five-field cron expressions in the process timezone. Set Docker `TZ`, such as `TZ=Europe/Berlin`, for local-time scheduling. The default minimum interval is 5 minutes and can be changed with `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES`.

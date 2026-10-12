@@ -177,6 +177,9 @@ an omitted, empty, or whitespace-only prefix leaves the subject unchanged.
 Schedule `type` can be `refresh`, `update`, `autoremove`, `reboot`, or
 `notification_digest`. All schedule types use `config.cron`. System-targeted
 schedules accept `systemIds: null` for all systems or an array of system IDs.
+`reboot` schedules accept an optional `config.onlyIfRequired` boolean; when
+`true`, scoped systems are refreshed first and only those that still report a
+pending reboot are rebooted.
 
 ## Scripts
 

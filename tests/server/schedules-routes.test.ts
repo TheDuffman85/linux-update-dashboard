@@ -347,7 +347,43 @@ describe("schedules routes and migration", () => {
     const body = await res.json() as { id: number };
     const row = getDb().select().from(schedules).where(eq(schedules.id, body.id)).get();
     expect(row?.type).toBe("reboot");
-    expect(JSON.parse(row?.config || "{}")).toEqual({ cron: "0 3 * * 0" });
+    expect(JSON.parse(row?.config || "{}")).toEqual({ cron: "0 3 * * 0", onlyIfRequired: false });
+  });
+
+  test("creates reboot schedules that only reboot when required", async () => {
+    const res = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Reboot when required",
+        type: "reboot",
+        enabled: true,
+        systemIds: null,
+        config: { cron: "0 4 * * 0", onlyIfRequired: true },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json() as { id: number };
+    const row = getDb().select().from(schedules).where(eq(schedules.id, body.id)).get();
+    expect(row?.type).toBe("reboot");
+    expect(row?.systemIds).toBeNull();
+    expect(JSON.parse(row?.config || "{}")).toEqual({ cron: "0 4 * * 0", onlyIfRequired: true });
+  });
+
+  test("rejects non-boolean onlyIfRequired on reboot schedules", async () => {
+    const res = await app.request("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Bad reboot",
+        type: "reboot",
+        config: { cron: "0 4 * * 0", onlyIfRequired: "yes" },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "onlyIfRequired must be a boolean" });
   });
 
   test("creates refresh schedules with cron and cache settings", async () => {

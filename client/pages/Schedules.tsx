@@ -128,10 +128,12 @@ function generateScheduleName(
   language: ReturnType<typeof useI18n>["language"],
   timeZone: string | null,
   use24HourTimeFormat: boolean,
+  onlyIfRequired = false,
 ): string | null {
   const preview = getCronPreview(cron, new Date(), 3, language, timeZone, use24HourTimeFormat);
   if ("error" in preview) return null;
-  return truncateScheduleName(`${TYPE_LABELS[type]} - ${preview.description}`);
+  const label = type === "reboot" && onlyIfRequired ? "Reboot if required" : TYPE_LABELS[type];
+  return truncateScheduleName(`${label} - ${preview.description}`);
 }
 
 function getScheduleCron(schedule: Schedule): string | null {
@@ -168,10 +170,16 @@ function describeSchedule(
     });
   }
 
+  if (schedule.type === "reboot" && isRebootConfig(schedule.config)) {
+    const description = describeCronExpression(schedule.config.cron, t, language, use24HourTimeFormat);
+    return schedule.config.onlyIfRequired
+      ? t("pages.schedules.descriptionOnlyIfRequired", { schedule: description })
+      : description;
+  }
+
   if (
     (schedule.type === "update" && isUpdateConfig(schedule.config)) ||
-    (schedule.type === "autoremove" && isAutoremoveConfig(schedule.config)) ||
-    (schedule.type === "reboot" && isRebootConfig(schedule.config))
+    (schedule.type === "autoremove" && isAutoremoveConfig(schedule.config))
   ) {
     return describeCronExpression(schedule.config.cron, t, language, use24HourTimeFormat);
   }
@@ -314,7 +322,7 @@ function ScheduleForm({
   const initialRebootConfig =
     initial?.type === "reboot" && isRebootConfig(initial.config)
       ? initial.config
-      : { cron: "0 3 * * 0" };
+      : { cron: "0 3 * * 0", onlyIfRequired: false };
   const initialNotificationScheduleConfig =
     initial?.config && isNotificationScheduleConfig(initial.config)
       ? initial.config
@@ -342,6 +350,7 @@ function ScheduleForm({
     initialNotificationScheduleConfig.notificationIds,
   );
   const [cacheDurationHours, setCacheDurationHours] = useState(String(initialRefreshConfig.cacheDurationHours));
+  const [rebootOnlyIfRequired, setRebootOnlyIfRequired] = useState(initialRebootConfig.onlyIfRequired);
   const [cronPreset, setCronPreset] = useState(initialCronPreset);
   const [customCron, setCustomCron] = useState(initialCronPreset === "custom" ? initialCron : "");
   const [error, setError] = useState("");
@@ -393,6 +402,7 @@ function ScheduleForm({
       language,
       timeZone,
       resolvedTimeFormat === "24h",
+      rebootOnlyIfRequired,
     );
     if (!generatedName) {
       setError(t("pages.schedules.enterValidCronBeforeGeneratingName"));
@@ -422,7 +432,9 @@ function ScheduleForm({
               cron,
               notificationIds: selectedNotificationIds,
             }
-          : { cron };
+          : type === "reboot"
+            ? { cron, onlyIfRequired: rebootOnlyIfRequired }
+            : { cron };
 
     if (!config.cron) {
       setError(t("pages.schedules.cronExpressionIsRequired"));
@@ -632,6 +644,22 @@ function ScheduleForm({
                 onChange={(e) => setCacheDurationHours(e.target.value)}
                 className={inputClass}
               />
+            </div>
+          )}
+          {type === "reboot" && (
+            <div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={rebootOnlyIfRequired}
+                  onChange={(e) => setRebootOnlyIfRequired(e.target.checked)}
+                  className={checkboxClass}
+                />
+                <span className="text-sm font-medium">{t("pages.schedules.rebootOnlyIfRequired")}</span>
+              </label>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {t("pages.schedules.rebootOnlyIfRequiredHint")}
+              </p>
             </div>
           )}
         </div>
