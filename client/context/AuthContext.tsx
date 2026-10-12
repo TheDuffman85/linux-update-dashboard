@@ -136,7 +136,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    await apiFetch("/auth/logout", { method: "POST" });
+    const res = await apiFetch<{ redirectUrl?: string }>("/auth/logout", {
+      method: "POST",
+    });
+    // SSO sessions are also ended at the identity provider, which then
+    // redirects back to the login page.
+    if (res?.redirectUrl && /^https?:\/\//i.test(res.redirectUrl)) {
+      window.location.assign(res.redirectUrl);
+      return;
+    }
     setState((s) => ({ ...s, user: null }));
   };
 

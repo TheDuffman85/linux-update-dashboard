@@ -893,6 +893,8 @@
   "pages.settings.oidcUnmatchedRoleAdmin": "Admin access",
   "pages.settings.oidcUnmatchedRoleReadOnly": "Read-only access",
   "pages.settings.oidcUnmatchedRoleHelp": "Choose what happens when an OIDC user matches no configured group. The default is deny sign-in.",
+  "pages.settings.oidcEndSession": "Sign out of the identity provider on logout",
+  "pages.settings.oidcEndSessionHelp": "When an SSO user logs out, also end their session at the identity provider so the next SSO sign-in asks for credentials again. Register {{url}} as a post-logout redirect URI with your provider.",
   "pages.settings.add": "Add",
   "pages.settings.noScopesConfigured": "No scopes configured.",
   "pages.settings.removeScope": "Remove {scope}",

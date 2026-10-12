@@ -37,7 +37,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | GET    | `/api/auth/status`                    | Auth state, setup status, and OIDC availability.                                   |
 | POST   | `/api/auth/setup`                     | Create the initial admin account.                                                  |
 | POST   | `/api/auth/login`                     | Password login.                                                                    |
-| POST   | `/api/auth/logout`                    | Clear the current session.                                                         |
+| POST   | `/api/auth/logout`                    | Clear the current session. SSO sessions may return a provider `redirectUrl`.       |
 | GET    | `/api/auth/me`                        | Current user info.                                                                 |
 | POST   | `/api/auth/change-password`           | Change the current user's password.                                                |
 | POST   | `/api/auth/totp/setup`                | Start TOTP setup for the password-authenticated user.                             |

@@ -89,6 +89,7 @@ const OIDC_SETTING_KEYS = [
   "oidc_admin_groups",
   "oidc_read_only_groups",
   "oidc_unmatched_role",
+  "oidc_end_session",
 ];
 
 type OidcListField = "oidc_scope" | "oidc_admin_groups" | "oidc_read_only_groups";
@@ -1456,6 +1457,29 @@ export default function Settings() {
             removeLabel={(group) => t("pages.settings.removeGroup", { group })}
             labelClass={labelClass}
           />
+          <label className="lg:col-span-2 flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.oidc_end_session !== "false"}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  oidc_end_session: e.target.checked ? "true" : "false",
+                })
+              }
+              className="mt-0.5 rounded border-border"
+            />
+            <span>
+              <span className="block text-sm">
+                {t("pages.settings.oidcEndSession")}
+              </span>
+              <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {t("pages.settings.oidcEndSessionHelp", {
+                  url: `${window.location?.origin ?? ""}/login`,
+                })}
+              </span>
+            </span>
+          </label>
         </div>
         <button
           onClick={() => handleSave(OIDC_SETTING_KEYS)}

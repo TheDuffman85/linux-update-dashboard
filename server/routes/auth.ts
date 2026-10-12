@@ -14,6 +14,7 @@ import {
   getSession,
   clearSession,
   initSession,
+  OIDC_SESSION_LIFETIME,
 } from "../auth/session";
 import * as wa from "../auth/webauthn";
 import { issueWebAuthnChallenge, consumeWebAuthnChallenge } from "../auth/webauthn-challenge";
@@ -325,6 +326,9 @@ function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
   return { origin, rpId: new URL(origin).hostname };
 }
 
+const OIDC_ID_TOKEN_COOKIE = "ludash_oidc_id_token";
+const MAX_ID_TOKEN_COOKIE_LENGTH = 3800;
+
 const auth = new Hono();
 
 // --- Status ---
@@ -526,7 +530,26 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
 
 // --- Logout ---
 auth.post("/logout", async (c) => {
+  const session = await getSession(c);
+  const idToken = getCookie(c, OIDC_ID_TOKEN_COOKIE);
   clearSession(c);
+  deleteCookie(c, OIDC_ID_TOKEN_COOKIE, { path: "/" });
+
+  // RP-initiated logout: send SSO users to the provider so its session ends too.
+  if (session?.authMethod === "oidc" && oidc.isEndSessionEnabled()) {
+    try {
+      const redirectUrl = oidc.getEndSessionUrl(
+        `${getTrustedPublicOrigin(c)}/login`,
+        idToken,
+      );
+      if (redirectUrl) return c.json({ status: "ok", redirectUrl });
+    } catch (e) {
+      console.warn(
+        `OIDC end-session URL could not be built; logging out locally: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   return c.json({ status: "ok" });
 });
 
@@ -1148,6 +1171,19 @@ auth.get("/oidc/callback", async (c) => {
     const user = upsertOidcUser({ ...result, role: result.role });
 
     await createSession(c, user.id, user.username, "oidc");
+    // Kept as id_token_hint for RP-initiated logout. Oversized tokens are
+    // skipped; logout then falls back to client_id only.
+    if (result.idToken && result.idToken.length <= MAX_ID_TOKEN_COOKIE_LENGTH) {
+      setCookie(c, OIDC_ID_TOKEN_COOKIE, result.idToken, {
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: isSecureRequest(c),
+        maxAge: OIDC_SESSION_LIFETIME,
+        path: "/",
+      });
+    } else {
+      deleteCookie(c, OIDC_ID_TOKEN_COOKIE, { path: "/" });
+    }
     return c.redirect(`${targetOrigin}/dashboard`);
   } catch (e) {
     console.error("OIDC callback error:", e);

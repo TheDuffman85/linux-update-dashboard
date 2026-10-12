@@ -893,6 +893,8 @@
   "pages.settings.oidcUnmatchedRoleAdmin": "وصول مسؤول",
   "pages.settings.oidcUnmatchedRoleReadOnly": "وصول للقراءة فقط",
   "pages.settings.oidcUnmatchedRoleHelp": "اختر ما يحدث عندما لا يطابق مستخدم OIDC أي مجموعة مضبوطة. الافتراضي هو رفض تسجيل الدخول.",
+  "pages.settings.oidcEndSession": "تسجيل الخروج من موفر الهوية عند تسجيل الخروج",
+  "pages.settings.oidcEndSessionHelp": "عند تسجيل خروج مستخدم SSO، يتم أيضًا إنهاء جلسته لدى موفر الهوية بحيث يطلب تسجيل الدخول التالي عبر SSO بيانات الاعتماد مرة أخرى. سجّل {{url}} كعنوان URI لإعادة التوجيه بعد تسجيل الخروج لدى موفرك.",
   "pages.settings.add": "إضافة",
   "pages.settings.noScopesConfigured": "لم يتم تكوين أي نطاقات.",
   "pages.settings.removeScope": "إزالة {scope}",

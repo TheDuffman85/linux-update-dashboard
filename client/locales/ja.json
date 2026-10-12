@@ -893,6 +893,8 @@
   "pages.settings.oidcUnmatchedRoleAdmin": "管理者アクセス",
   "pages.settings.oidcUnmatchedRoleReadOnly": "読み取り専用アクセス",
   "pages.settings.oidcUnmatchedRoleHelp": "OIDC ユーザーが設定済みグループに一致しない場合の動作を選択します。デフォルトではサインインを拒否します。",
+  "pages.settings.oidcEndSession": "ログアウト時に ID プロバイダーからもサインアウトする",
+  "pages.settings.oidcEndSessionHelp": "SSO ユーザーがログアウトすると、ID プロバイダーのセッションも終了し、次回の SSO サインイン時に再度資格情報の入力が求められます。{{url}} をプロバイダーにログアウト後のリダイレクト URI として登録してください。",
   "pages.settings.add": "追加",
   "pages.settings.noScopesConfigured": "スコープは設定されていません。",
   "pages.settings.removeScope": "{scope} を削除",
