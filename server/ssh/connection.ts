@@ -18,6 +18,7 @@ import {
   getSystem,
 } from "../services/system-service";
 import type { ApprovedHostKeyInput } from "../services/system-connection-validation";
+import type { SecretInput } from "./secret-input";
 
 const { Client: SshClient, utils } = ssh2;
 
@@ -27,6 +28,15 @@ const PATH_PREFIX =
   "export LC_ALL=C LANG=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ";
 
 const SUDO_STDIN_PATTERN = /\bsudo -S(?: -p ''| -p "")?(?=\s)/g;
+
+export interface RunCommandOptions {
+  /** Secret environment delivered over stdin; output is redacted of its values. */
+  secretInput?: SecretInput | null;
+}
+
+function activeSecretInput(secretInput: SecretInput | null | undefined): SecretInput | null {
+  return secretInput && !secretInput.isEmpty ? secretInput : null;
+}
 
 function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
@@ -50,10 +60,14 @@ export function preparePersistentSudoCommand(command: string): string {
 
 export function buildPersistentSetupCommand(
   command: string,
-  sudoPasswordProvided: boolean
-): { setupCmd: string; useSudoStdin: boolean } {
+  sudoPasswordProvided: boolean,
+  secretPreamble = ""
+): { setupCmd: string; useSudoStdin: boolean; useStdinPipe: boolean } {
   const needsSudoStdin = command.includes("sudo -S");
   const useSudoStdin = needsSudoStdin && sudoPasswordProvided;
+  // Secrets are read from stdin by the preamble, so the script needs the
+  // stdin FIFO even when no sudo password is piped after them.
+  const useStdinPipe = useSudoStdin || secretPreamble.length > 0;
   const persistentCommand = useSudoStdin
     ? command
     : needsSudoStdin
@@ -63,7 +77,7 @@ export function buildPersistentSetupCommand(
   const scriptBody = [
     "#!/bin/sh",
     "(",
-    persistentCommand,
+    secretPreamble + persistentCommand,
     ")",
     "RC=$?",
     'printf "%s" "$RC" > "$1"',
@@ -77,7 +91,7 @@ export function buildPersistentSetupCommand(
     'SCRIPT="${BASE}.sh"',
     'LOGFILE="${BASE}.log"',
     'EXITFILE="${BASE}.exit"',
-    ...(useSudoStdin ? [
+    ...(useStdinPipe ? [
       'STDINFILE="${BASE}.stdin"',
       'mkfifo "$STDINFILE"',
       'chmod 600 "$STDINFILE"',
@@ -88,22 +102,23 @@ export function buildPersistentSetupCommand(
   ];
   const launchInnerCmd = [
     'if command -v setsid >/dev/null 2>&1; then',
-    `  nohup setsid sh "$1" "$2" > "$3" 2>&1${useSudoStdin ? ' < "$4"' : " < /dev/null"} &`,
+    `  nohup setsid sh "$1" "$2" > "$3" 2>&1${useStdinPipe ? ' < "$4"' : " < /dev/null"} &`,
     'else',
-    `  nohup sh "$1" "$2" > "$3" 2>&1${useSudoStdin ? ' < "$4"' : " < /dev/null"} &`,
+    `  nohup sh "$1" "$2" > "$3" 2>&1${useStdinPipe ? ' < "$4"' : " < /dev/null"} &`,
     'fi',
-    ...(useSudoStdin ? [
+    ...(useStdinPipe ? [
       'cat > "$4"',
       'rm -f "$4"',
     ] : []),
     'echo "LUDASH_BG PID=$! LOG=$3 EXIT=$2 SCRIPT=$1"',
   ].join("\n");
   const launchCmd =
-    `sh -c ${shellSingleQuote(launchInnerCmd)} _ "$SCRIPT" "$EXITFILE" "$LOGFILE"${useSudoStdin ? ' "$STDINFILE"' : ""}`;
+    `sh -c ${shellSingleQuote(launchInnerCmd)} _ "$SCRIPT" "$EXITFILE" "$LOGFILE"${useStdinPipe ? ' "$STDINFILE"' : ""}`;
 
   return {
     setupCmd: setupCmdParts.join(" && ") + ` && ${launchCmd}`,
     useSudoStdin,
+    useStdinPipe,
   };
 }
 
@@ -155,6 +170,32 @@ interface SSHConnectionError extends Error {
   level?: string;
   description?: string;
   debugRef?: string;
+  serverBanner?: string;
+}
+
+const MAX_SERVER_BANNER_LENGTH = 1000;
+
+/**
+ * Normalize a USERAUTH_BANNER for display: keep line breaks, drop terminal
+ * escape sequences and other control characters, redact secrets, and cap the
+ * length so a misbehaving server cannot flood the UI.
+ */
+export function normalizeServerBanner(message: unknown): string | undefined {
+  if (typeof message !== "string") return undefined;
+  const normalized = sanitizeOutput(
+    message
+      .replace(/\r\n?/g, "\n")
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+  ).trim();
+  if (!normalized) return undefined;
+  return normalized.length > MAX_SERVER_BANNER_LENGTH
+    ? `${normalized.slice(0, MAX_SERVER_BANNER_LENGTH)}…`
+    : normalized;
+}
+
+export function buildAuthenticationTimeoutMessage(timeoutSeconds: number): string {
+  return `Authentication did not complete within ${timeoutSeconds}s. The SSH handshake succeeded, but the server never accepted or rejected the login.`;
 }
 
 function getSSHErrorMessage(err: unknown): string {
@@ -169,6 +210,7 @@ export interface TestConnectionResult {
   success: boolean;
   message: string;
   debugRef?: string;
+  serverBanner?: string;
   hostKeyChallenges?: ApprovedHostKeyInput[];
 }
 
@@ -502,9 +544,9 @@ export class SSHConnectionManager {
   ): Promise<Client> {
     const attemptId = randomUUID();
     const startedAt = Date.now();
-    const meta = buildSSHAttemptLogMeta(hop, context);
     const conn = new SshClient();
     const connectConfig = this.buildConnectionConfig(hop);
+    const meta = buildSSHAttemptLogMeta(hop, context, connectConfig);
     const approvedHostKey = this.findApprovedHostKey(hop, context);
     let hostKeyError: HostKeyVerificationError | null = null;
 
@@ -544,7 +586,25 @@ export class SSHConnectionManager {
     });
 
     return new Promise<Client>((resolve, reject) => {
+      // ssh2 emits "handshake" once key exchange and host-key verification
+      // succeeded; a readyTimeout after that means authentication stalled.
+      let handshakeCompleted = false;
+      // Servers such as Tailscale SSH in "check" mode explain a held login
+      // (e.g. with a re-authentication URL) only via a USERAUTH_BANNER.
+      const bannerParts: string[] = [];
+      const onHandshake = () => {
+        handshakeCompleted = true;
+      };
+      const onBanner = (message: string) => {
+        bannerParts.push(message);
+      };
+      const removeAttemptListeners = () => {
+        conn.removeListener("handshake", onHandshake);
+        conn.removeListener("banner", onBanner);
+      };
+
       const onReady = () => {
+        removeAttemptListeners();
         conn.removeListener("error", onError);
         conn.on("error", (err: SSHConnectionError) => {
           logger.debug("SSH client error after connection ready", {
@@ -571,8 +631,18 @@ export class SSHConnectionManager {
       };
 
       const onError = (err: SSHConnectionError) => {
+        removeAttemptListeners();
         conn.removeListener("ready", onReady);
         err.debugRef = attemptId;
+        if (err.level === "client-timeout" && handshakeCompleted) {
+          err.message = buildAuthenticationTimeoutMessage(
+            Number(connectConfig.readyTimeout) / 1000
+          );
+        }
+        const serverBanner = normalizeServerBanner(bannerParts.join("\n"));
+        if (serverBanner) {
+          err.serverBanner = serverBanner;
+        }
         logger.warn("SSH connect attempt failed", {
           attemptId,
           hopIndex: hopIndex + 1,
@@ -580,6 +650,9 @@ export class SSHConnectionManager {
           hopRole: hop.role,
           elapsedMs: Date.now() - startedAt,
           ...meta,
+          handshakeCompleted,
+          // Banner text can carry one-time login links, so only log presence.
+          hasServerBanner: !!serverBanner,
           errorLevel: err.level,
           errorDescription: err.description
             ? sanitizeOutput(err.description)
@@ -589,6 +662,8 @@ export class SSHConnectionManager {
         reject(hostKeyError ?? err);
       };
 
+      conn.once("handshake", onHandshake);
+      conn.on("banner", onBanner);
       conn.once("ready", onReady);
       conn.once("error", onError);
       conn.connect(connectConfig as Parameters<Client["connect"]>[0]);
@@ -628,10 +703,35 @@ export class SSHConnectionManager {
     timeout?: number,
     sudoPassword?: string,
     onData?: (chunk: string, stream: "stdout" | "stderr") => void,
-    signal?: AbortSignal | null
+    signal?: AbortSignal | null,
+    options?: RunCommandOptions
+  ): Promise<CommandResult> {
+    const secretInput = activeSecretInput(options?.secretInput);
+    return this.execCommand(
+      conn,
+      secretInput ? secretInput.preamble() + command : command,
+      timeout,
+      // Secrets first: the preamble consumes them before sudo -S reads the password.
+      (secretInput?.stdinPrefix() ?? "") + (sudoPassword ? sudoPassword + "\n" : ""),
+      onData,
+      signal,
+      secretInput
+    );
+  }
+
+  private execCommand(
+    conn: Client,
+    command: string,
+    timeout: number | undefined,
+    stdinData: string,
+    onData: ((chunk: string, stream: "stdout" | "stderr") => void) | undefined,
+    signal: AbortSignal | null | undefined,
+    secretInput: SecretInput | null
   ): Promise<CommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const wrappedCommand = wrapRemoteCommand(command);
+    const stdoutRedactor = secretInput?.createRedactor() ?? null;
+    const stderrRedactor = secretInput?.createRedactor() ?? null;
 
     return new Promise<CommandResult>((resolve) => {
       let settled = false;
@@ -648,6 +748,14 @@ export class SSHConnectionManager {
         conn.removeListener("end", onConnectionEnd);
       };
 
+      const flushRedactors = () => {
+        const restOut = stdoutRedactor?.flush() ?? "";
+        const restErr = stderrRedactor?.flush() ?? "";
+        stdout += restOut;
+        stderr += restErr;
+        return { restOut, restErr };
+      };
+
       const settle = (result: CommandResult) => {
         if (settled) return;
         settled = true;
@@ -656,6 +764,7 @@ export class SSHConnectionManager {
       };
 
       const onConnectionError = (err: SSHConnectionError) => {
+        flushRedactors();
         settle({
           stdout,
           stderr: appendConnectionError(stderr, getSSHErrorMessage(err)),
@@ -664,6 +773,7 @@ export class SSHConnectionManager {
       };
 
       const onConnectionClose = () => {
+        flushRedactors();
         settle({
           stdout,
           stderr: appendConnectionError(stderr, "SSH connection closed"),
@@ -672,6 +782,7 @@ export class SSHConnectionManager {
       };
 
       const onConnectionEnd = () => {
+        flushRedactors();
         settle({
           stdout,
           stderr: appendConnectionError(stderr, "SSH connection ended"),
@@ -687,6 +798,7 @@ export class SSHConnectionManager {
             stream?.end();
           } catch {}
         }
+        flushRedactors();
         settle({
           stdout,
           stderr: appendConnectionError(stderr, "Operation cancelled"),
@@ -728,22 +840,29 @@ export class SSHConnectionManager {
           return;
         }
         stream.on("data", (data: Buffer) => {
-          const text = data.toString();
+          const raw = data.toString();
+          const text = stdoutRedactor ? stdoutRedactor.push(raw) : raw;
           stdout += text;
-          onData?.(text, "stdout");
+          if (text) onData?.(text, "stdout");
         });
         stream.stderr.on("data", (data: Buffer) => {
-          const text = data.toString();
+          const raw = data.toString();
+          const text = stderrRedactor ? stderrRedactor.push(raw) : raw;
           stderr += text;
-          onData?.(text, "stderr");
+          if (text) onData?.(text, "stderr");
         });
         stream.on("close", (code: number | null) => {
+          if (!settled) {
+            const { restOut, restErr } = flushRedactors();
+            if (restOut) onData?.(restOut, "stdout");
+            if (restErr) onData?.(restErr, "stderr");
+          }
           settle({ stdout, stderr, exitCode: code ?? 0 });
         });
 
         // Always close stdin so non-interactive commands cannot block on prompts.
-        if (sudoPassword) {
-          stream.end(sudoPassword + "\n");
+        if (stdinData) {
+          stream.end(stdinData);
         } else {
           stream.end();
         }
@@ -766,23 +885,38 @@ export class SSHConnectionManager {
     options?: {
       signal?: AbortSignal | null;
       onPersistentInfo?: (info: PersistentCommandInfo) => void;
+      secretInput?: SecretInput | null;
     }
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const signal = options?.signal ?? null;
+    const secretInput = activeSecretInput(options?.secretInput);
     const { setupCmd, useSudoStdin } = buildPersistentSetupCommand(
       command,
-      !!sudoPassword
+      !!sudoPassword,
+      secretInput?.preamble() ?? ""
     );
 
-    const setupResult = await this.runCommand(
-      conn,
-      setupCmd,
-      30,
-      useSudoStdin ? sudoPassword : undefined,
-      undefined,
-      signal
-    );
+    // The setup command forwards its stdin into the script's FIFO, so the
+    // secrets (and then the sudo password) reach the preamble in order.
+    const setupResult = secretInput
+      ? await this.execCommand(
+          conn,
+          setupCmd,
+          30,
+          secretInput.stdinPrefix() + (useSudoStdin && sudoPassword ? sudoPassword + "\n" : ""),
+          undefined,
+          signal,
+          secretInput
+        )
+      : await this.runCommand(
+          conn,
+          setupCmd,
+          30,
+          useSudoStdin ? sudoPassword : undefined,
+          undefined,
+          signal
+        );
     const info = this.parseNohupOutput(setupResult.stdout);
 
     if (setupResult.exitCode === EXIT_CANCELLED) {
@@ -819,7 +953,9 @@ export class SSHConnectionManager {
       info.pid,
       cmdTimeout,
       onData,
-      signal
+      signal,
+      0,
+      secretInput
     );
     this.persistentOutput.set(info, { bytes: tailResult.bytesRead, text: tailResult.stdout });
 
@@ -906,29 +1042,38 @@ export class SSHConnectionManager {
     onData?: (chunk: string, stream: "stdout" | "stderr") => void,
     signal?: AbortSignal | null,
     outputOffset = 0,
+    secretInput: SecretInput | null = null,
   ): Promise<{ stdout: string; bytesRead: number; monitoringLost: boolean; cancelled: boolean }> {
+    const redactor = secretInput?.createRedactor() ?? null;
+    const stderrRedactor = secretInput?.createRedactor() ?? null;
     return new Promise((resolve) => {
       let resolved = false;
       let stream: ClientChannel | null = null;
       let stdout = "";
       let bytesRead = 0;
-      const finish = (stdout: string, lost: boolean, cancelled = false) => {
+      const finish = (lost: boolean, cancelled = false, discardOutput = false) => {
         if (resolved) return;
+        const rest = redactor?.flush() ?? "";
+        if (rest && !discardOutput) {
+          onData?.(rest, "stdout");
+          stdout += rest;
+        }
+        const resultStdout = discardOutput ? "" : stdout;
         resolved = true;
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         conn.removeListener("error", onConnError);
         conn.removeListener("close", onConnClose);
-        resolve({ stdout, bytesRead, monitoringLost: lost, cancelled });
+        resolve({ stdout: resultStdout, bytesRead, monitoringLost: lost, cancelled });
       };
 
       const timer = setTimeout(() => {
-        finish(stdout, true);
+        finish(true);
       }, timeout * 1000);
 
       // If the connection itself drops, the process still runs under nohup
-      const onConnError = () => finish(stdout, true);
-      const onConnClose = () => finish(stdout, true);
+      const onConnError = () => finish(true);
+      const onConnClose = () => finish(true);
       const onAbort = () => {
         try {
           stream?.close();
@@ -937,7 +1082,7 @@ export class SSHConnectionManager {
             stream?.end();
           } catch {}
         }
-        finish(stdout, false, true);
+        finish(false, true);
       };
       conn.once("error", onConnError);
       conn.once("close", onConnClose);
@@ -952,7 +1097,7 @@ export class SSHConnectionManager {
         if (err) {
           conn.removeListener("error", onConnError);
           conn.removeListener("close", onConnClose);
-          finish("", true);
+          finish(true, false, true);
           return;
         }
 
@@ -964,24 +1109,26 @@ export class SSHConnectionManager {
         stream.on("data", (data: Buffer) => {
           if (resolved) return;
           bytesRead += data.length;
-          const text = data.toString();
+          const raw = data.toString();
+          const text = redactor ? redactor.push(raw) : raw;
           stdout += text;
-          onData?.(text, "stdout");
+          if (text) onData?.(text, "stdout");
         });
         stream.stderr.on("data", (data: Buffer) => {
           if (resolved) return;
-          const text = data.toString();
-          onData?.(text, "stderr");
+          const raw = data.toString();
+          const text = stderrRedactor ? stderrRedactor.push(raw) : raw;
+          if (text) onData?.(text, "stderr");
         });
         stream.on("close", () => {
           conn.removeListener("error", onConnError);
           conn.removeListener("close", onConnClose);
-          finish(stdout, false);
+          finish(false);
         });
         stream.on("error", () => {
           conn.removeListener("error", onConnError);
           conn.removeListener("close", onConnClose);
-          finish(stdout, true);
+          finish(true);
         });
       });
     });
@@ -996,9 +1143,12 @@ export class SSHConnectionManager {
     conn: Client,
     info: PersistentCommandInfo,
     timeout?: number,
-    onData?: (chunk: string, stream: "stdout" | "stderr") => void
+    onData?: (chunk: string, stream: "stdout" | "stderr") => void,
+    options?: RunCommandOptions
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
+    const secretInput = activeSecretInput(options?.secretInput);
+    const redact = (text: string) => secretInput ? secretInput.redact(text) : text;
     const previousOutput = this.persistentOutput.get(info) ?? { bytes: 0, text: "" };
 
     // Check if the log file still exists (it won't if the server rebooted and /tmp was cleared)
@@ -1036,7 +1186,7 @@ export class SSHConnectionManager {
         `cat "${info.logFile}" 2>/dev/null`,
         30
       );
-      const remaining = Buffer.from(logResult.stdout).subarray(previousOutput.bytes).toString();
+      const remaining = redact(Buffer.from(logResult.stdout).subarray(previousOutput.bytes).toString());
       if (remaining) onData?.(remaining, "stdout");
       this.persistentOutput.delete(info);
 
@@ -1048,7 +1198,7 @@ export class SSHConnectionManager {
       ).catch(() => {});
 
       return {
-        stdout: logResult.stdout,
+        stdout: redact(logResult.stdout),
         stderr: "",
         exitCode: isNaN(exitCode) ? -1 : exitCode,
       };
@@ -1071,6 +1221,7 @@ export class SSHConnectionManager {
         onData,
         undefined,
         previousOutput.bytes,
+        secretInput,
       );
       const combinedOutput = previousOutput.text + tailResult.stdout;
       this.persistentOutput.set(info, {
@@ -1158,12 +1309,14 @@ export class SSHConnectionManager {
           success: false,
           message: "Permission denied (check credentials)",
           debugRef: err.debugRef,
+          serverBanner: err.serverBanner,
         };
       }
       return {
         success: false,
         message: buildTestConnectionFailureMessage(system, err),
         debugRef: err.debugRef,
+        serverBanner: err.serverBanner,
       };
     } finally {
       if (conn) this.disconnect(conn);

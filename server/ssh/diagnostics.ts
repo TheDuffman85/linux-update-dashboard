@@ -13,6 +13,7 @@ export interface SSHAttemptLogMeta {
   port: number;
   username?: string;
   authType: string;
+  credentialId?: number;
   hasPassword: boolean;
   hasPrivateKey: boolean;
   hasKeyPassphrase: boolean;
@@ -48,9 +49,21 @@ function normalizeAuthType(value: unknown): string {
   return value === "key" ? "key" : "password";
 }
 
+/**
+ * The secrets actually handed to ssh2, after resolving inline and stored
+ * credentials. Only their presence is logged, never their values.
+ */
+export interface ResolvedSSHAuthConfig {
+  password?: unknown;
+  privateKey?: unknown;
+  passphrase?: unknown;
+  authHandler?: unknown;
+}
+
 export function buildSSHAttemptLogMeta(
   system: Record<string, unknown>,
-  context: SSHConnectContext = {}
+  context: SSHConnectContext = {},
+  resolvedAuth?: ResolvedSSHAuthConfig
 ): SSHAttemptLogMeta {
   return {
     systemId: context.systemId,
@@ -58,9 +71,18 @@ export function buildSSHAttemptLogMeta(
     port: normalizePort(system.port),
     username: typeof system.username === "string" ? system.username : undefined,
     authType: normalizeAuthType(system.authType),
-    hasPassword: !!system.encryptedPassword,
-    hasPrivateKey: !!system.encryptedPrivateKey,
-    hasKeyPassphrase: !!system.encryptedKeyPassphrase,
+    credentialId:
+      typeof system.credentialId === "number" ? system.credentialId : undefined,
+    hasPassword: resolvedAuth
+      ? !!resolvedAuth.password
+      : !!system.encryptedPassword,
+    hasPrivateKey: resolvedAuth
+      ? !!resolvedAuth.privateKey ||
+        (Array.isArray(resolvedAuth.authHandler) && resolvedAuth.authHandler.length > 0)
+      : !!system.encryptedPrivateKey,
+    hasKeyPassphrase: resolvedAuth
+      ? !!resolvedAuth.passphrase
+      : !!system.encryptedKeyPassphrase,
   };
 }
 

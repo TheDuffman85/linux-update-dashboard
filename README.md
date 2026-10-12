@@ -30,18 +30,20 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 ## Features
 
-- **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, and custom package managers.
+- **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, and custom package managers.
 - **SSH credential vault:** reusable password, key, and OpenSSH certificate credentials encrypted at rest with AES-256-GCM.
 - **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
+- **Repository sources:** view each system's APT, DNF/YUM, Pacman, APK, and Flatpak repository files with credentials masked, and optionally edit them through `sudoedit` with a diff review and activity history.
 - **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
-- **Scheduling:** cron-based refresh, update, and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
+- **Scheduling:** cron-based refresh, update, autoremove, reboot (optionally only when required), and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
+- **Branding:** replace the application name and logo shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**.
 - **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, version/build info, and Docker-ready production packaging.
 
 ## Screenshots
@@ -246,6 +248,10 @@ TOTP can be enabled from **Settings > Password** after signing in with the accou
 
 For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oidc/callback`. Set `LUDASH_BASE_URL` before configuring OIDC so callback and origin validation match the public URL.
 
+OIDC settings also control the requested scopes (must include `openid`), the claim that carries group membership (default `groups`, read from the ID token and the UserInfo endpoint), and which groups get admin or read-only access. Admin groups take precedence over read-only groups. Users that match no configured group are denied by default; you can instead grant them admin or read-only access. Installations that already used OIDC before group mapping existed keep granting admin access to unmatched users, so existing SSO accounts are not locked out after upgrading. Role changes apply on the next SSO sign-in, and OIDC sessions expire after one day.
+
+Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, scripts, or settings. API tokens owned by a read-only user are always read-only. Local password accounts always have admin access.
+
 API tokens are for external integrations such as [gethomepage](https://gethomepage.dev/) widgets, scripts, monitoring, and Telegram command automation. Tokens can be read-only or read/write, expire after 30/60/90/365 days or never, are stored as SHA-256 hashes, are limited to 25 per user, and cannot access management endpoints or configure SSH connections.
 
 ```bash
@@ -265,11 +271,24 @@ The endpoint catalog lives in [API.md](API.md).
 | APK | Alpine Linux |
 | Flatpak | Any cross-distribution host |
 | Snap | Any cross-distribution host |
+| [deb-get](https://github.com/wimpysworld/deb-get) | Debian and Ubuntu hosts with deb-get installed |
 | Custom | User-defined scripts and parser rules |
 
 Managers are detected over SSH when testing a connection or running the first check. Detected managers are enabled by default and can be toggled per system. Security updates are identified where the package manager exposes enough information.
 
 Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Snap does not currently expose manager-specific settings.
+
+### deb-get
+
+deb-get installs apps that publish `.deb` files on GitHub, GitLab, or a website but have no APT repository, such as Obsidian or draw.io. The dashboard manages the apps that deb-get installed itself (methods `direct`, `github`, `gitlab`, and `website` in `/etc/deb-get/installed`). Apps that deb-get set up from an APT repository or PPA stay with APT.
+
+- **Check:** runs the read-only `deb-get show <app>` for each app and compares versions with `dpkg --compare-versions`. It does not run `deb-get update`, because that also runs `apt-get update` and re-checks every app deb-get knows about in the background, which uses up GitHub API limits.
+- **Upgrade all:** `deb-get upgrade --dg-only`. deb-get also upgrades the apt and ppa apps it installed in this step.
+- **Upgrade selected:** `deb-get install <app...>`.
+- **No duplicates:** deb-get installs its apps through dpkg. While deb-get is enabled, its apps are removed from the APT inventory and from APT updates.
+- **GitHub token:** assign a **Secret** credential to the built-in `githubToken` entry. deb-get receives it as `DEBGET_TOKEN`, which raises the GitHub API rate limit. Without it, GitHub-hosted apps can fail to report a published version, and the check output names them. See [Secret config entries](#secret-config-entries).
+
+deb-get needs root for every action, including `show`. The generated sudoers file therefore has an exact `deb-get upgrade --dg-only` rule, an active `deb-get show *` rule (see the read-only lookups below), a commented `deb-get install *` rule for selected upgrades, and `env_keep` for `DEBGET_TOKEN`. Any sudo access to deb-get is effectively root: deb-get runs its app definitions as shell code and installs whatever packages they point to.
 
 ## Dashboard groups and Upgrade All priorities
 
@@ -296,6 +315,7 @@ Schedules are managed from the **Schedules** page. Existing installs migrate to 
 
 - **Refresh schedules** re-check scoped systems when cached results are stale.
 - **Update schedules** refresh scoped systems first, then run the normal per-system Upgrade action where visible updates remain.
+- **Reboot schedules** reboot every scoped system. With **Only reboot if required** enabled, they refresh scoped systems first and only reboot those that report a pending reboot; systems with a dismissed reboot warning are skipped.
 - **Notification schedules** deliver pending event batches for assigned notification channels.
 
 Schedules use five-field cron expressions in the process timezone. Set Docker `TZ`, such as `TZ=Europe/Berlin`, for local-time scheduling. The default minimum interval is 5 minutes and can be changed with `LUDASH_MIN_SCHEDULE_INTERVAL_MINUTES`.
@@ -342,7 +362,7 @@ Optional commands are private-chat-only, disabled by default, scoped to the chan
 
 Webhook channels support `POST`, `PUT`, and `PATCH`; custom or Discord presets; no auth, bearer auth, or basic auth; text, JSON template, or form bodies; query params; custom headers; timeout; retries; retry delay; and optional insecure TLS for trusted internal targets.
 
-Templates use simple Mustache variable tags. Only dotted `event.*` paths are allowed; sections, loops, and other Mustache control tags are rejected. Common variables include `{{event.title}}`, `{{event.body}}`, `{{event.priority}}`, `{{event.sentAt}}`, totals under `{{event.totals.*}}`, text summaries, JSON payload helpers, and JSON-safe variants such as `{{event.titleJson}}` and `{{event.decoratedTitleJson}}`.
+Templates use simple Mustache variable tags. Only dotted `event.*` paths are allowed; sections, loops, and other Mustache control tags are rejected. Common variables include `{{event.title}}`, `{{event.body}}`, `{{event.priority}}`, `{{event.sentAt}}`, `{{event.appName}}` (the configured branding name), totals under `{{event.totals.*}}`, text summaries, JSON payload helpers, and JSON-safe variants such as `{{event.titleJson}}` and `{{event.decoratedTitleJson}}`.
 
 Webhook delivery defaults to a 10-second timeout, 2 retries, and a 30-second retry delay. URLs must be `http` or `https`, embedded URL credentials are rejected, cloud metadata endpoints are blocked, and reserved headers such as `Authorization`, `Host`, `Content-Length`, `Connection`, and `Cookie` cannot be set manually.
 
@@ -352,15 +372,18 @@ The **Scripts** page exposes the SSH command templates for package-manager detec
 
 Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
 
-- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, system-info, and reboot are read-only and can be copied.
+- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, system-info, and reboot are read-only and can be copied.
 - Custom scripts can define shell steps, operation type, parser settings, installed-package inventory parsing, and system-info section mapping.
 - Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`.
 - Custom package managers can define display labels, parser regexes, optional config entries, and import/export bundles.
+- Config entries can be marked **secret** for tokens and passwords. See [Secret config entries](#secret-config-entries).
 - Used scripts and package managers are protected from accidental deletion.
 
 Command placeholders include `{{package}}`, `{{packages}}`, `{{quotedPackage}}`, `{{quotedPackages}}`, `{{manager}}`, `{{config.someKey}}`, and `{{sudo:COMMAND}}`. Custom parser regexes should use named capture groups such as `packageName`, `newVersion`, `currentVersion`, `architecture`, and `repository`.
 
 For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Sudoers setup** action that generates a least-privilege `/etc/sudoers.d` allowlist for the selected system. Review generated files before installing them, keep commands exact, prefer absolute executable paths, leave selected-package wildcard rules commented unless needed, and avoid broad rules such as `NOPASSWD: ALL` or `sudo sh <writable-script>`.
+
+**Read-only lookups** are the one exception to exact, active rules. Some lookups must run as root and take a different argument list every time, such as `deb-get show <app>`. The generated file lists these in their own active section as `<command> *`. Only commands on a fixed allowlist in the dashboard qualify, and only in check or inventory steps. A custom script that passes a variable to any other sudo command still gets a warning instead of a rule.
 
 Example validation after installing a generated file:
 
@@ -370,6 +393,50 @@ sudo visudo -cf /etc/sudoers.d/updater-updater
 ```
 
 Package maintenance remains privileged because package scripts run as root. The goal is to limit the dashboard account to the required maintenance commands.
+
+### Secret config entries
+
+Mark a config entry as secret when a script needs a token or password, for example a GitHub token that raises API rate limits. A secret entry has no default value. Instead, it names the environment variable the script reads, such as `DEBGET_TOKEN`. Each system then assigns a **Secret** credential from the **Credentials** page.
+
+- The value is stored encrypted, like every other credential. It is never returned by the API, included in bundle exports, or copied anywhere except the systems that reference it.
+- At run time the dashboard sends the value over the SSH channel's stdin, ahead of the sudo password. A short preamble reads it into the environment variable. The command text, the process list on the host, the detached script in `/tmp`, the activity history, and the command shown in the browser contain only the variable name.
+- Command output is redacted of the value before it is streamed, stored, or logged. Values shorter than 6 characters are not redacted.
+- Scripts reference the variable, for example `"$DEBGET_TOKEN"`. `{{config.<key>}}` placeholders are rejected for secret entries.
+- Enable **Keep through sudo** on the entry when a root command needs the variable. sudo's default `env_reset` drops it otherwise, so the generated sudoers file adds `Defaults:<user> env_keep += "DEBGET_TOKEN"`. Command rules stay exact, and the value never appears in sudo's command line or auth log. Accounts with full sudo access need this line too. Names that change shell, loader, interpreter, or sudo behavior, such as `PATH`, `LD_*`, `BASH_ENV`, `PYTHONPATH`, or `SUDO_*`, are rejected.
+
+The tool that receives the secret decides what happens next. A tool that passes it to `curl` on the command line makes it visible in the host's process list while that command runs.
+
+## Repository Sources
+
+The **Repository sources** action on the **Systems** page opens a modal with the repository files of the system's active package managers. The files are read over SSH as the SSH user, without sudo, each time the modal is opened or refreshed.
+
+| Manager | Files |
+| ------- | ----- |
+| APT | `/etc/apt/sources.list`, `/etc/apt/sources.list.d/*.list`, `/etc/apt/sources.list.d/*.sources` |
+| DNF | `/etc/yum.repos.d/*.repo`, `/etc/distro.repos.d/*.repo`, `/usr/share/dnf5/repos.d/*.repo` (view only) |
+| YUM | `/etc/yum.repos.d/*.repo` |
+| Pacman | `/etc/pacman.conf`, `/etc/pacman.d/*mirrorlist` |
+| APK | `/etc/apk/repositories`, `/etc/apk/repositories.d/*.list` |
+| Flatpak | `/var/lib/flatpak/repo/config`, `/etc/flatpak/remotes.d/*.flatpakrepo` (view only; use `flatpak remote-*`) |
+
+Credentials in URLs (`https://user:pass@...`) and `password`, `token`, or `secret` fields are masked before content leaves the server.
+
+Editing is off by default. Turn on **Allow repository source editing** in the system settings to edit existing files of that system; while it is off, the modal links to the system settings. Read-only users and API tokens cannot edit or change the setting.
+
+- **One file at a time:** while a file is being edited, the modal can only be closed with **Cancel**, so an unsaved edit is not lost to Escape or a click outside.
+- **Review before writing:** saving first validates the syntax of one-line APT entries, deb822 stanzas, and INI section headers, then shows a diff of the change against the file currently on the host. The file is written only after you confirm.
+- **Concurrent changes:** if the file changed on the host since it was loaded, the save is rejected and the file must be reloaded.
+- **How it is written:** the new content travels base64-encoded over the SSH channel's stdin. Root writes the file directly. Other users go through `sudoedit`, which copies the file to a temporary file owned by the SSH user, lets a throwaway editor script in `/tmp/ludash_*` replace that copy, and installs it as root. `sudoedit` refuses symlinks and keeps the file's owner and mode. The dashboard reads the file back afterwards to confirm that it changed. Nothing is installed on the host.
+- **History:** each save is recorded in the activity history with a unified diff.
+- **Not editable from the dashboard:** files with masked credentials (they would be lost), files over 64 KiB, files that are not valid UTF-8, vendor files, and Flatpak remotes. New files cannot be created yet.
+
+For restricted SSH users, each file needs an exact `sudoedit` rule. When editing is enabled, the **Sudoers setup** output lists one commented rule per file found on the host:
+
+```sudoers
+# updater ALL=(root) NOPASSWD: sudoedit /etc/apt/sources.list.d/debian.sources
+```
+
+Uncomment only the files you want to edit. Write access to repository sources is root-equivalent: a repository decides which packages the next upgrade installs, and package scripts run as root. Only add repositories you trust, and run **Check for updates** after an edit to confirm the package manager accepts the new configuration.
 
 ## SSH-Safe Maintenance
 
@@ -417,6 +484,8 @@ docker logs -f linux-update-dashboard
 At `info`, logs include startup, configuration, warnings, and errors. `debug` adds attempt-scoped SSH diagnostics and routine scheduler refresh logs. Failed test-connection requests include a debug reference ID you can match against logs.
 
 Logged SSH diagnostics are limited to safe metadata such as host, port, username, auth type, elapsed time, and filtered auth/debug events. Passwords, sudo passwords, private keys, passphrases, tokens, and raw SSH payloads are never logged. Avoid leaving debug logging enabled longer than needed.
+
+If a login banner is sent by the SSH server, Test Connection shows it below the error. The banner is not written to the logs because it can contain one-time links. "Authentication did not complete" means the handshake succeeded but the server held the login open until the timeout. A common cause is [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) with an ACL rule set to `"action": "check"`: it ignores the configured credentials and waits for a browser re-authentication that the dashboard cannot perform. Use `"action": "accept"` for the dashboard host, or disable Tailscale SSH on the target so its regular SSH server answers.
 
 ## Security
 
@@ -506,6 +575,7 @@ Shared credentials:
 | `ludash-test-apt-dpkg-interrupted` | 2015 | APT interrupted dpkg fixture | Debian 12 |
 | `ludash-test-ubuntu-root` | 2016 | APT root-login/full sudo fixture | Ubuntu 24.04 |
 | `ludash-test-custom-package-managers` | 2017 | All custom package-manager examples | Ubuntu 24.04 |
+| `ludash-test-deb-get` | 2018 | deb-get stand-in with local `.deb` apps, least-privilege sudoers | Debian 12 |
 
 Fixtures pin older package versions from archived or local repositories while current repos stay active, so package-manager checks report deterministic pending updates. Special fixtures cover kept-back packages, partial multi-manager failures, DNF GPG prompts, DNF EULA prompts, interrupted dpkg repair, root-login behavior, and custom package manager examples in [`examples/`](examples/).
 
@@ -529,6 +599,8 @@ Docker integration tests are opt-in, for example:
 
 ```bash
 LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/apt-sudo-password.integration.test.ts
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/secret-env.integration.test.ts
+LUDASH_RUN_DOCKER_INTEGRATION=1 pnpm vitest run tests/server/deb-get.integration.test.ts
 ```
 
 ### Branch Management

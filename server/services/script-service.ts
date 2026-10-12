@@ -2,10 +2,13 @@ import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import { getDb } from "../db";
 import { customPackageManagers, customScripts, systemScriptOverrides, systems } from "../db/schema";
 import {
+  getBuiltinConfigEntries,
   getLegacyCustomConfigKey,
   getManagerConfig,
+  getSecretConfigEntries,
   normalizeCustomPackageManagerConfigEntriesForManager,
   parsePackageManagerConfigs,
+  serializePackageManagerSecretRefs,
   validateCustomPackageManagerConfigEntries,
   type CustomPackageManagerConfigEntry,
   type PackageManagerConfigValue,
@@ -18,6 +21,7 @@ import {
 } from "../ssh/installed-packages";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND } from "../ssh/parsers/apt";
+import { debGetCheckScript } from "../ssh/parsers/deb-get";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
 import { getProxmoxBackupGuardCommand, getRebootCommand } from "../ssh/reboot";
@@ -161,7 +165,7 @@ export interface PlaceholderHelpEntry {
   example: string;
 }
 
-const BUILTIN_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
+const BUILTIN_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap", "deb-get"];
 const MANAGER_LABELS: Record<string, string> = {
   apt: "APT",
   dnf: "DNF",
@@ -170,6 +174,7 @@ const MANAGER_LABELS: Record<string, string> = {
   apk: "APK",
   flatpak: "Flatpak",
   snap: "Snap",
+  "deb-get": "deb-get",
 };
 
 const MAX_SCRIPT_STEPS = 8;
@@ -600,6 +605,18 @@ function normalizeScriptConfigPlaceholders(script: Partial<ScriptDefinition>): P
   };
 }
 
+function findSecretConfigPlaceholder(command: string, manager: string | null | undefined): string | null {
+  if (!manager || !command.includes("{{config.")) return null;
+  const definition = listPackageManagerDefinitions().find((entry) => entry.name === manager);
+  const secretKeys = new Set(getSecretConfigEntries(definition)
+    .map((entry) => getLegacyCustomConfigKey(manager, entry.key)));
+  if (secretKeys.size === 0) return null;
+  for (const match of command.matchAll(/\{\{config\.([a-zA-Z0-9_.-]+)\}\}/g)) {
+    if (secretKeys.has(getLegacyCustomConfigKey(manager, match[1]))) return match[1];
+  }
+  return null;
+}
+
 function resolveConfigValue(config: PackageManagerConfigValue | undefined, path: string): string {
   const value = path.split(".").reduce<unknown>((current, part) => {
     if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
@@ -619,6 +636,12 @@ export function renderCommandTemplate(
 ): string {
   const packages = context.packages ? validatePackageNames(context.packages) : [];
   const firstPackage = packages[0] ? validatePackageName(packages[0]) : "";
+  const secretKey = findSecretConfigPlaceholder(command, context.pkgManager);
+  if (secretKey) {
+    throw new Error(
+      `{{config.${secretKey}}} is a secret entry; use its environment variable instead of a placeholder`,
+    );
+  }
   const config = withConfigDefaults(context.pkgManager, context.config);
   let rendered = command
     .replaceAll("{{manager}}", context.pkgManager ?? "")
@@ -995,6 +1018,8 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
           ),
         },
       ];
+    case "deb-get":
+      return [{ label: "Checking for updates", command: debGetCheckScript() }];
     default:
       return [];
   }
@@ -1043,6 +1068,11 @@ function builtinUpgradeAllCommand(manager: string): string {
       return commentedCommand("Upgrade all installed Flatpak applications and runtimes.", sudoersRelevantCommand("flatpak update -y") + " 2>&1");
     case "snap":
       return commentedCommand("Refresh all installed Snap packages.", sudoersRelevantCommand("snap refresh") + " 2>&1");
+    case "deb-get":
+      return commentedCommand(
+        "Upgrade the apps deb-get manages. --dg-only skips deb-get's full APT upgrade; deb-get still upgrades the apt and ppa apps it installed.",
+        sudoersRelevantCommand("deb-get upgrade --dg-only") + " 2>&1",
+      );
     default:
       return "";
   }
@@ -1115,6 +1145,8 @@ function builtinUpgradeSelectedCommand(manager: string): string {
       return commentedCommand("Upgrade only the selected Flatpak applications or runtimes.", sudoersRelevantCommand("flatpak update -y {{packages}}") + " 2>&1");
     case "snap":
       return commentedCommand("Refresh only the selected Snap packages.", sudoersRelevantCommand("snap refresh {{packages}}") + " 2>&1");
+    case "deb-get":
+      return commentedCommand("Upgrade only the selected deb-get apps to their published versions.", sudoersRelevantCommand("deb-get install {{packages}}") + " 2>&1");
     default:
       return "";
   }
@@ -1273,7 +1305,10 @@ function serializeCustomPackageManager(row: typeof customPackageManagers.$inferS
     name: row.name,
     label: builtin ? MANAGER_LABELS[row.name] ?? row.name : row.label,
     parserConfig: builtin ? null : parseJson<CustomParserConfig | null>(row.parserConfig, null),
-    configEntries: normalizeCustomPackageManagerConfigEntriesForManager(row.name, parseJson<unknown>(row.configEntries, [])),
+    configEntries: [
+      ...(builtin ? getBuiltinConfigEntries(row.name) : []),
+      ...normalizeCustomPackageManagerConfigEntriesForManager(row.name, parseJson<unknown>(row.configEntries, [])),
+    ],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -1310,7 +1345,7 @@ export function listPackageManagerDefinitions(): CustomPackageManagerDefinition[
     name,
     label: MANAGER_LABELS[name] ?? name,
     parserConfig: null,
-    configEntries: [],
+    configEntries: getBuiltinConfigEntries(name),
     createdAt: now,
     updatedAt: now,
   });
@@ -1415,6 +1450,12 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
       step.command.length > MAX_STEP_COMMAND_LENGTH
     ) {
       return `each step needs a label and command (command max ${MAX_STEP_COMMAND_LENGTH} chars)`;
+    }
+    const secretKey = input.type === "package_manager"
+      ? findSecretConfigPlaceholder(step.command, input.pkgManager)
+      : null;
+    if (secretKey) {
+      return `{{config.${secretKey}}} is a secret entry; reference its environment variable instead`;
     }
   }
   const parserConfig = normalizeParserConfigForOperation(input.parserConfig, input.operation);
@@ -1568,6 +1609,28 @@ function withoutManager(value: string | null, manager: string): string | null {
   return next.length > 0 ? JSON.stringify(next) : null;
 }
 
+/** Drop secret assignments whose config entry is gone or no longer secret. */
+function pruneSystemSecretRefs(): void {
+  const definitions = listPackageManagerDefinitions();
+  const rows = getDb()
+    .select({ id: systems.id, pkgManagerSecretRefs: systems.pkgManagerSecretRefs })
+    .from(systems)
+    .all();
+  for (const row of rows) {
+    if (!row.pkgManagerSecretRefs) continue;
+    const next = serializePackageManagerSecretRefs(
+      parseJson<unknown>(row.pkgManagerSecretRefs, null) as never,
+      definitions,
+    );
+    if (next === row.pkgManagerSecretRefs) continue;
+    getDb()
+      .update(systems)
+      .set({ pkgManagerSecretRefs: next })
+      .where(eq(systems.id, row.id))
+      .run();
+  }
+}
+
 function removePackageManagerFromSystemConfigs(manager: string): void {
   const systemRows = getDb()
     .select({
@@ -1576,6 +1639,7 @@ function removePackageManagerFromSystemConfigs(manager: string): void {
       detectedPkgManagers: systems.detectedPkgManagers,
       disabledPkgManagers: systems.disabledPkgManagers,
       pkgManagerConfigs: systems.pkgManagerConfigs,
+      pkgManagerSecretRefs: systems.pkgManagerSecretRefs,
     })
     .from(systems)
     .all();
@@ -1586,6 +1650,10 @@ function removePackageManagerFromSystemConfigs(manager: string): void {
     const configs = isRecord(rawConfigs) ? { ...rawConfigs } : {};
     delete configs[manager];
     const nextConfigs = Object.keys(configs).length > 0 ? JSON.stringify(configs) : null;
+    const rawSecretRefs = parseJson<unknown>(system.pkgManagerSecretRefs, {});
+    const secretRefs = isRecord(rawSecretRefs) ? { ...rawSecretRefs } : {};
+    delete secretRefs[manager];
+    const nextSecretRefs = Object.keys(secretRefs).length > 0 ? JSON.stringify(secretRefs) : null;
     const nextPkgManager = system.pkgManager === manager ? null : system.pkgManager;
     const nextDetected = withoutManager(system.detectedPkgManagers, manager);
     const nextDisabled = withoutManager(system.disabledPkgManagers, manager);
@@ -1594,7 +1662,8 @@ function removePackageManagerFromSystemConfigs(manager: string): void {
       nextPkgManager === system.pkgManager &&
       nextDetected === system.detectedPkgManagers &&
       nextDisabled === system.disabledPkgManagers &&
-      nextConfigs === system.pkgManagerConfigs
+      nextConfigs === system.pkgManagerConfigs &&
+      nextSecretRefs === system.pkgManagerSecretRefs
     ) {
       continue;
     }
@@ -1606,6 +1675,7 @@ function removePackageManagerFromSystemConfigs(manager: string): void {
         detectedPkgManagers: nextDetected,
         disabledPkgManagers: nextDisabled,
         pkgManagerConfigs: nextConfigs,
+        pkgManagerSecretRefs: nextSecretRefs,
         updatedAt: now,
       })
       .where(eq(systems.id, system.id))
@@ -1802,16 +1872,23 @@ export function updateCustomPackageManager(name: string, input: {
     const parserConfigError = validateParserConfig(input.parserConfig);
     if (parserConfigError) throw new Error(parserConfigError);
   }
+  const builtinEntryKeys = new Set(getBuiltinConfigEntries(normalizedName).map((entry) => entry.key));
   const rawConfigEntries = input.configEntries === undefined
     ? parseJson<unknown>(existing?.configEntries, [])
     : input.configEntries;
+  // Built-in entries are part of the definition, not user data; drop them when
+  // a client sends the full entry list back.
+  const userConfigEntries = Array.isArray(rawConfigEntries)
+    ? rawConfigEntries.filter((entry) =>
+        !(isRecord(entry) && (entry.builtin === true || builtinEntryKeys.has(String(entry.key)))))
+    : rawConfigEntries;
   const configEntryError = validateCustomPackageManagerConfigEntries(
-    rawConfigEntries,
+    userConfigEntries,
     listPackageManagerDefinitions(),
     normalizedName,
   );
   if (configEntryError) throw new Error(configEntryError);
-  const configEntries = normalizeCustomPackageManagerConfigEntriesForManager(normalizedName, rawConfigEntries);
+  const configEntries = normalizeCustomPackageManagerConfigEntriesForManager(normalizedName, userConfigEntries);
 
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const values = {
@@ -1836,6 +1913,7 @@ export function updateCustomPackageManager(name: string, input: {
         })
         .returning()
         .get();
+  pruneSystemSecretRefs();
   return serializeCustomPackageManager(row);
 }
 
@@ -2217,6 +2295,7 @@ function withConfigDefaults(
   if (!definition?.configEntries.length) return withBuiltinDefaults;
   const defaults: Record<string, unknown> = {};
   for (const entry of definition.configEntries) {
+    if (entry.secret) continue;
     const legacyKey = getLegacyCustomConfigKey(manager, entry.key);
     const value = withBuiltinDefaults[legacyKey] ?? entry.defaultValue;
     defaults[legacyKey] = value;

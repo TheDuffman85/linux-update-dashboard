@@ -25,6 +25,7 @@ import { getServerTranslator } from "./i18n";
 import * as scheduleService from "./schedule-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
+import { getAppName } from "./branding-service";
 
 const DEFAULT_NOTIFY_ON = ["updates", "appUpdates"] as const;
 const DEFAULT_NOTIFY_ON_JSON = JSON.stringify(DEFAULT_NOTIFY_ON);
@@ -369,8 +370,8 @@ function buildTestPayload(name?: string): NotificationPayload {
   const event: NotificationEventData = {
     title: t("server.notifications.test.title"),
     body: name
-      ? t("server.notifications.test.bodyWithChannel", { name })
-      : t("server.notifications.test.body"),
+      ? t("server.notifications.test.bodyWithChannel", { name, appName: getAppName() })
+      : t("server.notifications.test.body", { appName: getAppName() }),
     priority: "default",
     tags: ["white_check_mark"],
     sentAt,
@@ -1336,7 +1337,7 @@ function buildBatchPayload(
       ? `${prefix}${appUpdate.currentVersion.replace(/^dev-/, "")}`
       : t("server.notifications.currentBuild");
     const remoteVersion = `${prefix}${appUpdate.remoteVersion.replace(/^dev-/, "")}`;
-    const lines = [`Linux Update Dashboard: ${currentVersion} -> ${remoteVersion}`];
+    const lines = [`${getAppName()}: ${currentVersion} -> ${remoteVersion}`];
 
     if (body) body += "\n\n";
     body += lines.join("\n");

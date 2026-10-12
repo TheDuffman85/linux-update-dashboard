@@ -2,6 +2,7 @@ import Mustache from "mustache";
 import type { NotificationEventData } from "./types";
 import { decorateNotificationTitle, formatUpdateLine } from "./presentation";
 import { getServerTranslator } from "../i18n";
+import { getAppName } from "../branding-service";
 
 const ALLOWED_TAG_RE = /^event(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*$/;
 
@@ -35,6 +36,7 @@ function jsonStringify(value: unknown): string {
 
 export function buildTemplateView(event: NotificationEventData) {
   const t = getServerTranslator();
+  const appName = getAppName();
   const decoratedTitle = decorateNotificationTitle({
     title: event.title,
     tags: event.tags,
@@ -56,6 +58,8 @@ export function buildTemplateView(event: NotificationEventData) {
   return {
     event: {
       ...event,
+      appName,
+      appNameJson: jsonStringify(appName),
       tagsCsv: event.tags.join(","),
       updatesText,
       unreachableText,

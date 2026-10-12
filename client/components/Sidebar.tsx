@@ -1,22 +1,24 @@
 import { NavLink } from "react-router";
 import { useAuth } from "../context/AuthContext";
-import { PenguinLogo } from "./PenguinLogo";
+import { AppLogo } from "./AppLogo";
 import { ThemeToggle } from "./ThemeToggle";
 import { useI18n } from "../lib/i18n";
+import { useBranding } from "../lib/branding";
 
-const navItems = [
+const navItems: Array<{ path: string; label: string; icon: string; adminOnly?: boolean }> = [
   { path: "/dashboard", label: "components.sidebar.nav.dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
   { path: "/systems", label: "components.sidebar.nav.systems", icon: "M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" },
-  { path: "/credentials", label: "components.sidebar.nav.credentials", icon: "M15 7a2 2 0 11-2.001-2A2 2 0 0115 7zm-3 4h7l2 2-6 6-2-2m-1-6H7a2 2 0 00-2 2v2a2 2 0 002 2h2" },
-  { path: "/schedules", label: "components.sidebar.nav.schedules", icon: "M8 7V3m8 4V3M4 11h16M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2zm4 10h.01M12 15h.01M15 15h.01" },
-  { path: "/notifications", label: "components.sidebar.nav.notifications", icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" },
-  { path: "/scripts", label: "components.sidebar.nav.scripts", icon: "M8 9h8M8 13h5m-9 8h16a2 2 0 002-2V5a2 2 0 00-2-2H8l-4 4v12a2 2 0 002 2z" },
-  { path: "/settings", label: "components.sidebar.nav.settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
+  { path: "/credentials", label: "components.sidebar.nav.credentials", adminOnly: true, icon: "M15 7a2 2 0 11-2.001-2A2 2 0 0115 7zm-3 4h7l2 2-6 6-2-2m-1-6H7a2 2 0 00-2 2v2a2 2 0 002 2h2" },
+  { path: "/schedules", label: "components.sidebar.nav.schedules", adminOnly: true, icon: "M8 7V3m8 4V3M4 11h16M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2zm4 10h.01M12 15h.01M15 15h.01" },
+  { path: "/notifications", label: "components.sidebar.nav.notifications", adminOnly: true, icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" },
+  { path: "/scripts", label: "components.sidebar.nav.scripts", adminOnly: true, icon: "M8 9h8M8 13h5m-9 8h16a2 2 0 002-2V5a2 2 0 00-2-2H8l-4 4v12a2 2 0 002 2z" },
+  { path: "/settings", label: "components.sidebar.nav.settings", adminOnly: true, icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
 ];
 
 export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  const { user, logout } = useAuth();
+  const { user, logout, isReadOnly } = useAuth();
   const { t } = useI18n();
+  const { appName } = useBranding();
   const hasRepoUrl = Boolean(__APP_REPO_URL__);
 
   return (
@@ -33,14 +35,16 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
         }`}
       >
         <div className="p-4">
-          <div className="flex items-center gap-2">
-            <PenguinLogo size={28} />
-            <span className="font-semibold text-sm">Linux Update Dashboard</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <AppLogo size={28} />
+            <span className="font-semibold text-sm truncate" title={appName}>
+              {appName}
+            </span>
           </div>
         </div>
 
         <nav className="flex-1 p-2 space-y-1">
-          {navItems.map((item) => (
+          {navItems.filter((item) => !isReadOnly || !item.adminOnly).map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -63,8 +67,15 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
 
         <div className="p-3 border-t border-border">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
-              {user?.username}
+            <span className="flex min-w-0 flex-col">
+              <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                {user?.username}
+              </span>
+              {isReadOnly && (
+                <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                  {t("components.sidebar.readOnlyAccess")}
+                </span>
+              )}
             </span>
             <div className="flex items-center gap-1">
               <ThemeToggle />

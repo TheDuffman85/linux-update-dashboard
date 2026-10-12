@@ -11,6 +11,7 @@ import { authMiddleware } from "../../server/middleware/auth";
 import settingsRoutes from "../../server/routes/settings";
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { getSSHManager, initSSHManager } from "../../server/ssh/connection";
+import { getAppLogoJpeg } from "../../server/services/branding-service";
 
 const Hono = BaseHono<{ Variables: { user: { userId: number; username: string; isAdmin: boolean } } }>;
 
@@ -41,7 +42,10 @@ describe("settings routes", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ settings: { language: "de" } });
+    expect(body).toEqual({
+      settings: { language: "de" },
+      branding: { appName: "Linux Update Dashboard", logoUrl: null },
+    });
     expect(JSON.stringify(body)).not.toContain("super-secret");
   });
 
@@ -388,6 +392,187 @@ describe("settings routes", () => {
       maxConcurrent: 7,
       defaultTimeout: 25,
       defaultCmdTimeout: 30,
+    });
+  });
+
+  describe("branding", () => {
+    const PNG_BYTES = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    ]);
+    const pngDataUrl = `data:image/png;base64,${PNG_BYTES.toString("base64")}`;
+
+    function createAdminApp() {
+      const app = new Hono();
+      app.use("/api/settings/*", async (c, next) => {
+        c.set("user", { userId: 1, username: "admin", isAdmin: true });
+        await next();
+      });
+      app.route("/api/settings", settingsRoutes);
+      return app;
+    }
+
+    function uploadLogo(app: ReturnType<typeof createAdminApp>, dataUrl: unknown) {
+      return app.request("/api/settings/branding/logo", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dataUrl }),
+      });
+    }
+
+    test("normalizes the application name and exposes it publicly", async () => {
+      const app = createAdminApp();
+
+      const res = await app.request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ app_name: "  Acme\n  Patch   Center " }),
+      });
+      expect(res.status).toBe(200);
+
+      const publicRes = await app.request("/api/settings/public");
+      const body = await publicRes.json();
+      expect(body.branding).toEqual({ appName: "Acme Patch Center", logoUrl: null });
+    });
+
+    test("falls back to the default name when the application name is cleared", async () => {
+      const app = createAdminApp();
+      await app.request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ app_name: "Acme" }),
+      });
+      await app.request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ app_name: "   " }),
+      });
+
+      const body = await (await app.request("/api/settings/public")).json();
+      expect(body.branding.appName).toBe("Linux Update Dashboard");
+    });
+
+    test("rejects overly long application names", async () => {
+      const res = await createAdminApp().request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ app_name: "x".repeat(61) }),
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    test("does not allow the logo to be written through the generic settings endpoint", async () => {
+      const res = await createAdminApp().request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ app_logo: pngDataUrl }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(
+        getDb().select().from(settings).where(eq(settings.key, "app_logo")).get(),
+      ).toBeUndefined();
+    });
+
+    test("stores an uploaded logo and serves it publicly with a versioned URL", async () => {
+      const app = createAdminApp();
+
+      const uploadRes = await uploadLogo(app, pngDataUrl);
+      expect(uploadRes.status).toBe(200);
+      const uploadBody = await uploadRes.json();
+      expect(uploadBody.branding.logoUrl).toMatch(
+        /^\/api\/settings\/public\/logo\?v=[0-9a-f]{16}$/,
+      );
+
+      const publicApp = new Hono();
+      publicApp.use("/api/*", authMiddleware);
+      publicApp.route("/api/settings", settingsRoutes);
+
+      const publicBody = await (await publicApp.request("/api/settings/public")).json();
+      expect(publicBody.branding.logoUrl).toBe(uploadBody.branding.logoUrl);
+
+      const logoRes = await publicApp.request(uploadBody.branding.logoUrl);
+      expect(logoRes.status).toBe(200);
+      expect(logoRes.headers.get("content-type")).toBe("image/png");
+      expect(logoRes.headers.get("cache-control")).toContain("immutable");
+      expect(Buffer.from(await logoRes.arrayBuffer())).toEqual(PNG_BYTES);
+
+      const unversioned = await publicApp.request("/api/settings/public/logo");
+      expect(unversioned.headers.get("cache-control")).toBe("no-cache");
+    });
+
+    test("detects the logo type from its content instead of the declared type", async () => {
+      const svg = Buffer.from('<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+      const app = createAdminApp();
+
+      const res = await uploadLogo(app, `data:image/png;base64,${svg.toString("base64")}`);
+      expect(res.status).toBe(200);
+
+      const logoRes = await app.request("/api/settings/public/logo");
+      expect(logoRes.headers.get("content-type")).toBe("image/svg+xml");
+      expect(logoRes.headers.get("content-security-policy")).toContain("sandbox");
+    });
+
+    test("rejects logos that are not supported images", async () => {
+      const app = createAdminApp();
+      const html = Buffer.from("<html><script>alert(1)</script></html>").toString("base64");
+
+      expect((await uploadLogo(app, `data:image/png;base64,${html}`)).status).toBe(400);
+      expect((await uploadLogo(app, "not a data url")).status).toBe(400);
+      expect((await uploadLogo(app, 42)).status).toBe(400);
+    });
+
+    test("rejects logos larger than the size limit", async () => {
+      const oversized = Buffer.concat([PNG_BYTES, Buffer.alloc(512 * 1024)]);
+
+      const res = await uploadLogo(
+        createAdminApp(),
+        `data:image/png;base64,${oversized.toString("base64")}`,
+      );
+
+      expect(res.status).toBe(400);
+    });
+
+    test("stores a validated JPEG rendition alongside the logo", async () => {
+      const app = createAdminApp();
+      const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+
+      const invalid = await app.request("/api/settings/branding/logo", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dataUrl: pngDataUrl, jpegDataUrl: pngDataUrl }),
+      });
+      expect(invalid.status).toBe(400);
+
+      const res = await app.request("/api/settings/branding/logo", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          dataUrl: pngDataUrl,
+          jpegDataUrl: `data:image/jpeg;base64,${jpeg.toString("base64")}`,
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(getAppLogoJpeg()?.data).toEqual(jpeg);
+
+      const settingsBody = await (await app.request("/api/settings")).json();
+      expect(settingsBody.settings).not.toHaveProperty("app_logo_jpeg");
+
+      await app.request("/api/settings/branding/logo", { method: "DELETE" });
+      expect(getAppLogoJpeg()).toBeNull();
+    });
+
+    test("removes the custom logo and hides it from the settings list", async () => {
+      const app = createAdminApp();
+      await uploadLogo(app, pngDataUrl);
+
+      const settingsBody = await (await app.request("/api/settings")).json();
+      expect(settingsBody.settings).not.toHaveProperty("app_logo");
+
+      const deleteRes = await app.request("/api/settings/branding/logo", { method: "DELETE" });
+      expect(deleteRes.status).toBe(200);
+      expect((await deleteRes.json()).branding.logoUrl).toBeNull();
+      expect((await app.request("/api/settings/public/logo")).status).toBe(404);
     });
   });
 });

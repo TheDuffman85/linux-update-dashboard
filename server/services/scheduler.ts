@@ -38,7 +38,7 @@ function isAutoremoveConfig(
 }
 
 function isRebootConfig(config: SerializedSchedule["config"]): config is RebootScheduleConfig {
-  return isUpdateConfig(config);
+  return isUpdateConfig(config) && "onlyIfRequired" in config;
 }
 
 function isNotificationScheduleConfig(
@@ -301,16 +301,34 @@ async function runRebootSchedule(
   scheduleService.markScheduleStarted(schedule.id);
 
   try {
+    const { onlyIfRequired } = schedule.config;
     const scopedIds = getScheduleSystemIds(schedule);
     logger.info("Reboot schedule running", {
       scheduleId: schedule.id,
       scheduleName: schedule.name,
       count: scopedIds.length,
+      onlyIfRequired,
     });
 
+    let rebootIds = scopedIds;
+    let checkedIds: number[] = [];
+    let failedIds: number[] = [];
+    if (onlyIfRequired) {
+      // Refresh first so the reboot-required flag reflects the current state of each host.
+      ({ checkedIds, failedIds } = await checkSystemsAndNotify(scopedIds));
+      rebootIds = checkedIds.filter((id) => {
+        const system = getDb()
+          .select({ needsReboot: systems.needsReboot })
+          .from(systems)
+          .where(eq(systems.id, id))
+          .get();
+        return system?.needsReboot === 1;
+      });
+    }
+
     let rebooted = 0;
-    let failed = 0;
-    for (const id of scopedIds) {
+    let failed = failedIds.length;
+    for (const id of rebootIds) {
       try {
         const result = await updateService.rebootSystem(id);
         if (result.success) rebooted += 1;
@@ -323,6 +341,19 @@ async function runRebootSchedule(
           error: String(error),
         });
       }
+    }
+
+    if (onlyIfRequired) {
+      const status = failed === 0 ? "success" : checkedIds.length > 0 ? "warning" : "failed";
+      const skipped = checkedIds.length - rebootIds.length;
+      scheduleService.markScheduleFinished(
+        schedule.id,
+        status,
+        `Checked ${checkedIds.length} system${checkedIds.length === 1 ? "" : "s"}, sent reboot to ${rebooted}, skipped ${skipped}${
+          failed ? `, ${failed} failed` : ""
+        }`,
+      );
+      return;
     }
 
     const status = failed === 0 ? "success" : rebooted > 0 ? "warning" : "failed";

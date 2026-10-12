@@ -8,10 +8,16 @@ export type SettingsResponse = {
   timeZone: string | null;
 };
 
+export type PublicBranding = {
+  appName: string;
+  logoUrl: string | null;
+};
+
 export type PublicSettingsResponse = {
   settings: {
     language: string;
   };
+  branding: PublicBranding;
 };
 
 export function useSettingsResponse(enabled = true) {

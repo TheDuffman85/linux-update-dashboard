@@ -26,6 +26,7 @@ import {
   isTrustedReturnOrigin,
   rememberTrustedPublicOrigin,
 } from "../request-security";
+import { getAppName } from "../services/branding-service";
 
 // Pre-computed dummy hash for timing-safe login (L1)
 const DUMMY_HASH = await hashPassword("timing-safe-dummy-password-pad");
@@ -144,6 +145,7 @@ function isOidcOnlyAccount(
 
 function upsertOidcUser(params: {
   username: string;
+  role: oidc.UserRole;
   issuer: string;
   subject: string;
 }) {
@@ -190,6 +192,7 @@ function upsertOidcUser(params: {
       .values({
         username: storedUsername,
         isAdmin: 0,
+        role: params.role,
         authProvider: "oidc",
         oidcIssuer: params.issuer,
         oidcSubject: params.subject,
@@ -201,6 +204,7 @@ function upsertOidcUser(params: {
   db.update(users)
     .set({
       username: storedUsername,
+      role: params.role,
       authProvider: "oidc",
       oidcIssuer: params.issuer,
       oidcSubject: params.subject,
@@ -558,7 +562,7 @@ auth.post("/totp/setup", rateLimit(5, 60_000), async (c) => {
 
   const secret = generateSecret();
   const otpauthUrl = generateURI({
-    issuer: "Linux Update Dashboard",
+    issuer: getAppName(),
     label: user.username,
     secret,
   });
@@ -1007,7 +1011,12 @@ auth.get("/oidc/login", async (c) => {
 
   const state = crypto.randomUUID();
   const nonce = crypto.randomUUID();
-  const url = oidc.getAuthorizationUrl(state, nonce, redirectUri);
+  const url = oidc.getAuthorizationUrl(
+    state,
+    nonce,
+    redirectUri,
+    oidc.getOidcPolicy().scope,
+  );
 
   // Capture the frontend origin so we can redirect back after callback.
   // In dev, the login request comes through Vite's proxy (port 5173),
@@ -1095,14 +1104,16 @@ auth.get("/oidc/callback", async (c) => {
       );
     }
 
-    const result = await oidc.handleCallback(callbackUrl, nonce, state);
+    const result = await oidc.handleCallback(
+      callbackUrl,
+      oidc.getOidcPolicy(),
+      nonce,
+      state,
+    );
     if (!result) {
       return c.json({ error: "OIDC authentication failed" }, 400);
     }
 
-    const user = upsertOidcUser(result);
-
-    await createSession(c, user.id, user.username, "oidc");
     deleteCookie(c, "oidc_state", { path: "/" });
     deleteCookie(c, "oidc_nonce", { path: "/" });
     deleteCookie(c, "oidc_redirect_uri", { path: "/" });
@@ -1110,11 +1121,33 @@ auth.get("/oidc/callback", async (c) => {
     const returnOrigin = getCookie(c, "oidc_return_origin");
     deleteCookie(c, "oidc_return_origin", { path: "/" });
 
-    // Redirect to SPA dashboard (use stored origin for dev where SPA is on a different port)
+    // Redirect to the SPA (use stored origin for dev where SPA is on a different port)
     const targetOrigin =
       returnOrigin && isTrustedReturnOrigin(returnOrigin)
         ? returnOrigin
         : getKnownPublicOrigin();
+
+    if (!result.role) {
+      console.warn(
+        `OIDC user "${result.username}" matched no configured group and was denied`,
+      );
+      // End any sessions the identity still holds from before it lost access.
+      getDb()
+        .update(users)
+        .set({ sessionVersion: sql`${users.sessionVersion} + 1` })
+        .where(
+          and(
+            eq(users.oidcIssuer, result.issuer),
+            eq(users.oidcSubject, result.subject),
+          ),
+        )
+        .run();
+      return c.redirect(`${targetOrigin}/login?error=oidc_unauthorized`);
+    }
+
+    const user = upsertOidcUser({ ...result, role: result.role });
+
+    await createSession(c, user.id, user.username, "oidc");
     return c.redirect(`${targetOrigin}/dashboard`);
   } catch (e) {
     console.error("OIDC callback error:", e);

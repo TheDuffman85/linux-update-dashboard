@@ -22,6 +22,7 @@ import {
 } from "../lib/systems";
 import type { DashboardGroup, System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useI18n } from "../lib/i18n";
 import { isDashboardStatusFilterActive, parseDashboardSearch, toggleDashboardStatusFilter } from "../lib/dashboard-search";
@@ -456,6 +457,7 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
 
 export default function Dashboard() {
   const { isUpgrading, removeUpgrading, upgradingSystems, upgradingCount } = useUpgrade();
+  const { isReadOnly } = useAuth();
   const { data: systems, dataUpdatedAt } = useDashboardSystems(upgradingCount > 0);
   const hasActiveOps = systems?.some((s) => s.activeOperation) ?? false;
   const { data: stats } = useDashboardStats(hasActiveOps);
@@ -769,6 +771,7 @@ export default function Dashboard() {
     <Layout
       title={t("pages.dashboard.dashboard")}
       actions={
+        isReadOnly ? undefined : (
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
             onClick={handleRefresh}
@@ -792,6 +795,7 @@ export default function Dashboard() {
             {t("pages.dashboard.upgradeAll")}
           </button>
         </div>
+        )
       }
     >
       {/* Stats */}
@@ -830,12 +834,13 @@ export default function Dashboard() {
           ungroupedSortOrder={dashboardGroupConfig.ungroupedSortOrder}
           ungroupedUpdatePriority={ungroupedUpdatePriority}
           editMode={dashboardGroupEditMode}
+          canEdit={!isReadOnly}
           onToggleEditMode={() => setDashboardGroupEditMode((current) => !current)}
           onCreateGroup={handleCreateDashboardGroup}
           onRenameGroup={handleRenameDashboardGroup}
           onDeleteGroup={handleDeleteDashboardGroup}
           onUpgradeGroup={
-            disableUpgradeLauncher
+            disableUpgradeLauncher || isReadOnly
               ? undefined
               : (groupId, name) => openUpgradeConfirm({ groupId, name })
           }
@@ -877,12 +882,14 @@ export default function Dashboard() {
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">{t("pages.dashboard.noSystemsConfiguredYet")}</p>
-          <Link
-            to="/systems"
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            {t("pages.dashboard.addSystem")}
-          </Link>
+          {!isReadOnly && (
+            <Link
+              to="/systems"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              {t("pages.dashboard.addSystem")}
+            </Link>
+          )}
         </div>
       )}
 

@@ -28,6 +28,7 @@ export interface AutoremoveScheduleConfig {
 
 export interface RebootScheduleConfig {
   cron: string;
+  onlyIfRequired: boolean;
 }
 
 export interface NotificationScheduleConfig {
@@ -193,6 +194,13 @@ function normalizeScheduleConfig(
     };
   }
 
+  if (type === "reboot") {
+    return {
+      cron: cron || DEFAULT_UPDATE_CONFIG.cron,
+      onlyIfRequired: source.onlyIfRequired === true,
+    };
+  }
+
   return {
     cron:
       cron ||
@@ -306,6 +314,13 @@ export function validateScheduleConfig(type: ScheduleType, config: unknown): str
   const minIntervalMs = getCronMinimumIntervalMs(cron);
   if (minIntervalMs !== null && minIntervalMs < minScheduleIntervalMinutes * 60_000) {
     return `cron must not run more often than every ${minScheduleIntervalMinutes} minute${minScheduleIntervalMinutes === 1 ? "" : "s"}`;
+  }
+
+  if (type === "reboot") {
+    const onlyIfRequired = (config as Record<string, unknown>).onlyIfRequired;
+    if (onlyIfRequired !== undefined && typeof onlyIfRequired !== "boolean") {
+      return "onlyIfRequired must be a boolean";
+    }
   }
 
   if (type === "notification_digest") {

@@ -17,8 +17,10 @@ import {
 } from "../lib/systems";
 import type { System } from "../lib/systems";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
+import { RepositorySourcesPanel } from "../components/systems/RepositorySourcesPanel";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
 import { filterSystems, getLifecycleBadge } from "../lib/system-search";
 import { useSettings } from "../lib/settings";
@@ -42,6 +44,7 @@ export function getEditSystemIdFromRouteState(state: unknown): number | null {
 export default function SystemsList() {
   const { data: systems, isLoading, refetch } = useSystems();
   const { data: settings } = useSettings();
+  const { isReadOnly } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const routeEditSystemId = getEditSystemIdFromRouteState(location.state);
@@ -59,6 +62,8 @@ export default function SystemsList() {
     () => systems?.find((system) => system.id === routeEditSystemId) ?? null,
   );
   const [sudoersSystem, setSudoersSystem] = useState<System | null>(null);
+  const [repositorySourcesSystem, setRepositorySourcesSystem] = useState<System | null>(null);
+  const [editingRepositorySource, setEditingRepositorySource] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [orderedSystems, setOrderedSystems] = useState<System[]>(() => systems ?? []);
   const systemsRef = useRef<System[]>([]);
@@ -81,11 +86,11 @@ export default function SystemsList() {
     if (routeEditSystemId === null || !systems) return;
 
     const targetSystem = systems.find((system) => system.id === routeEditSystemId) ?? null;
-    if (targetSystem) {
+    if (targetSystem && !isReadOnly) {
       setEditSystem(targetSystem);
     }
     navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, navigate, routeEditSystemId, systems]);
+  }, [isReadOnly, location.pathname, navigate, routeEditSystemId, systems]);
 
   useEffect(() => {
     orderedSystemsRef.current = orderedSystems;
@@ -93,7 +98,7 @@ export default function SystemsList() {
 
   useEffect(() => {
     const tbody = tbodyRef.current;
-    if (!tbody || orderedSystems.length <= 1 || searchActive) {
+    if (!tbody || orderedSystems.length <= 1 || searchActive || isReadOnly) {
       sortableRef.current?.destroy();
       sortableRef.current = null;
       return;
@@ -132,7 +137,7 @@ export default function SystemsList() {
       sortableRef.current?.destroy();
       sortableRef.current = null;
     };
-  }, [orderedSystems.length, searchActive, reorderDisabled, reorderSystems, addToast]);
+  }, [orderedSystems.length, searchActive, isReadOnly, reorderDisabled, reorderSystems, addToast]);
 
   useEffect(() => {
     sortableRef.current?.option("disabled", reorderDisabled);
@@ -186,12 +191,14 @@ export default function SystemsList() {
     <Layout
       title={t("pages.systemsList.systems")}
       actions={
-        <button
-          onClick={() => setShowForm(true)}
-          className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
-        >
-          {t("pages.systemsList.addSystem")}
-        </button>
+        isReadOnly ? undefined : (
+          <button
+            onClick={() => setShowForm(true)}
+            className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+          >
+            {t("pages.systemsList.addSystem")}
+          </button>
+        )
       }
     >
       {isLoading ? (
@@ -229,6 +236,7 @@ export default function SystemsList() {
                   >
                   <td className="px-2 sm:px-4 py-3">
                     <div className="flex items-center gap-2 min-w-0">
+                      {!isReadOnly && (
                       <span
                         className={`drag-handle shrink-0 rounded-md p-1 text-slate-400 transition-colors ${
                           reorderDisabled || orderedSystems.length < 2
@@ -243,6 +251,7 @@ export default function SystemsList() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
                         </svg>
                       </span>
+                      )}
                       <Link to={`/systems/${s.id}`} className="min-w-0 font-medium text-blue-600 dark:text-blue-400 hover:underline truncate">
                         {s.name}
                       </Link>
@@ -318,6 +327,18 @@ export default function SystemsList() {
                         </svg>
                       </button>
                       <button
+                        onClick={() => setRepositorySourcesSystem(s)}
+                        className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        title={t("components.repositorySources.title")}
+                        aria-label={t("components.repositorySources.titleForName", { name: s.name })}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </button>
+                      {!isReadOnly && (
+                      <>
+                      <button
                         onClick={() => handleDuplicate(s)}
                         className="p-1 sm:p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                         title={t("pages.systemsList.duplicateSystem")}
@@ -344,6 +365,8 @@ export default function SystemsList() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                       </button>
+                      </>
+                      )}
                     </div>
                   </td>
                   </tr>
@@ -356,12 +379,14 @@ export default function SystemsList() {
       ) : (
         <div className="text-center py-16">
           <p className="text-slate-500 dark:text-slate-400 mb-4">{t("pages.systemsList.noSystemsConfiguredYet")}</p>
-          <button
-            onClick={() => setShowForm(true)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            {t("pages.systemsList.addYourFirstSystem")}
-          </button>
+          {!isReadOnly && (
+            <button
+              onClick={() => setShowForm(true)}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              {t("pages.systemsList.addYourFirstSystem")}
+            </button>
+          )}
         </div>
       )}
 
@@ -390,8 +415,10 @@ export default function SystemsList() {
             detectedPkgManagers: duplicateSource.detectedPkgManagers ?? undefined,
             disabledPkgManagers: duplicateSource.disabledPkgManagers ?? undefined,
             pkgManagerConfigs: duplicateSource.pkgManagerConfigs ?? undefined,
+            pkgManagerSecretRefs: duplicateSource.pkgManagerSecretRefs ?? null,
             autoHideKeptBackUpdates: duplicateSource.autoHideKeptBackUpdates,
             hidden: duplicateSource.hidden === 1,
+            repositorySourceEditingEnabled: duplicateSource.repositorySourceEditingEnabled === 1,
             hostKeyStatus: duplicateSource.hostKeyStatus,
             scriptOverrides: duplicateSource.scriptOverrides,
           } : undefined}
@@ -424,8 +451,10 @@ export default function SystemsList() {
               detectedPkgManagers: editSystem.detectedPkgManagers ?? undefined,
               disabledPkgManagers: editSystem.disabledPkgManagers ?? undefined,
               pkgManagerConfigs: editSystem.pkgManagerConfigs ?? undefined,
+              pkgManagerSecretRefs: editSystem.pkgManagerSecretRefs ?? null,
               autoHideKeptBackUpdates: editSystem.autoHideKeptBackUpdates,
               hidden: editSystem.hidden === 1,
+              repositorySourceEditingEnabled: editSystem.repositorySourceEditingEnabled === 1,
               hostKeyStatus: editSystem.hostKeyStatus,
               scriptOverrides: editSystem.scriptOverrides,
             }}
@@ -456,6 +485,33 @@ export default function SystemsList() {
             {t("pages.systemsList.unableToLoadSudoersSetupForThisSystem")}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={repositorySourcesSystem !== null}
+        onClose={() => {
+          setRepositorySourcesSystem(null);
+          setEditingRepositorySource(false);
+        }}
+        title={repositorySourcesSystem
+          ? t("components.repositorySources.titleForName", { name: repositorySourcesSystem.name })
+          : t("components.repositorySources.title")}
+        // Keep an unsaved edit from being lost to Escape or a backdrop click.
+        dismissible={!editingRepositorySource}
+      >
+        {repositorySourcesSystem ? (
+          <RepositorySourcesPanel
+            key={repositorySourcesSystem.id}
+            systemId={repositorySourcesSystem.id}
+            readOnly={isReadOnly}
+            onEditingChange={setEditingRepositorySource}
+            onOpenSystemSettings={isReadOnly ? undefined : () => {
+              setEditSystem(repositorySourcesSystem);
+              setRepositorySourcesSystem(null);
+              setEditingRepositorySource(false);
+            }}
+          />
+        ) : null}
       </Modal>
 
       <ConfirmDialog

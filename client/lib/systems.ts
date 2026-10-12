@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, pollJob } from "./client";
-import type { PackageManagerConfigs } from "./package-manager-configs";
+import type { PackageManagerConfigs, PackageManagerSecretRefs } from "./package-manager-configs";
 import type { HostKeyStatus } from "./host-key-status";
 
 export interface ActiveOperation {
@@ -40,6 +40,7 @@ export interface System {
   detectedPkgManagers: string[] | null;
   disabledPkgManagers: string[] | null;
   pkgManagerConfigs: PackageManagerConfigs | null;
+  pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
   autoHideKeptBackUpdates: number;
   osId: string | null;
   osIdLike: string | null;
@@ -74,6 +75,7 @@ export interface System {
   dashboardOrder: number;
   updatePriority: number;
   hidden: number;
+  repositorySourceEditingEnabled: number;
   needsReboot: number;
   isReachable: number;
   lastSeenAt: string | null;
@@ -212,7 +214,7 @@ export interface PotentialCommandEntry {
   pkgManager: string | null;
   command: string;
   sourceCommand?: string;
-  sudoersSafety?: "exact" | "package_placeholder" | "unsafe";
+  sudoersSafety?: "exact" | "package_placeholder" | "read_only_wildcard" | "unsafe";
   requiresWildcard?: boolean;
   requiresPasswordLauncher?: boolean;
   warnings?: string[];
@@ -243,6 +245,45 @@ export interface SudoersPreview {
   resolutionError: string | null;
   content: string;
   warnings: SudoersPreviewWarning[];
+}
+
+export type RepositorySourceFormat = "apt-list" | "deb822" | "ini" | "plain";
+
+export type RepositorySourceEditBlockedReason =
+  | "disabled"
+  | "unsupported"
+  | "unreadable"
+  | "truncated"
+  | "redacted"
+  | "encoding"
+  | "too_large"
+  | "path";
+
+export interface RepositorySourceFile {
+  path: string;
+  format: RepositorySourceFormat;
+  pkgManagers: string[];
+  readable: boolean;
+  content: string | null;
+  truncated: boolean;
+  redacted: boolean;
+  sha256: string | null;
+  editable: boolean;
+  editBlockedReason: RepositorySourceEditBlockedReason | null;
+}
+
+export interface RepositorySources {
+  pkgManagers: string[];
+  unsupportedPkgManagers: string[];
+  editingEnabled: boolean;
+  files: RepositorySourceFile[];
+  fetchedAt: string;
+}
+
+export interface SaveRepositorySourceResult {
+  file: RepositorySourceFile;
+  changed: boolean;
+  diff: string;
 }
 
 export interface ApprovedHostKeyApproval {
@@ -325,6 +366,45 @@ export function useSudoersPreview(id: number, options?: { enabled?: boolean }) {
   });
 }
 
+export function useRepositorySources(id: number, options?: { enabled?: boolean }) {
+  return useQuery({
+    // Kept outside the ["system", id] prefix so system invalidations do not
+    // trigger another SSH read.
+    queryKey: ["repository-sources", id],
+    enabled: options?.enabled ?? true,
+    queryFn: () => apiFetch<RepositorySources>(`/systems/${id}/repository-sources`),
+    // Each fetch opens an SSH session: read fresh when the modal opens, then
+    // only on demand.
+    staleTime: Infinity,
+    refetchOnMount: "always",
+    retry: false,
+  });
+}
+
+export function useSaveRepositorySource(systemId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { path: string; content: string; baseSha256: string; dryRun?: boolean }) =>
+      apiFetch<SaveRepositorySourceResult>(`/systems/${systemId}/repository-sources`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: async (result, vars) => {
+      if (vars.dryRun) return;
+      qc.setQueryData<RepositorySources>(["repository-sources", systemId], (previous) =>
+        previous
+          ? {
+              ...previous,
+              files: previous.files.map((file) => (file.path === result.file.path ? result.file : file)),
+            }
+          : previous,
+      );
+      // The edit is recorded in the activity history.
+      await qc.invalidateQueries({ queryKey: ["system", systemId] });
+    },
+  });
+}
+
 export function useCreateSystem() {
   const qc = useQueryClient();
   return useMutation({
@@ -340,9 +420,11 @@ export function useCreateSystem() {
       disabledPkgManagers?: string[];
       detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
+      pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
+      repositorySourceEditingEnabled?: boolean;
       scriptOverrides?: Record<string, string | null | undefined>;
       sourceSystemId?: number;
     }) => apiFetch<{ id: number }>("/systems", { method: "POST", body: JSON.stringify(data) }),
@@ -369,15 +451,19 @@ export function useUpdateSystem() {
       disabledPkgManagers?: string[];
       detectedPkgManagers?: string[];
       pkgManagerConfigs?: PackageManagerConfigs | null;
+      pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
       autoHideKeptBackUpdates?: boolean;
       excludeFromUpgradeAll?: boolean;
       hidden?: boolean;
+      repositorySourceEditingEnabled?: boolean;
       scriptOverrides?: Record<string, string | null | undefined>;
     }) => apiFetch(`/systems/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["systems"] });
       await qc.invalidateQueries({ queryKey: ["dashboard"] });
       await qc.invalidateQueries({ queryKey: ["system", vars.id] });
+      // Which repository source files are editable is decided by the server.
+      await qc.invalidateQueries({ queryKey: ["repository-sources", vars.id] });
     },
   });
 }
@@ -662,6 +748,7 @@ export function useTestConnection() {
         success: boolean;
         message: string;
         debugRef?: string;
+        serverBanner?: string;
         detectedManagers?: string[];
         validatedConfigToken?: string;
         trustChallengeToken?: string;

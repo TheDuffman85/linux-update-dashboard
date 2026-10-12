@@ -15,9 +15,11 @@ import { useRevokeHostKey, useSystems, useTestConnection } from "../../lib/syste
 import {
   getLegacyCustomConfigKey,
   normalizePackageManagerConfigs,
+  normalizePackageManagerSecretRefs,
   SUPPORTED_PACKAGE_MANAGER_CONFIGS,
   type CustomPackageManagerConfig,
   type PackageManagerConfigs,
+  type PackageManagerSecretRefs,
 } from "../../lib/package-manager-configs";
 import {
   getHostKeyStatusBadgeLabel,
@@ -42,8 +44,10 @@ interface SystemFormData {
   disabledPkgManagers?: string[];
   detectedPkgManagers?: string[];
   pkgManagerConfigs?: PackageManagerConfigs | null;
+  pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
   autoHideKeptBackUpdates?: boolean;
   hidden?: boolean;
+  repositorySourceEditingEnabled?: boolean;
   scriptOverrides?: Record<string, string | null | undefined>;
   sourceSystemId?: number;
 }
@@ -57,8 +61,9 @@ const PACKAGE_MANAGER_LABELS: Record<string, string> = {
   apk: "APK",
   flatpak: "Flatpak",
   snap: "Snap",
+  "deb-get": "deb-get",
 };
-const PACKAGE_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap"];
+const PACKAGE_MANAGER_ORDER = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap", "deb-get"];
 const SCRIPT_OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
   detect: "pages.scripts.operation.detect",
   check_updates: "pages.scripts.operation.checkUpdates",
@@ -103,6 +108,7 @@ export function SystemForm({
     detectedPkgManagers?: string[] | null;
     disabledPkgManagers?: string[] | null;
     pkgManagerConfigs?: PackageManagerConfigs | null;
+    pkgManagerSecretRefs?: PackageManagerSecretRefs | null;
     autoHideKeptBackUpdates?: number;
     approvedHostKey?: string | null;
     trustedHostKeyFingerprintSha256?: string | null;
@@ -127,12 +133,15 @@ export function SystemForm({
     allCredentials?.filter((credential) =>
       SSH_CREDENTIAL_KINDS.includes(credential.kind)
     ) || [];
+  const secretCredentials =
+    allCredentials?.filter((credential) => credential.kind === "secret") || [];
   const availableSystems =
     allSystems?.filter((system) => system.id !== systemId) || [];
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message: string;
     debugRef?: string;
+    serverBanner?: string;
   } | null>(null);
   const [validatedConfigToken, setValidatedConfigToken] = useState<string | null>(null);
   const [name, setName] = useState(initial?.name || "");
@@ -160,7 +169,13 @@ export function SystemForm({
         ? { apt: { autoHideKeptBackUpdates: true } }
         : {})
   );
+  const [pkgManagerSecretRefs, setPkgManagerSecretRefs] = useState<PackageManagerSecretRefs>(
+    initial?.pkgManagerSecretRefs ?? {}
+  );
   const [hidden, setHidden] = useState(initial?.hidden === true);
+  const [repositorySourceEditingEnabled, setRepositorySourceEditingEnabled] = useState(
+    initial?.repositorySourceEditingEnabled === true
+  );
   const [scriptOverrides, setScriptOverrides] = useState<Record<string, string>>(
     initial?.scriptOverrides ?? {}
   );
@@ -193,6 +208,7 @@ export function SystemForm({
   );
   const [showUnapprovedSaveWarning, setShowUnapprovedSaveWarning] = useState(false);
   const [showCreateCredential, setShowCreateCredential] = useState(false);
+  const [createSecretTarget, setCreateSecretTarget] = useState<{ manager: string; key: string } | null>(null);
   const [scriptsOpen, setScriptsOpen] = useState(false);
 
   const resetValidatedState = () => {
@@ -308,6 +324,24 @@ export function SystemForm({
     });
   };
 
+  const setSecretRef = (manager: string, key: string, credentialIdValue: number | null) => {
+    setPkgManagerSecretRefs((prev) => {
+      const current = { ...(prev[manager] ?? {}) };
+      if (credentialIdValue) {
+        current[key] = credentialIdValue;
+      } else {
+        delete current[key];
+      }
+      const next = { ...prev };
+      if (Object.keys(current).length > 0) {
+        next[manager] = current;
+      } else {
+        delete next[manager];
+      }
+      return next;
+    });
+  };
+
   const packageManagerConfigsWithCustomDefaults = (): PackageManagerConfigs => {
     const next: PackageManagerConfigs = { ...pkgManagerConfigs };
     for (const manager of customPackageManagers) {
@@ -317,7 +351,7 @@ export function SystemForm({
         ? next[manager.name] as CustomPackageManagerConfig
         : {};
       next[manager.name] = Object.fromEntries(
-        manager.configEntries.map((entry) => [
+        manager.configEntries.filter((entry) => !entry.secret).map((entry) => [
           entry.key,
           current[entry.key] ?? current[getLegacyCustomConfigKey(manager.name, entry.key)] ?? entry.defaultValue,
         ]),
@@ -365,7 +399,12 @@ export function SystemForm({
         customPackageManagers,
         false,
       ) ?? {},
+      pkgManagerSecretRefs: normalizePackageManagerSecretRefs(
+        pkgManagerSecretRefs,
+        customPackageManagers,
+      ) ?? {},
       hidden,
+      repositorySourceEditingEnabled,
       scriptOverrides: activeScriptOverrides,
       sourceSystemId,
     });
@@ -483,6 +522,7 @@ export function SystemForm({
             success: data.success,
             message: data.message,
             debugRef: data.debugRef,
+            serverBanner: data.serverBanner,
           });
           setPendingTrustChallenge(null);
           if (data.success && data.validatedConfigToken) {
@@ -584,6 +624,23 @@ export function SystemForm({
         setCredentialId(result.id);
         setShowCreateCredential(false);
         addToast(t("components.systemForm.credentialCreated"), "success");
+      },
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleCreateSecret = (data: {
+    name: string;
+    kind: CredentialKind;
+    payload: Record<string, string>;
+  }) => {
+    if (!createSecretTarget) return;
+    const target = createSecretTarget;
+    createCredential.mutate(data, {
+      onSuccess: (result) => {
+        setSecretRef(target.manager, target.key, result.id);
+        setCreateSecretTarget(null);
+        addToast(t("components.systemForm.secretCreated"), "success");
       },
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -906,6 +963,25 @@ export function SystemForm({
           </span>
         </label>
 
+        <label className="flex items-start gap-3 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={repositorySourceEditingEnabled}
+            onChange={(e) => setRepositorySourceEditingEnabled(e.target.checked)}
+            className="rounded mt-0.5"
+          />
+          <span className="min-w-0">
+            <span className="block text-slate-700 dark:text-slate-200">
+              {t("components.repositorySources.allowEditing")}
+            </span>
+            <span className={`block text-xs mt-0.5 ${repositorySourceEditingEnabled ? "text-amber-700 dark:text-amber-300" : "text-slate-400"}`}>
+              {repositorySourceEditingEnabled
+                ? t("components.repositorySources.editingWarning")
+                : t("components.repositorySources.allowEditingDescription")}
+            </span>
+          </span>
+        </label>
+
         {visiblePackageManagers.length > 0 && (
           <div className="space-y-4">
             <div>
@@ -1166,6 +1242,55 @@ export function SystemForm({
                         const config = pkgManagerConfigs[manager] && typeof pkgManagerConfigs[manager] === "object" && !Array.isArray(pkgManagerConfigs[manager])
                           ? pkgManagerConfigs[manager] as CustomPackageManagerConfig
                           : {};
+                        if (entry.secret) {
+                          const refKey = getLegacyCustomConfigKey(manager, entry.key);
+                          const selectedSecretId = pkgManagerSecretRefs[manager]?.[refKey] ?? 0;
+                          return (
+                            <div key={entry.key}>
+                              <label className={labelClass}>
+                                {entry.key}{" "}
+                                <span className="normal-case tracking-normal text-slate-400">
+                                  ({t("components.systemForm.secretEntry")})
+                                </span>
+                              </label>
+                              <div className="flex items-center gap-3">
+                                <select
+                                  value={selectedSecretId}
+                                  onChange={(e) => setSecretRef(manager, refKey, Number(e.target.value) || null)}
+                                  className={`${inputClass} flex-1`}
+                                  aria-label={entry.key}
+                                >
+                                  <option value={0}>{t("components.systemForm.noSecretAssigned")}</option>
+                                  {secretCredentials.map((credential) => (
+                                    <option key={credential.id} value={credential.id}>
+                                      {credential.name}
+                                    </option>
+                                  ))}
+                                  {selectedSecretId > 0 && !secretCredentials.some((credential) => credential.id === selectedSecretId) && (
+                                    <option value={selectedSecretId}>#{selectedSecretId}</option>
+                                  )}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => setCreateSecretTarget({ manager, key: refKey })}
+                                  className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
+                                >
+                                  {t("components.systemForm.newSecret")}
+                                </button>
+                              </div>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {entry.description ? `${entry.description} ` : ""}
+                                {t("components.systemForm.secretEntryHint", { envVar: entry.envVar ?? "" })}
+                                {entry.sudoEnvKeep ? ` ${t("components.systemForm.secretEntrySudoHint")}` : ""}
+                              </p>
+                              {secretCredentials.length === 0 && (
+                                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                                  {t("components.systemForm.noSecretCredentials")}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        }
                         return (
                           <div key={entry.key}>
                             <label className={labelClass}>{entry.key}</label>
@@ -1294,6 +1419,14 @@ export function SystemForm({
         {testResult && (
           <div className={`p-3 rounded-lg text-sm ${testResult.success ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"}`}>
             <div>{testResult.message}</div>
+            {!testResult.success && testResult.serverBanner && (
+              <div className="mt-2">
+                <div className="text-xs opacity-80">{t("components.systemForm.serverBanner")}</div>
+                <pre className="mt-1 p-2 rounded bg-black/5 dark:bg-white/5 text-xs font-mono whitespace-pre-wrap break-words">
+                  {testResult.serverBanner}
+                </pre>
+              </div>
+            )}
             {!testResult.success && testResult.debugRef && (
               <div className="mt-2 text-xs opacity-80">
                 Check container logs with debug reference <span className="font-mono">{testResult.debugRef}</span>.
@@ -1348,8 +1481,23 @@ export function SystemForm({
         dismissible={!createCredential.isPending}
       >
         <CredentialForm
+          kinds={SSH_CREDENTIAL_KINDS}
           onSubmit={handleCreateCredential}
           onCancel={() => setShowCreateCredential(false)}
+          loading={createCredential.isPending}
+        />
+      </Modal>
+
+      <Modal
+        open={createSecretTarget !== null}
+        onClose={() => setCreateSecretTarget(null)}
+        title={t("components.systemForm.addSecret")}
+        dismissible={!createCredential.isPending}
+      >
+        <CredentialForm
+          kinds={["secret"]}
+          onSubmit={handleCreateSecret}
+          onCancel={() => setCreateSecretTarget(null)}
           loading={createCredential.isPending}
         />
       </Modal>

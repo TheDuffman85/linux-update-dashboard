@@ -214,6 +214,18 @@ describe("SystemsList", () => {
     expect(html).not.toContain("Sudoers Setup for Alpha");
   });
 
+  test("renders a repository sources action without reading the host until opened", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <SystemsList />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('title="Repository sources"');
+    expect(html).toContain('aria-label="Repository sources for Alpha"');
+    expect(html).not.toContain("Repository configuration files of this system");
+  });
+
   test("labels Debian LTS lifecycle warnings without dates", () => {
     mockUseSystems.mockReturnValue({
       data: [

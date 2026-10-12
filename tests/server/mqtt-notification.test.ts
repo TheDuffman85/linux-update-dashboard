@@ -7,7 +7,7 @@ import { join } from "path";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
-import { notifications, systems, updateCache } from "../../server/db/schema";
+import { notifications, settings, systems, updateCache } from "../../server/db/schema";
 import { initEncryptor } from "../../server/security";
 import notificationsRoutes from "../../server/routes/notifications";
 import { __testing as mqttClientTesting } from "../../server/services/mqtt-client";
@@ -15,6 +15,7 @@ import * as notificationRuntime from "../../server/services/notification-runtime
 import { __testing as mqttRuntimeTesting } from "../../server/services/mqtt-runtime";
 import { resetAppUpdateStatusCache } from "../../server/services/app-update-service";
 import { testNotification } from "../../server/services/notification-service";
+import { getAppLogo, saveAppLogo } from "../../server/services/branding-service";
 import { __testing as requestSecurityTesting, rememberTrustedPublicOrigin } from "../../server/request-security";
 
 class FakeMqttClient extends EventEmitter {
@@ -672,5 +673,79 @@ describe("mqtt notifications", () => {
     const attributesPayload = JSON.parse(attributes!.payload);
     expect(attributesPayload.update_available).toBe(false);
     expect(attributesPayload.current_branch).toBe("dev");
+  });
+
+  test("test notifications mention the configured application name", async () => {
+    getDb().insert(settings).values({ key: "app_name", value: "Acme Patch Center" }).run();
+    const inserted = getDb().insert(notifications).values({
+      name: "MQTT Events",
+      type: "mqtt",
+      enabled: 1,
+      notifyOn: '["updates"]',
+      config: JSON.stringify({
+        brokerUrl: "mqtt://broker.example.com:1883",
+        topic: "ludash/events",
+        publishEvents: true,
+        homeAssistantEnabled: false,
+        qos: 1,
+      }),
+    }).returning({ id: notifications.id }).get();
+
+    const result = await testNotification(inserted.id);
+    expect(result.success).toBe(true);
+
+    const publish = clients[0].publishes.find((entry) => entry.topic === "ludash/events");
+    const payload = JSON.parse(publish!.payload);
+    expect(payload.body).toContain("This is a test notification from Acme Patch Center.");
+  });
+
+  test("runtime brands the Home Assistant app entity while keeping stable ids", async () => {
+    process.env.LUDASH_APP_REPOSITORY = "TheDuffman85/linux-update-dashboard";
+    process.env.LUDASH_APP_BRANCH = "main";
+    process.env.LUDASH_APP_VERSION = "2026.3.1";
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ tag_name: "2026.3.2" }), { status: 200 })) as typeof fetch;
+
+    getDb().insert(settings).values({ key: "app_name", value: "Acme Patch Center" }).run();
+    saveAppLogo({
+      contentType: "image/png",
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+    });
+    getDb().insert(notifications).values({
+      name: "HA App MQTT",
+      type: "mqtt",
+      enabled: 1,
+      notifyOn: '["appUpdates"]',
+      systemIds: null,
+      config: JSON.stringify({
+        brokerUrl: "mqtt://broker.example.com:1883",
+        publishEvents: false,
+        homeAssistantEnabled: true,
+        discoveryPrefix: "homeassistant",
+        baseTopic: "ludash",
+        publishAppEntity: true,
+        commandsEnabled: false,
+        qos: 1,
+      }),
+    }).run();
+
+    await notificationRuntime.start();
+    await flush();
+    await flush();
+
+    const runtimeClient = clients[0];
+    const discovery = runtimeClient.publishes.find((entry) => entry.topic === "homeassistant/update/ludash_1_app_update/config");
+    const discoveryPayload = JSON.parse(discovery!.payload);
+    expect(discoveryPayload.unique_id).toBe("ludash_1_app_update");
+    expect(discoveryPayload.name).toBe("Acme Patch Center Update");
+    expect(discoveryPayload.device.manufacturer).toBe("Acme Patch Center");
+    expect(discoveryPayload.entity_picture).toBe(
+      `http://localhost:3001/api/settings/public/logo?v=${getAppLogo()!.version}`,
+    );
+
+    const state = runtimeClient.publishes.find((entry) => entry.topic.endsWith("/app_update/state"));
+    const statePayload = JSON.parse(state!.payload);
+    expect(statePayload.title).toBe("Acme Patch Center");
+    expect(statePayload.release_summary).toBe("Acme Patch Center: 2026.3.1 -> 2026.3.2");
   });
 });

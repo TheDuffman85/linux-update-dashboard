@@ -14,6 +14,7 @@ const DETECTION_COMMANDS: PackageManagerDetectionCommand[] = [
   { name: "apk", command: "command -v apk >/dev/null 2>&1 && echo 'found'" },
   { name: "flatpak", command: "command -v flatpak >/dev/null 2>&1 && echo 'found'" },
   { name: "snap", command: "command -v snap >/dev/null 2>&1 && echo 'found'" },
+  { name: "deb-get", command: "command -v deb-get >/dev/null 2>&1 && echo 'found'" },
 ];
 
 export function getPackageManagerDetectionCommands(): PackageManagerDetectionCommand[] {

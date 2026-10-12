@@ -14,6 +14,9 @@ import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
 import { logger } from "../logger";
 import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
+import { resolveSecretInput, withSecretEnvNote } from "./package-manager-secret-service";
+import { applyPackageOwnershipClaims } from "./package-ownership";
+import type { SecretInput } from "../ssh/secret-input";
 import {
   describeUpgradeBehaviors,
   getManagerConfig,
@@ -510,11 +513,23 @@ export function validateSelectedPackageUpgradeRequest(
  * When SSH monitoring is lost during an upgrade (e.g. server rebooted),
  * attempt to reconnect and determine the actual result.
  */
+function resolveSecretInputForRedaction(
+  system: Parameters<typeof resolveSecretInput>[0],
+  pkgManager: string,
+): SecretInput | null {
+  try {
+    return resolveSecretInput(system, pkgManager);
+  } catch {
+    return null;
+  }
+}
+
 async function attemptReconnection(
   systemId: number,
   persistentInfo: PersistentCommandInfo,
   preUpgradeUpdateCount: number,
   onData: (chunk: string, stream: "stdout" | "stderr") => void,
+  secretInput: SecretInput | null = null,
 ): Promise<ReconnectionResult> {
   const system = systemService.getSystem(systemId);
   if (!system) {
@@ -560,6 +575,7 @@ async function attemptReconnection(
         persistentInfo,
         3600,
         onData,
+        { secretInput },
       );
 
       if (result.exitCode === EXIT_FILES_GONE) {
@@ -752,6 +768,22 @@ function logHistory(
   pruneHistoryForSystem(systemId);
 }
 
+/** Record a repository source edit; the unified diff is kept as its output. */
+export function recordRepositorySourceEdit(
+  systemId: number,
+  pkgManager: string,
+  status: "success" | "failed",
+  opts: { path: string; command: string; diff?: string; error?: string; startedAt: string },
+): void {
+  logHistory(systemId, "repository_source_edit", pkgManager, status, {
+    packages: JSON.stringify([opts.path]),
+    command: opts.command,
+    output: opts.diff || undefined,
+    error: opts.error,
+    startedAt: opts.startedAt,
+  });
+}
+
 /** Insert a "started" history row and return its ID. */
 function insertStartedEntry(
   systemId: number,
@@ -917,7 +949,8 @@ async function checkUpdatesUnlocked(
           pkgManagerConfig: managerConfig,
         });
         if (!steps.length || (!parser && !isCustomPackageManager(pmName))) continue;
-        const commands = steps.map((step) => step.command);
+        const secretInput = resolveSecretInput(system, pmName);
+        const commands = steps.map((step) => withSecretEnvNote(step.command, secretInput));
         allCommands.push(...commands);
         let lastStdout = "";
         let lastStderr = "";
@@ -940,7 +973,8 @@ async function checkUpdatesUnlocked(
               streamedOutput += chunk;
               pub({ type: "output", data: chunk, stream });
             },
-            signal
+            signal,
+            { secretInput }
           );
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
@@ -1050,11 +1084,12 @@ async function checkUpdatesUnlocked(
 
       let lastInventoryStepIndex: number | null = null;
       try {
+        const secretInput = resolveSecretInput(system, pmName);
         const commandResults: CheckCommandResult[] = [];
         const activityStepIndexes: number[] = [];
         for (const step of installedPackageSteps) {
           throwIfActiveOperationCancelled(systemId);
-          const command = step.command;
+          const command = withSecretEnvNote(step.command, secretInput);
           const label = step.label || `Listing installed ${pmName} packages`;
           const stepStartedAt = getCurrentTimestamp();
           allCommands.push(command);
@@ -1067,6 +1102,7 @@ async function checkUpdatesUnlocked(
             sudoPassword,
             undefined,
             signal,
+            { secretInput },
           );
           const stepCompletedAt = getCurrentTimestamp();
           if (isCancelledResult(result.exitCode)) {
@@ -1174,6 +1210,8 @@ async function checkUpdatesUnlocked(
   }
 
   installedPackageService.pruneInstalledPackagesForInactiveManagers(systemId, pkgManagers);
+  const ownedUpdates = applyPackageOwnershipClaims(systemId, pkgManagers, allUpdates);
+  allUpdates.splice(0, allUpdates.length, ...ownedUpdates);
 
   // Store in cache
   cacheService.invalidateCache(systemId);
@@ -1289,8 +1327,9 @@ export async function solvePackageManagerIssue(
         conn = await sshManager.connect(system as Record<string, unknown>, { systemId });
         throwIfActiveOperationCancelled(systemId);
 
+        const secretInput = resolveSecretInput(system, issue.pkgManager);
         for (const step of steps) {
-          const cmd = step.command;
+          const cmd = withSecretEnvNote(step.command, secretInput);
           allCommands.push(cmd);
           const label = step.label || "Repairing package manager";
           const stepStartedAt = getCurrentTimestamp();
@@ -1312,6 +1351,7 @@ export async function solvePackageManagerIssue(
               outputStream.publish(systemId, { type: "output", data: chunk, stream });
             },
             signal,
+            { secretInput },
           );
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || `${result.stdout}${result.stderr}`;
@@ -1480,11 +1520,17 @@ export async function applyUpgradeAll(
           pkgManager: pmName,
           pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
         });
-        const cmd = options?.resume?.pkgManager === pmName
-          ? options.resume.command
-          : buildMaintenanceCommand(steps);
-        if (!cmd) continue;
         const isResumeStep = options?.resume?.pkgManager === pmName;
+        // A resumed process already has its environment; the secrets are only
+        // needed to keep redacting its output.
+        const secretInput = isResumeStep
+          ? resolveSecretInputForRedaction(system, pmName)
+          : resolveSecretInput(system, pmName);
+        const maintenanceCommand = buildMaintenanceCommand(steps);
+        const cmd = isResumeStep
+          ? options!.resume!.command
+          : maintenanceCommand && withSecretEnvNote(maintenanceCommand, secretInput);
+        if (!cmd) continue;
         if (!isResumeStep && !conn) {
           conn = await sshManager.connect(system as Record<string, unknown>, {
             systemId,
@@ -1525,9 +1571,10 @@ export async function applyUpgradeAll(
         const result = isResumeStep
           ? await attemptReconnection(
               systemId,
-              options.resume!.persistentInfo,
-              options.resume!.preUpgradeUpdateCount,
+              options!.resume!.persistentInfo,
+              options!.resume!.preUpgradeUpdateCount,
               onDataCb,
+              secretInput,
             )
           : await sshManager.runPersistentCommand(
               conn!,
@@ -1537,6 +1584,7 @@ export async function applyUpgradeAll(
               onDataCb,
               {
                 signal,
+                secretInput,
                 onPersistentInfo: (info) => {
                   setActiveOperationPersistentInfo(systemId, info);
                   options?.onPersistentInfo?.({
@@ -1583,6 +1631,7 @@ export async function applyUpgradeAll(
             result.persistentInfo,
             preCount,
             onDataCb,
+            secretInput,
           );
 
           stdout = reconResult.stdout || stdout;
@@ -1770,13 +1819,15 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
 
         for (const pmName of supportedManagers) {
           throwIfActiveOperationCancelled(systemId);
-          const cmd = buildMaintenanceCommand(resolveRuntimeSteps({
+          const maintenanceCommand = buildMaintenanceCommand(resolveRuntimeSteps({
             systemId,
             operation: "autoremove",
             pkgManager: pmName,
             pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
           }));
-          if (!cmd) continue;
+          if (!maintenanceCommand) continue;
+          const secretInput = resolveSecretInput(system, pmName);
+          const cmd = withSecretEnvNote(maintenanceCommand, secretInput);
 
           allCommands.push(cmd);
           const stepStartedAt = getCurrentTimestamp();
@@ -1796,6 +1847,7 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
               },
               {
                 signal,
+                secretInput,
                 onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
               },
             );
@@ -1987,8 +2039,10 @@ export async function applyFullUpgradeAll(
             pkgManagerConfig: managerConfig,
           });
         }
-        const cmd = buildMaintenanceCommand(steps);
-        if (!cmd) continue;
+        const maintenanceCommand = buildMaintenanceCommand(steps);
+        if (!maintenanceCommand) continue;
+        const secretInput = resolveSecretInput(system, pmName);
+        const cmd = withSecretEnvNote(maintenanceCommand, secretInput);
         allCommands.push(cmd);
         const stepStartedAt = getCurrentTimestamp();
         const histId = insertStartedEntry(systemId, "full_upgrade_all", pmName, cmd, stepStartedAt);
@@ -2008,6 +2062,7 @@ export async function applyFullUpgradeAll(
           onDataCb,
           {
             signal,
+            secretInput,
             onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
           },
         );
@@ -2051,6 +2106,7 @@ export async function applyFullUpgradeAll(
             result.persistentInfo,
             preCount,
             onDataCb,
+            secretInput,
           );
 
           stdout = reconResult.stdout || stdout;
@@ -2222,12 +2278,14 @@ export async function applyUpgradePackages(
             pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
             packages: packagesForManager,
           });
-          const cmd = buildMaintenanceCommand(steps);
-          if (!cmd) {
+          const maintenanceCommand = buildMaintenanceCommand(steps);
+          if (!maintenanceCommand) {
             overallSuccess = false;
             allOutputs.push(`[${pmName}] No selected-package upgrade script`);
             continue;
           }
+          const secretInput = resolveSecretInput(system, pmName);
+          const cmd = withSecretEnvNote(maintenanceCommand, secretInput);
           allCommands.push(cmd);
 
           const stepStartedAt = getCurrentTimestamp();
@@ -2253,6 +2311,7 @@ export async function applyUpgradePackages(
             onDataCb,
             {
               signal,
+              secretInput,
               onPersistentInfo: (info) => setActiveOperationPersistentInfo(systemId, info),
             },
           );
@@ -2296,6 +2355,7 @@ export async function applyUpgradePackages(
               result.persistentInfo,
               selected.packageNames.length,
               onDataCb,
+              secretInput,
             );
 
             stdout = reconResult.stdout || stdout;

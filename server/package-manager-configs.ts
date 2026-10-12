@@ -43,9 +43,20 @@ export interface CustomPackageManagerConfigEntry {
   key: string;
   description?: string;
   defaultValue: string;
+  /** Secret entries never hold plaintext values: systems reference a secret credential instead. */
+  secret?: boolean;
+  /** Environment variable the secret is exported as on the remote host. */
+  envVar?: string;
+  /** Emit a sudoers env_keep rule so the variable survives sudo's env_reset. */
+  sudoEnvKeep?: boolean;
+  /** Shipped with a built-in package manager; read-only and never stored. */
+  builtin?: boolean;
 }
 
 export type CustomPackageManagerConfig = Record<string, string>;
+
+/** Per-system secret assignments: { manager: { configKey: credentialId } }. */
+export type PackageManagerSecretRefs = Record<string, Record<string, number>>;
 export type SupportedPackageManagerConfigName = keyof BuiltinPackageManagerConfigs;
 export type BuiltinPackageManagerConfigValue = NonNullable<BuiltinPackageManagerConfigs[SupportedPackageManagerConfigName]>;
 
@@ -68,6 +79,36 @@ const SUPPORTED_CONFIG_MANAGERS = [
 
 const UNSUPPORTED_CONFIG_MANAGERS = new Set(["snap"]);
 const CUSTOM_CONFIG_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+const SECRET_ENV_VAR_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
+// Variables that change how shells, loaders, interpreters, or sudo behave must
+// never be fed from a secret, and must never be added to sudoers env_keep.
+const RESERVED_SECRET_ENV_VARS = new Set([
+  "PATH", "HOME", "SHELL", "USER", "LOGNAME", "MAIL", "TERM", "IFS", "ENV", "BASH_ENV",
+  "PS1", "PS2", "PS4", "SHELLOPTS", "BASHOPTS", "CDPATH", "GLOBIGNORE", "TMPDIR", "TZ",
+  "LANG", "LANGUAGE", "NODE_OPTIONS", "NODE_PATH", "PYTHONPATH", "PYTHONSTARTUP",
+  "PYTHONHOME", "PERL5LIB", "PERL5OPT", "PERLLIB", "RUBYOPT", "RUBYLIB", "GCONV_PATH",
+  "HOSTALIASES", "LOCALDOMAIN", "RES_OPTIONS", "NLSPATH", "EDITOR", "VISUAL", "PAGER",
+]);
+const RESERVED_SECRET_ENV_VAR_PREFIXES = ["LD_", "DYLD_", "LC_", "SUDO_", "LUDASH_", "BASH_FUNC_"];
+
+export function validateSecretEnvVarName(value: unknown): string | null {
+  if (typeof value !== "string" || !SECRET_ENV_VAR_PATTERN.test(value)) {
+    return "must be an upper-case environment variable name (A-Z, 0-9, underscore)";
+  }
+  if (
+    RESERVED_SECRET_ENV_VARS.has(value) ||
+    RESERVED_SECRET_ENV_VAR_PREFIXES.some((prefix) => value.startsWith(prefix))
+  ) {
+    return `${value} is reserved and cannot carry a secret`;
+  }
+  return null;
+}
+
+export function getSecretConfigEntries(
+  definition: CustomPackageManagerConfigDefinition | undefined | null,
+): CustomPackageManagerConfigEntry[] {
+  return (definition?.configEntries ?? []).filter((entry) => entry.secret === true);
+}
 const BUILTIN_CONFIG_KEYS: Record<string, string[]> = {
   apt: ["defaultUpgradeMode", "autoHideKeptBackUpdates"],
   dnf: [
@@ -86,7 +127,25 @@ const BUILTIN_CONFIG_KEYS: Record<string, string[]> = {
   pacman: ["refreshDatabasesOnCheck"],
   apk: ["refreshIndexesOnCheck"],
   flatpak: ["refreshAppstreamOnCheck"],
+  "deb-get": ["githubToken"],
 };
+
+/** Config entries that ship with built-in package managers. */
+export const BUILTIN_CONFIG_ENTRIES: Record<string, CustomPackageManagerConfigEntry[]> = {
+  "deb-get": [{
+    key: "githubToken",
+    description: "GitHub token for deb-get's GitHub API lookups. Without it, unauthenticated rate limits can hide updates for GitHub-hosted apps. A fine-grained token without any permissions is enough.",
+    defaultValue: "",
+    secret: true,
+    envVar: "DEBGET_TOKEN",
+    sudoEnvKeep: true,
+    builtin: true,
+  }],
+};
+
+export function getBuiltinConfigEntries(manager: string): CustomPackageManagerConfigEntry[] {
+  return (BUILTIN_CONFIG_ENTRIES[manager] ?? []).map((entry) => ({ ...entry }));
+}
 
 export interface CustomPackageManagerConfigDefinition {
   name: string;
@@ -113,15 +172,22 @@ function customConfigForManager(
   const definition = customManagerMap.get(manager);
   if (!definition?.configEntries?.length && !allowUnknownKeys) return null;
   const keyMap = new Map<string, string>();
+  const secretKeys = new Set<string>();
   if (definition?.configEntries?.length) {
     for (const entry of definition.configEntries) {
       const targetKey = getLegacyCustomConfigKey(manager, entry.key);
+      if (entry.secret) {
+        secretKeys.add(targetKey);
+        continue;
+      }
       keyMap.set(targetKey, targetKey);
     }
   }
   const customConfig: CustomPackageManagerConfig = {};
   for (const [key, rawValue] of Object.entries(rawConfig)) {
-    const targetKey = keyMap.size > 0 ? keyMap.get(key) : key;
+    // Secret entries are only ever stored as credential references.
+    if (secretKeys.has(key)) continue;
+    const targetKey = keyMap.size > 0 || secretKeys.size > 0 ? keyMap.get(key) : key;
     if (!targetKey) continue;
     if (typeof rawValue === "string") {
       customConfig[targetKey] = rawValue;
@@ -269,6 +335,7 @@ export function validateCustomPackageManagerConfigEntries(
   }
 
   const seen = new Set<string>();
+  const seenEnvVars = new Set<string>();
   const currentBuiltinKeys = currentManagerName ? BUILTIN_CONFIG_KEYS[currentManagerName] ?? [] : [];
   for (const [index, entry] of entries.entries()) {
     if (!isRecord(entry)) return `configEntries.${index} must be an object`;
@@ -286,6 +353,24 @@ export function validateCustomPackageManagerConfigEntries(
     if (entry.description !== undefined && typeof entry.description !== "string") {
       return `configEntries.${index}.description must be a string`;
     }
+    if (entry.secret !== undefined && typeof entry.secret !== "boolean") {
+      return `configEntries.${index}.secret must be a boolean`;
+    }
+    if (entry.secret === true) {
+      if (entry.defaultValue !== undefined && entry.defaultValue !== "") {
+        return `configEntries.${index}.defaultValue must be empty for secret entries`;
+      }
+      const envVarError = validateSecretEnvVarName(entry.envVar);
+      if (envVarError) return `configEntries.${index}.envVar ${envVarError}`;
+      if (seenEnvVars.has(entry.envVar as string)) {
+        return `Duplicate secret environment variable: ${entry.envVar}`;
+      }
+      seenEnvVars.add(entry.envVar as string);
+      if (entry.sudoEnvKeep !== undefined && typeof entry.sudoEnvKeep !== "boolean") {
+        return `configEntries.${index}.sudoEnvKeep must be a boolean`;
+      }
+      continue;
+    }
     if (typeof entry.defaultValue !== "string") {
       return `configEntries.${index}.defaultValue is required`;
     }
@@ -298,12 +383,25 @@ export function normalizeCustomPackageManagerConfigEntries(entries: unknown): Cu
   if (!Array.isArray(entries)) return [];
   return entries
     .filter(isRecord)
-    .map((entry) => ({
-      key: typeof entry.key === "string" ? entry.key.trim() : "",
-      description: typeof entry.description === "string" ? entry.description.trim() || undefined : undefined,
-      defaultValue: typeof entry.defaultValue === "string" ? entry.defaultValue : "",
-    }))
-    .filter((entry) => CUSTOM_CONFIG_KEY_PATTERN.test(entry.key));
+    .map((entry): CustomPackageManagerConfigEntry => {
+      const normalized: CustomPackageManagerConfigEntry = {
+        key: typeof entry.key === "string" ? entry.key.trim() : "",
+        description: typeof entry.description === "string" ? entry.description.trim() || undefined : undefined,
+        defaultValue: typeof entry.defaultValue === "string" ? entry.defaultValue : "",
+      };
+      if (entry.secret !== true) return normalized;
+      return {
+        ...normalized,
+        defaultValue: "",
+        secret: true,
+        envVar: typeof entry.envVar === "string" ? entry.envVar.trim() : "",
+        sudoEnvKeep: entry.sudoEnvKeep === true,
+      };
+    })
+    .filter((entry) =>
+      CUSTOM_CONFIG_KEY_PATTERN.test(entry.key) &&
+      (!entry.secret || validateSecretEnvVarName(entry.envVar) === null)
+    );
 }
 
 export function normalizeCustomPackageManagerConfigEntriesForManager(
@@ -340,9 +438,15 @@ export function validatePackageManagerConfigsInput(
     }
 
     const keys = Object.keys(rawConfig);
-    const customConfigKeys = new Set((customManager?.configEntries ?? []).map((entry) =>
-      getLegacyCustomConfigKey(manager, entry.key),
-    ));
+    const customConfigKeys = new Set((customManager?.configEntries ?? [])
+      .filter((entry) => !entry.secret)
+      .map((entry) => getLegacyCustomConfigKey(manager, entry.key)));
+    const secretKey = getSecretConfigEntries(customManager)
+      .map((entry) => getLegacyCustomConfigKey(manager, entry.key))
+      .find((key) => keys.includes(key));
+    if (secretKey) {
+      return `pkgManagerConfigs.${manager}.${secretKey} is a secret entry; assign a secret credential instead`;
+    }
     if (!isBuiltinManager && customManager) {
       for (const key of keys) {
         if (!customConfigKeys.has(key)) {
@@ -592,4 +696,87 @@ export function describeUpgradeBehaviors(
   return uniqueManagers
     .map((manager) => describeUpgradeBehavior(manager, getManagerConfig(configs, manager)))
     .filter((value): value is string => !!value);
+}
+
+function secretEntryKeysByManager(
+  definitions: CustomPackageManagerConfigDefinition[],
+): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>();
+  for (const definition of definitions) {
+    const keys = getSecretConfigEntries(definition)
+      .map((entry) => getLegacyCustomConfigKey(definition.name, entry.key));
+    if (keys.length > 0) result.set(definition.name, new Set(keys));
+  }
+  return result;
+}
+
+/** Keep only references to secret entries that still exist; drop everything else. */
+export function normalizePackageManagerSecretRefs(
+  value: unknown,
+  definitions: CustomPackageManagerConfigDefinition[] = [],
+): PackageManagerSecretRefs | null {
+  if (!isRecord(value)) return null;
+  const secretKeys = secretEntryKeysByManager(definitions);
+  const next: PackageManagerSecretRefs = {};
+  for (const [manager, rawRefs] of Object.entries(value)) {
+    const keys = secretKeys.get(manager);
+    if (!keys || !isRecord(rawRefs)) continue;
+    const refs: Record<string, number> = {};
+    for (const [key, rawId] of Object.entries(rawRefs)) {
+      const id = typeof rawId === "string" && /^\d+$/.test(rawId) ? Number(rawId) : rawId;
+      if (keys.has(key) && typeof id === "number" && Number.isInteger(id) && id > 0) {
+        refs[key] = id;
+      }
+    }
+    if (Object.keys(refs).length > 0) next[manager] = refs;
+  }
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+export function parsePackageManagerSecretRefs(
+  value: string | null | undefined,
+  definitions: CustomPackageManagerConfigDefinition[] = [],
+): PackageManagerSecretRefs | null {
+  if (!value) return null;
+  try {
+    return normalizePackageManagerSecretRefs(JSON.parse(value), definitions);
+  } catch {
+    return null;
+  }
+}
+
+export function serializePackageManagerSecretRefs(
+  value: PackageManagerSecretRefs | null | undefined,
+  definitions: CustomPackageManagerConfigDefinition[] = [],
+): string | null {
+  const normalized = normalizePackageManagerSecretRefs(value, definitions);
+  return normalized ? JSON.stringify(normalized) : null;
+}
+
+/** Structural validation; credential existence and kind are checked by the caller. */
+export function validatePackageManagerSecretRefsInput(
+  value: unknown,
+  definitions: CustomPackageManagerConfigDefinition[] = [],
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) return "pkgManagerSecretRefs must be an object";
+  const secretKeys = secretEntryKeysByManager(definitions);
+  for (const [manager, rawRefs] of Object.entries(value)) {
+    const keys = secretKeys.get(manager);
+    if (!keys) return `pkgManagerSecretRefs.${manager} has no secret config entries`;
+    if (!isRecord(rawRefs)) return `pkgManagerSecretRefs.${manager} must be an object`;
+    for (const [key, rawId] of Object.entries(rawRefs)) {
+      if (!keys.has(key)) return `pkgManagerSecretRefs.${manager}.${key} is not a secret config entry`;
+      if (rawId === null) continue;
+      if (typeof rawId !== "number" || !Number.isInteger(rawId) || rawId <= 0) {
+        return `pkgManagerSecretRefs.${manager}.${key} must be a credential ID`;
+      }
+    }
+  }
+  return null;
+}
+
+export function listSecretRefCredentialIds(refs: PackageManagerSecretRefs | null | undefined): number[] {
+  if (!refs) return [];
+  return [...new Set(Object.values(refs).flatMap((managerRefs) => Object.values(managerRefs)))];
 }

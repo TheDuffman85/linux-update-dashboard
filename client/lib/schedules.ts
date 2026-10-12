@@ -24,6 +24,7 @@ export interface AutoremoveScheduleConfig {
 
 export interface RebootScheduleConfig {
   cron: string;
+  onlyIfRequired: boolean;
 }
 
 export interface NotificationScheduleConfig {
@@ -66,7 +67,7 @@ export function isAutoremoveConfig(config: ScheduleConfig): config is Autoremove
 }
 
 export function isRebootConfig(config: ScheduleConfig): config is RebootScheduleConfig {
-  return isUpdateConfig(config);
+  return isUpdateConfig(config) && "onlyIfRequired" in config;
 }
 
 export function isNotificationScheduleConfig(

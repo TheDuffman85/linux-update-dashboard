@@ -10,6 +10,7 @@ import {
   useI18n,
 } from "./lib/i18n";
 import { useUpdateSettings } from "./lib/settings";
+import { useDocumentBranding } from "./lib/branding";
 
 const Login = lazy(() => import("./pages/Login"));
 const Setup = lazy(() => import("./pages/Setup"));
@@ -47,6 +48,12 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AdminGuard({ children }: { children: React.ReactNode }) {
+  const { isReadOnly } = useAuth();
+  if (isReadOnly) return <Navigate to="/dashboard" replace />;
+  return <AuthGuard>{children}</AuthGuard>;
+}
+
 const LANGUAGE_PROMPT_STORAGE_KEY = "ludash.languagePermanentPromptDismissed";
 
 function hasDismissedLanguagePrompt(): boolean {
@@ -66,7 +73,7 @@ function dismissLanguagePrompt(): void {
 }
 
 function PermanentLanguagePrompt() {
-  const { user, loading, setupRequired } = useAuth();
+  const { user, loading, setupRequired, isReadOnly } = useAuth();
   const { preference, browserLanguage, t } = useI18n();
   const { addToast } = useToast();
   const updateSettings = useUpdateSettings();
@@ -76,6 +83,7 @@ function PermanentLanguagePrompt() {
       loading ||
       setupRequired ||
       !user ||
+      isReadOnly ||
       preference !== BROWSER_LANGUAGE_SETTING ||
       browserLanguage === "en" ||
       hasDismissedLanguagePrompt()
@@ -115,6 +123,7 @@ function PermanentLanguagePrompt() {
   }, [
     addToast,
     browserLanguage,
+    isReadOnly,
     loading,
     preference,
     setupRequired,
@@ -130,6 +139,7 @@ export default function App() {
   const { loading, setupRequired, user, backendUnavailable } = useAuth();
   const { t } = useI18n();
   const pageTopRef = useRef<HTMLDivElement | null>(null);
+  useDocumentBranding();
 
   if (loading) {
     return <PageLoader message={backendUnavailable ? t("app.reconnectingToBackend") : undefined} />;
@@ -183,41 +193,41 @@ export default function App() {
         <Route
           path="/notifications"
           element={
-            <AuthGuard>
+            <AdminGuard>
               <Notifications />
-            </AuthGuard>
+            </AdminGuard>
           }
         />
         <Route
           path="/schedules"
           element={
-            <AuthGuard>
+            <AdminGuard>
               <Schedules />
-            </AuthGuard>
+            </AdminGuard>
           }
         />
         <Route
           path="/credentials"
           element={
-            <AuthGuard>
+            <AdminGuard>
               <Credentials />
-            </AuthGuard>
+            </AdminGuard>
           }
         />
         <Route
           path="/scripts"
           element={
-            <AuthGuard>
+            <AdminGuard>
               <Scripts />
-            </AuthGuard>
+            </AdminGuard>
           }
         />
         <Route
           path="/settings"
           element={
-            <AuthGuard>
+            <AdminGuard>
               <Settings />
-            </AuthGuard>
+            </AdminGuard>
           }
         />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

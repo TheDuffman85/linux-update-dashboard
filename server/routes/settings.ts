@@ -2,9 +2,16 @@ import { Hono } from "hono";
 import { eq, count } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings, webauthnCredentials } from "../db/schema";
-import { configureOidc } from "../auth/oidc";
+import {
+  configureOidc,
+  DEFAULT_OIDC_GROUPS_CLAIM,
+  parseCsvList,
+  parseOidcScope,
+  parseOidcUnmatchedRole,
+} from "../auth/oidc";
 import { getEncryptor } from "../security";
 import * as updateService from "../services/update-service";
+import * as notificationRuntime from "../services/notification-runtime";
 import {
   getNumericSettingRules,
   isNumericSettingKey,
@@ -13,6 +20,19 @@ import {
 } from "../services/settings-service";
 import type { SessionData } from "../auth/session";
 import { getConfiguredTimeZone } from "../time-zone";
+import {
+  APP_LOGO_JPEG_SETTING_KEY,
+  APP_LOGO_SETTING_KEY,
+  APP_NAME_SETTING_KEY,
+  BrandingValidationError,
+  clearAppLogo,
+  getAppLogo,
+  getPublicBranding,
+  normalizeAppName,
+  parseAppLogoJpegUpload,
+  parseAppLogoUpload,
+  saveAppLogo,
+} from "../services/branding-service";
 
 type AuthEnv = {
   Variables: {
@@ -22,6 +42,8 @@ type AuthEnv = {
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
 const PUBLIC_SETTING_KEYS = ["language"] as const;
+// Managed through dedicated endpoints and too large to ship with every settings read.
+const HIDDEN_KEYS = [APP_LOGO_SETTING_KEY, APP_LOGO_JPEG_SETTING_KEY];
 
 const settingsRouter = new Hono<AuthEnv>();
 
@@ -43,7 +65,58 @@ settingsRouter.get("/public", (c) => {
     }
   }
 
-  return c.json({ settings: publicSettings });
+  return c.json({ settings: publicSettings, branding: getPublicBranding() });
+});
+
+settingsRouter.get("/public/logo", (c) => {
+  const logo = getAppLogo();
+  if (!logo) {
+    return c.json({ error: "No custom logo configured" }, 404);
+  }
+
+  const versioned = c.req.query("v") === logo.version;
+  c.header("Content-Type", logo.contentType);
+  c.header(
+    "Cache-Control",
+    versioned ? "public, max-age=31536000, immutable" : "no-cache",
+  );
+  // SVG logos are rendered via <img>, but lock them down in case one is
+  // opened directly so embedded scripts can never run on this origin.
+  c.header(
+    "Content-Security-Policy",
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+  );
+  c.header("Content-Disposition", "inline");
+  return c.body(new Uint8Array(logo.data));
+});
+
+settingsRouter.put("/branding/logo", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  try {
+    const { dataUrl, jpegDataUrl } = body as { dataUrl?: unknown; jpegDataUrl?: unknown };
+    const logo = parseAppLogoUpload(dataUrl);
+    const jpeg = jpegDataUrl == null ? null : parseAppLogoJpegUpload(jpegDataUrl);
+    saveAppLogo(logo, jpeg);
+  } catch (error) {
+    if (error instanceof BrandingValidationError) {
+      return c.json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+
+  // Home Assistant entity pictures and Telegram bot photos follow the logo.
+  void notificationRuntime.syncBranding();
+  return c.json({ status: "ok", branding: getPublicBranding() });
+});
+
+settingsRouter.delete("/branding/logo", (c) => {
+  clearAppLogo();
+  void notificationRuntime.syncBranding();
+  return c.json({ status: "ok", branding: getPublicBranding() });
 });
 
 // Get all settings
@@ -52,6 +125,7 @@ settingsRouter.get("/", (c) => {
   const allSettings = db.select().from(settings).orderBy(settings.key).all();
   const settingsMap: Record<string, string> = {};
   for (const s of allSettings) {
+    if (HIDDEN_KEYS.includes(s.key)) continue;
     if (SENSITIVE_KEYS.includes(s.key) && s.value) {
       settingsMap[s.key] = "(stored)";
     } else if (isNumericSettingKey(s.key)) {
@@ -75,12 +149,62 @@ settingsRouter.put("/", async (c) => {
   }
 
   const db = getDb();
-  const normalizedBody = Object.fromEntries(
+  const normalizedBody: Record<string, unknown> = Object.fromEntries(
     Object.entries(body).map(([key, value]) => [
       key,
       isNumericSettingKey(key) ? normalizeNumericSetting(key, value) : value,
     ]),
   );
+
+  if (HIDDEN_KEYS.some((key) => key in normalizedBody)) {
+    return c.json({ error: "Use the branding logo endpoint to change the logo" }, 400);
+  }
+  if (APP_NAME_SETTING_KEY in normalizedBody) {
+    try {
+      normalizedBody[APP_NAME_SETTING_KEY] = normalizeAppName(
+        normalizedBody[APP_NAME_SETTING_KEY],
+      );
+    } catch (error) {
+      if (error instanceof BrandingValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+  }
+  if ("oidc_scope" in normalizedBody) {
+    try {
+      normalizedBody.oidc_scope = parseOidcScope(
+        typeof normalizedBody.oidc_scope === "string" ? normalizedBody.oidc_scope : "",
+      );
+    } catch {
+      return c.json({ error: "OIDC scopes must include openid" }, 400);
+    }
+  }
+  if ("oidc_unmatched_role" in normalizedBody) {
+    try {
+      if (typeof normalizedBody.oidc_unmatched_role !== "string") {
+        throw new Error("Invalid role");
+      }
+      normalizedBody.oidc_unmatched_role = parseOidcUnmatchedRole(
+        normalizedBody.oidc_unmatched_role,
+      );
+    } catch {
+      return c.json({ error: "Invalid OIDC unmatched role" }, 400);
+    }
+  }
+  if ("oidc_groups_claim" in normalizedBody) {
+    const claim = normalizedBody.oidc_groups_claim;
+    normalizedBody.oidc_groups_claim =
+      typeof claim === "string" && claim.trim()
+        ? claim.trim()
+        : DEFAULT_OIDC_GROUPS_CLAIM;
+  }
+  for (const key of ["oidc_admin_groups", "oidc_read_only_groups"]) {
+    if (key in normalizedBody) {
+      const value = normalizedBody[key];
+      normalizedBody[key] = parseCsvList(typeof value === "string" ? value : "").join(",");
+    }
+  }
 
   // Prevent disabling password login without an alternative auth method
   if (normalizedBody.disable_password_login === "true") {
@@ -133,6 +257,11 @@ settingsRouter.put("/", async (c) => {
         },
       })
       .run();
+  }
+
+  if (APP_NAME_SETTING_KEY in normalizedBody) {
+    // Republish Home Assistant discovery so device and entity names follow.
+    void notificationRuntime.syncAppUpdateState();
   }
 
   if ("activity_history_limit" in normalizedBody) {

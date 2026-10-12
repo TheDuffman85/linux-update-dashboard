@@ -40,9 +40,27 @@ export interface CustomPackageManagerConfigEntry {
   key: string;
   description?: string;
   defaultValue: string;
+  secret?: boolean;
+  envVar?: string;
+  sudoEnvKeep?: boolean;
+  /** Shipped with a built-in package manager; read-only. */
+  builtin?: boolean;
 }
 
 export type CustomPackageManagerConfig = Record<string, string>;
+
+/** Per-system secret assignments: { manager: { configKey: credentialId } }. */
+export type PackageManagerSecretRefs = Record<string, Record<string, number>>;
+
+export const SECRET_ENV_VAR_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
+
+export function suggestSecretEnvVar(key: string): string {
+  const candidate = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .toUpperCase();
+  return /^[A-Z_]/.test(candidate) ? candidate.slice(0, 64) : `_${candidate}`.slice(0, 64);
+}
 export type BuiltinPackageManagerConfigValue = NonNullable<BuiltinPackageManagerConfigs[keyof BuiltinPackageManagerConfigs]>;
 
 export type PackageManagerConfigs = BuiltinPackageManagerConfigs & {
@@ -81,15 +99,22 @@ function mergeCustomConfig(
   const definition = customManagerMap.get(manager);
   if (!definition?.configEntries?.length && !allowUnknownKeys) return;
   const keyMap = new Map<string, string>();
+  const secretKeys = new Set<string>();
   if (definition?.configEntries?.length) {
     for (const entry of definition.configEntries) {
       const targetKey = getLegacyCustomConfigKey(manager, entry.key);
+      if (entry.secret) {
+        secretKeys.add(targetKey);
+        continue;
+      }
       keyMap.set(targetKey, targetKey);
     }
   }
   const config: CustomPackageManagerConfig = {};
   for (const [key, raw] of Object.entries(rawConfig)) {
-    const targetKey = keyMap.size > 0 ? keyMap.get(key) : key;
+    // Secret entries are assigned as credential references, never as values.
+    if (secretKeys.has(key)) continue;
+    const targetKey = keyMap.size > 0 || secretKeys.size > 0 ? keyMap.get(key) : key;
     if (!targetKey) continue;
     if (typeof raw === "string") {
       config[targetKey] = raw;
@@ -212,4 +237,26 @@ export function getUpgradeBehaviorNotes(
     }
     return [];
   });
+}
+
+export function normalizePackageManagerSecretRefs(
+  value: PackageManagerSecretRefs | null | undefined,
+  managers: CustomPackageManagerConfigDefinition[] = [],
+  isManagerActive: (manager: string) => boolean = () => true,
+): PackageManagerSecretRefs | null {
+  if (!value) return null;
+  const next: PackageManagerSecretRefs = {};
+  for (const manager of managers) {
+    if (!isManagerActive(manager.name)) continue;
+    const refs = value[manager.name];
+    if (!refs) continue;
+    const secretKeys = new Set((manager.configEntries ?? [])
+      .filter((entry) => entry.secret)
+      .map((entry) => getLegacyCustomConfigKey(manager.name, entry.key)));
+    const kept = Object.fromEntries(
+      Object.entries(refs).filter(([key, id]) => secretKeys.has(key) && Number.isInteger(id) && id > 0),
+    );
+    if (Object.keys(kept).length > 0) next[manager.name] = kept;
+  }
+  return Object.keys(next).length > 0 ? next : null;
 }

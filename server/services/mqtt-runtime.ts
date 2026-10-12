@@ -28,6 +28,7 @@ import { getAppUpdateStatus } from "./app-update-service";
 import * as updateService from "./update-service";
 import * as hiddenUpdateService from "./hidden-update-service";
 import * as systemService from "./system-service";
+import { getAppName, getPublicBranding } from "./branding-service";
 
 type NotificationRow = typeof notifications.$inferSelect;
 type SystemRow = typeof systems.$inferSelect;
@@ -190,14 +191,15 @@ function getPublicBaseUrl(): string {
 }
 
 function getLogoUrl(): string {
-  return new URL("/assets/logo.png", `${getPublicBaseUrl()}/`).toString();
+  const logoPath = getPublicBranding().logoUrl ?? "/assets/logo.png";
+  return new URL(logoPath, `${getPublicBaseUrl()}/`).toString();
 }
 
 function buildSharedDeviceMetadata(row: NotificationRow, config: MqttConfig): Record<string, unknown> {
   return {
     identifiers: [`ludash_channel_${row.id}`],
     name: config.deviceName,
-    manufacturer: "Linux Update Dashboard",
+    manufacturer: getAppName(),
     model: "MQTT Update Channel",
   };
 }
@@ -287,9 +289,10 @@ function buildAppEntity(
   const latestVersion = status.updateAvailable
     ? formatHomeAssistantAppVersion(status.remoteVersion, status.currentBranch) || installedVersion
     : installedVersion;
+  const appName = getAppName();
   const releaseSummary = status.updateAvailable
-    ? `Linux Update Dashboard: ${installedVersion} -> ${latestVersion}`
-    : "Linux Update Dashboard is up to date";
+    ? `${appName}: ${installedVersion} -> ${latestVersion}`
+    : `${appName} is up to date`;
   const logoUrl = getLogoUrl();
   const publicBaseUrl = getPublicBaseUrl();
 
@@ -300,7 +303,7 @@ function buildAppEntity(
       device: buildSharedDeviceMetadata(row, config),
       origin: buildDiscoveryOrigin(),
       unique_id: `ludash_${row.id}_${componentId}`,
-      name: "Linux Update Dashboard Update",
+      name: `${appName} Update`,
       default_entity_id: `update.ludash_${row.id}_${componentId}`,
       icon: "mdi:linux",
       entity_picture: logoUrl,
@@ -316,7 +319,7 @@ function buildAppEntity(
     statePayload: JSON.stringify({
       installed_version: installedVersion,
       latest_version: latestVersion,
-      title: "Linux Update Dashboard",
+      title: appName,
       release_summary: releaseSummary,
       ...(status.releaseUrl || status.repoUrl
         ? { release_url: status.releaseUrl || status.repoUrl }

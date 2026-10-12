@@ -1,4 +1,4 @@
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { getDb } from "../db";
 import { installedPackageCache } from "../db/schema";
 import type { InstalledPackage } from "../ssh/installed-packages";
@@ -77,5 +77,21 @@ export function pruneInstalledPackagesForInactiveManagers(
         ? and(systemFilter, notInArray(installedPackageCache.pkgManager, activeManagers))
         : systemFilter,
     )
+    .run();
+}
+
+export function removeInstalledPackagesByName(
+  systemId: number,
+  pkgManager: string,
+  packageNames: string[],
+): void {
+  if (packageNames.length === 0) return;
+  getDb()
+    .delete(installedPackageCache)
+    .where(and(
+      eq(installedPackageCache.systemId, systemId),
+      eq(installedPackageCache.pkgManager, pkgManager),
+      inArray(installedPackageCache.packageName, packageNames),
+    ))
     .run();
 }

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { PenguinLogo } from "../components/PenguinLogo";
+import { AppLogo } from "../components/AppLogo";
 import { ApiError, apiFetch } from "../lib/client";
 import { useI18n } from "../lib/i18n";
+import { useBranding } from "../lib/branding";
 
 function base64urlToBuffer(base64url: string): ArrayBuffer {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
@@ -31,12 +32,19 @@ export default function Login() {
     refresh,
   } = useAuth();
   const { t } = useI18n();
+  const { appName } = useBranding();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [requiresTotp, setRequiresTotp] = useState(false);
 
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() =>
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("error") ===
+      "oidc_unauthorized"
+      ? t("pages.login.oidcUnauthorized")
+      : "",
+  );
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -168,9 +176,12 @@ export default function Login() {
       <div className="w-full max-w-sm bg-white dark:bg-slate-800 rounded-xl shadow-lg p-8">
         <div className="text-center mb-6">
           <div className="flex justify-center">
-            <PenguinLogo size={48} />
+            <AppLogo size={48} />
           </div>
-          <h1 className="mt-3 text-xl font-semibold">
+          <p className="mt-3 text-sm font-medium text-slate-500 dark:text-slate-400 break-words">
+            {appName}
+          </p>
+          <h1 className="mt-1 text-xl font-semibold">
             {t("pages.login.welcomeBack")}
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">

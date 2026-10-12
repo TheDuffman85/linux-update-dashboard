@@ -185,6 +185,7 @@ function migrateStoredEncryptedValues(rewrite: RewriteEncryptedValue): number {
     usernamePassword: ["password"],
     sshKey: ["privateKey", "passphrase"],
     certificate: ["certificatePem", "privateKeyPem", "privateKeyPassword"],
+    secret: ["value"],
   };
 
   const allCredentials = dbInstance.select().from(credentials).all();

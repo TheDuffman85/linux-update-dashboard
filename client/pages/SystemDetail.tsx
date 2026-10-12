@@ -24,6 +24,7 @@ import {
 } from "../lib/systems";
 import { getCheckResultToast, useAutoremove, useCancelOperation, useCheckUpdates, useHideUpdate, useUnhideUpdate } from "../lib/updates";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 import { useUpgrade } from "../context/UpgradeContext";
 import { useCommandOutput } from "../hooks/useCommandOutput";
 import type { WsMessage } from "../hooks/useCommandOutput";
@@ -157,6 +158,7 @@ function UpdatesTable({
   selectionDisabled,
   hideBusy,
   searchActive = false,
+  readOnly = false,
 }: {
   updates: CachedUpdate[];
   onHide: (update: CachedUpdate) => void;
@@ -166,6 +168,7 @@ function UpdatesTable({
   selectionDisabled?: boolean;
   hideBusy?: boolean;
   searchActive?: boolean;
+  readOnly?: boolean;
 }) {
   const { t } = useI18n();
   const packageSelectionState = getPackageSelectionState(selectedPackageNames, updates, selectionDisabled);
@@ -190,6 +193,7 @@ function UpdatesTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-slate-500 uppercase tracking-wide">
+            {!readOnly && (
             <th className="px-2 sm:px-4 py-2 w-10">
               <input
                 ref={selectAllRef}
@@ -201,17 +205,21 @@ function UpdatesTable({
                 className="rounded border-border text-blue-600 focus:ring-blue-500 disabled:opacity-50"
               />
             </th>
+            )}
             <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.package")}</th>
             <th className="px-2 sm:px-4 py-2 hidden sm:table-cell">{t("pages.systemDetail.current")}</th>
             <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.available")}</th>
             <th className="px-2 sm:px-4 py-2 hidden md:table-cell">{t("pages.systemDetail.manager")}</th>
             <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">{t("pages.systemDetail.repository")}</th>
-            <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">{t("pages.systemDetail.actions")}</th>
+            {!readOnly && (
+              <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">{t("pages.systemDetail.actions")}</th>
+            )}
           </tr>
         </thead>
         <tbody>
           {updates.map((u) => (
             <tr key={u.id} className="border-b border-border last:border-0">
+              {!readOnly && (
               <td className="px-2 sm:px-4 py-2 align-top">
                 <input
                   type="checkbox"
@@ -222,6 +230,7 @@ function UpdatesTable({
                   className="mt-0.5 rounded border-border text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                 />
               </td>
+              )}
               <td className="px-2 sm:px-4 py-2 break-all">
                 {u.packageName}
                 {u.isSecurity ? (
@@ -243,6 +252,7 @@ function UpdatesTable({
               <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500 truncate max-w-[150px]">
                 {u.repository || "-"}
               </td>
+              {!readOnly && (
               <td className="px-2 sm:px-4 py-2 text-right">
                 <div className="inline-flex items-center gap-1">
                   <button
@@ -259,6 +269,7 @@ function UpdatesTable({
                   </button>
                 </div>
               </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -404,7 +415,7 @@ function HiddenUpdatesSection({
 }: {
   hiddenUpdates: HiddenUpdate[];
   busy?: boolean;
-  onUnhide: (hiddenUpdate: HiddenUpdate) => void;
+  onUnhide?: (hiddenUpdate: HiddenUpdate) => void;
 }) {
   const { t } = useI18n();
 
@@ -428,7 +439,9 @@ function HiddenUpdatesSection({
               <th className="px-2 sm:px-4 py-2">{t("pages.systemDetail.hiddenVersion")}</th>
               <th className="px-2 sm:px-4 py-2 hidden md:table-cell">{t("pages.systemDetail.manager")}</th>
               <th className="px-2 sm:px-4 py-2 hidden lg:table-cell">{t("pages.systemDetail.repository")}</th>
-              <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">{t("pages.systemDetail.action")}</th>
+              {onUnhide && (
+                <th className="px-2 sm:px-4 py-2 text-right whitespace-nowrap">{t("pages.systemDetail.action")}</th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -455,6 +468,7 @@ function HiddenUpdatesSection({
                 <td className="px-2 sm:px-4 py-2 hidden lg:table-cell text-slate-500 truncate max-w-[150px]">
                   {update.repository || "-"}
                 </td>
+                {onUnhide && (
                 <td className="px-2 sm:px-4 py-2 text-right">
                   <button
                     onClick={() => onUnhide(update)}
@@ -468,6 +482,7 @@ function HiddenUpdatesSection({
                     </svg>
                   </button>
                 </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -678,7 +693,7 @@ function getOperationNoticeCopy(
         };
   }
 
-  const copies: Record<string, Record<"failed" | "warning", Pick<OperationNoticeState, "title" | "message">>> = {
+  const copies: Record<string, Partial<Record<"failed" | "warning", Pick<OperationNoticeState, "title" | "message">>>> = {
     autoremove: {
       failed: {
         title: translateOrFallback(t, "pages.systemDetail.notice.autoremoveFailedTitle", "Autoremove failed"),
@@ -727,6 +742,12 @@ function getOperationNoticeCopy(
       warning: {
         title: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningTitle", "Reboot completed with warnings"),
         message: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningMessage", "The reboot operation completed with warnings."),
+      },
+    },
+    repository_source_edit: {
+      failed: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.repositorySourceEditFailedTitle", "Repository source update failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.repositorySourceEditFailedMessage", "The repository source file could not be saved."),
       },
     },
     package_manager_repair: {
@@ -857,8 +878,8 @@ export function PackageManagerIssueBanner({
   busy?: boolean;
   solvingIssueId?: number | null;
   dismissingIssueId?: number | null;
-  onSolve: (issue: PackageManagerIssue) => void;
-  onDismiss: (issue: PackageManagerIssue) => void;
+  onSolve?: (issue: PackageManagerIssue) => void;
+  onDismiss?: (issue: PackageManagerIssue) => void;
 }) {
   const { t } = useI18n();
 
@@ -884,6 +905,7 @@ export function PackageManagerIssueBanner({
               </div>
               <p className="text-amber-700 dark:text-amber-400">{issue.message}</p>
             </div>
+            {onSolve && (
             <button
               onClick={() => onSolve(issue)}
               disabled={busy || solving || dismissing}
@@ -896,6 +918,8 @@ export function PackageManagerIssueBanner({
                 </span>
               ) : t("pages.systemDetail.solve")}
             </button>
+            )}
+            {onDismiss && (
             <button
               onClick={() => onDismiss(issue)}
               disabled={busy || solving || dismissing}
@@ -908,6 +932,7 @@ export function PackageManagerIssueBanner({
                 </span>
               ) : t("pages.systemDetail.dismiss")}
             </button>
+            )}
           </div>
         );
       })}
@@ -984,7 +1009,7 @@ export function OsLifecycleWarningBanner({
   supportEndDate: string | null;
   daysUntilSupportEnd: number | null;
   busy?: boolean;
-  onDismiss: () => void;
+  onDismiss?: () => void;
 }) {
   const { t } = useI18n();
   const isEol = status === "eol";
@@ -1052,6 +1077,7 @@ export function OsLifecycleWarningBanner({
         <p className="font-medium">{translatedLabel}</p>
         <p className={`mt-1 ${tone.body}`}>{detail}</p>
       </div>
+      {onDismiss && (
       <button
         type="button"
         onClick={onDismiss}
@@ -1065,6 +1091,7 @@ export function OsLifecycleWarningBanner({
           </span>
         ) : t("pages.systemDetail.dismiss")}
       </button>
+      )}
     </div>
   );
 }
@@ -1194,6 +1221,10 @@ export function getActivityTitle(
   if (action === "full_upgrade_all") return translateOrFallback(t, "pages.systemDetail.activity.fullUpgradedAllPackages", "Full upgraded all packages");
   if (action === "reboot") return translateOrFallback(t, "pages.systemDetail.activity.rebootedSystem", "Rebooted system");
   if (action === "package_manager_repair") return translateOrFallback(t, "pages.systemDetail.activity.repairedPackageManager", "Repaired package manager");
+  if (action === "repository_source_edit") {
+    const path = packagesList.join(", ") || "repository source";
+    return translateOrFallback(t, "pages.systemDetail.activity.editedRepositorySource", `Edited ${path}`, { path });
+  }
   return translateOrFallback(t, "pages.systemDetail.activity.upgradedPackageList", `Upgraded ${packagesList.join(", ") || packageName || "package"}`, {
     packages: packagesList.join(", ") || packageName || "package",
   });
@@ -1289,7 +1320,7 @@ export function getPackageSelectionState(
 }
 
 function isSshSafeActivity(action: string): boolean {
-  return action !== "check" && action !== "reboot";
+  return action !== "check" && action !== "reboot" && action !== "repository_source_edit";
 }
 
 type ActivityDisplayRow = {
@@ -2250,6 +2281,7 @@ export default function SystemDetail() {
   const systemId = parseInt(id!, 10);
   const { data, isLoading, dataUpdatedAt } = useSystem(systemId);
   const { data: settings } = useSettings();
+  const { isReadOnly } = useAuth();
   const checkUpdates = useCheckUpdates();
   const autoremove = useAutoremove();
   const hideUpdate = useHideUpdate();
@@ -2694,7 +2726,7 @@ export default function SystemDetail() {
             </svg>
             {t("pages.systemDetail.back")}
           </button>
-          {(checking || repairingPackageIssue) && activeOp ? (
+          {isReadOnly ? null : (checking || repairingPackageIssue) && activeOp ? (
             renderRunningCancelAction(
               repairingPackageIssue ? t("pages.systemDetail.repairing") : t("common.checking"),
               checkingCancelClass,
@@ -2870,7 +2902,7 @@ export default function SystemDetail() {
         />
       </div>
 
-      {showRootUserBanner && (
+      {showRootUserBanner && !isReadOnly && (
         <RootUserInfoBanner
           systemName={system.name}
           busy={dismissingRootUserBanner}
@@ -2879,7 +2911,7 @@ export default function SystemDetail() {
         />
       )}
 
-      {showHostKeyVerificationBanner && (
+      {showHostKeyVerificationBanner && !isReadOnly && (
         <HostKeyVerificationBanner
           systemName={system.name}
           onOpenConfiguration={() => setShowConfigurationModal(true)}
@@ -2902,7 +2934,7 @@ export default function SystemDetail() {
           supportEndDate={system.osLifecycleSupportEndDate}
           daysUntilSupportEnd={system.osLifecycleDaysUntilSupportEnd}
           busy={dismissingOsLifecycleWarning}
-          onDismiss={handleDismissOsLifecycleWarning}
+          onDismiss={isReadOnly ? undefined : handleDismissOsLifecycleWarning}
         />
       )}
 
@@ -2911,8 +2943,8 @@ export default function SystemDetail() {
         busy={upgrading || autoremoving || checking || rebooting || repairingPackageIssue}
         solvingIssueId={solvePackageIssue.isPending ? solvePackageIssue.variables?.issueId ?? null : null}
         dismissingIssueId={dismissPackageIssue.isPending ? dismissPackageIssue.variables?.issueId ?? null : null}
-        onSolve={setPendingSolveIssue}
-        onDismiss={setPendingDismissIssue}
+        onSolve={isReadOnly ? undefined : setPendingSolveIssue}
+        onDismiss={isReadOnly ? undefined : setPendingDismissIssue}
       />
 
       <OperationNoticeBanner state={displayedOperationNoticeState} />
@@ -2925,6 +2957,8 @@ export default function SystemDetail() {
           </svg>
           <span className="font-medium">{t("pages.systemDetail.rebootRequired")}</span>
           <span className="text-amber-600 dark:text-amber-500 flex-1">{t("pages.systemDetail.rebootRequiredDescription")}</span>
+          {!isReadOnly && (
+          <>
           <button
             onClick={() => setShowRebootConfirm(true)}
             disabled={rebooting || upgrading || autoremoving || checking || repairingPackageIssue || dismissingNeedsReboot}
@@ -2949,6 +2983,8 @@ export default function SystemDetail() {
               </span>
             ) : t("pages.systemDetail.dismiss")}
           </button>
+          </>
+          )}
         </div>
       )}
 
@@ -2964,6 +3000,7 @@ export default function SystemDetail() {
         selectionDisabled={packageSelectionState.selectionDisabled}
         hideBusy={hideUpdate.isPending}
         onHide={setPendingHideUpdate}
+        readOnly={isReadOnly}
       />
 
       <InstalledPackagesSection
@@ -2975,7 +3012,7 @@ export default function SystemDetail() {
       <HiddenUpdatesSection
         hiddenUpdates={hiddenUpdates}
         busy={unhideUpdate.isPending || hideUpdate.isPending || upgrading || autoremoving || checking || repairingPackageIssue}
-        onUnhide={handleUnhideUpdate}
+        onUnhide={isReadOnly ? undefined : handleUnhideUpdate}
       />
 
       {/* History */}
@@ -3142,8 +3179,10 @@ export default function SystemDetail() {
             detectedPkgManagers: system.detectedPkgManagers ?? undefined,
             disabledPkgManagers: system.disabledPkgManagers ?? undefined,
             pkgManagerConfigs: system.pkgManagerConfigs ?? undefined,
+            pkgManagerSecretRefs: system.pkgManagerSecretRefs ?? null,
             autoHideKeptBackUpdates: system.autoHideKeptBackUpdates,
             hidden: system.hidden === 1,
+            repositorySourceEditingEnabled: system.repositorySourceEditingEnabled === 1,
             hostKeyStatus: system.hostKeyStatus,
             scriptOverrides: system.scriptOverrides,
           }}

@@ -15,6 +15,7 @@ const {
   mockUseDeleteApiToken,
   mockUseToast,
   mockUseAuth,
+  mockUseBranding,
 } = vi.hoisted(() => ({
   mockUseSettingsResponse: vi.fn(),
   mockUseUpdateSettings: vi.fn(),
@@ -28,11 +29,19 @@ const {
   mockUseDeleteApiToken: vi.fn(),
   mockUseToast: vi.fn(),
   mockUseAuth: vi.fn(),
+  mockUseBranding: vi.fn(),
 }));
 
 vi.mock("../../client/lib/settings", () => ({
   useSettingsResponse: mockUseSettingsResponse,
   useUpdateSettings: mockUseUpdateSettings,
+}));
+
+vi.mock("../../client/lib/branding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../client/lib/branding")>()),
+  useBranding: mockUseBranding,
+  useUploadAppLogo: () => ({ mutate: vi.fn(), isPending: false }),
+  useResetAppLogo: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("../../client/lib/passkeys", () => ({
@@ -112,6 +121,7 @@ describe("Settings page", () => {
     mockUseDeleteApiToken.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseToast.mockReturnValue({ addToast: vi.fn() });
     mockUseAuth.mockReturnValue({ hasPassword: true, refresh: vi.fn() });
+    mockUseBranding.mockReturnValue({ appName: "Linux Update Dashboard", logoUrl: null });
   });
 
   afterEach(() => {
@@ -128,5 +138,27 @@ describe("Settings page", () => {
     expect(html).not.toContain("Update Schedule");
     expect(html).not.toContain("Scheduler Interval");
     expect(html).not.toContain("Cache Duration");
+  });
+
+  test("renders the branding section with the default logo controls", () => {
+    const html = renderToStaticMarkup(<Settings />);
+
+    expect(html).toContain("Branding");
+    expect(html).toContain("Application Name");
+    expect(html).toContain('placeholder="Linux Update Dashboard"');
+    expect(html).toContain("Upload Logo");
+    expect(html).not.toContain("Use Default Logo");
+  });
+
+  test("offers resetting the logo when a custom logo is configured", () => {
+    mockUseBranding.mockReturnValue({
+      appName: "Acme",
+      logoUrl: "/api/settings/public/logo?v=abc",
+    });
+
+    const html = renderToStaticMarkup(<Settings />);
+
+    expect(html).toContain("Use Default Logo");
+    expect(html).toContain('src="/api/settings/public/logo?v=abc"');
   });
 });

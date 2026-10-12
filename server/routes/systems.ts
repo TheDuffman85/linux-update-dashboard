@@ -14,6 +14,12 @@ import { validatePackageName } from "../ssh/parsers/types";
 import * as outputStream from "../services/output-stream";
 import { logger } from "../logger";
 import { resolveSudoersPreview } from "../services/sudoers-preview";
+import {
+  RepositorySourceError,
+  fetchRepositorySources,
+  saveRepositorySource,
+} from "../services/repository-source-service";
+import { sanitizeOutput } from "../utils/sanitize";
 import { resolveSystemCredential } from "../services/credential-service";
 import { getActivityHistoryLimit } from "../services/settings-service";
 import {
@@ -29,9 +35,13 @@ import {
   getAptAutoHideKeptBackUpdates,
   mergeLegacyAutoHideKeptBackUpdates,
   normalizePackageManagerConfigs,
+  normalizePackageManagerSecretRefs,
   parsePackageManagerConfigs,
+  parsePackageManagerSecretRefs,
   validatePackageManagerConfigsInput,
+  validatePackageManagerSecretRefsInput,
 } from "../package-manager-configs";
+import { validateSecretRefCredentials } from "../services/package-manager-secret-service";
 
 type SystemsEnv = {
   Variables: {
@@ -90,6 +100,12 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
     return "hidden must be a boolean";
   }
   if (
+    body.repositorySourceEditingEnabled !== undefined &&
+    typeof body.repositorySourceEditingEnabled !== "boolean"
+  ) {
+    return "repositorySourceEditingEnabled must be a boolean";
+  }
+  if (
     body.autoHideKeptBackUpdates !== undefined &&
     typeof body.autoHideKeptBackUpdates !== "boolean"
   ) {
@@ -125,6 +141,15 @@ function validateSystemInput(body: Record<string, unknown>): string | null {
   );
   if (pkgManagerConfigError) {
     return pkgManagerConfigError;
+  }
+  const secretRefsError = validatePackageManagerSecretRefsInput(
+    body.pkgManagerSecretRefs,
+    scriptService.listPackageManagerDefinitions(),
+  ) ?? validateSecretRefCredentials(
+    normalizePackageManagerSecretRefs(body.pkgManagerSecretRefs, scriptService.listPackageManagerDefinitions()),
+  );
+  if (secretRefsError) {
+    return secretRefsError;
   }
   if (
     body.validatedConfigToken !== undefined &&
@@ -305,6 +330,11 @@ function serializeSystem(s: Record<string, unknown>) {
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
     pkgManagerConfigs,
+    // Credential IDs only; secret values are never serialized.
+    pkgManagerSecretRefs: parsePackageManagerSecretRefs(
+      s.pkgManagerSecretRefs as string | null,
+      scriptService.listPackageManagerDefinitions(),
+    ),
     hostKeyStatus: systemService.deriveConnectionHostKeyStatus({
       id: s.id as number | undefined,
       hostKeyVerificationEnabled: s.hostKeyVerificationEnabled as number | null,
@@ -674,6 +704,68 @@ systems.get("/:id/sudoers-preview", async (c) => {
   return c.json(preview);
 });
 
+systems.get("/:id/repository-sources", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  const system = systemService.getSystem(id);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  try {
+    const sources = await fetchRepositorySources(
+      system as Record<string, unknown> & typeof system,
+      getSSHManager(),
+      { systemId: id },
+    );
+    return c.json(sources);
+  } catch (error) {
+    const message = sanitizeOutput(error instanceof Error ? error.message : String(error));
+    logger.warn("Failed to read repository sources", { systemId: id, error: message });
+    return c.json({ error: message }, 502);
+  }
+});
+
+systems.put("/:id/repository-sources", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (isApiTokenRequest(c)) {
+    return c.json({ error: "API tokens cannot modify repository sources" }, 403);
+  }
+  const system = systemService.getSystem(id);
+  if (!system) return c.json({ error: "System not found" }, 404);
+
+  const body = asObject(await c.req.json().catch(() => null));
+  if (
+    !body ||
+    typeof body.path !== "string" ||
+    typeof body.content !== "string" ||
+    typeof body.baseSha256 !== "string" ||
+    (body.dryRun !== undefined && typeof body.dryRun !== "boolean")
+  ) {
+    return c.json({ error: "path, content, and baseSha256 are required strings; dryRun must be a boolean" }, 400);
+  }
+  if (updateService.getActiveOperation(id) ?? upgradeBatchService.getQueuedOrRunningOperation(id)) {
+    return c.json({ error: "Wait for the running operation on this system to finish" }, 409);
+  }
+
+  try {
+    const result = await saveRepositorySource(
+      system as Record<string, unknown> & typeof system,
+      { path: body.path, content: body.content, baseSha256: body.baseSha256, dryRun: body.dryRun === true },
+      getSSHManager(),
+      { systemId: id },
+    );
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof RepositorySourceError) {
+      if (error.status === 502) {
+        logger.warn("Failed to save repository source", { systemId: id, path: body.path, error: error.message });
+      }
+      return c.json({ error: error.message, ...error.details }, error.status);
+    }
+    throw error;
+  }
+});
+
 systems.post("/:id/hidden-updates", async (c) => {
   const systemId = parseId(c.req.param("id"));
   if (!systemId) return c.json({ error: "Invalid system ID" }, 400);
@@ -801,6 +893,10 @@ systems.post("/", async (c) => {
       body.pkgManagerConfigs !== undefined
         ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
+    const pkgManagerSecretRefs =
+      body.pkgManagerSecretRefs !== undefined
+        ? normalizePackageManagerSecretRefs(body.pkgManagerSecretRefs, scriptService.listPackageManagerDefinitions())
+        : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
     if (autoHideKeptBackUpdates !== undefined) {
@@ -814,6 +910,8 @@ systems.post("/", async (c) => {
     const excludeFromUpgradeAll =
       typeof body.excludeFromUpgradeAll === "boolean" ? body.excludeFromUpgradeAll : undefined;
     const hidden = typeof body.hidden === "boolean" ? body.hidden : undefined;
+    const repositorySourceEditingEnabled =
+      typeof body.repositorySourceEditingEnabled === "boolean" ? body.repositorySourceEditingEnabled : undefined;
 
     systemId = systemService.createSystem({
       name,
@@ -826,9 +924,11 @@ systems.post("/", async (c) => {
       disabledPkgManagers,
       detectedPkgManagers,
       pkgManagerConfigs,
+      pkgManagerSecretRefs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,
+      repositorySourceEditingEnabled,
       sourceSystemId,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
@@ -985,6 +1085,10 @@ systems.put("/:id", async (c) => {
       body.pkgManagerConfigs !== undefined
         ? normalizePackageManagerConfigs(body.pkgManagerConfigs, scriptService.listPackageManagerDefinitions())
         : undefined;
+    const pkgManagerSecretRefs =
+      body.pkgManagerSecretRefs !== undefined
+        ? normalizePackageManagerSecretRefs(body.pkgManagerSecretRefs, scriptService.listPackageManagerDefinitions())
+        : undefined;
     const autoHideKeptBackUpdates =
       typeof body.autoHideKeptBackUpdates === "boolean" ? body.autoHideKeptBackUpdates : undefined;
     if (autoHideKeptBackUpdates !== undefined) {
@@ -998,6 +1102,8 @@ systems.put("/:id", async (c) => {
     const excludeFromUpgradeAll =
       typeof body.excludeFromUpgradeAll === "boolean" ? body.excludeFromUpgradeAll : undefined;
     const hidden = typeof body.hidden === "boolean" ? body.hidden : undefined;
+    const repositorySourceEditingEnabled =
+      typeof body.repositorySourceEditingEnabled === "boolean" ? body.repositorySourceEditingEnabled : undefined;
 
     systemService.updateSystem(id, {
       name,
@@ -1010,9 +1116,11 @@ systems.put("/:id", async (c) => {
       disabledPkgManagers,
       detectedPkgManagers,
       pkgManagerConfigs,
+      pkgManagerSecretRefs,
       autoHideKeptBackUpdates: effectiveAutoHideKeptBackUpdates,
       excludeFromUpgradeAll,
       hidden,
+      repositorySourceEditingEnabled,
       trustedHostKeyData: validatedConfig?.approvedTargetHostKey,
     });
     if (body.scriptOverrides !== undefined) {

@@ -6,8 +6,7 @@ import {
   type VerifiedRegistrationResponse,
   type VerifiedAuthenticationResponse,
 } from "@simplewebauthn/server";
-
-const rpName = "Linux Update Dashboard";
+import { getAppName } from "../services/branding-service";
 
 export async function getRegistrationOptions(
   userId: number,
@@ -20,7 +19,7 @@ export async function getRegistrationOptions(
   }));
 
   return generateRegistrationOptions({
-    rpName,
+    rpName: getAppName(),
     rpID,
     userName: username,
     userDisplayName: username,

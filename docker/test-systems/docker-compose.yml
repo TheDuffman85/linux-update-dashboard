@@ -228,3 +228,13 @@ services:
     ports:
       - "2017:22"
     restart: unless-stopped
+
+  deb-get:
+    build:
+      context: .
+      dockerfile: Dockerfile.deb-get
+    container_name: ludash-test-deb-get
+    hostname: deb-get-test
+    ports:
+      - "2018:22"
+    restart: unless-stopped

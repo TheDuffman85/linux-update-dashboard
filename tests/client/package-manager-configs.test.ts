@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { normalizePackageManagerConfigs } from "../../client/lib/package-manager-configs";
+import {
+  normalizePackageManagerConfigs,
+  normalizePackageManagerSecretRefs,
+  suggestSecretEnvVar,
+} from "../../client/lib/package-manager-configs";
 
 describe("client package-manager configs", () => {
   test("normalizes DNF and YUM EULA automation settings", () => {
@@ -54,5 +58,28 @@ describe("client package-manager configs", () => {
         configEntries: [],
       },
     ], false)).toBeNull();
+  });
+  test("never sends plaintext values for secret entries", () => {
+    const managers = [{
+      name: "deb-get",
+      configEntries: [
+        { key: "githubToken", defaultValue: "", secret: true, envVar: "DEBGET_TOKEN" },
+        { key: "channel", defaultValue: "stable" },
+      ],
+    }];
+
+    expect(normalizePackageManagerConfigs({
+      "deb-get": { githubToken: "ghp_plaintext", channel: "beta" },
+    }, managers)).toEqual({ "deb-get": { channel: "beta" } });
+    expect(normalizePackageManagerSecretRefs({
+      "deb-get": { githubToken: 4, channel: 5 },
+      other: { githubToken: 6 },
+    }, managers)).toEqual({ "deb-get": { githubToken: 4 } });
+  });
+
+  test("suggests environment variable names from config keys", () => {
+    expect(suggestSecretEnvVar("githubToken")).toBe("GITHUB_TOKEN");
+    expect(suggestSecretEnvVar("api-key")).toBe("API_KEY");
+    expect(suggestSecretEnvVar("2fa")).toBe("_2FA");
   });
 });

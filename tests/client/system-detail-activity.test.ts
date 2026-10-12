@@ -27,6 +27,7 @@ import {
 } from "../../client/pages/SystemDetail";
 import { SudoersSetupPanel } from "../../client/components/systems/SudoersSetupPanel";
 import type { ActiveOperation, HistoryEntry, PackageManagerIssue } from "../../client/lib/systems";
+import { translateForLanguage, type TranslationValues } from "../../client/lib/i18n";
 import type { WsMessage } from "../../client/hooks/useCommandOutput";
 
 function createHistoryEntry(overrides: Partial<HistoryEntry> & Pick<HistoryEntry, "id" | "action" | "pkgManager" | "status" | "startedAt">): HistoryEntry {
@@ -1007,5 +1008,27 @@ describe("package selection helpers", () => {
     const state = getPackageSelectionState(["bash"], [{ packageName: "bash" }], true);
     expect(state.selectionDisabled).toBe(true);
     expect(state.selectedCount).toBe(1);
+  });
+});
+
+describe("repository source edit activity", () => {
+  test("names the edited file and uses a specific failure notice", () => {
+    const t = (key: string, values?: TranslationValues) => translateForLanguage("en", key, values);
+
+    expect(getActivityTitle("repository_source_edit", ["/etc/apt/sources.list"])).toBe("Edited /etc/apt/sources.list");
+    expect(getActivityTitle("repository_source_edit", ["/etc/apt/sources.list"], undefined, t))
+      .toBe("Edited /etc/apt/sources.list");
+    expect(getOperationNoticeState(createHistoryEntry({
+      id: 1,
+      action: "repository_source_edit",
+      pkgManager: "apt",
+      startedAt: "2026-10-11 12:00:00",
+      status: "failed",
+      error: "sudo: a password is required",
+    }), 0, t)).toMatchObject({
+      kind: "operation_failed",
+      title: "Repository source update failed",
+      error: "sudo: a password is required",
+    });
   });
 });

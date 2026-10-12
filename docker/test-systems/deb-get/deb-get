@@ -1,0 +1,91 @@
+#!/bin/sh
+# Minimal stand-in for deb-get (https://github.com/wimpysworld/deb-get) used by
+# the dashboard integration tests. It mirrors the parts the dashboard relies on:
+#   - root is required for every action, like deb-get's elevate_privs
+#   - `show` prints deb-get's "  Key:<TAB>value" info block per app
+#   - `upgrade --dg-only` and `install <app...>` install published .deb files
+#   - GitHub-hosted apps need DEBGET_TOKEN, simulating the API rate limit
+set -eu
+
+FIXTURE=/opt/deb-get-fixture
+INSTALLED=/etc/deb-get/installed
+
+if [ "$(id -u)" != "0" ]; then
+  echo "  [!] ERROR! deb-get requires sudo or doas to elevate permissions, neither were found." >&2
+  exit 1
+fi
+
+method_of() { awk -v app="$1" '$1 == app {print $3}' "$INSTALLED"; }
+installed_version() { dpkg-query -W -f='${Version}' "$1" 2>/dev/null || true; }
+
+published_of() {
+  if [ "$(method_of "$1")" = "github" ] && [ -z "${DEBGET_TOKEN-}" ]; then
+    echo "  [!] ERROR! GitHub API rate limit exceeded for $1; set DEBGET_TOKEN." >&2
+    return 0
+  fi
+  cat "$FIXTURE/published/$1"
+}
+
+log_auth() {
+  if [ -n "${DEBGET_TOKEN-}" ]; then
+    echo "  [+] GitHub API: authenticated with token ${DEBGET_TOKEN}"
+  else
+    echo "  [*] WARNING! GitHub API: unauthenticated"
+  fi
+}
+
+install_published() {
+  version="$(published_of "$1")"
+  if [ -z "$version" ]; then
+    echo "  [*] WARNING! $1 update check failed, moving on to next package."
+    return 0
+  fi
+  if dpkg --compare-versions "$version" gt "$(installed_version "$1")"; then
+    dpkg -i "$FIXTURE/debs/${1}_${version}_all.deb" >/dev/null
+    echo "  [+] Installed $1 $version"
+  else
+    echo "  [+] ${1}_${version}_all.deb is up to date."
+  fi
+}
+
+action="${1-}"
+[ "$#" -gt 0 ] && shift
+
+case "$action" in
+  show)
+    [ "$#" -gt 0 ] || { echo "  [!] ERROR! You must specify an app:" >&2; exit 1; }
+    for app in "$@"; do
+      if [ ! -f "$FIXTURE/published/$app" ]; then
+        echo "  [!] ERROR! $app is not a supported application." >&2
+        exit 1
+      fi
+      case "$(method_of "$app")" in
+        apt|ppa) updater=apt ;;
+        *) updater=deb-get ;;
+      esac
+      installed="$(installed_version "$app")"
+      published="$(published_of "$app")"
+      printf '%s\n' "$app"
+      printf '  %s:\t%s\n' Package "$app" Repository 01-main Updater "$updater" \
+        Installed "${installed:-No}" Published "$published" Architecture all \
+        Website "https://example.invalid/$app" Summary "deb-get fixture app"
+    done
+    ;;
+  upgrade)
+    [ "${1-}" = "--dg-only" ] || { echo "  [!] ERROR! The fixture only supports upgrade --dg-only." >&2; exit 2; }
+    log_auth
+    for app in $(awk '$3 !~ /^(apt|ppa)$/ {print $1}' "$INSTALLED"); do
+      install_published "$app"
+    done
+    ;;
+  install)
+    log_auth
+    for app in "$@"; do
+      install_published "$app"
+    done
+    ;;
+  *)
+    echo "  [!] ERROR! Unknown action supplied: $action" >&2
+    exit 1
+    ;;
+esac

@@ -20,6 +20,7 @@ export const users = sqliteTable("users", {
   oidcIssuer: text("oidc_issuer"),
   oidcSubject: text("oidc_subject"),
   isAdmin: integer("is_admin").notNull().default(0),
+  role: text("role").notNull().default("admin"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
@@ -86,6 +87,7 @@ export const systems = sqliteTable("systems", {
   detectedPkgManagers: text("detected_pkg_managers"),
   disabledPkgManagers: text("disabled_pkg_managers"),
   pkgManagerConfigs: text("pkg_manager_configs"),
+  pkgManagerSecretRefs: text("pkg_manager_secret_refs"),
   autoHideKeptBackUpdates: integer("auto_hide_kept_back_updates")
     .notNull()
     .default(0),
@@ -114,6 +116,9 @@ export const systems = sqliteTable("systems", {
   rootUserBannerDismissedHostKeyFingerprintSha256: text(
     "root_user_banner_dismissed_host_key_fingerprint_sha256",
   ),
+  repositorySourceEditingEnabled: integer("repository_source_editing_enabled")
+    .notNull()
+    .default(0),
   excludeFromUpgradeAll: integer("exclude_from_upgrade_all")
     .notNull()
     .default(0),

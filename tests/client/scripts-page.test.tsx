@@ -327,7 +327,7 @@ describe("Scripts page", () => {
     const html = renderToStaticMarkup(<Scripts />);
 
     expect(html).toContain("Package Managers");
-    expect(html).toContain("8 managers");
+    expect(html).toContain("9 managers");
     expect(html).toContain("1 custom");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Edit package manager");

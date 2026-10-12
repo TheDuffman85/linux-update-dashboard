@@ -13,7 +13,11 @@ import {
   prepareTelegramConfigForStorage,
   resolveTelegramCommandToken,
 } from "../../server/services/notifications/telegram";
-import { __testing as telegramBotTesting } from "../../server/services/telegram-bot";
+import {
+  __testing as telegramBotTesting,
+  syncBrandingProfilePhotos,
+} from "../../server/services/telegram-bot";
+import { saveAppLogo } from "../../server/services/branding-service";
 
 const Hono = BaseHono<{ Variables: { user: { userId: number; username: string; isAdmin?: boolean } } }>;
 type Hono = InstanceType<typeof Hono>;
@@ -323,5 +327,98 @@ describe("telegram notification routes", () => {
     const body = await res.json() as { config: Record<string, unknown> };
     expect(body.config.commandTokenStatus).toBe("expired");
     expect(body.config.commandTokenExpiresAt).toBe("2000-01-01 00:00:00");
+  });
+
+  describe("branded bot profile photo", () => {
+    const PNG_LOGO = {
+      contentType: "image/png" as const,
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+    };
+    const jpeg = (marker: number) => Buffer.from([0xff, 0xd8, 0xff, 0xe0, marker]);
+
+    async function createTelegramNotification() {
+      const res = await app.request("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Ops Telegram",
+          type: "telegram",
+          enabled: true,
+          notifyOn: ["updates"],
+          systemIds: null,
+          config: {
+            telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+            commandsEnabled: false,
+          },
+        }),
+      });
+      expect(res.status).toBe(201);
+      return (await res.json()) as { id: number };
+    }
+
+    function stubTelegram(uploads: Buffer[]) {
+      globalThis.fetch = (async (input, init) => {
+        const url = String(input);
+        if (url.includes("/setMyProfilePhoto")) {
+          const avatar = (init?.body as FormData).get("avatar") as File;
+          uploads.push(Buffer.from(await avatar.arrayBuffer()));
+          return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { username: "ludash_test_bot" },
+        }), { status: 200 });
+      }) as typeof fetch;
+    }
+
+    test("uploads the branding logo rendition once per version when linking", async () => {
+      saveAppLogo(PNG_LOGO, jpeg(1));
+      const created = await createTelegramNotification();
+      const uploads: Buffer[] = [];
+      stubTelegram(uploads);
+
+      await app.request(`/api/notifications/${created.id}/telegram/link`, { method: "POST" });
+      await app.request(`/api/notifications/${created.id}/telegram/link`, { method: "POST" });
+
+      expect(uploads).toEqual([jpeg(1)]);
+    });
+
+    test("re-uploads the photo of linked bots when the logo changes", async () => {
+      getDb().insert(notifications).values({
+        name: "Linked Telegram",
+        type: "telegram",
+        enabled: 1,
+        notifyOn: '["updates"]',
+        config: JSON.stringify(prepareTelegramConfigForStorage({
+          telegramBotToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXyz_12345",
+          chatId: "42",
+          chatBindingStatus: "bound",
+          commandsEnabled: false,
+        })),
+      }).run();
+      const uploads: Buffer[] = [];
+      stubTelegram(uploads);
+      telegramBotTesting.setStarted(true);
+
+      saveAppLogo(PNG_LOGO, jpeg(1));
+      await syncBrandingProfilePhotos();
+      await syncBrandingProfilePhotos();
+      saveAppLogo(PNG_LOGO, jpeg(2));
+      await syncBrandingProfilePhotos();
+
+      expect(uploads).toEqual([jpeg(1), jpeg(2)]);
+    });
+
+    test("does not touch bots without a linked chat", async () => {
+      await createTelegramNotification();
+      const uploads: Buffer[] = [];
+      stubTelegram(uploads);
+      telegramBotTesting.setStarted(true);
+
+      saveAppLogo(PNG_LOGO, jpeg(1));
+      await syncBrandingProfilePhotos();
+
+      expect(uploads).toEqual([]);
+    });
   });
 });

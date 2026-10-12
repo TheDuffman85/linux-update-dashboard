@@ -1,5 +1,6 @@
 import { getEncryptor, looksLikeEncryptedValue } from "../../security";
 import type { NotificationConfig } from "./types";
+import { getAppName } from "../branding-service";
 
 export const STORED_SENTINEL = "(stored)";
 const ALLOWED_PROTOCOLS = new Set(["mqtt:", "mqtts:", "ws:", "wss:"]);
@@ -99,7 +100,7 @@ export function defaultMqttConfig(): MqttConfig {
     topic: "",
     retainEvents: false,
     homeAssistantEnabled: false,
-    deviceName: "Linux Update Dashboard",
+    deviceName: getAppName(),
     discoveryPrefix: "homeassistant",
     baseTopic: "ludash",
     publishAppEntity: true,

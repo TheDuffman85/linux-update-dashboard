@@ -42,6 +42,7 @@ describe("encryption migrations", () => {
     const systemPassword = encryptWithAuthTagLength("system-secret", key, 12);
     const oidcSecret = encryptWithAuthTagLength("oidc-secret", key, 12);
     const credentialPassword = encryptWithAuthTagLength("credential-secret", key, 12);
+    const secretCredentialValue = encryptWithAuthTagLength("package-manager-token", key, 12);
     const webhookHeader = encryptWithAuthTagLength("header-secret", key, 12);
     const webhookPassword = encryptWithAuthTagLength("basic-secret", key, 12);
     const webhookField = encryptWithAuthTagLength("field-secret", key, 12);
@@ -65,6 +66,12 @@ describe("encryption migrations", () => {
         username: "app",
         password: credentialPassword,
       }),
+    }).returning({ id: credentials.id }).get();
+
+    const secretCredentialRow = db.insert(credentials).values({
+      name: "deb-get token",
+      kind: "secret",
+      payload: JSON.stringify({ value: secretCredentialValue }),
     }).returning({ id: credentials.id }).get();
 
     const notificationRow = db.insert(notifications).values({
@@ -91,12 +98,16 @@ describe("encryption migrations", () => {
     const migratedSetting = db.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();
     const migratedCredential = db.select().from(credentials).where(eq(credentials.id, credentialRow.id)).get();
     const migratedNotification = db.select().from(notifications).where(eq(notifications.id, notificationRow.id)).get();
+    const migratedSecretCredential = db.select().from(credentials).where(eq(credentials.id, secretCredentialRow.id)).get();
 
     const decryptor = getEncryptor();
     const systemMeta = decryptor.decryptWithMetadata(migratedSystem?.encryptedPassword as string);
     const settingMeta = decryptor.decryptWithMetadata(migratedSetting?.value as string);
     const credentialMeta = decryptor.decryptWithMetadata(
       JSON.parse(migratedCredential?.payload as string).password,
+    );
+    const secretCredentialMeta = decryptor.decryptWithMetadata(
+      JSON.parse(migratedSecretCredential?.payload as string).value,
     );
     const webhookConfig = JSON.parse(migratedNotification?.config as string);
     const headerMeta = decryptor.decryptWithMetadata(webhookConfig.headers[0].value);
@@ -113,6 +124,10 @@ describe("encryption migrations", () => {
     });
     expect(credentialMeta).toEqual({
       plaintext: "credential-secret",
+      authTagLength: CURRENT_AUTH_TAG_LENGTH,
+    });
+    expect(secretCredentialMeta).toEqual({
+      plaintext: "package-manager-token",
       authTagLength: CURRENT_AUTH_TAG_LENGTH,
     });
     expect(headerMeta).toEqual({

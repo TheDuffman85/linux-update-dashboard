@@ -52,13 +52,22 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 
 ## Dashboard and Settings
 
-| Method | Endpoint                 | Description                             |
-| ------ | ------------------------ | --------------------------------------- |
-| GET    | `/api/dashboard/stats`   | Summary statistics.                     |
-| GET    | `/api/dashboard/systems` | Systems with dashboard status metadata. |
-| GET    | `/api/app-update`        | Application update status.              |
-| GET    | `/api/settings`          | Current settings.                       |
-| PUT    | `/api/settings`          | Update settings.                        |
+| Method | Endpoint                      | Description                                                           |
+| ------ | ----------------------------- | --------------------------------------------------------------------- |
+| GET    | `/api/dashboard/stats`        | Summary statistics.                                                   |
+| GET    | `/api/dashboard/systems`      | Systems with dashboard status metadata.                               |
+| GET    | `/api/app-update`             | Application update status.                                            |
+| GET    | `/api/settings`               | Current settings.                                                     |
+| PUT    | `/api/settings`               | Update settings, including the `app_name` branding setting.           |
+| GET    | `/api/settings/public`        | Unauthenticated language and branding (name and logo URL).            |
+| GET    | `/api/settings/public/logo`   | Unauthenticated custom logo image; `404` when none is configured.     |
+| PUT    | `/api/settings/branding/logo` | Upload a custom logo as `{ "dataUrl": "data:image/...;base64,..." }`. |
+| DELETE | `/api/settings/branding/logo` | Restore the default logo.                                             |
+
+Custom logos may be PNG, JPEG, GIF, WebP, or SVG images up to 512 KB. The
+image type is detected from the file content, and SVG logos are served with a
+sandboxed Content Security Policy. Like all `/api/settings` management
+endpoints, the branding endpoints are not available to API tokens.
 
 `GET /api/app-update` is available to read-only and read/write API tokens. It
 returns the current version and branch, the latest remote version, whether an
@@ -85,11 +94,21 @@ update is available, and release/repository URLs when available.
 | PUT    | `/api/systems/:id/script-overrides`                | Update per-system script overrides. API tokens cannot use this route.                                                         |
 | DELETE | `/api/systems/:id`                                 | Remove a system.                                                                                                              |
 | GET    | `/api/systems/:id/sudoers-preview`                 | Generate least-privilege sudoers setup instructions.                                                                          |
+| GET    | `/api/systems/:id/repository-sources`              | Read the repository source files of the active package managers over SSH (credentials masked). Each file includes `sha256`, `editable`, and `editBlockedReason`; returns `502` when the host cannot be read. |
+| PUT    | `/api/systems/:id/repository-sources`              | Replace one repository source file with `{ path, content, baseSha256, dryRun? }`. Requires **Allow repository source editing** on the system (`repositorySourceEditingEnabled` when creating or updating the system, default off); not available to API tokens. `dryRun` returns the diff without writing. Returns `409` when the file changed on the host or an operation is running, `400` with `line` for invalid syntax. |
 | GET    | `/api/systems/:id/updates`                         | Cached updates for a system.                                                                                                  |
 | GET    | `/api/systems/:id/history`                         | Activity/history records for a system.                                                                                        |
 | POST   | `/api/systems/:id/hidden-updates`                  | Hide one visible update from counts and dashboards.                                                                           |
 | DELETE | `/api/systems/:id/hidden-updates/:hiddenUpdateId`  | Unhide an update.                                                                                                             |
 | POST   | `/api/systems/:id/package-issues/:issueId/dismiss` | Dismiss a visible package-manager issue.                                                                                      |
+
+`POST /api/systems` and `PUT /api/systems/:id` accept `pkgManagerSecretRefs`, which
+assigns secret credentials to secret config entries:
+`{ "deb-get": { "githubToken": 12 } }`. Each ID must reference a credential of
+kind `secret`. Send `{}` to clear all assignments, or omit the field to keep the
+current ones. Plaintext values for secret entries are rejected in
+`pkgManagerConfigs`. System responses include `pkgManagerSecretRefs` as
+credential IDs only.
 
 ## Dashboard Groups
 
@@ -158,6 +177,9 @@ an omitted, empty, or whitespace-only prefix leaves the subject unchanged.
 Schedule `type` can be `refresh`, `update`, `autoremove`, `reboot`, or
 `notification_digest`. All schedule types use `config.cron`. System-targeted
 schedules accept `systemIds: null` for all systems or an array of system IDs.
+`reboot` schedules accept an optional `config.onlyIfRequired` boolean; when
+`true`, scoped systems are refreshed first and only those that still report a
+pending reboot are rebooted.
 
 ## Scripts
 
@@ -177,14 +199,21 @@ schedules accept `systemIds: null` for all systems or an array of system IDs.
 
 ## Credentials
 
-| Method | Endpoint                   | Description                           |
-| ------ | -------------------------- | ------------------------------------- |
-| GET    | `/api/credentials`         | List saved SSH credentials.           |
-| PUT    | `/api/credentials/reorder` | Reorder credentials.                  |
-| GET    | `/api/credentials/:id`     | Get a credential with masked secrets. |
-| POST   | `/api/credentials`         | Create a credential.                  |
-| PUT    | `/api/credentials/:id`     | Update a credential.                  |
-| DELETE | `/api/credentials/:id`     | Delete a credential.                  |
+| Method | Endpoint                   | Description                            |
+| ------ | -------------------------- | -------------------------------------- |
+| GET    | `/api/credentials`         | List saved SSH and secret credentials. |
+| PUT    | `/api/credentials/reorder` | Reorder credentials.                   |
+| GET    | `/api/credentials/:id`     | Get a credential with masked secrets.  |
+| POST   | `/api/credentials`         | Create a credential.                   |
+| PUT    | `/api/credentials/:id`     | Update a credential.                   |
+| DELETE | `/api/credentials/:id`     | Delete a credential.                   |
+
+Credential kinds are `usernamePassword`, `sshKey`, `certificate`, and `secret`.
+A `secret` credential has a single `value` field. It must be one line of at
+most 4096 characters, and responses mask it as `(stored)`. A credential that a
+system references, either for SSH or for a secret config entry, cannot be
+deleted. Its references list the system, plus `pkgManager` and `key` for secret
+entries.
 
 ## Passkeys
 

@@ -31,7 +31,9 @@ function moveCredential<T>(items: T[], fromIndex: number, toIndex: number): T[] 
 
 function getReferenceLabel(credential: CredentialSummary): string {
   if (credential.referenceCount === 0) return "Unused";
-  return credential.references.map((ref) => ref.name).join(", ");
+  return Array.from(new Set(credential.references.map((ref) =>
+    ref.type === "packageManagerSecret" ? `${ref.name} (${ref.pkgManager})` : ref.name
+  ))).join(", ");
 }
 
 export default function Credentials() {

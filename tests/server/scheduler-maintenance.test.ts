@@ -5,6 +5,7 @@ import { join } from "path";
 import { eq } from "drizzle-orm";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { schedules, systems } from "../../server/db/schema";
+import * as notificationService from "../../server/services/notification-service";
 import * as scheduleService from "../../server/services/schedule-service";
 import { schedulerTesting } from "../../server/services/scheduler";
 import * as updateService from "../../server/services/update-service";
@@ -79,5 +80,47 @@ describe("maintenance schedules", () => {
     expect(row?.enabled).toBe(1);
     expect(row?.lastRunStatus).toBe("success");
     expect(row?.lastRunMessage).toBe("Sent reboot to 1 system");
+  });
+
+  test("reboots only systems that still need a reboot after a fresh check", async () => {
+    const [alphaId, bravoId] = insertSystems();
+    const failingId = getDb()
+      .insert(systems)
+      .values({ name: "Charlie", hostname: "charlie.local", username: "root" })
+      .returning({ id: systems.id })
+      .get().id;
+    // Stale flags: Alpha looks fine but needs a reboot after the check, Bravo the reverse.
+    getDb().update(systems).set({ needsReboot: 1 }).where(eq(systems.id, bravoId)).run();
+    const checkUpdates = vi
+      .spyOn(updateService, "checkUpdates")
+      .mockImplementation(async (systemId) => {
+        if (systemId === failingId) throw new Error("unreachable");
+        getDb()
+          .update(systems)
+          .set({ needsReboot: systemId === alphaId ? 1 : 0 })
+          .where(eq(systems.id, systemId))
+          .run();
+        return [];
+      });
+    vi.spyOn(notificationService, "processScheduledResults").mockResolvedValue(undefined);
+    vi.spyOn(notificationService, "processAppUpdateNotifications").mockResolvedValue(undefined);
+    const rebootSystem = vi
+      .spyOn(updateService, "rebootSystem")
+      .mockResolvedValue({ success: true, message: "Reboot command sent" });
+    const id = scheduleService.createSchedule({
+      name: "Reboot when required",
+      type: "reboot",
+      systemIds: [alphaId, bravoId, failingId],
+      config: { cron: "0 4 * * 0", onlyIfRequired: true },
+    });
+
+    await schedulerTesting.runRebootSchedule(scheduleService.getSchedule(id)!);
+
+    expect(checkUpdates).toHaveBeenCalledTimes(3);
+    expect(rebootSystem).toHaveBeenCalledTimes(1);
+    expect(rebootSystem).toHaveBeenCalledWith(alphaId);
+    const row = getDb().select().from(schedules).where(eq(schedules.id, id)).get();
+    expect(row?.lastRunStatus).toBe("warning");
+    expect(row?.lastRunMessage).toBe("Checked 2 systems, sent reboot to 1, skipped 1, 1 failed");
   });
 });
