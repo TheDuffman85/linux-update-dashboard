@@ -9,6 +9,7 @@ import { resolveNotificationLinkLabel, resolveNotificationLinkUrl } from "./link
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_IMPORTANCE_OVERRIDES = ["auto", "normal", "important"] as const;
 const VALID_TLS_MODES = ["plain", "starttls", "tls"] as const;
+const VALID_EMAIL_FORMATS = ["html", "text"] as const;
 
 export type EmailTlsMode = (typeof VALID_TLS_MODES)[number];
 
@@ -109,19 +110,39 @@ function escapeHtml(text: string): string {
     .replaceAll(">", "&gt;");
 }
 
+// Event bodies are blank-line separated sections with one entry per line
+// (e.g. "system: N updates"), so each section is rendered as a bullet list.
+function buildEmailBodySections(payload: NotificationPayload): string[] {
+  const asList = (payload.event?.eventTypes.length ?? 0) > 0;
+  return payload.body
+    .split(/\n\s*\n/)
+    .map((section) => section.split("\n").map((line) => line.trim()).filter(Boolean))
+    .filter((lines) => lines.length > 0)
+    .map((lines) => {
+      const escaped = lines.map(escapeHtml);
+      if (!asList) {
+        return `<p style="margin:0 0 20px;">${escaped.join("<br>\n")}</p>`;
+      }
+      return [
+        "<ul style=\"margin:0 0 20px;padding-left:20px;\">",
+        ...escaped.map((line) => `<li>${line}</li>`),
+        "</ul>",
+      ].join("\n");
+    });
+}
+
 function buildEmailHtmlBody(payload: NotificationPayload): string {
   const title = escapeHtml(decorateNotificationTitle(payload));
-  const body = escapeHtml(payload.body).replaceAll("\n", "<br>");
   const actionUrl = escapeHtml(resolveNotificationLinkUrl(payload));
   const actionLabel = escapeHtml(resolveNotificationLinkLabel(payload));
 
   return [
     "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111827;\">",
     `<p style="margin:0 0 16px;"><strong>${title}</strong></p>`,
-    `<p style="margin:0 0 20px;">${body}</p>`,
+    ...buildEmailBodySections(payload),
     `<p style="margin:0;"><a href="${actionUrl}" style="display:inline-block;padding:10px 16px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px;">${actionLabel}</a></p>`,
     "</div>",
-  ].join("");
+  ].join("\n");
 }
 
 export const emailProvider = createFlatProvider({
@@ -138,6 +159,7 @@ export const emailProvider = createFlatProvider({
     "emailTo",
     "emailSubjectPrefix",
     "emailImportanceOverride",
+    "emailFormat",
   ],
   sensitiveKeys: ["smtpPassword"],
   normalizeConfig: normalizeEmailConfig,
@@ -176,6 +198,11 @@ export const emailProvider = createFlatProvider({
       return `email importance override must be one of: ${VALID_IMPORTANCE_OVERRIDES.join(", ")}`;
     }
 
+    const emailFormat = config.emailFormat || "html";
+    if (!VALID_EMAIL_FORMATS.includes(emailFormat as (typeof VALID_EMAIL_FORMATS)[number])) {
+      return `email format must be one of: ${VALID_EMAIL_FORMATS.join(", ")}`;
+    }
+
     return null;
   },
 
@@ -199,13 +226,18 @@ export const emailProvider = createFlatProvider({
     const importance = resolveEmailImportance(payload.priority, config.emailImportanceOverride);
     const subjectPrefix = config.emailSubjectPrefix?.trim();
     const title = decorateNotificationTitle(payload);
+    // Without HTML there is no link button, so the link goes into the text itself.
+    const textOnly = config.emailFormat === "text";
+    const text = textOnly
+      ? `${payload.body}\n\n${resolveNotificationLinkLabel(payload)}: ${resolveNotificationLinkUrl(payload)}`
+      : payload.body;
 
     await transport.sendMail({
       from: config.smtpFrom,
       to: recipients,
       subject: subjectPrefix ? `${subjectPrefix} ${title}` : title,
-      text: payload.body,
-      html: buildEmailHtmlBody(payload),
+      text,
+      html: textOnly ? undefined : buildEmailHtmlBody(payload),
       priority: importance.mailPriority,
       headers: {
         Importance: importance.importanceHeader,

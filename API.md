@@ -163,6 +163,10 @@ Email channels accept an optional `config.emailSubjectPrefix` string, for exampl
 including test emails and scheduled digests. Surrounding whitespace is trimmed;
 an omitted, empty, or whitespace-only prefix leaves the subject unchanged.
 
+Email channels also accept an optional `config.emailFormat`: `"html"` (default) sends
+an HTML body with a plain-text alternative, and `"text"` sends plain text only, with
+the dashboard or release link appended to the message.
+
 ## Schedules
 
 | Method | Endpoint                 | Description        |
