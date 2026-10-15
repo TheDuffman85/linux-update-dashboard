@@ -108,6 +108,11 @@ const EMAIL_IMPORTANCE_OPTIONS = [
   { value: "important", labelKey: "pages.notifications.importance.important" },
 ];
 
+const EMAIL_FORMAT_OPTIONS = [
+  { value: "html", labelKey: "pages.notifications.emailFormat.html" },
+  { value: "text", labelKey: "pages.notifications.emailFormat.text" },
+];
+
 const EMAIL_TLS_MODE_OPTIONS: Array<{ value: EmailTlsMode; labelKey: string }> = [
   { value: "plain", labelKey: "pages.notifications.smtpSecurity.plain" },
   { value: "starttls", labelKey: "pages.notifications.smtpSecurity.starttls" },
@@ -793,6 +798,9 @@ function NotificationForm({
   const [emailImportanceOverride, setEmailImportanceOverride] = useState(
     readString(initial?.config || {}, "emailImportanceOverride", "auto")
   );
+  const [emailFormat, setEmailFormat] = useState(
+    readString(initial?.config || {}, "emailFormat", "html")
+  );
 
   const [gotifyUrl, setGotifyUrl] = useState(readString(initial?.config || {}, "gotifyUrl"));
   const [gotifyToken, setGotifyToken] = useState("");
@@ -921,6 +929,7 @@ function NotificationForm({
         emailTo,
         emailSubjectPrefix,
         emailImportanceOverride,
+        emailFormat,
       };
     }
 
@@ -1315,6 +1324,19 @@ function NotificationForm({
                   className={inputClass}
                 >
                   {EMAIL_IMPORTANCE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="emailFormat" className={labelClass}>{t("pages.notifications.emailFormat")}</label>
+                <select
+                  id="emailFormat"
+                  value={emailFormat}
+                  onChange={(e) => setEmailFormat(e.target.value)}
+                  className={inputClass}
+                >
+                  {EMAIL_FORMAT_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                   ))}
                 </select>

@@ -9,7 +9,7 @@ import type { UserRole } from "./oidc";
 
 const SESSION_COOKIE = "ludash_session";
 const SESSION_LIFETIME = 86400 * 30; // 30 days — JWT expiration
-const OIDC_SESSION_LIFETIME = 86400; // OIDC role and access changes take effect within a day
+export const OIDC_SESSION_LIFETIME = 86400; // OIDC role and access changes take effect within a day
 const REFRESH_AFTER = 86400; // refresh daily to keep session rolling
 
 let _secret: Uint8Array | null = null;

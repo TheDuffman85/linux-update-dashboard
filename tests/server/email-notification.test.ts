@@ -20,6 +20,17 @@ describe("email provider validation", () => {
     expect(result).toBeNull();
   });
 
+  test("accepts supported email formats and rejects others", () => {
+    const base = {
+      smtpHost: "smtp.example.com",
+      smtpFrom: "dashboard@example.com",
+      emailTo: "admin@example.com",
+    };
+    expect(emailProvider.validateConfig({ ...base, emailFormat: "html" })).toBeNull();
+    expect(emailProvider.validateConfig({ ...base, emailFormat: "text" })).toBeNull();
+    expect(emailProvider.validateConfig({ ...base, emailFormat: "markdown" })).toContain("email format");
+  });
+
   test("rejects invalid importance override values", () => {
     const result = emailProvider.validateConfig({
       smtpHost: "smtp.example.com",
@@ -275,5 +286,74 @@ describe("email provider sending", () => {
     expect(String(sentMail?.html)).toContain(
       "https://github.com/TheDuffman85/linux-update-dashboard/releases/tag/2026.3.2"
     );
+  });
+  test("renders event sections as bullet lists with readable HTML line breaks", async () => {
+    let sentMail: Record<string, unknown> | undefined;
+    (nodemailer as any).createTransport = () => ({
+      sendMail: async (mailOptions: Record<string, unknown>) => {
+        sentMail = mailOptions;
+      },
+    });
+
+    const body = "web-01: 3 updates\ndb-01: 5 updates (1 security)\n\nbackup-01: unreachable";
+    const base = makeNotificationPayload({ title: "8 updates available", body });
+    await emailProvider.send(
+      { ...base, event: { ...base.event!, eventTypes: ["updates", "unreachable"] } },
+      {
+        smtpHost: "smtp.example.com",
+        smtpFrom: "dashboard@example.com",
+        emailTo: "admin@example.com",
+      },
+    );
+
+    const html = String(sentMail?.html);
+    expect(sentMail?.text).toBe(body);
+    expect(html).toContain("<li>web-01: 3 updates</li>\n<li>db-01: 5 updates (1 security)</li>\n</ul>");
+    expect(html).toContain("<li>backup-01: unreachable</li>");
+    expect(html.match(/<ul /g)).toHaveLength(2);
+    expect(html.split("\n").length).toBeGreaterThan(5);
+  });
+
+  test("keeps non-event bodies as paragraphs and escapes HTML", async () => {
+    let sentMail: Record<string, unknown> | undefined;
+    (nodemailer as any).createTransport = () => ({
+      sendMail: async (mailOptions: Record<string, unknown>) => {
+        sentMail = mailOptions;
+      },
+    });
+
+    await emailProvider.send(
+      makeNotificationPayload({ title: "Test", body: "line <one>\nline two" }),
+      {
+        smtpHost: "smtp.example.com",
+        smtpFrom: "dashboard@example.com",
+        emailTo: "admin@example.com",
+      },
+    );
+
+    const html = String(sentMail?.html);
+    expect(html).not.toContain("<ul");
+    expect(html).toContain("line &lt;one&gt;<br>\nline two</p>");
+  });
+  test("sends text-only mail with the link inline when the format is text", async () => {
+    let sentMail: Record<string, unknown> | undefined;
+    (nodemailer as any).createTransport = () => ({
+      sendMail: async (mailOptions: Record<string, unknown>) => {
+        sentMail = mailOptions;
+      },
+    });
+
+    await emailProvider.send(
+      makeNotificationPayload({ title: "Updates", body: "web-01: 3 updates" }),
+      {
+        smtpHost: "smtp.example.com",
+        smtpFrom: "dashboard@example.com",
+        emailTo: "admin@example.com",
+        emailFormat: "text",
+      },
+    );
+
+    expect(sentMail?.html).toBeUndefined();
+    expect(String(sentMail?.text)).toMatch(/^web-01: 3 updates\n\n.+: https?:\/\//);
   });
 });

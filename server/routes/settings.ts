@@ -5,6 +5,7 @@ import { settings, webauthnCredentials } from "../db/schema";
 import {
   configureOidc,
   DEFAULT_OIDC_GROUPS_CLAIM,
+  OIDC_END_SESSION_SETTING_KEY,
   parseCsvList,
   parseOidcScope,
   parseOidcUnmatchedRole,
@@ -204,6 +205,12 @@ settingsRouter.put("/", async (c) => {
       const value = normalizedBody[key];
       normalizedBody[key] = parseCsvList(typeof value === "string" ? value : "").join(",");
     }
+  }
+
+  if (OIDC_END_SESSION_SETTING_KEY in normalizedBody) {
+    const value = normalizedBody[OIDC_END_SESSION_SETTING_KEY];
+    normalizedBody[OIDC_END_SESSION_SETTING_KEY] =
+      value === false || value === "false" ? "false" : "true";
   }
 
   // Prevent disabling password login without an alternative auth method

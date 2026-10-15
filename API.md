@@ -37,7 +37,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | GET    | `/api/auth/status`                    | Auth state, setup status, and OIDC availability.                                   |
 | POST   | `/api/auth/setup`                     | Create the initial admin account.                                                  |
 | POST   | `/api/auth/login`                     | Password login.                                                                    |
-| POST   | `/api/auth/logout`                    | Clear the current session.                                                         |
+| POST   | `/api/auth/logout`                    | Clear the current session. SSO sessions may return a provider `redirectUrl`.       |
 | GET    | `/api/auth/me`                        | Current user info.                                                                 |
 | POST   | `/api/auth/change-password`           | Change the current user's password.                                                |
 | POST   | `/api/auth/totp/setup`                | Start TOTP setup for the password-authenticated user.                             |
@@ -162,6 +162,10 @@ Email channels accept an optional `config.emailSubjectPrefix` string, for exampl
 `"[LINUX-UPDATE]"`. It is prepended to every email subject with a separating space,
 including test emails and scheduled digests. Surrounding whitespace is trimmed;
 an omitted, empty, or whitespace-only prefix leaves the subject unchanged.
+
+Email channels also accept an optional `config.emailFormat`: `"html"` (default) sends
+an HTML body with a plain-text alternative, and `"text"` sends plain text only, with
+the dashboard or release link appended to the message.
 
 ## Schedules
 

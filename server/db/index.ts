@@ -112,6 +112,12 @@ const DEFAULT_SETTINGS = [
       "Access for OIDC users that match no configured group: deny, admin, or read-only",
   },
   {
+    key: "oidc_end_session",
+    value: "true",
+    description:
+      "Also sign out of the OIDC provider when an SSO user logs out (RP-initiated logout)",
+  },
+  {
     key: "disable_password_login",
     value: "false",
     description: "Disable password-based login",

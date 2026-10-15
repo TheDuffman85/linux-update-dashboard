@@ -1,5 +1,5 @@
 import * as client from "openid-client";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings } from "../db/schema";
 
@@ -8,6 +8,7 @@ export type OidcUnmatchedRole = "deny" | UserRole;
 
 export const DEFAULT_OIDC_SCOPE = "openid profile email";
 export const DEFAULT_OIDC_GROUPS_CLAIM = "groups";
+export const OIDC_END_SESSION_SETTING_KEY = "oidc_end_session";
 
 export interface OidcRolePolicy {
   groupsClaim: string;
@@ -234,6 +235,41 @@ export function getAuthorizationUrl(
   return `${authEndpoint}?${params.toString()}`;
 }
 
+/** Whether logging out should also end the session at the identity provider. */
+export function isEndSessionEnabled(): boolean {
+  const row = getDb()
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, OIDC_END_SESSION_SETTING_KEY))
+    .get();
+  return row?.value !== "false";
+}
+
+/**
+ * Builds the RP-Initiated Logout URL, or returns null when the provider does
+ * not advertise an end_session_endpoint.
+ */
+export function buildEndSessionUrl(
+  configuration: client.Configuration,
+  postLogoutRedirectUri: string,
+  idTokenHint?: string,
+): string | null {
+  if (!configuration.serverMetadata().end_session_endpoint) return null;
+  const params: Record<string, string> = {
+    post_logout_redirect_uri: postLogoutRedirectUri,
+  };
+  if (idTokenHint) params.id_token_hint = idTokenHint;
+  return client.buildEndSessionUrl(configuration, params).toString();
+}
+
+export function getEndSessionUrl(
+  postLogoutRedirectUri: string,
+  idTokenHint?: string,
+): string | null {
+  if (!_configured || !_config) return null;
+  return buildEndSessionUrl(_config, postLogoutRedirectUri, idTokenHint);
+}
+
 async function fetchUserInfoClaims(
   configuration: client.Configuration,
   accessToken: string | undefined,
@@ -267,6 +303,7 @@ export async function handleCallback(
   role: UserRole | null;
   issuer: string;
   subject: string;
+  idToken?: string;
 } | null> {
   if (!_config) throw new Error("OIDC not configured");
 
@@ -295,6 +332,7 @@ export async function handleCallback(
       ...resolved,
       issuer,
       subject,
+      idToken: tokens.id_token,
     };
   } catch (e: any) {
     const code = e?.code || "UNKNOWN";

@@ -241,8 +241,12 @@ describe("read-only enforcement", () => {
       oidc_admin_groups: " ops, ops ,admins,",
       oidc_read_only_groups: "viewers",
       oidc_unmatched_role: "read-only",
+      oidc_end_session: "no",
     });
     expect(ok.status).toBe(200);
+    expect(readSetting("oidc_end_session")).toBe("true");
+    expect((await put({ oidc_end_session: "false" })).status).toBe(200);
+    expect(readSetting("oidc_end_session")).toBe("false");
     expect(getOidcPolicy()).toEqual({
       scope: "openid groups",
       groupsClaim: "groups",
