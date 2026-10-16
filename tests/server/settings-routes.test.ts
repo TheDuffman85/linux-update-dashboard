@@ -44,7 +44,15 @@ describe("settings routes", () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({
       settings: { language: "de" },
-      branding: { appName: "Linux Update Dashboard", logoUrl: null },
+      branding: {
+        appName: "Linux Update Dashboard",
+        logoUrl: null,
+        logoDarkUrl: null,
+        theme: {
+          light: { accent: null, neutral: null },
+          dark: { accent: null, neutral: null },
+        },
+      },
     });
     expect(JSON.stringify(body)).not.toContain("super-secret");
   });
@@ -431,7 +439,11 @@ describe("settings routes", () => {
 
       const publicRes = await app.request("/api/settings/public");
       const body = await publicRes.json();
-      expect(body.branding).toEqual({ appName: "Acme Patch Center", logoUrl: null });
+      expect(body.branding).toMatchObject({
+        appName: "Acme Patch Center",
+        logoUrl: null,
+        logoDarkUrl: null,
+      });
     });
 
     test("falls back to the default name when the application name is cleared", async () => {
@@ -573,6 +585,97 @@ describe("settings routes", () => {
       expect(deleteRes.status).toBe(200);
       expect((await deleteRes.json()).branding.logoUrl).toBeNull();
       expect((await app.request("/api/settings/public/logo")).status).toBe(404);
+    });
+
+    function uploadDarkLogo(app: ReturnType<typeof createAdminApp>, dataUrl: unknown) {
+      return app.request("/api/settings/branding/logo/dark", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dataUrl }),
+      });
+    }
+
+    function updateTheme(app: ReturnType<typeof createAdminApp>, theme: unknown) {
+      return app.request("/api/settings/branding/theme", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ theme }),
+      });
+    }
+
+    test("stores an optional dark mode logo separately from the main logo", async () => {
+      const app = createAdminApp();
+      const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+
+      expect((await uploadDarkLogo(app, "not a data url")).status).toBe(400);
+
+      const res = await uploadDarkLogo(app, `data:image/svg+xml;base64,${svg.toString("base64")}`);
+      expect(res.status).toBe(200);
+      const { branding } = await res.json();
+      expect(branding.logoUrl).toBeNull();
+      expect(branding.logoDarkUrl).toMatch(
+        /^\/api\/settings\/public\/logo\/dark\?v=[0-9a-f]{16}$/,
+      );
+
+      const publicApp = new Hono();
+      publicApp.use("/api/*", authMiddleware);
+      publicApp.route("/api/settings", settingsRoutes);
+      const logoRes = await publicApp.request(branding.logoDarkUrl);
+      expect(logoRes.status).toBe(200);
+      expect(logoRes.headers.get("content-type")).toBe("image/svg+xml");
+      expect(logoRes.headers.get("content-security-policy")).toContain("sandbox");
+      expect(logoRes.headers.get("cache-control")).toContain("immutable");
+      expect((await publicApp.request("/api/settings/public/logo")).status).toBe(404);
+
+      const settingsBody = await (await app.request("/api/settings")).json();
+      expect(settingsBody.settings).not.toHaveProperty("app_logo_dark");
+
+      const deleteRes = await app.request("/api/settings/branding/logo/dark", {
+        method: "DELETE",
+      });
+      expect((await deleteRes.json()).branding.logoDarkUrl).toBeNull();
+      expect((await app.request("/api/settings/public/logo/dark")).status).toBe(404);
+    });
+
+    test("validates, normalizes, and exposes the theme colors", async () => {
+      const app = createAdminApp();
+
+      expect((await updateTheme(app, { light: { accent: "red" } })).status).toBe(400);
+      expect((await updateTheme(app, { light: { accent: "#123;}" } })).status).toBe(400);
+      expect((await updateTheme(app, { dark: { neutral: "purple" } })).status).toBe(400);
+      expect((await updateTheme(app, "slate")).status).toBe(400);
+
+      const res = await updateTheme(app, {
+        light: { accent: "#E11D48", neutral: "zinc" },
+        dark: { accent: "#0f0", neutral: "" },
+      });
+      expect(res.status).toBe(200);
+      const expected = {
+        light: { accent: "#e11d48", neutral: "zinc" },
+        dark: { accent: "#00ff00", neutral: null },
+      };
+      expect((await res.json()).branding.theme).toEqual(expected);
+      expect((await (await app.request("/api/settings/public")).json()).branding.theme).toEqual(
+        expected,
+      );
+
+      const settingsBody = await (await app.request("/api/settings")).json();
+      expect(settingsBody.settings).not.toHaveProperty("app_theme");
+      const generic = await app.request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ app_theme: "{}" }),
+      });
+      expect(generic.status).toBe(400);
+
+      const reset = await updateTheme(app, { light: {}, dark: {} });
+      expect((await reset.json()).branding.theme).toEqual({
+        light: { accent: null, neutral: null },
+        dark: { accent: null, neutral: null },
+      });
+      expect(
+        getDb().select().from(settings).where(eq(settings.key, "app_theme")).get()?.value,
+      ).toBe("");
     });
   });
 });

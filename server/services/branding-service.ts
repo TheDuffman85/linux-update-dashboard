@@ -2,16 +2,30 @@ import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings } from "../db/schema";
+import {
+  BRANDING_THEME_STYLE_ID,
+  buildBrandingThemeCss,
+  DEFAULT_BRANDING_THEME,
+  isDefaultBrandingTheme,
+  normalizeBrandingTheme,
+  type BrandingTheme,
+} from "../../shared/branding-theme";
 
 export const DEFAULT_APP_NAME = "Linux Update Dashboard";
 export const APP_NAME_SETTING_KEY = "app_name";
 export const APP_LOGO_SETTING_KEY = "app_logo";
+export const APP_LOGO_DARK_SETTING_KEY = "app_logo_dark";
+export const APP_THEME_SETTING_KEY = "app_theme";
 // JPEG rendition of the logo (rendered by the browser on upload) for services
 // such as Telegram bot profile photos that only accept JPEG.
 export const APP_LOGO_JPEG_SETTING_KEY = "app_logo_jpeg";
 export const MAX_APP_NAME_LENGTH = 60;
 export const MAX_APP_LOGO_BYTES = 512 * 1024;
 export const APP_LOGO_PATH = "/api/settings/public/logo";
+export const APP_LOGO_DARK_PATH = "/api/settings/public/logo/dark";
+
+/** The main logo is used everywhere; the optional dark variant only replaces it while the dark theme is active. */
+export type AppLogoVariant = "default" | "dark";
 
 export type AppLogoContentType =
   | "image/png"
@@ -29,6 +43,8 @@ export type AppLogo = {
 export type PublicBranding = {
   appName: string;
   logoUrl: string | null;
+  logoDarkUrl: string | null;
+  theme: BrandingTheme;
 };
 
 export class BrandingValidationError extends Error {}
@@ -145,6 +161,18 @@ export function parseAppLogoJpegUpload(dataUrl: unknown): Buffer {
   return data;
 }
 
+/** Stores the optional dark mode logo. It needs no JPEG rendition: only the main logo is used outside the UI. */
+export function saveAppDarkLogo(logo: { contentType: AppLogoContentType; data: Buffer }): void {
+  writeSetting(
+    APP_LOGO_DARK_SETTING_KEY,
+    `data:${logo.contentType};base64,${logo.data.toString("base64")}`,
+  );
+}
+
+export function clearAppDarkLogo(): void {
+  writeSetting(APP_LOGO_DARK_SETTING_KEY, "");
+}
+
 export function saveAppLogo(
   logo: { contentType: AppLogoContentType; data: Buffer },
   jpeg?: Buffer | null,
@@ -164,8 +192,10 @@ export function clearAppLogo(): void {
   writeSetting(APP_LOGO_JPEG_SETTING_KEY, "");
 }
 
-export function getAppLogo(): AppLogo | null {
-  const stored = readSetting(APP_LOGO_SETTING_KEY);
+export function getAppLogo(variant: AppLogoVariant = "default"): AppLogo | null {
+  const stored = readSetting(
+    variant === "dark" ? APP_LOGO_DARK_SETTING_KEY : APP_LOGO_SETTING_KEY,
+  );
   if (!stored) return null;
   const match = DATA_URL_PATTERN.exec(stored);
   if (!match) return null;
@@ -196,6 +226,19 @@ export function getAppLogoJpeg(): { data: Buffer; version: string } | null {
   };
 }
 
+export function getAppTheme(): BrandingTheme {
+  try {
+    const stored = readSetting(APP_THEME_SETTING_KEY);
+    return stored ? normalizeBrandingTheme(JSON.parse(stored)) : DEFAULT_BRANDING_THEME;
+  } catch {
+    return DEFAULT_BRANDING_THEME;
+  }
+}
+
+export function saveAppTheme(theme: BrandingTheme): void {
+  writeSetting(APP_THEME_SETTING_KEY, isDefaultBrandingTheme(theme) ? "" : JSON.stringify(theme));
+}
+
 function escapeHtmlAttribute(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -206,9 +249,10 @@ function escapeHtmlAttribute(value: string): string {
 }
 
 /**
- * Injects the configured name and logo into the SPA shell so the browser tab,
- * bookmarks, and link previews are branded before any JavaScript runs. The
- * original favicon is kept in data attributes so the client can restore it.
+ * Injects the configured name, logo, and colors into the SPA shell so the
+ * browser tab, bookmarks, link previews, and palette are branded before any
+ * JavaScript runs. The original favicon is kept in data attributes so the
+ * client can restore it.
  */
 export function applyBrandingToIndexHtml(html: string): string {
   const appName = getAppName();
@@ -228,13 +272,25 @@ export function applyBrandingToIndexHtml(html: string): string {
     });
   }
 
+  // The theme CSS is built only from validated hex colors and preset names.
+  const themeCss = buildBrandingThemeCss(getAppTheme());
+  if (themeCss) {
+    branded = branded.replace(
+      "</head>",
+      () => `<style id="${BRANDING_THEME_STYLE_ID}">${themeCss}</style>\n</head>`,
+    );
+  }
+
   return branded;
 }
 
 export function getPublicBranding(): PublicBranding {
   const logo = getAppLogo();
+  const logoDark = getAppLogo("dark");
   return {
     appName: getAppName(),
     logoUrl: logo ? `${APP_LOGO_PATH}?v=${logo.version}` : null,
+    logoDarkUrl: logoDark ? `${APP_LOGO_DARK_PATH}?v=${logoDark.version}` : null,
+    theme: getAppTheme(),
   };
 }

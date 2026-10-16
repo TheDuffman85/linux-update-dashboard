@@ -29,10 +29,14 @@ import {
   MAX_APP_LOGO_BYTES,
   MAX_APP_NAME_LENGTH,
   useBranding,
+  useResetAppDarkLogo,
   useResetAppLogo,
+  useUploadAppDarkLogo,
   useUploadAppLogo,
+  type AppLogoVariant,
 } from "../lib/branding";
 import { AppLogo } from "../components/AppLogo";
+import { BrandingColorsSettings } from "../components/BrandingColorsSettings";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { useToast } from "../context/ToastContext";
@@ -79,6 +83,16 @@ function SettingSection({
   );
 }
 
+function ManagedSettingHint({ envVar }: { envVar?: string }) {
+  const { t } = useI18n();
+  if (!envVar) return null;
+  return (
+    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+      {t("pages.settings.managedByEnv", { name: envVar })}
+    </p>
+  );
+}
+
 const DEFAULT_OIDC_SCOPE = "openid profile email";
 const OIDC_SETTING_KEYS = [
   "oidc_issuer",
@@ -120,6 +134,8 @@ function ListEditor({
   removeLabel,
   canRemove = () => true,
   labelClass,
+  disabled = false,
+  hint,
 }: {
   id: string;
   label: string;
@@ -134,6 +150,8 @@ function ListEditor({
   removeLabel: (item: string) => string;
   canRemove?: (item: string) => boolean;
   labelClass: string;
+  disabled?: boolean;
+  hint?: React.ReactNode;
 }) {
   return (
     <div>
@@ -141,7 +159,7 @@ function ListEditor({
         {label}
       </label>
       <form
-        className="flex min-h-11 overflow-hidden rounded-lg border border-border bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-blue-500"
+        className={`flex min-h-11 overflow-hidden rounded-lg border border-border bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-blue-500 ${disabled ? "opacity-60" : ""}`}
         onSubmit={(e) => {
           e.preventDefault();
           onAdd();
@@ -159,7 +177,7 @@ function ListEditor({
               className="inline-flex max-w-full items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-sm font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-100"
             >
               <span className="truncate">{item}</span>
-              {canRemove(item) && (
+              {!disabled && canRemove(item) && (
                 <button
                   type="button"
                   onClick={() => onRemove(item)}
@@ -185,7 +203,8 @@ function ListEditor({
             type="text"
             value={draft}
             onChange={(e) => onDraftChange(e.target.value)}
-            placeholder={items.length === 0 ? placeholder : ""}
+            placeholder={items.length === 0 && !disabled ? placeholder : ""}
+            disabled={disabled}
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
@@ -198,7 +217,7 @@ function ListEditor({
         </div>
         <button
           type="submit"
-          disabled={!draft.trim()}
+          disabled={disabled || !draft.trim()}
           className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 border-l border-border bg-slate-50 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -207,6 +226,7 @@ function ListEditor({
           <span>{addLabel}</span>
         </button>
       </form>
+      {hint}
     </div>
   );
 }
@@ -223,11 +243,18 @@ export default function Settings() {
   } = useAuth();
   const { browserLanguage, t } = useI18n();
   const { browserTimeFormat, formatDate } = useDateTime();
-  const { logoUrl } = useBranding();
+  const { logoUrl, logoDarkUrl, theme: brandingTheme } = useBranding();
   const uploadAppLogo = useUploadAppLogo();
   const resetAppLogo = useResetAppLogo();
+  const uploadAppDarkLogo = useUploadAppDarkLogo();
+  const resetAppDarkLogo = useResetAppDarkLogo();
   const logoInputRef = useRef<HTMLInputElement | null>(null);
-  const logoBusy = uploadAppLogo.isPending || resetAppLogo.isPending;
+  const darkLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const logoBusy =
+    uploadAppLogo.isPending ||
+    resetAppLogo.isPending ||
+    uploadAppDarkLogo.isPending ||
+    resetAppDarkLogo.isPending;
   const maxLogoSize = `${MAX_APP_LOGO_BYTES / 1024} KB`;
 
   const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
@@ -276,6 +303,10 @@ export default function Settings() {
   >({ oidc_scope: "", oidc_admin_groups: "", oidc_read_only_groups: "" });
   const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>(
     {},
+  );
+  const managedSettings = settingsResponse?.managedSettings ?? {};
+  const allOidcSettingsManaged = OIDC_SETTING_KEYS.every(
+    (key) => key in managedSettings,
   );
   const numericSettingRules: NumericSettingRules = {
     ...NUMERIC_SETTING_RULES,
@@ -341,8 +372,11 @@ export default function Settings() {
   };
 
   const handleSave = (keys: string[]) => {
+    // Environment-managed settings are read-only and rejected by the server.
+    const editableKeys = keys.filter((k) => !(k in managedSettings));
+    if (editableKeys.length === 0) return;
     const data: Record<string, string> = {};
-    for (const k of keys) {
+    for (const k of editableKeys) {
       if (storedSecrets[k] && !form[k]) {
         data[k] = "(stored)";
       } else {
@@ -525,7 +559,10 @@ export default function Settings() {
     }
   };
 
-  const handleLogoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoSelected = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    variant: AppLogoVariant,
+  ) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -537,15 +574,25 @@ export default function Settings() {
       addToast(t("pages.settings.logoTooLarge", { size: maxLogoSize }), "danger");
       return;
     }
-    uploadAppLogo.mutate(file, {
-      onSuccess: () => addToast(t("pages.settings.logoUpdated"), "success"),
+    const upload = variant === "dark" ? uploadAppDarkLogo : uploadAppLogo;
+    upload.mutate(file, {
+      onSuccess: () =>
+        addToast(
+          t(variant === "dark" ? "pages.settings.darkLogoUpdated" : "pages.settings.logoUpdated"),
+          "success",
+        ),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
 
-  const handleResetLogo = () => {
-    resetAppLogo.mutate(undefined, {
-      onSuccess: () => addToast(t("pages.settings.logoReset"), "success"),
+  const handleResetLogo = (variant: AppLogoVariant) => {
+    const reset = variant === "dark" ? resetAppDarkLogo : resetAppLogo;
+    reset.mutate(undefined, {
+      onSuccess: () =>
+        addToast(
+          t(variant === "dark" ? "pages.settings.darkLogoRemoved" : "pages.settings.logoReset"),
+          "success",
+        ),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -556,8 +603,69 @@ export default function Settings() {
     addToast(t("pages.settings.copied"), "success");
   };
 
+  const logoButtonClass =
+    "px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50";
+
+  const renderLogoField = (variant: AppLogoVariant) => {
+    const dark = variant === "dark";
+    const inputRef = dark ? darkLogoInputRef : logoInputRef;
+    const customUrl = dark ? logoDarkUrl : logoUrl;
+    const uploading = dark ? uploadAppDarkLogo.isPending : uploadAppLogo.isPending;
+    return (
+      <div data-testid={`settings-logo-${variant}`}>
+        <label className={labelClass}>
+          {t(dark ? "pages.settings.darkLogo" : "pages.settings.logo")}
+        </label>
+        <div className="flex items-center gap-4">
+          {/* Fixed light and dark tiles show each logo on the background it is used on. */}
+          <div
+            className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border ${dark ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}
+          >
+            <AppLogo size={48} variant={variant} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={inputRef}
+              type="file"
+              accept={ACCEPTED_APP_LOGO_TYPES.join(",")}
+              onChange={(e) => handleLogoSelected(e, variant)}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={logoBusy}
+              className={logoButtonClass}
+            >
+              {uploading ? (
+                <span className="spinner spinner-sm" />
+              ) : (
+                t("pages.settings.uploadLogo")
+              )}
+            </button>
+            {customUrl && (
+              <button
+                type="button"
+                onClick={() => handleResetLogo(variant)}
+                disabled={logoBusy}
+                className={logoButtonClass}
+              >
+                {t(dark ? "pages.settings.removeLogo" : "pages.settings.resetLogo")}
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          {dark
+            ? t("pages.settings.darkLogoHelp")
+            : t("pages.settings.logoHelp", { size: maxLogoSize })}
+        </p>
+      </div>
+    );
+  };
+
   const inputClass =
-    "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
+    "w-full px-3 py-2 rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:cursor-not-allowed disabled:opacity-60";
   const labelClass =
     "block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1";
 
@@ -776,11 +884,15 @@ export default function Settings() {
           const hasAlternativeAuth =
             (passkeys && passkeys.length > 0) ||
             !!(form.oidc_issuer && form.oidc_client_id);
-          const canDisable = hasAlternativeAuth;
+          const passwordLoginEnvVar = managedSettings.disable_password_login;
+          const canDisable = hasAlternativeAuth && !passwordLoginEnvVar;
+          const checkboxDisabled =
+            !!passwordLoginEnvVar ||
+            (!canDisable && form.disable_password_login !== "true");
           return (
             <>
               <label
-                className={`flex items-center gap-2 ${canDisable ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+                className={`flex items-center gap-2 ${checkboxDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
               >
                 <input
                   type="checkbox"
@@ -793,16 +905,16 @@ export default function Settings() {
                         : "false",
                     })
                   }
-                  disabled={
-                    !canDisable && form.disable_password_login !== "true"
-                  }
+                  disabled={checkboxDisabled}
                   className="rounded border-border"
                 />
                 <span className="text-sm">
                   {t("pages.settings.disablePasswordLogin")}
                 </span>
               </label>
-              {!canDisable ? (
+              {passwordLoginEnvVar ? (
+                <ManagedSettingHint envVar={passwordLoginEnvVar} />
+              ) : !canDisable ? (
                 <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
                   {t(
                     "pages.settings.registerAPasskeyOrConfigureSsoBeforeDisabling",
@@ -813,19 +925,26 @@ export default function Settings() {
                   {t("pages.settings.whenEnabledOnlyPasskeyAndSsoLoginMethods")}
                 </p>
               )}
+              {settingsResponse?.passwordLoginFallback && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  {t("pages.settings.passwordLoginFallback")}
+                </p>
+              )}
             </>
           );
         })()}
-        <button
-          onClick={() => {
-            handleSave(["disable_password_login"]);
-            refreshAuth();
-          }}
-          disabled={updateSettings.isPending}
-          className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-        >
-          {t("pages.settings.save")}
-        </button>
+        {!managedSettings.disable_password_login && (
+          <button
+            onClick={() => {
+              handleSave(["disable_password_login"]);
+              refreshAuth();
+            }}
+            disabled={updateSettings.isPending}
+            className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+          >
+            {t("pages.settings.save")}
+          </button>
+        )}
 
         {hasPassword && (
           <>
@@ -1304,6 +1423,7 @@ export default function Settings() {
             </label>
             <input
               id="oidc-issuer"
+              disabled={!!managedSettings.oidc_issuer}
               type="url"
               value={form.oidc_issuer || ""}
               onChange={(e) =>
@@ -1312,6 +1432,7 @@ export default function Settings() {
               className={inputClass}
               placeholder="https://auth.example.com"
             />
+            <ManagedSettingHint envVar={managedSettings.oidc_issuer} />
           </div>
           <div>
             <label htmlFor="oidc-client-id" className={labelClass}>
@@ -1319,6 +1440,7 @@ export default function Settings() {
             </label>
             <input
               id="oidc-client-id"
+              disabled={!!managedSettings.oidc_client_id}
               type="text"
               value={form.oidc_client_id || ""}
               onChange={(e) =>
@@ -1326,6 +1448,7 @@ export default function Settings() {
               }
               className={inputClass}
             />
+            <ManagedSettingHint envVar={managedSettings.oidc_client_id} />
           </div>
           <div>
             <label htmlFor="oidc-client-secret" className={labelClass}>
@@ -1333,6 +1456,7 @@ export default function Settings() {
             </label>
             <input
               id="oidc-client-secret"
+              disabled={!!managedSettings.oidc_client_secret}
               type="password"
               value={form.oidc_client_secret || ""}
               onChange={(e) =>
@@ -1340,11 +1464,14 @@ export default function Settings() {
               }
               className={inputClass}
               placeholder={
-                storedSecrets.oidc_client_secret && !form.oidc_client_secret
+                storedSecrets.oidc_client_secret &&
+                !form.oidc_client_secret &&
+                !managedSettings.oidc_client_secret
                   ? t("pages.settings.unchanged")
                   : ""
               }
             />
+            <ManagedSettingHint envVar={managedSettings.oidc_client_secret} />
           </div>
           <div className="lg:col-span-2">
             <ListEditor
@@ -1356,6 +1483,8 @@ export default function Settings() {
                 setOidcListDrafts((prev) => ({ ...prev, oidc_scope: value }))
               }
               onAdd={() => addOidcListItem("oidc_scope")}
+              disabled={!!managedSettings.oidc_scope}
+              hint={<ManagedSettingHint envVar={managedSettings.oidc_scope} />}
               onRemove={(scope) => removeOidcListItem("oidc_scope", scope)}
               canRemove={(scope) => scope !== "openid"}
               placeholder={DEFAULT_OIDC_SCOPE}
@@ -1373,6 +1502,7 @@ export default function Settings() {
             </label>
             <input
               id="oidc-groups-claim"
+              disabled={!!managedSettings.oidc_groups_claim}
               type="text"
               value={form.oidc_groups_claim ?? ""}
               onChange={(e) =>
@@ -1381,6 +1511,7 @@ export default function Settings() {
               className={inputClass}
               placeholder="groups"
             />
+            <ManagedSettingHint envVar={managedSettings.oidc_groups_claim} />
           </div>
           <div>
             <label htmlFor="oidc-unmatched-role" className={labelClass}>
@@ -1388,6 +1519,7 @@ export default function Settings() {
             </label>
             <select
               id="oidc-unmatched-role"
+              disabled={!!managedSettings.oidc_unmatched_role}
               aria-describedby="oidc-unmatched-role-help"
               value={form.oidc_unmatched_role || "deny"}
               onChange={(e) =>
@@ -1411,6 +1543,7 @@ export default function Settings() {
             >
               {t("pages.settings.oidcUnmatchedRoleHelp")}
             </p>
+            <ManagedSettingHint envVar={managedSettings.oidc_unmatched_role} />
           </div>
           <ListEditor
             id="oidc-admin-groups"
@@ -1424,6 +1557,8 @@ export default function Settings() {
               }))
             }
             onAdd={() => addOidcListItem("oidc_admin_groups")}
+              disabled={!!managedSettings.oidc_admin_groups}
+              hint={<ManagedSettingHint envVar={managedSettings.oidc_admin_groups} />}
             onRemove={(group) =>
               removeOidcListItem("oidc_admin_groups", group)
             }
@@ -1448,6 +1583,8 @@ export default function Settings() {
               }))
             }
             onAdd={() => addOidcListItem("oidc_read_only_groups")}
+              disabled={!!managedSettings.oidc_read_only_groups}
+              hint={<ManagedSettingHint envVar={managedSettings.oidc_read_only_groups} />}
             onRemove={(group) =>
               removeOidcListItem("oidc_read_only_groups", group)
             }
@@ -1457,10 +1594,13 @@ export default function Settings() {
             removeLabel={(group) => t("pages.settings.removeGroup", { group })}
             labelClass={labelClass}
           />
-          <label className="lg:col-span-2 flex items-start gap-2 cursor-pointer">
+          <label
+            className={`lg:col-span-2 flex items-start gap-2 ${managedSettings.oidc_end_session ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+          >
             <input
               type="checkbox"
               checked={form.oidc_end_session !== "false"}
+              disabled={!!managedSettings.oidc_end_session}
               onChange={(e) =>
                 setForm({
                   ...form,
@@ -1478,19 +1618,22 @@ export default function Settings() {
                   url: `${window.location?.origin ?? ""}/login`,
                 })}
               </span>
+              <ManagedSettingHint envVar={managedSettings.oidc_end_session} />
             </span>
           </label>
         </div>
-        <button
-          onClick={() => handleSave(OIDC_SETTING_KEYS)}
-          disabled={updateSettings.isPending}
-          className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-          </svg>
-          {t("pages.settings.saveOidcSettings")}
-        </button>
+        {!allOidcSettingsManaged && (
+          <button
+            onClick={() => handleSave(OIDC_SETTING_KEYS)}
+            disabled={updateSettings.isPending}
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            {t("pages.settings.saveOidcSettings")}
+          </button>
+        )}
       </SettingSection>
 
       {/* API Tokens */}
@@ -1808,7 +1951,7 @@ export default function Settings() {
         title={t("pages.settings.branding")}
         description={t("pages.settings.brandingDescription")}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
             <label className={labelClass}>{t("pages.settings.appName")}</label>
             <input
@@ -1832,49 +1975,16 @@ export default function Settings() {
               {t("pages.settings.save")}
             </button>
           </div>
-          <div>
-            <label className={labelClass}>{t("pages.settings.logo")}</label>
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-border bg-slate-50 dark:bg-slate-900">
-                <AppLogo size={48} />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <input
-                  ref={logoInputRef}
-                  type="file"
-                  accept={ACCEPTED_APP_LOGO_TYPES.join(",")}
-                  onChange={handleLogoSelected}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => logoInputRef.current?.click()}
-                  disabled={logoBusy}
-                  className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                >
-                  {uploadAppLogo.isPending ? (
-                    <span className="spinner spinner-sm" />
-                  ) : (
-                    t("pages.settings.uploadLogo")
-                  )}
-                </button>
-                {logoUrl && (
-                  <button
-                    type="button"
-                    onClick={handleResetLogo}
-                    disabled={logoBusy}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                  >
-                    {t("pages.settings.resetLogo")}
-                  </button>
-                )}
-              </div>
-            </div>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              {t("pages.settings.logoHelp", { size: maxLogoSize })}
-            </p>
-          </div>
+          {/* Starts a new row so both logos sit side by side below the name. */}
+          <div className="lg:col-start-1">{renderLogoField("default")}</div>
+          {renderLogoField("dark")}
         </div>
+
+        <BrandingColorsSettings
+          theme={brandingTheme}
+          inputClass={inputClass}
+          labelClass={labelClass}
+        />
       </SettingSection>
     </Layout>
   );

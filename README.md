@@ -43,7 +43,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
-- **Branding:** replace the application name and logo shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**.
+- **Branding:** replace the application name, light and dark mode logos, and colors shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**. Accent color and neutral tone can be set separately for light and dark mode, with a live preview and a low-contrast warning.
 - **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, version/build info, and Docker-ready production packaging.
 
 ## Screenshots
@@ -240,9 +240,39 @@ The image includes a health check for `GET /api/health`; loopback requests do no
 
 For secret-backed settings, do not set both `VAR` and `VAR_FILE`; startup fails with a configuration error when both are present for the same setting.
 
+### Authentication settings from the environment
+
+OIDC and password login are normally configured under **Settings**. Each of the following variables pins one setting from the deployment instead. A pinned setting overrides the saved value, is locked in Settings with a note naming the variable, and is never written to the database. Removing the variable and restarting restores the last value saved in Settings. Unset or empty variables leave the setting managed in Settings, and invalid values stop startup with a configuration error.
+
+| Variable | Setting | Notes |
+|----------|---------|-------|
+| `LUDASH_OIDC_ISSUER` | Issuer URL | `http://` or `https://` URL. Must be set together with `LUDASH_OIDC_CLIENT_ID`. |
+| `LUDASH_OIDC_CLIENT_ID` | Client ID | Must be set together with `LUDASH_OIDC_ISSUER`. |
+| `LUDASH_OIDC_CLIENT_SECRET` | Client secret | `LUDASH_OIDC_CLIENT_SECRET_FILE` is supported for Docker Secrets. Never returned by the API. |
+| `LUDASH_OIDC_SCOPE` | Scopes | Space-separated; must include `openid`. |
+| `LUDASH_OIDC_GROUPS_CLAIM` | Groups claim | Default `groups`. |
+| `LUDASH_OIDC_ADMIN_GROUPS` | Admin groups | Comma-separated. |
+| `LUDASH_OIDC_READ_ONLY_GROUPS` | Read-only groups | Comma-separated. |
+| `LUDASH_OIDC_UNMATCHED_ROLE` | Access for unmatched users | `deny`, `admin`, or `read-only`. |
+| `LUDASH_OIDC_END_SESSION` | Sign out of the identity provider on logout | `true` or `false`. |
+| `LUDASH_PASSWORD_LOGIN_ENABLED` | Password login | `true` or `false`. |
+
+```yaml
+services:
+  linux-update-dashboard:
+    environment:
+      - LUDASH_OIDC_ISSUER=https://auth.example.com/application/o/ludash/
+      - LUDASH_OIDC_CLIENT_ID=ludash
+      - LUDASH_OIDC_CLIENT_SECRET=${LUDASH_OIDC_CLIENT_SECRET}
+      - LUDASH_OIDC_ADMIN_GROUPS=ludash-admins
+      - LUDASH_PASSWORD_LOGIN_ENABLED=false
+```
+
+Password login only stays disabled, whether from the environment or from Settings, while OIDC is configured (issuer and client ID) or at least one passkey exists. Otherwise it stays enabled, a warning is logged, and Settings shows a notice. If the identity provider becomes unreachable while password login is disabled, set `LUDASH_PASSWORD_LOGIN_ENABLED=true` and restart to sign in with a password again; password hashes are kept while password login is disabled.
+
 ## Authentication and API
 
-Linux Update Dashboard supports password login, TOTP authenticator codes, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, TOTP secrets are encrypted at rest, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless passkeys or SSO are configured to prevent lockout.
+Linux Update Dashboard supports password login, TOTP authenticator codes, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, TOTP secrets are encrypted at rest, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless passkeys or SSO are configured to prevent lockout. OIDC and password login can also be pinned from the deployment; see [Authentication settings from the environment](#authentication-settings-from-the-environment).
 
 TOTP can be enabled from **Settings > Password** after signing in with the account password. Once enabled, password sign-ins require a current authenticator app code.
 
@@ -521,6 +551,7 @@ If a login banner is sent by the SSH server, Test Connection shows it below the 
 ├── screenshots/              # README screenshots and capture scripts
 ├── scripts/                  # Build-time helper scripts
 ├── server/                   # Hono backend, auth, db, routes, services, ssh
+├── shared/                   # Code used by both client and server (branding theme)
 ├── tests/server/             # Vitest server and integration tests
 ├── run.sh                    # Local dev/production/test runner
 ├── reset-dev-branch.sh       # Reset dev branch to main

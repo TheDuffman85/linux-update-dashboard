@@ -42,19 +42,22 @@ describe("Login page", () => {
     expect(html).toContain("required");
   });
 
-  test("offers passkey sign-in when SSO is enabled so OIDC-only passkeys get a clear response", () => {
-    mockUseAuth.mockReturnValue({
+  test("offers passkey sign-in only when the server reports passkeys", () => {
+    mockUseI18n.mockReturnValue({ t: (key: string) => key });
+    const auth = {
       login: vi.fn(),
       refresh: vi.fn(),
       oidcEnabled: true,
       passwordLoginDisabled: false,
-      passkeysEnabled: false,
-    });
-    mockUseI18n.mockReturnValue({ t: (key: string) => key });
+    };
 
-    const html = renderToStaticMarkup(<Login />);
+    mockUseAuth.mockReturnValue({ ...auth, passkeysEnabled: false });
+    const withoutPasskeys = renderToStaticMarkup(<Login />);
+    expect(withoutPasskeys).not.toContain("pages.login.signInWithPasskey");
+    expect(withoutPasskeys).toContain("pages.login.continueWithSso");
 
-    expect(html).toContain("pages.login.signInWithPasskey");
+    mockUseAuth.mockReturnValue({ ...auth, passkeysEnabled: true });
+    expect(renderToStaticMarkup(<Login />)).toContain("pages.login.signInWithPasskey");
   });
 
   test("shows the configured application name and logo", () => {

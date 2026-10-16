@@ -2,13 +2,17 @@ import { mkdirSync, chmodSync } from "fs";
 import { dirname } from "path";
 import { serve } from "@hono/node-server";
 import { WebSocketServer } from "ws";
-import { eq } from "drizzle-orm";
 import { config, getEncryptionSalt, hasConfiguredBaseUrl } from "./config";
-import { initDatabase, closeDatabase, getDb } from "./db";
-import { settings } from "./db/schema";
-import { getEncryptor, initEncryptor } from "./security";
+import { initDatabase, closeDatabase } from "./db";
+import { initEncryptor } from "./security";
 import { initSession } from "./auth/session";
-import { configureOidc } from "./auth/oidc";
+import { configureOidcFromSettings } from "./auth/oidc";
+import {
+  getManagedAuthSettings,
+  getPasswordLoginState,
+  hasOidcSettings,
+  initAuthConfig,
+} from "./auth/auth-config";
 import * as scheduler from "./services/scheduler";
 import { createApp } from "./app";
 import { logger } from "./logger";
@@ -25,6 +29,17 @@ if (!hasConfiguredBaseUrl()) {
   logger.warn("LUDASH_BASE_URL is not set; falling back to the default base URL", {
     baseUrl: config.baseUrl,
   });
+}
+
+// Validate deployment-managed auth settings before touching any state.
+initAuthConfig();
+{
+  const managedAuthSettings = Object.values(getManagedAuthSettings());
+  if (managedAuthSettings.length > 0) {
+    logger.info("Auth settings managed by environment", {
+      variables: managedAuthSettings.join(", "),
+    });
+  }
 }
 
 logger.info("Initializing encryption");
@@ -44,27 +59,13 @@ initSession(config.secretKey);
 logger.info("Initializing SSH connection manager");
 syncSSHManagerWithSettings();
 
-// Initialize OIDC from database settings
-{
-  const dbInstance = getDb();
-  const oidcIssuer = dbInstance.select().from(settings).where(eq(settings.key, "oidc_issuer")).get();
-  const oidcClientId = dbInstance.select().from(settings).where(eq(settings.key, "oidc_client_id")).get();
-  const oidcClientSecret = dbInstance.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();
-
-  if (oidcIssuer?.value && oidcClientId?.value) {
-    logger.info("Initializing OIDC");
-    const encryptor = getEncryptor();
-    const decryptedSecret = oidcClientSecret?.value
-      ? encryptor.decrypt(oidcClientSecret.value)
-      : "";
-
-    configureOidc(
-      oidcIssuer.value,
-      oidcClientId.value,
-      decryptedSecret,
-    );
-  }
+// Initialize OIDC from environment and database settings
+if (hasOidcSettings()) {
+  logger.info("Initializing OIDC");
+  void configureOidcFromSettings();
 }
+// Surface a lockout fallback at startup instead of on the first login attempt.
+getPasswordLoginState();
 
 // Start background scheduler
 logger.info("Starting update scheduler");

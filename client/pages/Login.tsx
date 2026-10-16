@@ -287,7 +287,7 @@ export default function Login() {
 
         {!requiresTotp && (passkeysEnabled || oidcEnabled) && (
           <div className={`${passwordLoginDisabled ? "" : "mt-4"} space-y-2`}>
-            {(passkeysEnabled || oidcEnabled) && (
+            {passkeysEnabled && (
               <button
                 onClick={handlePasskeyLogin}
                 disabled={loading}

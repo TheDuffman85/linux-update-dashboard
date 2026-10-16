@@ -9,7 +9,10 @@ import { initEncryptor } from "../../server/security";
 import {
   applyBrandingToIndexHtml,
   getAppLogo,
+  getPublicBranding,
+  saveAppDarkLogo,
   saveAppLogo,
+  saveAppTheme,
 } from "../../server/services/branding-service";
 
 const INDEX_HTML = [
@@ -62,5 +65,38 @@ describe("index.html branding", () => {
       `<link rel="icon" type="image/png" href="/api/settings/public/logo?v=${getAppLogo()!.version}" ` +
         'data-default-href="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-default-type="image/svg+xml" />',
     );
+  });
+
+  test("keeps the main logo as the favicon when a dark mode logo is set", () => {
+    saveAppDarkLogo({
+      contentType: "image/png",
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+    });
+
+    expect(applyBrandingToIndexHtml(INDEX_HTML)).toBe(INDEX_HTML);
+    expect(getPublicBranding().logoDarkUrl).toBe(
+      `/api/settings/public/logo/dark?v=${getAppLogo("dark")!.version}`,
+    );
+  });
+
+  test("injects the theme colors into the head", () => {
+    saveAppTheme({
+      light: { accent: "#e11d48", neutral: null },
+      dark: { accent: null, neutral: "zinc" },
+    });
+
+    const html = applyBrandingToIndexHtml(INDEX_HTML);
+
+    expect(html).toMatch(
+      /<style id="branding-theme">:root\{--color-blue-50:#[0-9a-f]{6};[^<]*<\/style>\n<\/head>/,
+    );
+    expect(html).toContain(':root[data-theme="dark"]{--color-slate-50:');
+  });
+
+  test("ignores a corrupt stored theme", () => {
+    getDb().insert(settings).values({ key: "app_theme", value: "{not json" }).run();
+
+    expect(applyBrandingToIndexHtml(INDEX_HTML)).toBe(INDEX_HTML);
+    expect(getPublicBranding().theme.light.accent).toBeNull();
   });
 });

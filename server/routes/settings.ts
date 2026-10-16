@@ -1,15 +1,24 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { eq, count } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings, webauthnCredentials } from "../db/schema";
 import {
-  configureOidc,
+  configureOidcFromSettings,
   DEFAULT_OIDC_GROUPS_CLAIM,
   OIDC_END_SESSION_SETTING_KEY,
   parseCsvList,
   parseOidcScope,
   parseOidcUnmatchedRole,
 } from "../auth/oidc";
+import {
+  getAuthSettings,
+  getManagedAuthSettings,
+  getPasswordLoginState,
+  hasOidcSettings,
+  isAuthSettingManaged,
+  MANAGED_BY_CONFIG_CODE,
+  type AuthSettingKey,
+} from "../auth/auth-config";
 import { getEncryptor } from "../security";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
@@ -22,18 +31,28 @@ import {
 import type { SessionData } from "../auth/session";
 import { getConfiguredTimeZone } from "../time-zone";
 import {
+  APP_LOGO_DARK_SETTING_KEY,
   APP_LOGO_JPEG_SETTING_KEY,
   APP_LOGO_SETTING_KEY,
   APP_NAME_SETTING_KEY,
+  APP_THEME_SETTING_KEY,
   BrandingValidationError,
+  clearAppDarkLogo,
   clearAppLogo,
   getAppLogo,
   getPublicBranding,
   normalizeAppName,
   parseAppLogoJpegUpload,
   parseAppLogoUpload,
+  saveAppDarkLogo,
   saveAppLogo,
+  saveAppTheme,
+  type AppLogoVariant,
 } from "../services/branding-service";
+import {
+  BrandingThemeValidationError,
+  parseBrandingThemeInput,
+} from "../../shared/branding-theme";
 
 type AuthEnv = {
   Variables: {
@@ -43,8 +62,14 @@ type AuthEnv = {
 
 const SENSITIVE_KEYS = ["oidc_client_secret"];
 const PUBLIC_SETTING_KEYS = ["language"] as const;
-// Managed through dedicated endpoints and too large to ship with every settings read.
-const HIDDEN_KEYS = [APP_LOGO_SETTING_KEY, APP_LOGO_JPEG_SETTING_KEY];
+// Managed through dedicated branding endpoints; the logos are also too large to
+// ship with every settings read.
+const HIDDEN_KEYS = [
+  APP_LOGO_SETTING_KEY,
+  APP_LOGO_JPEG_SETTING_KEY,
+  APP_LOGO_DARK_SETTING_KEY,
+  APP_THEME_SETTING_KEY,
+];
 
 const settingsRouter = new Hono<AuthEnv>();
 
@@ -69,8 +94,8 @@ settingsRouter.get("/public", (c) => {
   return c.json({ settings: publicSettings, branding: getPublicBranding() });
 });
 
-settingsRouter.get("/public/logo", (c) => {
-  const logo = getAppLogo();
+function serveLogo(c: Context, variant: AppLogoVariant) {
+  const logo = getAppLogo(variant);
   if (!logo) {
     return c.json({ error: "No custom logo configured" }, 404);
   }
@@ -89,7 +114,10 @@ settingsRouter.get("/public/logo", (c) => {
   );
   c.header("Content-Disposition", "inline");
   return c.body(new Uint8Array(logo.data));
-});
+}
+
+settingsRouter.get("/public/logo", (c) => serveLogo(c, "default"));
+settingsRouter.get("/public/logo/dark", (c) => serveLogo(c, "dark"));
 
 settingsRouter.put("/branding/logo", async (c) => {
   const body = await c.req.json().catch(() => null);
@@ -120,6 +148,49 @@ settingsRouter.delete("/branding/logo", (c) => {
   return c.json({ status: "ok", branding: getPublicBranding() });
 });
 
+// The dark mode logo only replaces the main logo in the UI, so notification
+// integrations keep following the main logo.
+settingsRouter.put("/branding/logo/dark", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  try {
+    saveAppDarkLogo(parseAppLogoUpload((body as { dataUrl?: unknown }).dataUrl));
+  } catch (error) {
+    if (error instanceof BrandingValidationError) {
+      return c.json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+
+  return c.json({ status: "ok", branding: getPublicBranding() });
+});
+
+settingsRouter.delete("/branding/logo/dark", (c) => {
+  clearAppDarkLogo();
+  return c.json({ status: "ok", branding: getPublicBranding() });
+});
+
+settingsRouter.put("/branding/theme", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  try {
+    saveAppTheme(parseBrandingThemeInput((body as { theme?: unknown }).theme));
+  } catch (error) {
+    if (error instanceof BrandingThemeValidationError) {
+      return c.json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+
+  return c.json({ status: "ok", branding: getPublicBranding() });
+});
+
 // Get all settings
 settingsRouter.get("/", (c) => {
   const db = getDb();
@@ -135,8 +206,16 @@ settingsRouter.get("/", (c) => {
       settingsMap[s.key] = s.value;
     }
   }
+  // Environment-managed auth settings report their effective value.
+  const managedSettings = getManagedAuthSettings();
+  const managedKeys = Object.keys(managedSettings) as AuthSettingKey[];
+  for (const [key, value] of getAuthSettings(managedKeys)) {
+    settingsMap[key] = SENSITIVE_KEYS.includes(key) ? "(stored)" : value;
+  }
   return c.json({
     settings: settingsMap,
+    managedSettings,
+    passwordLoginFallback: getPasswordLoginState().fallback,
     numericSettingRules: getNumericSettingRules(),
     timeZone: getConfiguredTimeZone(),
   });
@@ -157,8 +236,22 @@ settingsRouter.put("/", async (c) => {
     ]),
   );
 
+  const managedKeys = Object.keys(normalizedBody).filter(isAuthSettingManaged);
+  if (managedKeys.length > 0) {
+    return c.json(
+      {
+        error: `Managed by environment configuration: ${managedKeys.join(", ")}`,
+        code: MANAGED_BY_CONFIG_CODE,
+        keys: managedKeys,
+      },
+      409,
+    );
+  }
   if (HIDDEN_KEYS.some((key) => key in normalizedBody)) {
-    return c.json({ error: "Use the branding logo endpoint to change the logo" }, 400);
+    return c.json(
+      { error: "Use the branding endpoints to change the logos and colors" },
+      400,
+    );
   }
   if (APP_NAME_SETTING_KEY in normalizedBody) {
     try {
@@ -225,12 +318,7 @@ settingsRouter.put("/", async (c) => {
       .get();
     const hasPasskeys = (passkeyCnt?.count ?? 0) > 0;
 
-    // Check if OIDC is configured
-    const oidcIssuer = db.select({ value: settings.value }).from(settings).where(eq(settings.key, "oidc_issuer")).get();
-    const oidcClientId = db.select({ value: settings.value }).from(settings).where(eq(settings.key, "oidc_client_id")).get();
-    const hasOidc = !!(oidcIssuer?.value && oidcClientId?.value);
-
-    if (!hasPasskeys && !hasOidc) {
+    if (!hasPasskeys && !hasOidcSettings()) {
       return c.json({
         error: "Cannot disable password login without a passkey or SSO configured",
       }, 400);
@@ -286,19 +374,7 @@ settingsRouter.put("/", async (c) => {
   // Reconfigure OIDC if any OIDC settings were changed
   const oidcKeys = ["oidc_issuer", "oidc_client_id", "oidc_client_secret"];
   if (oidcKeys.some((k) => k in normalizedBody)) {
-    const issuer = db.select().from(settings).where(eq(settings.key, "oidc_issuer")).get();
-    const clientId = db.select().from(settings).where(eq(settings.key, "oidc_client_id")).get();
-    const clientSecret = db.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();
-
-    const decryptedSecret = clientSecret?.value
-      ? encryptor.decrypt(clientSecret.value)
-      : "";
-
-    const oidcError = await configureOidc(
-      issuer?.value || "",
-      clientId?.value || "",
-      decryptedSecret,
-    );
+    const oidcError = await configureOidcFromSettings();
     if (oidcError) {
       return c.json({ status: "ok", oidcError });
     }

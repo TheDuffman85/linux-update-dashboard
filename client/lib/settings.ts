@@ -1,9 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type { NumericSettingRules } from "./settings-validation";
+import type { BrandingTheme } from "../../shared/branding-theme";
 
 export type SettingsResponse = {
   settings: Record<string, string>;
+  /** Settings pinned by an environment variable, mapped to the variable name. */
+  managedSettings?: Record<string, string>;
+  /** Password login was requested off but stays on because no other sign-in method exists. */
+  passwordLoginFallback?: boolean;
   numericSettingRules: NumericSettingRules;
   timeZone: string | null;
 };
@@ -11,6 +16,8 @@ export type SettingsResponse = {
 export type PublicBranding = {
   appName: string;
   logoUrl: string | null;
+  logoDarkUrl: string | null;
+  theme: BrandingTheme;
 };
 
 export type PublicSettingsResponse = {

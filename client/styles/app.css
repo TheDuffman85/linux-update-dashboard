@@ -2,21 +2,23 @@
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* Surfaces follow the slate palette, which the branding neutral tone can
+   override at runtime (see shared/branding-theme.ts). */
 @theme {
   --color-surface: #ffffff;
-  --color-surface-hover: #f1f5f9;
+  --color-surface-hover: var(--color-slate-100);
   --color-sidebar: #ffffff;
-  --color-sidebar-hover: #f1f5f9;
-  --color-border: #e2e8f0;
+  --color-sidebar-hover: var(--color-slate-100);
+  --color-border: var(--color-slate-200);
 }
 
 /* Dark theme overrides */
 [data-theme="dark"] {
-  --color-surface: #1e293b;
-  --color-surface-hover: #334155;
-  --color-sidebar: #0f172a;
-  --color-sidebar-hover: #1e293b;
-  --color-border: #334155;
+  --color-surface: var(--color-slate-800);
+  --color-surface-hover: var(--color-slate-700);
+  --color-sidebar: var(--color-slate-900);
+  --color-sidebar-hover: var(--color-slate-800);
+  --color-border: var(--color-slate-700);
 }
 
 html {
