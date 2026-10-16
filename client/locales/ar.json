@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 يوما",
   "pages.settings.days3": "90 يوما",
   "pages.settings.disablePasswordLogin": "تعطيل تسجيل الدخول بكلمة المرور",
+  "pages.settings.managedByEnv": "تم تعيينه بواسطة متغير البيئة {name}.",
+  "pages.settings.passwordLoginFallback": "يظل تسجيل الدخول بكلمة المرور مفعّلًا لعدم إعداد SSO أو مفتاح مرور.",
   "pages.settings.done": "تم",
   "pages.settings.eGHomepageWidget": "مثال: ودجت الصفحة الرئيسية",
   "pages.settings.eolWarningWindowDays": "نافذة تحذير نهاية العمر (أيام)",

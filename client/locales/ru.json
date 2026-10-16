@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 дней",
   "pages.settings.days3": "90 дней",
   "pages.settings.disablePasswordLogin": "Отключить вход по паролю",
+  "pages.settings.managedByEnv": "Задано переменной окружения {name}.",
+  "pages.settings.passwordLoginFallback": "Вход по паролю остаётся включённым, так как не настроены ни SSO, ни ключ доступа (passkey).",
   "pages.settings.done": "Готово",
   "pages.settings.eGHomepageWidget": "например, виджет Homepage",
   "pages.settings.eolWarningWindowDays": "Окно предупреждения EOL (дни)",

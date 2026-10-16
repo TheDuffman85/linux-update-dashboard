@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 Tage",
   "pages.settings.days3": "90 Tage",
   "pages.settings.disablePasswordLogin": "Passwort-Anmeldung deaktivieren",
+  "pages.settings.managedByEnv": "Durch die Umgebungsvariable {name} festgelegt.",
+  "pages.settings.passwordLoginFallback": "Die Passwort-Anmeldung bleibt aktiviert, da weder SSO noch ein Passkey eingerichtet ist.",
   "pages.settings.done": "Fertig",
   "pages.settings.eGHomepageWidget": "z. B. Homepage-Widget",
   "pages.settings.eolWarningWindowDays": "EOL-Warnfenster (Tage)",

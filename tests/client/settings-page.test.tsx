@@ -161,4 +161,65 @@ describe("Settings page", () => {
     expect(html).toContain("Use Default Logo");
     expect(html).toContain('src="/api/settings/public/logo?v=abc"');
   });
+
+  function withSettingsResponse(extra: Record<string, unknown>) {
+    const current = mockUseSettingsResponse();
+    mockUseSettingsResponse.mockReturnValue({
+      ...current,
+      data: { ...current.data, ...extra },
+    });
+  }
+
+  test("locks environment-managed auth settings and names their variables", () => {
+    withSettingsResponse({
+      managedSettings: {
+        oidc_issuer: "LUDASH_OIDC_ISSUER",
+        oidc_admin_groups: "LUDASH_OIDC_ADMIN_GROUPS",
+        disable_password_login: "LUDASH_PASSWORD_LOGIN_ENABLED",
+      },
+    });
+
+    const html = renderToStaticMarkup(<Settings />);
+
+    expect(html).toMatch(/<input id="oidc-issuer" disabled=""/);
+    expect(html).not.toMatch(/<input id="oidc-client-id" disabled=""/);
+    expect(html).toMatch(/<input id="oidc-admin-groups"[^>]*disabled=""/);
+    expect(html).toContain("Set by the LUDASH_OIDC_ISSUER environment variable.");
+    expect(html).toContain("Set by the LUDASH_OIDC_ADMIN_GROUPS environment variable.");
+    expect(html).toContain("Set by the LUDASH_PASSWORD_LOGIN_ENABLED environment variable.");
+    // Some OIDC fields stay editable, so the section keeps its save button.
+    expect(html).toContain("Save OIDC Settings");
+  });
+
+  test("hides the OIDC save button when every OIDC setting is managed", () => {
+    withSettingsResponse({
+      managedSettings: Object.fromEntries(
+        [
+          "oidc_issuer",
+          "oidc_client_id",
+          "oidc_client_secret",
+          "oidc_scope",
+          "oidc_groups_claim",
+          "oidc_admin_groups",
+          "oidc_read_only_groups",
+          "oidc_unmatched_role",
+          "oidc_end_session",
+        ].map((key) => [key, `LUDASH_${key.toUpperCase()}`]),
+      ),
+    });
+
+    const html = renderToStaticMarkup(<Settings />);
+
+    expect(html).not.toContain("Save OIDC Settings");
+  });
+
+  test("warns when password login stays enabled to avoid a lockout", () => {
+    withSettingsResponse({ passwordLoginFallback: true });
+
+    const html = renderToStaticMarkup(<Settings />);
+
+    expect(html).toContain(
+      "Password login stays enabled because neither SSO nor a passkey is configured.",
+    );
+  });
 });

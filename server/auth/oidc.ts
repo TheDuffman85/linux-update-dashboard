@@ -1,14 +1,26 @@
 import * as client from "openid-client";
-import { eq, inArray } from "drizzle-orm";
-import { getDb } from "../db";
-import { settings } from "../db/schema";
+import { getAuthSetting, getAuthSettings } from "./auth-config";
+import {
+  DEFAULT_OIDC_GROUPS_CLAIM,
+  DEFAULT_OIDC_SCOPE,
+  OIDC_END_SESSION_SETTING_KEY,
+  parseCsvList,
+  parseOidcScope,
+  parseOidcUnmatchedRole,
+  type OidcUnmatchedRole,
+  type UserRole,
+} from "./oidc-settings";
 
-export type UserRole = "admin" | "read-only";
-export type OidcUnmatchedRole = "deny" | UserRole;
-
-export const DEFAULT_OIDC_SCOPE = "openid profile email";
-export const DEFAULT_OIDC_GROUPS_CLAIM = "groups";
-export const OIDC_END_SESSION_SETTING_KEY = "oidc_end_session";
+export {
+  DEFAULT_OIDC_GROUPS_CLAIM,
+  DEFAULT_OIDC_SCOPE,
+  OIDC_END_SESSION_SETTING_KEY,
+  parseCsvList,
+  parseOidcScope,
+  parseOidcUnmatchedRole,
+  type OidcUnmatchedRole,
+  type UserRole,
+} from "./oidc-settings";
 
 export interface OidcRolePolicy {
   groupsClaim: string;
@@ -34,60 +46,15 @@ const OIDC_ERROR_HINTS: Record<string, string> = {
     "JWT claim validation failed — check client ID and issuer configuration.",
 };
 
-export function parseCsvList(value: string | undefined | null): string[] {
-  if (!value) return [];
-  return Array.from(
-    new Set(
-      value
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
-/** Normalizes a space-separated scope list. Throws when openid is missing. */
-export function parseOidcScope(value: string | undefined | null): string {
-  const scope = value?.trim();
-  if (!scope) return DEFAULT_OIDC_SCOPE;
-  const scopes = Array.from(new Set(scope.split(/\s+/)));
-  if (!scopes.includes("openid")) {
-    throw new Error("OIDC scopes must include openid");
-  }
-  return scopes.join(" ");
-}
-
-export function parseOidcUnmatchedRole(
-  value: string | undefined | null,
-): OidcUnmatchedRole {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized) return "deny";
-  if (
-    normalized === "deny" ||
-    normalized === "admin" ||
-    normalized === "read-only"
-  ) {
-    return normalized;
-  }
-  throw new Error("Invalid OIDC unmatched role");
-}
-
-/** Reads the role mapping and scope settings from the database. */
+/** Reads the role mapping and scope settings (environment overrides win). */
 export function getOidcPolicy(): OidcPolicy {
-  const rows = getDb()
-    .select({ key: settings.key, value: settings.value })
-    .from(settings)
-    .where(
-      inArray(settings.key, [
-        "oidc_scope",
-        "oidc_groups_claim",
-        "oidc_admin_groups",
-        "oidc_read_only_groups",
-        "oidc_unmatched_role",
-      ]),
-    )
-    .all();
-  const values = new Map(rows.map((row) => [row.key, row.value]));
+  const values = getAuthSettings([
+    "oidc_scope",
+    "oidc_groups_claim",
+    "oidc_admin_groups",
+    "oidc_read_only_groups",
+    "oidc_unmatched_role",
+  ]);
 
   let scope = DEFAULT_OIDC_SCOPE;
   try {
@@ -208,6 +175,20 @@ export async function configureOidc(
   }
 }
 
+/** Configures OIDC from the effective issuer, client ID and secret. */
+export function configureOidcFromSettings(): Promise<string | null> {
+  const values = getAuthSettings([
+    "oidc_issuer",
+    "oidc_client_id",
+    "oidc_client_secret",
+  ]);
+  return configureOidc(
+    values.get("oidc_issuer") || "",
+    values.get("oidc_client_id") || "",
+    values.get("oidc_client_secret") || "",
+  );
+}
+
 export function isConfigured(): boolean {
   return _configured;
 }
@@ -237,12 +218,7 @@ export function getAuthorizationUrl(
 
 /** Whether logging out should also end the session at the identity provider. */
 export function isEndSessionEnabled(): boolean {
-  const row = getDb()
-    .select({ value: settings.value })
-    .from(settings)
-    .where(eq(settings.key, OIDC_END_SESSION_SETTING_KEY))
-    .get();
-  return row?.value !== "false";
+  return getAuthSetting(OIDC_END_SESSION_SETTING_KEY) !== "false";
 }
 
 /**

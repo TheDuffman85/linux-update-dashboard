@@ -64,6 +64,15 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | PUT    | `/api/settings/branding/logo` | Upload a custom logo as `{ "dataUrl": "data:image/...;base64,..." }`. |
 | DELETE | `/api/settings/branding/logo` | Restore the default logo.                                             |
 
+`GET /api/settings` also returns `managedSettings`, which maps each setting
+pinned by an environment variable to that variable's name (for example
+`{ "oidc_issuer": "LUDASH_OIDC_ISSUER" }`), and `passwordLoginFallback`, which
+is `true` while password login was set to disabled but stays enabled because
+neither OIDC nor a passkey is configured. Managed settings report their
+effective value. A `PUT /api/settings` that includes a managed key is rejected
+with `409` and `{ "code": "MANAGED_BY_CONFIG", "keys": [...] }`, and nothing in
+that request is saved.
+
 Custom logos may be PNG, JPEG, GIF, WebP, or SVG images up to 512 KB. The
 image type is detected from the file content, and SVG logos are served with a
 sandboxed Content Security Policy. Like all `/api/settings` management

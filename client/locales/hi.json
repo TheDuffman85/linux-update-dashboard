@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 दिन",
   "pages.settings.days3": "90 दिन",
   "pages.settings.disablePasswordLogin": "पासवर्ड लॉगिन बंद करें",
+  "pages.settings.managedByEnv": "{name} एनवायरनमेंट वेरिएबल द्वारा सेट किया गया।",
+  "pages.settings.passwordLoginFallback": "पासवर्ड लॉगिन चालू रहेगा, क्योंकि न तो SSO और न ही कोई पासकी कॉन्फ़िगर है।",
   "pages.settings.done": "हो गया",
   "pages.settings.eGHomepageWidget": "जैसे Homepage widget",
   "pages.settings.eolWarningWindowDays": "EOL चेतावनी विंडो (दिन)",

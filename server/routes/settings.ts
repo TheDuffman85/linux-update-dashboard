@@ -3,13 +3,22 @@ import { eq, count } from "drizzle-orm";
 import { getDb } from "../db";
 import { settings, webauthnCredentials } from "../db/schema";
 import {
-  configureOidc,
+  configureOidcFromSettings,
   DEFAULT_OIDC_GROUPS_CLAIM,
   OIDC_END_SESSION_SETTING_KEY,
   parseCsvList,
   parseOidcScope,
   parseOidcUnmatchedRole,
 } from "../auth/oidc";
+import {
+  getAuthSettings,
+  getManagedAuthSettings,
+  getPasswordLoginState,
+  hasOidcSettings,
+  isAuthSettingManaged,
+  MANAGED_BY_CONFIG_CODE,
+  type AuthSettingKey,
+} from "../auth/auth-config";
 import { getEncryptor } from "../security";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
@@ -135,8 +144,16 @@ settingsRouter.get("/", (c) => {
       settingsMap[s.key] = s.value;
     }
   }
+  // Environment-managed auth settings report their effective value.
+  const managedSettings = getManagedAuthSettings();
+  const managedKeys = Object.keys(managedSettings) as AuthSettingKey[];
+  for (const [key, value] of getAuthSettings(managedKeys)) {
+    settingsMap[key] = SENSITIVE_KEYS.includes(key) ? "(stored)" : value;
+  }
   return c.json({
     settings: settingsMap,
+    managedSettings,
+    passwordLoginFallback: getPasswordLoginState().fallback,
     numericSettingRules: getNumericSettingRules(),
     timeZone: getConfiguredTimeZone(),
   });
@@ -157,6 +174,17 @@ settingsRouter.put("/", async (c) => {
     ]),
   );
 
+  const managedKeys = Object.keys(normalizedBody).filter(isAuthSettingManaged);
+  if (managedKeys.length > 0) {
+    return c.json(
+      {
+        error: `Managed by environment configuration: ${managedKeys.join(", ")}`,
+        code: MANAGED_BY_CONFIG_CODE,
+        keys: managedKeys,
+      },
+      409,
+    );
+  }
   if (HIDDEN_KEYS.some((key) => key in normalizedBody)) {
     return c.json({ error: "Use the branding logo endpoint to change the logo" }, 400);
   }
@@ -225,12 +253,7 @@ settingsRouter.put("/", async (c) => {
       .get();
     const hasPasskeys = (passkeyCnt?.count ?? 0) > 0;
 
-    // Check if OIDC is configured
-    const oidcIssuer = db.select({ value: settings.value }).from(settings).where(eq(settings.key, "oidc_issuer")).get();
-    const oidcClientId = db.select({ value: settings.value }).from(settings).where(eq(settings.key, "oidc_client_id")).get();
-    const hasOidc = !!(oidcIssuer?.value && oidcClientId?.value);
-
-    if (!hasPasskeys && !hasOidc) {
+    if (!hasPasskeys && !hasOidcSettings()) {
       return c.json({
         error: "Cannot disable password login without a passkey or SSO configured",
       }, 400);
@@ -286,19 +309,7 @@ settingsRouter.put("/", async (c) => {
   // Reconfigure OIDC if any OIDC settings were changed
   const oidcKeys = ["oidc_issuer", "oidc_client_id", "oidc_client_secret"];
   if (oidcKeys.some((k) => k in normalizedBody)) {
-    const issuer = db.select().from(settings).where(eq(settings.key, "oidc_issuer")).get();
-    const clientId = db.select().from(settings).where(eq(settings.key, "oidc_client_id")).get();
-    const clientSecret = db.select().from(settings).where(eq(settings.key, "oidc_client_secret")).get();
-
-    const decryptedSecret = clientSecret?.value
-      ? encryptor.decrypt(clientSecret.value)
-      : "";
-
-    const oidcError = await configureOidc(
-      issuer?.value || "",
-      clientId?.value || "",
-      decryptedSecret,
-    );
+    const oidcError = await configureOidcFromSettings();
     if (oidcError) {
       return c.json({ status: "ok", oidcError });
     }

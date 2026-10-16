@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 dias",
   "pages.settings.days3": "90 dias",
   "pages.settings.disablePasswordLogin": "Desativar login por senha",
+  "pages.settings.managedByEnv": "Definido pela variável de ambiente {name}.",
+  "pages.settings.passwordLoginFallback": "O login com senha permanece ativado porque nem SSO nem uma passkey estão configurados.",
   "pages.settings.done": "Concluído",
   "pages.settings.eGHomepageWidget": "e.g. Homepage widget",
   "pages.settings.eolWarningWindowDays": "EOL Aviso Window (days)",

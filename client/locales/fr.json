@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 jours",
   "pages.settings.days3": "90 jours",
   "pages.settings.disablePasswordLogin": "Désactiver la connexion par mot de passe",
+  "pages.settings.managedByEnv": "Défini par la variable d'environnement {name}.",
+  "pages.settings.passwordLoginFallback": "La connexion par mot de passe reste activée, car ni le SSO ni une passkey ne sont configurés.",
   "pages.settings.done": "Terminé",
   "pages.settings.eGHomepageWidget": "ex. widget Homepage",
   "pages.settings.eolWarningWindowDays": "Fenêtre d'avertissement EOL (jours)",

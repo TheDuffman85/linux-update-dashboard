@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 días",
   "pages.settings.days3": "90 días",
   "pages.settings.disablePasswordLogin": "Desactivar inicio de sesión con contraseña",
+  "pages.settings.managedByEnv": "Definido por la variable de entorno {name}.",
+  "pages.settings.passwordLoginFallback": "El inicio de sesión con contraseña sigue activo porque no hay SSO ni ninguna passkey configurados.",
   "pages.settings.done": "Hecho",
   "pages.settings.eGHomepageWidget": "p. ej. widget de Homepage",
   "pages.settings.eolWarningWindowDays": "Ventana de advertencia EOL (días)",

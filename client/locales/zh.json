@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 天",
   "pages.settings.days3": "90 天",
   "pages.settings.disablePasswordLogin": "禁用密码登录",
+  "pages.settings.managedByEnv": "由环境变量 {name} 设置。",
+  "pages.settings.passwordLoginFallback": "由于未配置 SSO 或通行密钥，密码登录仍保持启用。",
   "pages.settings.done": "完成",
   "pages.settings.eGHomepageWidget": "例如 Homepage 小组件",
   "pages.settings.eolWarningWindowDays": "EOL 警告窗口（天）",

@@ -4,6 +4,10 @@ import type { NumericSettingRules } from "./settings-validation";
 
 export type SettingsResponse = {
   settings: Record<string, string>;
+  /** Settings pinned by an environment variable, mapped to the variable name. */
+  managedSettings?: Record<string, string>;
+  /** Password login was requested off but stays on because no other sign-in method exists. */
+  passwordLoginFallback?: boolean;
   numericSettingRules: NumericSettingRules;
   timeZone: string | null;
 };

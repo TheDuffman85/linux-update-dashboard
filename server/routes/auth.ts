@@ -5,7 +5,7 @@ import { and, eq, count as countFn, sql } from "drizzle-orm";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { generateSecret, generateURI, verify } from "otplib";
 import { getDb } from "../db";
-import { users, webauthnCredentials, settings } from "../db/schema";
+import { users, webauthnCredentials } from "../db/schema";
 import { hashPassword, verifyPassword } from "../auth/password";
 import { config } from "../config";
 import { getEncryptor } from "../security";
@@ -19,6 +19,7 @@ import {
 import * as wa from "../auth/webauthn";
 import { issueWebAuthnChallenge, consumeWebAuthnChallenge } from "../auth/webauthn-challenge";
 import * as oidc from "../auth/oidc";
+import { hasUsablePasskeys, isPasswordLoginDisabled } from "../auth/auth-config";
 import { rateLimit } from "../middleware/rate-limit";
 import {
   getKnownPublicOrigin,
@@ -340,22 +341,13 @@ auth.get("/status", async (c) => {
   const session = await getSession(c);
   const oidcEnabled = oidc.isConfigured();
 
-  const pwSetting = db
-    .select({ value: settings.value })
-    .from(settings)
-    .where(eq(settings.key, "disable_password_login"))
-    .get();
-  const passwordLoginDisabled = pwSetting?.value === "true";
-
-  const passkeyCount = db
-    .select({ count: countFn() })
-    .from(webauthnCredentials)
-    .innerJoin(users, eq(users.id, webauthnCredentials.userId))
-    .where(
-      sql`(${users.authProvider} != 'oidc' OR ${users.passwordHash} IS NOT NULL)`,
-    )
-    .get();
-  const passkeysEnabled = (passkeyCount?.count ?? 0) > 0;
+  const passwordLoginDisabled = isPasswordLoginDisabled();
+  // Passkeys on SSO-only accounts cannot sign in, but still offer the button
+  // while SSO is enabled so they get a clear "use SSO instead" response.
+  const passkeysEnabled =
+    hasUsablePasskeys() ||
+    (oidcEnabled &&
+      (db.select({ count: countFn() }).from(webauthnCredentials).get()?.count ?? 0) > 0);
 
   let hasPassword = false;
   let totpEnabled = false;
@@ -430,12 +422,7 @@ auth.post("/setup", rateLimit(3, 60_000), async (c) => {
 // --- Login ---
 auth.post("/login", rateLimit(5, 60_000), async (c) => {
   const db = getDb();
-  const pwSetting = db
-    .select({ value: settings.value })
-    .from(settings)
-    .where(eq(settings.key, "disable_password_login"))
-    .get();
-  if (pwSetting?.value === "true") {
+  if (isPasswordLoginDisabled()) {
     return c.json({ error: "Password login is disabled" }, 403);
   }
 

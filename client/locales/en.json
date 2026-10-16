@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 days",
   "pages.settings.days3": "90 days",
   "pages.settings.disablePasswordLogin": "Disable password login",
+  "pages.settings.managedByEnv": "Set by the {name} environment variable.",
+  "pages.settings.passwordLoginFallback": "Password login stays enabled because neither SSO nor a passkey is configured.",
   "pages.settings.done": "Done",
   "pages.settings.eGHomepageWidget": "e.g. Homepage widget",
   "pages.settings.eolWarningWindowDays": "EOL Warning Window (days)",

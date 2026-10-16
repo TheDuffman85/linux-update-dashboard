@@ -849,6 +849,8 @@
   "pages.settings.days2": "60 日",
   "pages.settings.days3": "90 日",
   "pages.settings.disablePasswordLogin": "パスワードログインを無効化",
+  "pages.settings.managedByEnv": "環境変数 {name} で設定されています。",
+  "pages.settings.passwordLoginFallback": "SSO もパスキーも設定されていないため、パスワードログインは有効のままです。",
   "pages.settings.done": "完了",
   "pages.settings.eGHomepageWidget": "例: ホームページウィジェット",
   "pages.settings.eolWarningWindowDays": "EOL 警告期間 (日)",
