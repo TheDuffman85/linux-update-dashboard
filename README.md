@@ -43,7 +43,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
-- **Branding:** replace the application name and logo shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**.
+- **Branding:** replace the application name, light and dark mode logos, and colors shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**. Accent color and neutral tone can be set separately for light and dark mode, with a live preview and a low-contrast warning.
 - **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, version/build info, and Docker-ready production packaging.
 
 ## Screenshots
@@ -551,6 +551,7 @@ If a login banner is sent by the SSH server, Test Connection shows it below the 
 ├── screenshots/              # README screenshots and capture scripts
 ├── scripts/                  # Build-time helper scripts
 ├── server/                   # Hono backend, auth, db, routes, services, ssh
+├── shared/                   # Code used by both client and server (branding theme)
 ├── tests/server/             # Vitest server and integration tests
 ├── run.sh                    # Local dev/production/test runner
 ├── reset-dev-branch.sh       # Reset dev branch to main

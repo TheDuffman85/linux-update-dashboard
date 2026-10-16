@@ -2,6 +2,14 @@ import { useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { usePublicSettingsResponse, type PublicBranding } from "./settings";
+import {
+  BRANDING_THEME_STYLE_ID,
+  buildBrandingThemeCss,
+  normalizeBrandingTheme,
+  type BrandingTheme,
+} from "../../shared/branding-theme";
+
+export type AppLogoVariant = "default" | "dark";
 
 export const DEFAULT_APP_NAME = "Linux Update Dashboard";
 export const APP_NAME_SETTING_KEY = "app_name";
@@ -20,12 +28,32 @@ export function useBranding(): PublicBranding {
   return {
     appName: data?.branding?.appName || DEFAULT_APP_NAME,
     logoUrl: data?.branding?.logoUrl ?? null,
+    logoDarkUrl: data?.branding?.logoDarkUrl ?? null,
+    theme: normalizeBrandingTheme(data?.branding?.theme),
   };
 }
 
-/** Keeps the browser tab title and favicon in sync with the configured branding. */
+/** Applies the theme stylesheet, replacing the one the server injected into the page shell. */
+export function applyThemeBranding(css: string): void {
+  let style = document.getElementById(BRANDING_THEME_STYLE_ID);
+  if (!css) {
+    style?.remove();
+    return;
+  }
+  if (!style) {
+    style = document.createElement("style");
+    style.id = BRANDING_THEME_STYLE_ID;
+    document.head.appendChild(style);
+  }
+  if (style.textContent !== css) style.textContent = css;
+}
+
+/** Keeps the browser tab title, favicon, and colors in sync with the configured branding. */
 export function useDocumentBranding(): void {
-  const { appName, logoUrl } = useBranding();
+  const { data } = usePublicSettingsResponse();
+  const { appName, logoUrl, theme } = useBranding();
+  const loaded = data !== undefined;
+  const themeCss = buildBrandingThemeCss(theme);
 
   useEffect(() => {
     document.title = appName;
@@ -45,6 +73,11 @@ export function useDocumentBranding(): void {
       if (link.dataset.defaultType) link.type = link.dataset.defaultType;
     }
   }, [logoUrl]);
+
+  useEffect(() => {
+    // Until the branding has loaded, keep the colors the server injected.
+    if (loaded) applyThemeBranding(themeCss);
+  }, [loaded, themeCss]);
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -99,30 +132,56 @@ async function renderProfilePhotoJpeg(dataUrl: string): Promise<string | undefin
 
 type BrandingMutationResponse = { status: string; branding: PublicBranding };
 
-export function useUploadAppLogo() {
+function useBrandingMutation<TVariables>(
+  mutationFn: (variables: TVariables) => Promise<BrandingMutationResponse>,
+) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
-      const dataUrl = await readFileAsDataUrl(file);
-      const jpegDataUrl = await renderProfilePhotoJpeg(dataUrl);
-      return apiFetch<BrandingMutationResponse>("/settings/branding/logo", {
-        method: "PUT",
-        body: JSON.stringify({ dataUrl, jpegDataUrl }),
-      });
-    },
+    mutationFn,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
     },
   });
 }
 
-export function useResetAppLogo() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () =>
-      apiFetch<BrandingMutationResponse>("/settings/branding/logo", { method: "DELETE" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["settings"] });
-    },
+export function useUploadAppDarkLogo() {
+  return useBrandingMutation(async (file: File) => {
+    const dataUrl = await readFileAsDataUrl(file);
+    return apiFetch<BrandingMutationResponse>("/settings/branding/logo/dark", {
+      method: "PUT",
+      body: JSON.stringify({ dataUrl }),
+    });
   });
+}
+
+export function useResetAppDarkLogo() {
+  return useBrandingMutation(() =>
+    apiFetch<BrandingMutationResponse>("/settings/branding/logo/dark", { method: "DELETE" }),
+  );
+}
+
+export function useUpdateAppTheme() {
+  return useBrandingMutation((theme: BrandingTheme) =>
+    apiFetch<BrandingMutationResponse>("/settings/branding/theme", {
+      method: "PUT",
+      body: JSON.stringify({ theme }),
+    }),
+  );
+}
+
+export function useUploadAppLogo() {
+  return useBrandingMutation(async (file: File) => {
+    const dataUrl = await readFileAsDataUrl(file);
+    const jpegDataUrl = await renderProfilePhotoJpeg(dataUrl);
+    return apiFetch<BrandingMutationResponse>("/settings/branding/logo", {
+      method: "PUT",
+      body: JSON.stringify({ dataUrl, jpegDataUrl }),
+    });
+  });
+}
+
+export function useResetAppLogo() {
+  return useBrandingMutation(() =>
+    apiFetch<BrandingMutationResponse>("/settings/branding/logo", { method: "DELETE" }),
+  );
 }

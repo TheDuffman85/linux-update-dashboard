@@ -52,17 +52,21 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 
 ## Dashboard and Settings
 
-| Method | Endpoint                      | Description                                                           |
-| ------ | ----------------------------- | --------------------------------------------------------------------- |
-| GET    | `/api/dashboard/stats`        | Summary statistics.                                                   |
-| GET    | `/api/dashboard/systems`      | Systems with dashboard status metadata.                               |
-| GET    | `/api/app-update`             | Application update status.                                            |
-| GET    | `/api/settings`               | Current settings.                                                     |
-| PUT    | `/api/settings`               | Update settings, including the `app_name` branding setting.           |
-| GET    | `/api/settings/public`        | Unauthenticated language and branding (name and logo URL).            |
-| GET    | `/api/settings/public/logo`   | Unauthenticated custom logo image; `404` when none is configured.     |
-| PUT    | `/api/settings/branding/logo` | Upload a custom logo as `{ "dataUrl": "data:image/...;base64,..." }`. |
-| DELETE | `/api/settings/branding/logo` | Restore the default logo.                                             |
+| Method | Endpoint                           | Description                                                                   |
+| ------ | ---------------------------------- | ----------------------------------------------------------------------------- |
+| GET    | `/api/dashboard/stats`             | Summary statistics.                                                           |
+| GET    | `/api/dashboard/systems`           | Systems with dashboard status metadata.                                       |
+| GET    | `/api/app-update`                  | Application update status.                                                    |
+| GET    | `/api/settings`                    | Current settings.                                                             |
+| PUT    | `/api/settings`                    | Update settings, including the `app_name` branding setting.                   |
+| GET    | `/api/settings/public`             | Unauthenticated language and branding (name, logo URLs, and colors).          |
+| GET    | `/api/settings/public/logo`        | Unauthenticated custom logo image; `404` when none is configured.             |
+| GET    | `/api/settings/public/logo/dark`   | Unauthenticated dark mode logo image; `404` when none is configured.          |
+| PUT    | `/api/settings/branding/logo`      | Upload a custom logo as `{ "dataUrl": "data:image/...;base64,..." }`.         |
+| DELETE | `/api/settings/branding/logo`      | Restore the default logo.                                                     |
+| PUT    | `/api/settings/branding/logo/dark` | Upload a logo used while the dark theme is active, as `{ "dataUrl": "..." }`. |
+| DELETE | `/api/settings/branding/logo/dark` | Remove the dark mode logo so the main logo is used in both themes.            |
+| PUT    | `/api/settings/branding/theme`     | Set the colors as `{ "theme": { "light": {...}, "dark": {...} } }`.           |
 
 `GET /api/settings` also returns `managedSettings`, which maps each setting
 pinned by an environment variable to that variable's name (for example
@@ -77,6 +81,20 @@ Custom logos may be PNG, JPEG, GIF, WebP, or SVG images up to 512 KB. The
 image type is detected from the file content, and SVG logos are served with a
 sandboxed Content Security Policy. Like all `/api/settings` management
 endpoints, the branding endpoints are not available to API tokens.
+
+`branding` in `GET /api/settings/public` is
+`{ "appName", "logoUrl", "logoDarkUrl", "theme" }`. `logoUrl` is `null` when
+the default logo is used, and `logoDarkUrl` is `null` when no dark mode logo is
+set. The dark mode logo only replaces the logo in the UI; the favicon,
+notifications, and the Telegram bot photo keep using the main logo.
+
+`theme` has a `light` and a `dark` entry, each with an `accent` and a
+`neutral` value, for example
+`{ "light": { "accent": "#e11d48", "neutral": "zinc" }, "dark": { "accent": null, "neutral": null } }`.
+`accent` is a `#rrggbb` (or `#rgb`) color from which the full accent palette is
+generated, and `neutral` is one of `slate`, `gray`, `zinc`, `neutral`, or
+`stone`. `null` uses the default; in `dark`, `null` uses the `light` setting
+instead. Sending all values as `null` restores the default colors.
 
 `GET /api/app-update` is available to read-only and read/write API tokens. It
 returns the current version and branch, the latest remote version, whether an

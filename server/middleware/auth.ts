@@ -5,7 +5,7 @@ import { validateToken } from "../auth/api-token";
 import { getDb } from "../db";
 import { users } from "../db/schema";
 import { isLoopbackRequest, getClientIp } from "../request-security";
-import { APP_LOGO_PATH } from "../services/branding-service";
+import { APP_LOGO_DARK_PATH, APP_LOGO_PATH } from "../services/branding-service";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -70,7 +70,8 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Allow auth routes and static files without auth
   if (
     path.startsWith("/api/auth") ||
-    ((path === "/api/settings/public" || path === APP_LOGO_PATH) && c.req.method === "GET") ||
+    ((path === "/api/settings/public" || path === APP_LOGO_PATH || path === APP_LOGO_DARK_PATH) &&
+      c.req.method === "GET") ||
     path.startsWith("/assets") ||
     path === "/favicon.ico"
   ) {

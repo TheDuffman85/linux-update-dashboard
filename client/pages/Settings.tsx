@@ -29,10 +29,14 @@ import {
   MAX_APP_LOGO_BYTES,
   MAX_APP_NAME_LENGTH,
   useBranding,
+  useResetAppDarkLogo,
   useResetAppLogo,
+  useUploadAppDarkLogo,
   useUploadAppLogo,
+  type AppLogoVariant,
 } from "../lib/branding";
 import { AppLogo } from "../components/AppLogo";
+import { BrandingColorsSettings } from "../components/BrandingColorsSettings";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { useToast } from "../context/ToastContext";
@@ -239,11 +243,18 @@ export default function Settings() {
   } = useAuth();
   const { browserLanguage, t } = useI18n();
   const { browserTimeFormat, formatDate } = useDateTime();
-  const { logoUrl } = useBranding();
+  const { logoUrl, logoDarkUrl, theme: brandingTheme } = useBranding();
   const uploadAppLogo = useUploadAppLogo();
   const resetAppLogo = useResetAppLogo();
+  const uploadAppDarkLogo = useUploadAppDarkLogo();
+  const resetAppDarkLogo = useResetAppDarkLogo();
   const logoInputRef = useRef<HTMLInputElement | null>(null);
-  const logoBusy = uploadAppLogo.isPending || resetAppLogo.isPending;
+  const darkLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const logoBusy =
+    uploadAppLogo.isPending ||
+    resetAppLogo.isPending ||
+    uploadAppDarkLogo.isPending ||
+    resetAppDarkLogo.isPending;
   const maxLogoSize = `${MAX_APP_LOGO_BYTES / 1024} KB`;
 
   const { data: passkeys, isLoading: passkeysLoading } = usePasskeys();
@@ -548,7 +559,10 @@ export default function Settings() {
     }
   };
 
-  const handleLogoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoSelected = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    variant: AppLogoVariant,
+  ) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -560,15 +574,25 @@ export default function Settings() {
       addToast(t("pages.settings.logoTooLarge", { size: maxLogoSize }), "danger");
       return;
     }
-    uploadAppLogo.mutate(file, {
-      onSuccess: () => addToast(t("pages.settings.logoUpdated"), "success"),
+    const upload = variant === "dark" ? uploadAppDarkLogo : uploadAppLogo;
+    upload.mutate(file, {
+      onSuccess: () =>
+        addToast(
+          t(variant === "dark" ? "pages.settings.darkLogoUpdated" : "pages.settings.logoUpdated"),
+          "success",
+        ),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
 
-  const handleResetLogo = () => {
-    resetAppLogo.mutate(undefined, {
-      onSuccess: () => addToast(t("pages.settings.logoReset"), "success"),
+  const handleResetLogo = (variant: AppLogoVariant) => {
+    const reset = variant === "dark" ? resetAppDarkLogo : resetAppLogo;
+    reset.mutate(undefined, {
+      onSuccess: () =>
+        addToast(
+          t(variant === "dark" ? "pages.settings.darkLogoRemoved" : "pages.settings.logoReset"),
+          "success",
+        ),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -577,6 +601,67 @@ export default function Settings() {
     if (!navigator.clipboard || !totpSecret) return;
     await navigator.clipboard.writeText(totpSecret);
     addToast(t("pages.settings.copied"), "success");
+  };
+
+  const logoButtonClass =
+    "px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50";
+
+  const renderLogoField = (variant: AppLogoVariant) => {
+    const dark = variant === "dark";
+    const inputRef = dark ? darkLogoInputRef : logoInputRef;
+    const customUrl = dark ? logoDarkUrl : logoUrl;
+    const uploading = dark ? uploadAppDarkLogo.isPending : uploadAppLogo.isPending;
+    return (
+      <div data-testid={`settings-logo-${variant}`}>
+        <label className={labelClass}>
+          {t(dark ? "pages.settings.darkLogo" : "pages.settings.logo")}
+        </label>
+        <div className="flex items-center gap-4">
+          {/* Fixed light and dark tiles show each logo on the background it is used on. */}
+          <div
+            className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border ${dark ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}
+          >
+            <AppLogo size={48} variant={variant} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={inputRef}
+              type="file"
+              accept={ACCEPTED_APP_LOGO_TYPES.join(",")}
+              onChange={(e) => handleLogoSelected(e, variant)}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={logoBusy}
+              className={logoButtonClass}
+            >
+              {uploading ? (
+                <span className="spinner spinner-sm" />
+              ) : (
+                t("pages.settings.uploadLogo")
+              )}
+            </button>
+            {customUrl && (
+              <button
+                type="button"
+                onClick={() => handleResetLogo(variant)}
+                disabled={logoBusy}
+                className={logoButtonClass}
+              >
+                {t(dark ? "pages.settings.removeLogo" : "pages.settings.resetLogo")}
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          {dark
+            ? t("pages.settings.darkLogoHelp")
+            : t("pages.settings.logoHelp", { size: maxLogoSize })}
+        </p>
+      </div>
+    );
   };
 
   const inputClass =
@@ -1866,7 +1951,7 @@ export default function Settings() {
         title={t("pages.settings.branding")}
         description={t("pages.settings.brandingDescription")}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
             <label className={labelClass}>{t("pages.settings.appName")}</label>
             <input
@@ -1890,49 +1975,16 @@ export default function Settings() {
               {t("pages.settings.save")}
             </button>
           </div>
-          <div>
-            <label className={labelClass}>{t("pages.settings.logo")}</label>
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-border bg-slate-50 dark:bg-slate-900">
-                <AppLogo size={48} />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <input
-                  ref={logoInputRef}
-                  type="file"
-                  accept={ACCEPTED_APP_LOGO_TYPES.join(",")}
-                  onChange={handleLogoSelected}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => logoInputRef.current?.click()}
-                  disabled={logoBusy}
-                  className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                >
-                  {uploadAppLogo.isPending ? (
-                    <span className="spinner spinner-sm" />
-                  ) : (
-                    t("pages.settings.uploadLogo")
-                  )}
-                </button>
-                {logoUrl && (
-                  <button
-                    type="button"
-                    onClick={handleResetLogo}
-                    disabled={logoBusy}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                  >
-                    {t("pages.settings.resetLogo")}
-                  </button>
-                )}
-              </div>
-            </div>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              {t("pages.settings.logoHelp", { size: maxLogoSize })}
-            </p>
-          </div>
+          {/* Starts a new row so both logos sit side by side below the name. */}
+          <div className="lg:col-start-1">{renderLogoField("default")}</div>
+          {renderLogoField("dark")}
         </div>
+
+        <BrandingColorsSettings
+          theme={brandingTheme}
+          inputClass={inputClass}
+          labelClass={labelClass}
+        />
       </SettingSection>
     </Layout>
   );

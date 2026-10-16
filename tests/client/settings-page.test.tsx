@@ -42,6 +42,9 @@ vi.mock("../../client/lib/branding", async (importOriginal) => ({
   useBranding: mockUseBranding,
   useUploadAppLogo: () => ({ mutate: vi.fn(), isPending: false }),
   useResetAppLogo: () => ({ mutate: vi.fn(), isPending: false }),
+  useUploadAppDarkLogo: () => ({ mutate: vi.fn(), isPending: false }),
+  useResetAppDarkLogo: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateAppTheme: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("../../client/lib/passkeys", () => ({
@@ -84,6 +87,7 @@ vi.mock("../../client/components/Modal", () => ({
 }));
 
 import Settings from "../../client/pages/Settings";
+import { DEFAULT_BRANDING_THEME } from "../../shared/branding-theme";
 
 describe("Settings page", () => {
   beforeEach(() => {
@@ -121,7 +125,12 @@ describe("Settings page", () => {
     mockUseDeleteApiToken.mockReturnValue({ mutate: vi.fn(), isPending: false });
     mockUseToast.mockReturnValue({ addToast: vi.fn() });
     mockUseAuth.mockReturnValue({ hasPassword: true, refresh: vi.fn() });
-    mockUseBranding.mockReturnValue({ appName: "Linux Update Dashboard", logoUrl: null });
+    mockUseBranding.mockReturnValue({
+      appName: "Linux Update Dashboard",
+      logoUrl: null,
+      logoDarkUrl: null,
+      theme: DEFAULT_BRANDING_THEME,
+    });
   });
 
   afterEach(() => {
@@ -147,19 +156,65 @@ describe("Settings page", () => {
     expect(html).toContain("Application Name");
     expect(html).toContain('placeholder="Linux Update Dashboard"');
     expect(html).toContain("Upload Logo");
+    expect(html).toContain("Dark Mode Logo (Optional)");
     expect(html).not.toContain("Use Default Logo");
+    expect(html).not.toContain("Remove Logo");
   });
 
   test("offers resetting the logo when a custom logo is configured", () => {
     mockUseBranding.mockReturnValue({
       appName: "Acme",
       logoUrl: "/api/settings/public/logo?v=abc",
+      logoDarkUrl: null,
+      theme: DEFAULT_BRANDING_THEME,
     });
 
     const html = renderToStaticMarkup(<Settings />);
 
     expect(html).toContain("Use Default Logo");
     expect(html).toContain('src="/api/settings/public/logo?v=abc"');
+  });
+
+  test("previews the dark mode logo and offers removing it", () => {
+    mockUseBranding.mockReturnValue({
+      appName: "Acme",
+      logoUrl: "/api/settings/public/logo?v=abc",
+      logoDarkUrl: "/api/settings/public/logo/dark?v=def",
+      theme: DEFAULT_BRANDING_THEME,
+    });
+
+    const html = renderToStaticMarkup(<Settings />);
+    const darkField = html.slice(html.indexOf('data-testid="settings-logo-dark"'));
+
+    expect(html).toContain("Remove Logo");
+    expect(darkField).toContain('src="/api/settings/public/logo/dark?v=def"');
+  });
+
+  test("renders the per-theme color settings with previews of the saved colors", () => {
+    mockUseBranding.mockReturnValue({
+      appName: "Acme",
+      logoUrl: null,
+      logoDarkUrl: null,
+      theme: {
+        light: { accent: "#e11d48", neutral: "zinc" },
+        dark: { accent: null, neutral: null },
+      },
+    });
+
+    const html = renderToStaticMarkup(<Settings />);
+
+    expect(html).toContain("Accent Color");
+    expect(html).toContain("Neutral Tone");
+    expect(html).toContain('value="#e11d48"');
+    expect(html).toContain('placeholder="Same as light mode"');
+    expect(html).toContain('data-testid="settings-theme-preview-dark"');
+    // The dark preview inherits the light mode accent.
+    const darkPreviewStyle = /style="([^"]*)" data-testid="settings-theme-preview-dark"/.exec(
+      html,
+    )?.[1];
+    expect(darkPreviewStyle).toContain("--color-blue-600:#e11d48");
+    expect(html).toContain("Save Colors");
+    expect(html).toContain("Restore Default Colors");
   });
 
   function withSettingsResponse(extra: Record<string, unknown>) {
