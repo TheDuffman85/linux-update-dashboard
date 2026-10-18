@@ -3,10 +3,11 @@ import { dirname } from "path";
 import { serve } from "@hono/node-server";
 import { WebSocketServer } from "ws";
 import { config, getEncryptionSalt, hasConfiguredBaseUrl } from "./config";
-import { initDatabase, closeDatabase } from "./db";
+import { initDatabase, closeDatabase, getDb } from "./db";
+import { users } from "./db/schema";
 import { initEncryptor } from "./security";
 import { initSession } from "./auth/session";
-import { configureOidcFromSettings } from "./auth/oidc";
+import { configureOidcFromSettings, getOidcPolicy } from "./auth/oidc";
 import {
   getManagedAuthSettings,
   getPasswordLoginState,
@@ -65,7 +66,16 @@ if (hasOidcSettings()) {
   void configureOidcFromSettings();
 }
 // Surface a lockout fallback at startup instead of on the first login attempt.
-getPasswordLoginState();
+if (getPasswordLoginState().disabled) {
+  // Without password setup, only an OIDC admin role can create the first administrator.
+  const policy = getOidcPolicy();
+  const hasUsers = !!getDb().select({ id: users.id }).from(users).limit(1).get();
+  if (!hasUsers && policy.adminGroups.length === 0 && policy.unmatchedRole !== "admin") {
+    logger.warn(
+      "Password login is disabled and no users exist, but no OIDC admin groups are configured; no one can sign in as administrator.",
+    );
+  }
+}
 
 // Start background scheduler
 logger.info("Starting update scheduler");
