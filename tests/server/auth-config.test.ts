@@ -369,6 +369,31 @@ describe("deployment-managed auth settings", () => {
       setEnv({ LUDASH_PASSWORD_LOGIN_ENABLED: "false" });
       const status = await (await authApp().request("/api/auth/status", {}, { incoming })).json();
       expect(status.passwordLoginDisabled).toBe(false);
+      expect(status.setupRequired).toBe(true);
+    });
+
+    test("initial setup is closed while password login is disabled", async () => {
+      setEnv({
+        LUDASH_OIDC_ISSUER: "https://idp.example.com",
+        LUDASH_OIDC_CLIENT_ID: "ludash",
+        LUDASH_PASSWORD_LOGIN_ENABLED: "false",
+      });
+
+      const status = await (await authApp().request("/api/auth/status", {}, { incoming })).json();
+      expect(status.setupRequired).toBe(false);
+      expect(status.passwordLoginDisabled).toBe(true);
+
+      const setup = await authApp().request(
+        "/api/auth/setup",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ username: "admin", password: "Password1" }),
+        },
+        { incoming },
+      );
+      expect(setup.status).toBe(403);
+      expect(getDb().select({ id: users.id }).from(users).all()).toHaveLength(0);
     });
   });
 });

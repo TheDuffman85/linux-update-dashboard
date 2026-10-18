@@ -368,7 +368,8 @@ auth.get("/status", async (c) => {
   }
 
   return c.json({
-    setupRequired: !hasUsers,
+    // With password login disabled, the first OIDC sign-in bootstraps the instance instead.
+    setupRequired: !hasUsers && !passwordLoginDisabled,
     authenticated: !!session,
     user: session || null,
     oidcEnabled,
@@ -382,6 +383,9 @@ auth.get("/status", async (c) => {
 
 // --- Setup ---
 auth.post("/setup", rateLimit(3, 60_000), async (c) => {
+  if (isPasswordLoginDisabled()) {
+    return c.json({ error: "Password login is disabled" }, 403);
+  }
   const db = getDb();
   const result = db.select({ count: countFn() }).from(users).get();
   if ((result?.count ?? 0) > 0) {
