@@ -38,5 +38,8 @@ RUN su - testuser -c "sudo -n /usr/local/bin/deb-get show drawio" && \
 # Generate host keys
 RUN ssh-keygen -A
 
+COPY security /opt/ludash-test-security
+RUN sh /opt/ludash-test-security/distrust-emudhra.sh
+
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D"]

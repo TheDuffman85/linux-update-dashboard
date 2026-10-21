@@ -62,5 +62,8 @@ RUN su - testuser -c "sudo -n dpkg --audit && ! sudo -n true"
 
 RUN ssh-keygen -A
 
+COPY security /opt/ludash-test-security
+RUN sh /opt/ludash-test-security/distrust-emudhra.sh
+
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D"]

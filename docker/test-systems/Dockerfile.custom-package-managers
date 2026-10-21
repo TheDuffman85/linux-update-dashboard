@@ -30,5 +30,8 @@ RUN chmod 755 /opt/ludash-custom-package-managers/entrypoint.sh \
 
 RUN ssh-keygen -A
 
+COPY security /opt/ludash-test-security
+RUN sh /opt/ludash-test-security/distrust-emudhra.sh
+
 EXPOSE 22
 CMD ["/opt/ludash-custom-package-managers/entrypoint.sh"]

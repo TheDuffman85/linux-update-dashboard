@@ -88,6 +88,9 @@ RUN su - testuser -c "sudo -n dpkg --audit && sudo -n -l /usr/bin/flatpak update
 # Generate host keys
 RUN ssh-keygen -A
 
+COPY security /opt/ludash-test-security
+RUN sh /opt/ludash-test-security/distrust-emudhra.sh
+
 EXPOSE 22
 
 # Start dbus-daemon (needed for flatpak operations) then sshd
