@@ -1,8 +1,9 @@
-ARG NODE_VERSION=24.21.0
+ARG NODE_VERSION=24.22.1
 FROM node:${NODE_VERSION}-trixie-slim AS base
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade libc6 libc-bin \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install --global pnpm@12.9.1
 

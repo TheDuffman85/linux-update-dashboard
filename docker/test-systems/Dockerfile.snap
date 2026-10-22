@@ -87,5 +87,8 @@ RUN ssh-keygen -A
 
 # systemd expects SIGRTMIN+3 for clean shutdown
 STOPSIGNAL SIGRTMIN+3
+COPY security /opt/ludash-test-security
+RUN sh /opt/ludash-test-security/distrust-emudhra.sh
+
 EXPOSE 22
 CMD ["/sbin/init"]

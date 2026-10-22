@@ -28,5 +28,8 @@ RUN su - testuser -c "sudo -n -l /usr/bin/yum update -y >/dev/null && \
 # Generate host keys
 RUN ssh-keygen -A
 
+COPY security /opt/ludash-test-security
+RUN sh /opt/ludash-test-security/distrust-emudhra.sh
+
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D"]

@@ -35,5 +35,8 @@ RUN su - testuser -c "sudo -n -l /usr/bin/pacman -Sy --noconfirm >/dev/null && !
 # Generate host keys
 RUN ssh-keygen -A
 
+COPY security /opt/ludash-test-security
+RUN sh /opt/ludash-test-security/distrust-emudhra.sh
+
 EXPOSE 22
 CMD ["/bin/sh", "-lc", "test -s /etc/machine-id || systemd-machine-id-setup >/dev/null 2>&1 || true; exec /usr/sbin/sshd -D"]
