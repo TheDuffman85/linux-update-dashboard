@@ -28,9 +28,9 @@ configure_pnpm() {
     fi
 
     log "Error: 'pnpm' is not installed and 'corepack' is not available."
-    log "Install pnpm 12.9.1 or activate it with Corepack:"
+    log "Install pnpm 12.15.0 or activate it with Corepack:"
     log "  corepack enable"
-    log "  corepack prepare pnpm@12.9.1 --activate"
+    log "  corepack prepare pnpm@12.15.0 --activate"
     exit 1
 }
 

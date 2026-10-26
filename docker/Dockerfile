@@ -5,7 +5,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade libc6 libc-bin \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN npm install --global pnpm@12.9.1
+RUN npm install --global pnpm@12.15.0
 
 # Install dependencies
 FROM base AS deps

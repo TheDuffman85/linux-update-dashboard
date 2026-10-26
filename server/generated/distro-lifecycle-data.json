@@ -1,10 +1,14 @@
 {
   "source": "https://endoflife.date/api",
-  "generatedAt": "2026-10-16T22:35:01.462Z",
+  "generatedAt": "2026-10-26T16:11:54.133Z",
   "catalog": {
     "ubuntu": {
       "label": "Ubuntu",
       "entries": [
+        {
+          "cycle": "26.10",
+          "eol": "2027-07-01"
+        },
         {
           "cycle": "26.04",
           "eol": "2031-05-29"
