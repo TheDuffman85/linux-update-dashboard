@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "ترقية المجموعة",
   "pages.dashboard.groupUpgradeHelp": "إظهار زر الترقية في كل مجموعة",
   "pages.dashboard.groupStatus": "حالة المجموعة",
+  "pages.dashboard.collapseAllGroups": "طي الكل",
+  "pages.dashboard.expandAllGroups": "توسيع الكل",
   "pages.dashboard.decreaseUpdatePriorityForName": "خفض أولوية التحديث لـ {name}",
   "pages.dashboard.increaseUpdatePriorityForName": "رفع أولوية التحديث لـ {name}",
   "pages.dashboard.includeNameInThisUpgrade": "تضمين {name} في هذه الترقية",

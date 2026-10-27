@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "Gruppen-Upgrade",
   "pages.dashboard.groupUpgradeHelp": "Upgrade-Schaltfläche an jeder Gruppe anzeigen",
   "pages.dashboard.groupStatus": "Gruppenstatus",
+  "pages.dashboard.collapseAllGroups": "Alle einklappen",
+  "pages.dashboard.expandAllGroups": "Alle ausklappen",
   "pages.dashboard.decreaseUpdatePriorityForName": "Upgrade-Priorität für {name} verringern",
   "pages.dashboard.increaseUpdatePriorityForName": "Upgrade-Priorität für {name} erhöhen",
   "pages.dashboard.includeNameInThisUpgrade": "{name} in dieses Upgrade einbeziehen",

@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "Atualização de grupo",
   "pages.dashboard.groupUpgradeHelp": "Mostrar um botão Atualizar em cada grupo",
   "pages.dashboard.groupStatus": "Estado do grupo",
+  "pages.dashboard.collapseAllGroups": "Recolher tudo",
+  "pages.dashboard.expandAllGroups": "Expandir tudo",
   "pages.dashboard.decreaseUpdatePriorityForName": "Diminuir a prioridade de atualização de {name}",
   "pages.dashboard.increaseUpdatePriorityForName": "Aumentar a prioridade de atualização de {name}",
   "pages.dashboard.includeNameInThisUpgrade": "Incluir {name} nesta atualização",

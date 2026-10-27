@@ -360,6 +360,66 @@ describe("Dashboard", () => {
     }
   });
 
+  test("offers collapse all or expand all for dashboard groups", () => {
+    const base: System = mockUseDashboardSystems().data[0];
+    const systems = [
+      { ...base, dashboardGroupId: 1 },
+      { ...base, id: 2, name: "Beta", dashboardGroupId: 2 },
+    ];
+    const renderGroups = (
+      collapsed: string[],
+      { editMode = false, search = "", grouped = true } = {},
+    ) => {
+      vi.stubGlobal("window", {
+        localStorage: {
+          getItem: (key: string) =>
+            key.endsWith("collapsed-groups") ? JSON.stringify(collapsed) : null,
+        },
+      });
+      return renderToStaticMarkup(
+        <DashboardSystemGroups
+          systems={systems}
+          groups={grouped ? [
+            { id: 1, name: "Primary", sortOrder: 0, updatePriority: 1, createdAt: "", updatedAt: "" },
+            { id: 2, name: "Secondary", sortOrder: 1, updatePriority: 2, createdAt: "", updatedAt: "" },
+          ] : []}
+          ungroupedSortOrder={2}
+          ungroupedUpdatePriority={99}
+          editMode={editMode}
+          search={search}
+          onToggleEditMode={vi.fn()}
+          onCreateGroup={vi.fn()}
+          onRenameGroup={vi.fn()}
+          onDeleteGroup={vi.fn()}
+          saveGroupOrder={vi.fn()}
+          saveGroupUpdatePriority={vi.fn()}
+          saveSystemUpdatePriority={vi.fn()}
+          saveSystemUpgradeAllExclusion={vi.fn()}
+          saveSystemPlacements={vi.fn()}
+          onError={vi.fn()}
+          renderSystem={(system) => <span data-test-system={system.id}>{system.name}</span>}
+        />,
+      );
+    };
+    try {
+      const partlyCollapsed = renderGroups(["1"]);
+      expect(partlyCollapsed).toContain("Collapse all");
+      expect(partlyCollapsed).not.toContain("Expand all");
+
+      const allCollapsed = renderGroups(["1", "2"]);
+      expect(allCollapsed).toContain("Expand all");
+      expect(allCollapsed).not.toContain("Collapse all");
+      expect(allCollapsed).not.toContain('data-test-system="1"');
+      expect(allCollapsed).not.toContain('data-test-system="2"');
+
+      expect(hasDisabledAttribute(getOpeningButtonTag(renderGroups([], { search: "is:updates" }), "Collapse all"))).toBe(true);
+      expect(renderGroups([], { editMode: true })).not.toContain("Collapse all");
+      expect(renderGroups([], { grouped: false })).not.toContain("Collapse all");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test("shows OS warnings as amber and labels Debian LTS warnings without dates", () => {
     mockUseDashboardStats.mockReturnValue({
       data: {

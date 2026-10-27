@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "分组升级",
   "pages.dashboard.groupUpgradeHelp": "在每个分组上显示升级按钮",
   "pages.dashboard.groupStatus": "组状态",
+  "pages.dashboard.collapseAllGroups": "全部折叠",
+  "pages.dashboard.expandAllGroups": "全部展开",
   "pages.dashboard.decreaseUpdatePriorityForName": "降低 {name} 的更新优先级",
   "pages.dashboard.increaseUpdatePriorityForName": "提高 {name} 的更新优先级",
   "pages.dashboard.includeNameInThisUpgrade": "将 {name} 包含在本次升级中",

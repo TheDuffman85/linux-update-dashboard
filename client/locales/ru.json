@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "Обновление группы",
   "pages.dashboard.groupUpgradeHelp": "Показывать кнопку «Обновить» у каждой группы",
   "pages.dashboard.groupStatus": "Состояние группы",
+  "pages.dashboard.collapseAllGroups": "Свернуть все",
+  "pages.dashboard.expandAllGroups": "Развернуть все",
   "pages.dashboard.decreaseUpdatePriorityForName": "Уменьшить приоритет обновления для {name}",
   "pages.dashboard.increaseUpdatePriorityForName": "Увеличить приоритет обновления для {name}",
   "pages.dashboard.includeNameInThisUpgrade": "Включить {name} в это обновление",
