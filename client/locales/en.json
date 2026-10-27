@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "Group upgrade",
   "pages.dashboard.groupUpgradeHelp": "Show an Upgrade button on each group",
   "pages.dashboard.groupStatus": "Group status",
+  "pages.dashboard.collapseAllGroups": "Collapse all",
+  "pages.dashboard.expandAllGroups": "Expand all",
   "pages.dashboard.decreaseUpdatePriorityForName": "Decrease upgrade priority for {name}",
   "pages.dashboard.increaseUpdatePriorityForName": "Increase upgrade priority for {name}",
   "pages.dashboard.includeNameInThisUpgrade": "Include {name} in this upgrade",

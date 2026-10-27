@@ -3,5 +3,3 @@ allowBuilds:
   cpu-features: true
   esbuild: true
   ssh2: true
-minimumReleaseAgeExclude:
-  - hono@4.13.13

@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "समूह अपग्रेड",
   "pages.dashboard.groupUpgradeHelp": "प्रत्येक समूह पर अपग्रेड बटन दिखाएं",
   "pages.dashboard.groupStatus": "समूह की स्थिति",
+  "pages.dashboard.collapseAllGroups": "सभी संक्षिप्त करें",
+  "pages.dashboard.expandAllGroups": "सभी विस्तृत करें",
   "pages.dashboard.decreaseUpdatePriorityForName": "{name} की अपडेट प्राथमिकता घटाएँ",
   "pages.dashboard.increaseUpdatePriorityForName": "{name} की अपडेट प्राथमिकता बढ़ाएँ",
   "pages.dashboard.includeNameInThisUpgrade": "इस अपग्रेड में {name} को शामिल करें",

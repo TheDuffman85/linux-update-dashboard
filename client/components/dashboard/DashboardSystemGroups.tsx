@@ -341,13 +341,20 @@ export function DashboardSystemGroups({
   const displayedSections = editMode
     ? visibleSections
     : visibleSections.filter((section) => section.systems.length > 0);
+  const allGroupsCollapsed =
+    displayedSections.length > 0 &&
+    displayedSections.every((section) => collapsedGroups.has(section.key));
+
   const persistCollapsedGroups = (next: Set<string>) => {
     setCollapsedGroups(next);
-    if (typeof window !== "undefined") {
+    if (typeof window === "undefined") return;
+    try {
       window.localStorage.setItem(
         COLLAPSED_GROUPS_STORAGE_KEY,
         JSON.stringify([...next]),
       );
+    } catch {
+      // The collapsed state still applies for this session when storage is unavailable.
     }
   };
 
@@ -356,6 +363,17 @@ export function DashboardSystemGroups({
     const next = new Set(collapsedGroups);
     if (next.has(key)) next.delete(key);
     else next.add(key);
+    persistCollapsedGroups(next);
+  };
+
+  // Only touches the groups currently shown, so hidden empty groups keep their state.
+  const toggleAllCollapsed = () => {
+    if (editMode || searchActive) return;
+    const next = new Set(collapsedGroups);
+    for (const section of displayedSections) {
+      if (allGroupsCollapsed) next.delete(section.key);
+      else next.add(section.key);
+    }
     persistCollapsedGroups(next);
   };
 
@@ -1005,7 +1023,11 @@ export function DashboardSystemGroups({
             ) : (
               <button
                 type="button"
-                onClick={() => toggleCollapsed(section.key)}
+                onClick={(event) =>
+                  event.altKey
+                    ? toggleAllCollapsed()
+                    : toggleCollapsed(section.key)
+                }
                 disabled={searchActive}
                 aria-expanded={!isCollapsed}
                 aria-controls={`dashboard-group-content-${section.key}`}
@@ -1391,6 +1413,36 @@ export function DashboardSystemGroups({
                 />
               </svg>
               {t("pages.dashboard.addGroup")}
+            </button>
+          )}
+          {!flatMode && !editMode && displayedSections.length > 1 && (
+            <button
+              type="button"
+              onClick={toggleAllCollapsed}
+              disabled={searchActive}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+            >
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d={
+                    allGroupsCollapsed
+                      ? "m7 6 5 5 5-5M7 13l5 5 5-5"
+                      : "m7 11 5-5 5 5M7 18l5-5 5 5"
+                  }
+                />
+              </svg>
+              {allGroupsCollapsed
+                ? t("pages.dashboard.expandAllGroups")
+                : t("pages.dashboard.collapseAllGroups")}
             </button>
           )}
           {canEdit && (

@@ -257,6 +257,8 @@
   "pages.dashboard.groupUpgrade": "グループアップグレード",
   "pages.dashboard.groupUpgradeHelp": "各グループにアップグレードボタンを表示",
   "pages.dashboard.groupStatus": "グループの状態",
+  "pages.dashboard.collapseAllGroups": "すべて折りたたむ",
+  "pages.dashboard.expandAllGroups": "すべて展開",
   "pages.dashboard.decreaseUpdatePriorityForName": "{name} の更新優先度を下げる",
   "pages.dashboard.increaseUpdatePriorityForName": "{name} の更新優先度を上げる",
   "pages.dashboard.includeNameInThisUpgrade": "このアップグレードに {name} を含める",
