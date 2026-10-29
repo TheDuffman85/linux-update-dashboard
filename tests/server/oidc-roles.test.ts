@@ -244,9 +244,9 @@ describe("read-only enforcement", () => {
       oidc_end_session: "no",
     });
     expect(ok.status).toBe(200);
-    expect(readSetting("oidc_end_session")).toBe("true");
-    expect((await put({ oidc_end_session: "false" })).status).toBe(200);
     expect(readSetting("oidc_end_session")).toBe("false");
+    expect((await put({ oidc_end_session: "true" })).status).toBe(200);
+    expect(readSetting("oidc_end_session")).toBe("true");
     expect(getOidcPolicy()).toEqual({
       scope: "openid groups",
       groupsClaim: "groups",

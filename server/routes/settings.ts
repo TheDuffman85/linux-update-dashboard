@@ -5,6 +5,8 @@ import { settings, webauthnCredentials } from "../db/schema";
 import {
   configureOidcFromSettings,
   DEFAULT_OIDC_GROUPS_CLAIM,
+  OIDC_AUTO_LOGIN_SETTING_KEY,
+  OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
   OIDC_END_SESSION_SETTING_KEY,
   parseCsvList,
   parseOidcScope,
@@ -13,6 +15,7 @@ import {
 import {
   getAuthSettings,
   getManagedAuthSettings,
+  getOidcAutoLoginState,
   getPasswordLoginState,
   hasOidcSettings,
   isAuthSettingManaged,
@@ -216,6 +219,7 @@ settingsRouter.get("/", (c) => {
     settings: settingsMap,
     managedSettings,
     passwordLoginFallback: getPasswordLoginState().fallback,
+    oidcAutoLoginActive: getOidcAutoLoginState().active,
     numericSettingRules: getNumericSettingRules(),
     timeZone: getConfiguredTimeZone(),
   });
@@ -300,10 +304,15 @@ settingsRouter.put("/", async (c) => {
     }
   }
 
-  if (OIDC_END_SESSION_SETTING_KEY in normalizedBody) {
-    const value = normalizedBody[OIDC_END_SESSION_SETTING_KEY];
-    normalizedBody[OIDC_END_SESSION_SETTING_KEY] =
-      value === false || value === "false" ? "false" : "true";
+  for (const key of [
+    OIDC_END_SESSION_SETTING_KEY,
+    OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
+    OIDC_AUTO_LOGIN_SETTING_KEY,
+  ]) {
+    if (key in normalizedBody) {
+      const value = normalizedBody[key];
+      normalizedBody[key] = value === true || value === "true" ? "true" : "false";
+    }
   }
 
   // Prevent disabling password login without an alternative auth method
@@ -370,6 +379,9 @@ settingsRouter.put("/", async (c) => {
   ) {
     syncSSHManagerWithSettings();
   }
+
+  // Log right away when this change leaves auto-login enabled but inactive.
+  getOidcAutoLoginState();
 
   // Reconfigure OIDC if any OIDC settings were changed
   const oidcKeys = ["oidc_issuer", "oidc_client_id", "oidc_client_secret"];

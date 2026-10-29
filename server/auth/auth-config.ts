@@ -5,7 +5,10 @@ import { resolveSecretEnv } from "../env-secrets";
 import { logger } from "../logger";
 import { getEncryptor } from "../security";
 import {
+  OIDC_AUTO_LOGIN_SETTING_KEY,
+  OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
   OIDC_END_SESSION_SETTING_KEY,
+  OIDC_ISSUER_ENV_VAR,
   parseCsvList,
   parseOidcScope,
   parseOidcUnmatchedRole,
@@ -19,7 +22,7 @@ import {
  * locks the field in the UI. Removing the variable restores the saved value.
  */
 export const AUTH_SETTING_ENV_VARS = {
-  oidc_issuer: "LUDASH_OIDC_ISSUER",
+  oidc_issuer: OIDC_ISSUER_ENV_VAR,
   oidc_client_id: "LUDASH_OIDC_CLIENT_ID",
   oidc_client_secret: "LUDASH_OIDC_CLIENT_SECRET",
   oidc_scope: "LUDASH_OIDC_SCOPE",
@@ -28,6 +31,8 @@ export const AUTH_SETTING_ENV_VARS = {
   oidc_read_only_groups: "LUDASH_OIDC_READ_ONLY_GROUPS",
   oidc_unmatched_role: "LUDASH_OIDC_UNMATCHED_ROLE",
   [OIDC_END_SESSION_SETTING_KEY]: "LUDASH_OIDC_END_SESSION",
+  [OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY]: "LUDASH_OIDC_BACKCHANNEL_LOGOUT",
+  [OIDC_AUTO_LOGIN_SETTING_KEY]: "LUDASH_OIDC_AUTO_LOGIN",
   disable_password_login: "LUDASH_PASSWORD_LOGIN_ENABLED",
 } as const;
 
@@ -43,6 +48,7 @@ type AuthEnvOverrides = Partial<Record<AuthSettingKey, string>>;
 
 let _overrides: AuthEnvOverrides | null = null;
 let _passwordLoginFallbackWarned = false;
+let _oidcAutoLoginInactiveReason: string | null = null;
 
 function configError(name: string, message: string): Error {
   return new Error(`Configuration error: ${name} ${message}`);
@@ -120,11 +126,13 @@ export function loadAuthEnvOverrides(): AuthEnvOverrides {
     }
   }
 
-  const endSession = readEnv(env[OIDC_END_SESSION_SETTING_KEY]);
-  if (endSession) {
-    overrides[OIDC_END_SESSION_SETTING_KEY] = String(
-      parseBooleanEnv(env[OIDC_END_SESSION_SETTING_KEY], endSession),
-    );
+  for (const key of [
+    OIDC_END_SESSION_SETTING_KEY,
+    OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
+    OIDC_AUTO_LOGIN_SETTING_KEY,
+  ] as const) {
+    const value = readEnv(env[key]);
+    if (value) overrides[key] = String(parseBooleanEnv(env[key], value));
   }
 
   const passwordLoginEnabled = readEnv(env.disable_password_login);
@@ -141,12 +149,14 @@ export function loadAuthEnvOverrides(): AuthEnvOverrides {
 export function initAuthConfig(): void {
   _overrides = loadAuthEnvOverrides();
   _passwordLoginFallbackWarned = false;
+  _oidcAutoLoginInactiveReason = null;
 }
 
 /** Drops the cached environment so the next read picks up process.env again. */
 export function resetAuthConfig(): void {
   _overrides = null;
   _passwordLoginFallbackWarned = false;
+  _oidcAutoLoginInactiveReason = null;
 }
 
 function getOverrides(): AuthEnvOverrides {
@@ -252,4 +262,34 @@ export function getPasswordLoginState(): PasswordLoginState {
 
 export function isPasswordLoginDisabled(): boolean {
   return getPasswordLoginState().disabled;
+}
+
+export interface OidcAutoLoginState {
+  /** Saved or environment-pinned setting. */
+  enabled: boolean;
+  /** Enabled and SSO is the only sign-in method, so the login page redirects to the provider. */
+  active: boolean;
+}
+
+/**
+ * Auto-login only applies while SSO is the sole sign-in method. An enabled but
+ * inactive setting is logged once per change of the reason, not on every read.
+ */
+export function getOidcAutoLoginState(): OidcAutoLoginState {
+  if (getAuthSetting(OIDC_AUTO_LOGIN_SETTING_KEY) !== "true") {
+    _oidcAutoLoginInactiveReason = null;
+    return { enabled: false, active: false };
+  }
+  const unmetRequirements = [
+    ...(hasOidcSettings() ? [] : ["OIDC is not configured"]),
+    ...(isPasswordLoginDisabled() ? [] : ["password login is enabled"]),
+  ];
+  const reason = unmetRequirements.length > 0 ? unmetRequirements.join(", ") : null;
+  if (reason && reason !== _oidcAutoLoginInactiveReason) {
+    logger.warn(
+      `OIDC auto-login is enabled but inactive because ${reason}. It requires OIDC to be configured and password login to be disabled.`,
+    );
+  }
+  _oidcAutoLoginInactiveReason = reason;
+  return { enabled: true, active: !reason };
 }

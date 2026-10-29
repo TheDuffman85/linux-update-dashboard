@@ -105,6 +105,10 @@ describe("POST /api/auth/logout", () => {
       .values({ username: "sso", authProvider: "oidc", oidcIssuer: "https://idp", oidcSubject: "s" })
       .returning()
       .get().id;
+    db.update(settings)
+      .set({ value: "true" })
+      .where(eq(settings.key, "oidc_end_session"))
+      .run();
     getEndSessionUrl.mockReset();
     getEndSessionUrl.mockImplementation(
       (redirect: string, hint?: string) =>
@@ -158,5 +162,107 @@ describe("POST /api/auth/logout", () => {
     getEndSessionUrl.mockReturnValue(null);
     const res = await logout(await sessionCookie(oidcId, "sso", "oidc"));
     expect(await res.json()).toEqual({ status: "ok" });
+  });
+});
+
+describe("end-session default", () => {
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ludash-oidc-end-session-"));
+    dbPath = join(tempDir, "dashboard.db");
+    initEncryptor(randomBytes(32).toString("base64"));
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const readEndSession = () =>
+    getDb()
+      .select({ value: settings.value })
+      .from(settings)
+      .where(eq(settings.key, "oidc_end_session"))
+      .get()?.value;
+
+  // Simulates an install from before the default changed, which seeded "true".
+  function reopenAsLegacyInstall(prepare: () => void = () => {}) {
+    const db = getDb();
+    db.update(settings).set({ value: "true" }).where(eq(settings.key, "oidc_end_session")).run();
+    db.delete(settings).where(eq(settings.key, "oidc_end_session_default_migrated")).run();
+    prepare();
+    closeDatabase();
+    initDatabase(dbPath);
+  }
+
+  test("is off on new installs", () => {
+    initDatabase(dbPath);
+    expect(readEndSession()).toBe("false");
+    expect(isEndSessionEnabled()).toBe(false);
+  });
+
+  test("turns off on upgraded installs that do not use OIDC", () => {
+    initDatabase(dbPath);
+    reopenAsLegacyInstall();
+    expect(readEndSession()).toBe("false");
+  });
+
+  test("stays on for upgraded installs that already use OIDC", () => {
+    initDatabase(dbPath);
+    reopenAsLegacyInstall(() => {
+      getDb()
+        .update(settings)
+        .set({ value: "https://idp.example.com" })
+        .where(eq(settings.key, "oidc_issuer"))
+        .run();
+    });
+    expect(readEndSession()).toBe("true");
+  });
+
+  describe("with OIDC configured from the environment", () => {
+    let savedIssuer: string | undefined;
+
+    beforeEach(() => {
+      savedIssuer = process.env.LUDASH_OIDC_ISSUER;
+      process.env.LUDASH_OIDC_ISSUER = "https://idp.example.com";
+    });
+
+    afterEach(() => {
+      if (savedIssuer === undefined) delete process.env.LUDASH_OIDC_ISSUER;
+      else process.env.LUDASH_OIDC_ISSUER = savedIssuer;
+    });
+
+    test("upgraded installs keep provider logout on, even before any SSO sign-in", () => {
+      initDatabase(dbPath);
+      reopenAsLegacyInstall();
+      expect(readEndSession()).toBe("true");
+    });
+
+    test("new installs still start with provider logout off", () => {
+      initDatabase(dbPath);
+      expect(readEndSession()).toBe("false");
+    });
+  });
+
+  test("keeps the provider logout for installs from before the setting existed", () => {
+    initDatabase(dbPath);
+    reopenAsLegacyInstall(() => {
+      const db = getDb();
+      db.delete(settings).where(eq(settings.key, "oidc_end_session")).run();
+      db.insert(users)
+        .values({ username: "sso", authProvider: "oidc", oidcIssuer: "https://idp", oidcSubject: "s" })
+        .run();
+    });
+    expect(readEndSession()).toBe("true");
+  });
+
+  test("runs only once, so a later choice is kept", () => {
+    initDatabase(dbPath);
+    getDb().update(settings).set({ value: "true" }).where(eq(settings.key, "oidc_end_session")).run();
+    closeDatabase();
+    initDatabase(dbPath);
+    expect(readEndSession()).toBe("true");
   });
 });

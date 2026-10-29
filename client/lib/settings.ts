@@ -9,6 +9,8 @@ export type SettingsResponse = {
   managedSettings?: Record<string, string>;
   /** Password login was requested off but stays on because no other sign-in method exists. */
   passwordLoginFallback?: boolean;
+  /** OIDC auto-login is enabled and SSO is the only sign-in method. */
+  oidcAutoLoginActive?: boolean;
   numericSettingRules: NumericSettingRules;
   timeZone: string | null;
 };

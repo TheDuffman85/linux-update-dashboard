@@ -8,6 +8,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
 import { getEncryptor } from "../security";
+import { OIDC_ISSUER_ENV_VAR } from "../auth/oidc-settings";
 import * as schema from "./schema";
 import {
   getAptAutoHideKeptBackUpdates,
@@ -113,9 +114,21 @@ const DEFAULT_SETTINGS = [
   },
   {
     key: "oidc_end_session",
-    value: "true",
+    value: "false",
     description:
       "Also sign out of the OIDC provider when an SSO user logs out (RP-initiated logout)",
+  },
+  {
+    key: "oidc_backchannel_logout",
+    value: "false",
+    description:
+      "Accept OIDC back-channel logout notifications so signing out at the provider ends dashboard sessions",
+  },
+  {
+    key: "oidc_auto_login",
+    value: "false",
+    description:
+      "Redirect the login page straight to the OIDC provider while password login is disabled",
   },
   {
     key: "disable_password_login",
@@ -142,6 +155,8 @@ const NOTIFICATION_SCHEDULE_MIGRATION_KEY =
 const HIDDEN_UPDATE_HIDE_REASON_MIGRATION_KEY =
   "hidden_update_hide_reason_migrated";
 const BUILTIN_DEB_GET_MIGRATION_KEY = "builtin_deb_get_name_migrated";
+const OIDC_END_SESSION_DEFAULT_MIGRATION_KEY =
+  "oidc_end_session_default_migrated";
 const MAX_SCHEDULE_NAME_LENGTH = 100;
 
 export function initDatabase(
@@ -171,6 +186,27 @@ export function initDatabase(
     is_admin INTEGER NOT NULL DEFAULT 0,
     role TEXT NOT NULL DEFAULT 'admin',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS oidc_revoked_sessions (
+    issuer TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (issuer, session_id)
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS oidc_processed_logouts (
+    issuer TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (issuer, token_id)
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS oidc_logout_versions (
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    PRIMARY KEY (issuer, subject)
   )`);
 
   _db.run(sql`CREATE TABLE IF NOT EXISTS webauthn_credentials (
@@ -1193,6 +1229,7 @@ export function initDatabase(
   migrateLegacyCredentials(_db);
 
   migrateOidcUnmatchedRole(_db);
+  migrateOidcEndSessionDefault(_db);
 
   // Seed default settings
   for (const s of DEFAULT_SETTINGS) {
@@ -1230,7 +1267,14 @@ function migrateOidcUnmatchedRole(
     .where(eq(schema.settings.key, "oidc_unmatched_role"))
     .get();
   if (existing) return;
+  if (!isOidcInUse(db)) return;
 
+  db.run(
+    sql`INSERT OR IGNORE INTO settings (key, value, description) VALUES ('oidc_unmatched_role', 'admin', 'Access for OIDC users that match no configured group: deny, admin, or read-only')`,
+  );
+}
+
+function isOidcInUse(db: BetterSQLite3Database<typeof schema>): boolean {
   const issuer = db
     .select({ value: schema.settings.value })
     .from(schema.settings)
@@ -1241,11 +1285,43 @@ function migrateOidcUnmatchedRole(
     .from(schema.users)
     .where(eq(schema.users.authProvider, "oidc"))
     .get();
-  if (!issuer?.value && !oidcUser) return;
+  return !!issuer?.value || !!oidcUser;
+}
 
-  db.run(
-    sql`INSERT OR IGNORE INTO settings (key, value, description) VALUES ('oidc_unmatched_role', 'admin', 'Access for OIDC users that match no configured group: deny, admin, or read-only')`,
-  );
+/**
+ * Ending the provider session on logout used to default to on and now defaults
+ * to off. Installs that already use OIDC, from the database or the environment,
+ * keep it on; others get the new default.
+ */
+function migrateOidcEndSessionDefault(
+  db: BetterSQLite3Database<typeof schema>,
+): void {
+  const marker = db
+    .select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, OIDC_END_SESSION_DEFAULT_MIGRATION_KEY))
+    .get();
+  if (marker) return;
+
+  if (isOidcInUse(db)) {
+    db.run(
+      sql`INSERT OR IGNORE INTO settings (key, value, description) VALUES ('oidc_end_session', 'true', 'Also sign out of the OIDC provider when an SSO user logs out (RP-initiated logout)')`,
+    );
+  } else if (!process.env[OIDC_ISSUER_ENV_VAR]?.trim()) {
+    db.run(
+      sql`UPDATE settings SET value = 'false' WHERE key = 'oidc_end_session'`,
+    );
+  }
+  // With OIDC configured from the environment, an upgraded install keeps its
+  // saved value; a new install has none yet and is seeded with the new default.
+  db.insert(schema.settings)
+    .values({
+      key: OIDC_END_SESSION_DEFAULT_MIGRATION_KEY,
+      value: "true",
+      description: "The OIDC end-session default was migrated to off",
+    })
+    .onConflictDoNothing()
+    .run();
 }
 
 function normalizeLegacyInteger(

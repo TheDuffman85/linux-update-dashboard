@@ -254,7 +254,9 @@ OIDC and password login are normally configured under **Settings**. Each of the 
 | `LUDASH_OIDC_ADMIN_GROUPS` | Admin groups | Comma-separated. |
 | `LUDASH_OIDC_READ_ONLY_GROUPS` | Read-only groups | Comma-separated. |
 | `LUDASH_OIDC_UNMATCHED_ROLE` | Access for unmatched users | `deny`, `admin`, or `read-only`. |
-| `LUDASH_OIDC_END_SESSION` | Sign out of the identity provider on logout | `true` or `false`. |
+| `LUDASH_OIDC_END_SESSION` | Sign out of the identity provider on logout | `true` or `false`. Default `false`. |
+| `LUDASH_OIDC_BACKCHANNEL_LOGOUT` | End sessions when signing out at the identity provider | `true` or `false`. Default `false`. |
+| `LUDASH_OIDC_AUTO_LOGIN` | Sign in with SSO automatically | `true` or `false`. Default `false`. Only active while OIDC is configured and password login is disabled. |
 | `LUDASH_PASSWORD_LOGIN_ENABLED` | Password login | `true` or `false`. |
 
 ```yaml
@@ -280,7 +282,11 @@ For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oid
 
 OIDC settings also control the requested scopes (must include `openid`), the claim that carries group membership (default `groups`, read from the ID token and the UserInfo endpoint), and which groups get admin or read-only access. Admin groups take precedence over read-only groups. Users that match no configured group are denied by default; you can instead grant them admin or read-only access. Installations that already used OIDC before group mapping existed keep granting admin access to unmatched users, so existing SSO accounts are not locked out after upgrading. Role changes apply on the next SSO sign-in, and OIDC sessions expire after one day.
 
-When an SSO user logs out, the dashboard also ends their session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. You can turn this off under Settings → OIDC (SSO) to only clear the dashboard session.
+With **Sign out of the identity provider on logout** enabled under Settings → OIDC (SSO), or `LUDASH_OIDC_END_SESSION=true`, logging out of the dashboard also ends the SSO user's session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. It is off by default because the provider may reject the redirect until the post-logout redirect URI is registered; installations that already used OIDC when upgrading keep it on. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. Leave it off to only clear the dashboard session.
+
+To end dashboard sessions when a user signs out at the identity provider, enable **End sessions when signing out at the identity provider** (or `LUDASH_OIDC_BACKCHANNEL_LOGOUT=true`) and register `{LUDASH_BASE_URL}/api/auth/oidc/backchannel-logout` as the back-channel logout URI with your provider (OpenID Connect Back-Channel Logout). While the setting is off, logout notifications are rejected. The provider must be able to reach the dashboard directly, and logout tokens must be signed with a key from the provider's JWKS or, for HMAC tokens, with the client secret. A logout token with a session ID (`sid`) ends only the sessions from that provider sign-in, even when it also names the user (`sub`); if it names the user, it also ends that user's sessions that carry no `sid`, such as sessions from before the upgrade. Without `sid`, it ends all dashboard sessions of the named user. Repeated notifications with the same issuer and token ID (`jti`) are acknowledged without ending later sign-ins.
+
+With **Sign in with SSO automatically** enabled (or `LUDASH_OIDC_AUTO_LOGIN=true`), the login page redirects straight to the identity provider. It only applies while OIDC is configured and password login is disabled; otherwise the setting stays inactive, Settings shows a notice, and the server logs why. After a logout, or when an SSO sign-in was denied, the login page is shown instead of redirecting, so users are not signed straight back in. Open `{LUDASH_BASE_URL}/login?local=1` to reach the login page anyway, for example to sign in with a passkey.
 
 Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, scripts, or settings. API tokens owned by a read-only user are always read-only. Local password accounts always have admin access.
 

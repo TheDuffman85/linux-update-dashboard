@@ -104,6 +104,8 @@ const OIDC_SETTING_KEYS = [
   "oidc_read_only_groups",
   "oidc_unmatched_role",
   "oidc_end_session",
+  "oidc_backchannel_logout",
+  "oidc_auto_login",
 ];
 
 type OidcListField = "oidc_scope" | "oidc_admin_groups" | "oidc_read_only_groups";
@@ -1599,7 +1601,7 @@ export default function Settings() {
           >
             <input
               type="checkbox"
-              checked={form.oidc_end_session !== "false"}
+              checked={form.oidc_end_session === "true"}
               disabled={!!managedSettings.oidc_end_session}
               onChange={(e) =>
                 setForm({
@@ -1619,6 +1621,68 @@ export default function Settings() {
                 })}
               </span>
               <ManagedSettingHint envVar={managedSettings.oidc_end_session} />
+            </span>
+          </label>
+          <label
+            className={`lg:col-span-2 flex items-start gap-2 ${managedSettings.oidc_backchannel_logout ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+          >
+            <input
+              type="checkbox"
+              checked={form.oidc_backchannel_logout === "true"}
+              disabled={!!managedSettings.oidc_backchannel_logout}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  oidc_backchannel_logout: e.target.checked ? "true" : "false",
+                })
+              }
+              className="mt-0.5 rounded border-border"
+            />
+            <span>
+              <span className="block text-sm">
+                {t("pages.settings.oidcBackchannelLogout")}
+              </span>
+              <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {t("pages.settings.oidcBackchannelLogoutHelp", {
+                  url: `${window.location?.origin ?? ""}/api/auth/oidc/backchannel-logout`,
+                })}
+              </span>
+              <ManagedSettingHint
+                envVar={managedSettings.oidc_backchannel_logout}
+              />
+            </span>
+          </label>
+          <label
+            className={`lg:col-span-2 flex items-start gap-2 ${managedSettings.oidc_auto_login ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+          >
+            <input
+              type="checkbox"
+              checked={form.oidc_auto_login === "true"}
+              disabled={!!managedSettings.oidc_auto_login}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  oidc_auto_login: e.target.checked ? "true" : "false",
+                })
+              }
+              className="mt-0.5 rounded border-border"
+            />
+            <span>
+              <span className="block text-sm">
+                {t("pages.settings.oidcAutoLogin")}
+              </span>
+              <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {t("pages.settings.oidcAutoLoginHelp", {
+                  url: `${window.location?.origin ?? ""}/login?local=1`,
+                })}
+              </span>
+              {settingsResponse?.settings.oidc_auto_login === "true" &&
+                settingsResponse.oidcAutoLoginActive === false && (
+                  <span className="block mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    {t("pages.settings.oidcAutoLoginInactive")}
+                  </span>
+                )}
+              <ManagedSettingHint envVar={managedSettings.oidc_auto_login} />
             </span>
           </label>
         </div>

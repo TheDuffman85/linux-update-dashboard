@@ -2,6 +2,7 @@ import { createMiddleware } from "hono/factory";
 import { eq, count } from "drizzle-orm";
 import { getSession, refreshSessionIfNeeded, type SessionData } from "../auth/session";
 import { validateToken } from "../auth/api-token";
+import { refreshSessionSockets } from "../services/session-sockets";
 import { getDb } from "../db";
 import { users } from "../db/schema";
 import { isLoopbackRequest, getClientIp } from "../request-security";
@@ -145,7 +146,8 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     // Avoid mutating cookies during WebSocket upgrade handshakes.
     if (!isWebSocketUpgrade) {
       // Rolling session: refresh token if it's past the halfway point
-      await refreshSessionIfNeeded(c);
+      const refreshedToken = await refreshSessionIfNeeded(c);
+      if (refreshedToken) refreshSessionSockets(refreshedToken);
     }
 
     return next();

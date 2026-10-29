@@ -12,6 +12,7 @@ import { getEncryptor } from "../security";
 import {
   createSession,
   getSession,
+  getSessionToken,
   clearSession,
   initSession,
   OIDC_SESSION_LIFETIME,
@@ -19,7 +20,17 @@ import {
 import * as wa from "../auth/webauthn";
 import { issueWebAuthnChallenge, consumeWebAuthnChallenge } from "../auth/webauthn-challenge";
 import * as oidc from "../auth/oidc";
-import { hasUsablePasskeys, isPasswordLoginDisabled } from "../auth/auth-config";
+import {
+  getOidcAutoLoginState,
+  hasUsablePasskeys,
+  isPasswordLoginDisabled,
+} from "../auth/auth-config";
+import { applyOidcLogout } from "../auth/oidc-logout";
+import {
+  closeEndedSessionSockets,
+  closeSessionSockets,
+  rebindSessionSockets,
+} from "../services/session-sockets";
 import { rateLimit } from "../middleware/rate-limit";
 import {
   getKnownPublicOrigin,
@@ -330,6 +341,19 @@ function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
 const OIDC_ID_TOKEN_COOKIE = "ludash_oidc_id_token";
 const MAX_ID_TOKEN_COOKIE_LENGTH = 3800;
 
+/**
+ * Live output streams are authorized when they connect. After a change that
+ * ends a user's sessions, keep this browser's streams on its reissued token
+ * and close the ones whose session ended.
+ */
+async function closeEndedStreams(
+  previousToken: string | undefined,
+  token: string,
+): Promise<void> {
+  if (previousToken) rebindSessionSockets(previousToken, token);
+  await closeEndedSessionSockets();
+}
+
 const auth = new Hono();
 
 // --- Status ---
@@ -373,6 +397,8 @@ auth.get("/status", async (c) => {
     authenticated: !!session,
     user: session || null,
     oidcEnabled,
+    // The login page redirects straight to the provider while SSO is the only sign-in method.
+    oidcAutoLogin: oidcEnabled && getOidcAutoLoginState().active,
     passwordLoginDisabled,
     passkeysEnabled,
     hasPassword,
@@ -522,8 +548,10 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
 // --- Logout ---
 auth.post("/logout", async (c) => {
   const session = await getSession(c);
+  const sessionToken = getSessionToken(c);
   const idToken = getCookie(c, OIDC_ID_TOKEN_COOKIE);
   clearSession(c);
+  if (sessionToken) closeSessionSockets(sessionToken);
   deleteCookie(c, OIDC_ID_TOKEN_COOKIE, { path: "/" });
 
   // RP-initiated logout: send SSO users to the provider so its session ends too.
@@ -666,7 +694,10 @@ auth.post("/totp/enable", rateLimit(5, 60_000), async (c) => {
     .where(eq(users.id, session.userId))
     .run();
   deleteCookie(c, TOTP_SETUP_COOKIE, { path: "/" });
-  await createSession(c, user.id, user.username, "password");
+  await closeEndedStreams(
+    getSessionToken(c),
+    await createSession(c, user.id, user.username, "password"),
+  );
 
   return c.json({ status: "ok", totpEnabled: true });
 });
@@ -719,7 +750,10 @@ auth.delete("/totp", rateLimit(5, 60_000), async (c) => {
     })
     .where(eq(users.id, session.userId))
     .run();
-  await createSession(c, user.id, user.username, "password");
+  await closeEndedStreams(
+    getSessionToken(c),
+    await createSession(c, user.id, user.username, "password"),
+  );
 
   return c.json({ status: "ok", totpEnabled: false });
 });
@@ -783,7 +817,10 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
     .where(eq(users.id, session.userId))
     .run();
 
-  await createSession(c, user.id, user.username, "password");
+  await closeEndedStreams(
+    getSessionToken(c),
+    await createSession(c, user.id, user.username, "password"),
+  );
 
   return c.json({ status: "ok" });
 });
@@ -1156,12 +1193,19 @@ auth.get("/oidc/callback", async (c) => {
           ),
         )
         .run();
+      await closeEndedSessionSockets();
       return c.redirect(`${targetOrigin}/login?error=oidc_unauthorized`);
     }
 
     const user = upsertOidcUser({ ...result, role: result.role });
 
-    await createSession(c, user.id, user.username, "oidc");
+    // Signing in again ends the identity's earlier sessions (see upsertOidcUser).
+    await closeEndedStreams(
+      getSessionToken(c),
+      await createSession(c, user.id, user.username, "oidc", {
+        oidcSessionId: result.sessionId,
+      }),
+    );
     // Kept as id_token_hint for RP-initiated logout. Oversized tokens are
     // skipped; logout then falls back to client_id only.
     if (result.idToken && result.idToken.length <= MAX_ID_TOKEN_COOKIE_LENGTH) {
@@ -1180,6 +1224,60 @@ auth.get("/oidc/callback", async (c) => {
     console.error("OIDC callback error:", e);
     return c.json({ error: "OIDC authentication failed" }, 400);
   }
+});
+
+// OpenID Connect Back-Channel Logout: the provider calls this directly when an SSO session ends.
+auth.post("/oidc/backchannel-logout", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (!oidc.isConfigured()) {
+    return c.json(
+      { error: "invalid_request", error_description: "OIDC is not configured" },
+      400,
+    );
+  }
+  if (!oidc.isBackchannelLogoutEnabled()) {
+    return c.json(
+      {
+        error: "invalid_request",
+        error_description: "Back-channel logout is disabled",
+      },
+      400,
+    );
+  }
+
+  const body = await c.req.parseBody().catch(() => null);
+  const logoutToken =
+    typeof body?.logout_token === "string" ? body.logout_token : "";
+  if (!logoutToken) {
+    return c.json(
+      { error: "invalid_request", error_description: "Missing logout_token" },
+      400,
+    );
+  }
+
+  let identity: oidc.OidcLogoutIdentity | null;
+  try {
+    identity = await oidc.verifyLogoutToken(logoutToken);
+  } catch (e) {
+    console.warn(
+      `OIDC back-channel logout failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    identity = null;
+  }
+  if (!identity) {
+    return c.json(
+      { error: "invalid_request", error_description: "Invalid logout token" },
+      400,
+    );
+  }
+
+  const applied = applyOidcLogout({
+    ...identity,
+    sessionExpiresAt: Math.floor(Date.now() / 1000) + OIDC_SESSION_LIFETIME,
+  });
+  // Live output streams were authorized at upgrade time; end them too.
+  if (applied) await closeEndedSessionSockets();
+  return c.body(null, 200);
 });
 
 export default auth;

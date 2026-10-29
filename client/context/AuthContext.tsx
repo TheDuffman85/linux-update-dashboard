@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError, apiFetch } from "../lib/client";
+import { setOidcAutoLoginSuppressed } from "../lib/oidc-auto-login";
 
 export type UserRole = "admin" | "read-only";
 
@@ -22,6 +23,7 @@ export interface AuthState {
   loading: boolean;
   setupRequired: boolean;
   oidcEnabled: boolean;
+  oidcAutoLogin: boolean;
   passwordLoginDisabled: boolean;
   passkeysEnabled: boolean;
   passkeysAvailable: boolean;
@@ -64,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading: true,
     setupRequired: false,
     oidcEnabled: false,
+    oidcAutoLogin: false,
     passwordLoginDisabled: false,
     passkeysEnabled: false,
     passkeysAvailable: false,
@@ -81,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authenticated: boolean;
         user: User | null;
         oidcEnabled: boolean;
+        oidcAutoLogin?: boolean;
         passwordLoginDisabled: boolean;
         passkeysEnabled: boolean;
         passkeysAvailable: boolean;
@@ -93,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading: false,
         setupRequired: data.setupRequired,
         oidcEnabled: data.oidcEnabled,
+        oidcAutoLogin: data.oidcAutoLogin === true,
         passwordLoginDisabled: data.passwordLoginDisabled,
         passkeysEnabled: data.passkeysEnabled,
         passkeysAvailable: data.passkeysAvailable,
@@ -123,6 +128,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(retryTimer.current);
   }, [refresh]);
 
+  const signedIn = !!state.user;
+  useEffect(() => {
+    if (signedIn) setOidcAutoLoginSuppressed(false);
+  }, [signedIn]);
+
   const login = async (
     username: string,
     password: string,
@@ -139,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await apiFetch<{ redirectUrl?: string }>("/auth/logout", {
       method: "POST",
     });
+    setOidcAutoLoginSuppressed(true);
     // SSO sessions are also ended at the identity provider, which then
     // redirects back to the login page.
     if (res?.redirectUrl && /^https?:\/\//i.test(res.redirectUrl)) {

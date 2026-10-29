@@ -12,12 +12,17 @@ import { initSession } from "../../server/auth/session";
 import {
   getAuthSetting,
   getManagedAuthSettings,
+  getOidcAutoLoginState,
   getPasswordLoginState,
   initAuthConfig,
   loadAuthEnvOverrides,
   resetAuthConfig,
 } from "../../server/auth/auth-config";
-import { getOidcPolicy, isEndSessionEnabled } from "../../server/auth/oidc";
+import {
+  getOidcPolicy,
+  isBackchannelLogoutEnabled,
+  isEndSessionEnabled,
+} from "../../server/auth/oidc";
 import settingsRoutes from "../../server/routes/settings";
 
 const { default: authRoutes } = await import("../../server/routes/auth");
@@ -35,6 +40,8 @@ const AUTH_ENV_VARS = [
   "LUDASH_OIDC_READ_ONLY_GROUPS",
   "LUDASH_OIDC_UNMATCHED_ROLE",
   "LUDASH_OIDC_END_SESSION",
+  "LUDASH_OIDC_BACKCHANNEL_LOGOUT",
+  "LUDASH_OIDC_AUTO_LOGIN",
   "LUDASH_PASSWORD_LOGIN_ENABLED",
 ];
 
@@ -122,6 +129,8 @@ describe("deployment-managed auth settings", () => {
         LUDASH_OIDC_READ_ONLY_GROUPS: "viewers",
         LUDASH_OIDC_UNMATCHED_ROLE: "Read-Only",
         LUDASH_OIDC_END_SESSION: "off",
+        LUDASH_OIDC_BACKCHANNEL_LOGOUT: "on",
+        LUDASH_OIDC_AUTO_LOGIN: "1",
         LUDASH_PASSWORD_LOGIN_ENABLED: "no",
       });
 
@@ -135,6 +144,8 @@ describe("deployment-managed auth settings", () => {
         oidc_read_only_groups: "viewers",
         oidc_unmatched_role: "read-only",
         oidc_end_session: "false",
+        oidc_backchannel_logout: "true",
+        oidc_auto_login: "true",
         disable_password_login: "true",
       });
     });
@@ -159,6 +170,8 @@ describe("deployment-managed auth settings", () => {
       [{ LUDASH_OIDC_SCOPE: "profile email" }, "LUDASH_OIDC_SCOPE must include openid"],
       [{ LUDASH_OIDC_UNMATCHED_ROLE: "owner" }, "LUDASH_OIDC_UNMATCHED_ROLE must be deny, admin, or read-only"],
       [{ LUDASH_OIDC_END_SESSION: "maybe" }, "LUDASH_OIDC_END_SESSION must be true or false"],
+      [{ LUDASH_OIDC_BACKCHANNEL_LOGOUT: "maybe" }, "LUDASH_OIDC_BACKCHANNEL_LOGOUT must be true or false"],
+      [{ LUDASH_OIDC_AUTO_LOGIN: "maybe" }, "LUDASH_OIDC_AUTO_LOGIN must be true or false"],
       [{ LUDASH_PASSWORD_LOGIN_ENABLED: "sometimes" }, "LUDASH_PASSWORD_LOGIN_ENABLED must be true or false"],
       [{ LUDASH_OIDC_CLIENT_SECRET: "a", LUDASH_OIDC_CLIENT_SECRET_FILE: "/x" }, "both LUDASH_OIDC_CLIENT_SECRET"],
     ])("rejects invalid configuration %o", (env, message) => {
@@ -204,6 +217,19 @@ describe("deployment-managed auth settings", () => {
       expect(isEndSessionEnabled()).toBe(false);
     });
 
+    test("logout settings default to off and follow saved values", () => {
+      expect(isEndSessionEnabled()).toBe(false);
+      expect(isBackchannelLogoutEnabled()).toBe(false);
+
+      writeSetting("oidc_end_session", "true");
+      writeSetting("oidc_backchannel_logout", "true");
+      expect(isEndSessionEnabled()).toBe(true);
+      expect(isBackchannelLogoutEnabled()).toBe(true);
+
+      setEnv({ LUDASH_OIDC_BACKCHANNEL_LOGOUT: "false" });
+      expect(isBackchannelLogoutEnabled()).toBe(false);
+    });
+
     test("reports which settings are managed by which variable", () => {
       setEnv({ LUDASH_OIDC_SCOPE: "openid", LUDASH_PASSWORD_LOGIN_ENABLED: "true" });
       expect(getManagedAuthSettings()).toEqual({
@@ -243,6 +269,33 @@ describe("deployment-managed auth settings", () => {
     });
   });
 
+  describe("OIDC auto-login", () => {
+    test("is off by default", () => {
+      expect(getOidcAutoLoginState()).toEqual({ enabled: false, active: false });
+    });
+
+    test("stays inactive while password login is enabled or OIDC is missing", () => {
+      writeSetting("oidc_auto_login", "true");
+      expect(getOidcAutoLoginState()).toEqual({ enabled: true, active: false });
+
+      setEnv({
+        LUDASH_OIDC_ISSUER: "https://idp.example.com",
+        LUDASH_OIDC_CLIENT_ID: "ludash",
+      });
+      expect(getOidcAutoLoginState()).toEqual({ enabled: true, active: false });
+    });
+
+    test("is active while OIDC is the only sign-in method", () => {
+      setEnv({
+        LUDASH_OIDC_ISSUER: "https://idp.example.com",
+        LUDASH_OIDC_CLIENT_ID: "ludash",
+        LUDASH_PASSWORD_LOGIN_ENABLED: "false",
+        LUDASH_OIDC_AUTO_LOGIN: "true",
+      });
+      expect(getOidcAutoLoginState()).toEqual({ enabled: true, active: true });
+    });
+  });
+
   describe("settings routes", () => {
     test("GET reports effective managed values and masks the secret", async () => {
       writeSetting("oidc_groups_claim", "saved-claim");
@@ -279,6 +332,37 @@ describe("deployment-managed auth settings", () => {
       const body = await (await settingsApp().request("/api/settings")).json();
       expect(body.managedSettings).toEqual({});
       expect(body.passwordLoginFallback).toBe(true);
+    });
+
+    test("GET reports whether OIDC auto-login is active", async () => {
+      writeSetting("oidc_auto_login", "true");
+      const inactive = await (await settingsApp().request("/api/settings")).json();
+      expect(inactive.oidcAutoLoginActive).toBe(false);
+
+      setEnv({
+        LUDASH_OIDC_ISSUER: "https://idp.example.com",
+        LUDASH_OIDC_CLIENT_ID: "ludash",
+        LUDASH_PASSWORD_LOGIN_ENABLED: "false",
+      });
+      const active = await (await settingsApp().request("/api/settings")).json();
+      expect(active.oidcAutoLoginActive).toBe(true);
+    });
+
+    test("PUT stores the OIDC logout and auto-login toggles as booleans", async () => {
+      const res = await settingsApp().request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          oidc_end_session: true,
+          oidc_backchannel_logout: "true",
+          oidc_auto_login: "yes",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(readSetting("oidc_end_session")).toBe("true");
+      expect(readSetting("oidc_backchannel_logout")).toBe("true");
+      expect(readSetting("oidc_auto_login")).toBe("false");
     });
 
     test("PUT rejects managed keys without saving anything", async () => {

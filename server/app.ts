@@ -7,12 +7,17 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { upgradeWebSocket } from "@hono/node-server";
 import { authMiddleware } from "./middleware/auth";
 import { csrfMiddleware } from "./middleware/csrf";
+import { getSessionToken } from "./auth/session";
 import {
   getPublicRequestOrigin,
   getTrustedPublicOrigin,
   rememberTrustedPublicOrigin,
 } from "./request-security";
 import * as outputStream from "./services/output-stream";
+import {
+  trackSessionSocket,
+  untrackSessionSocket,
+} from "./services/session-sockets";
 import * as notificationRuntime from "./services/notification-runtime";
 import authRoutes from "./routes/auth";
 import dashboardRoutes from "./routes/dashboard";
@@ -150,9 +155,15 @@ export function createApp() {
     upgradeWebSocket((c) => {
       const rawSystemId = c.req.param("id");
       const systemId = rawSystemId ? parseInt(rawSystemId, 10) : NaN;
+      // Read during the upgrade request; sockets authorized by a browser
+      // session are closed when that session ends.
+      const sessionToken = c.req.header("authorization")?.startsWith("Bearer ")
+        ? undefined
+        : getSessionToken(c);
 
       return {
         onOpen(_evt, ws) {
+          if (sessionToken) trackSessionSocket(ws, sessionToken);
           if (isNaN(systemId)) {
             ws.send(
               JSON.stringify({ type: "error", message: "Invalid system ID" }),
@@ -165,6 +176,7 @@ export function createApp() {
         },
 
         onClose(_evt, ws) {
+          untrackSessionSocket(ws);
           if (systemId) {
             outputStream.unsubscribe(systemId, ws);
           }

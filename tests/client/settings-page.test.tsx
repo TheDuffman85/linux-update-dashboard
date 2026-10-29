@@ -246,6 +246,22 @@ describe("Settings page", () => {
     expect(html).toContain("Save OIDC Settings");
   });
 
+  test("warns when OIDC auto-login is enabled but inactive", () => {
+    const current = mockUseSettingsResponse();
+    withSettingsResponse({
+      settings: { ...current.data.settings, oidc_auto_login: "true" },
+      oidcAutoLoginActive: false,
+    });
+    expect(renderToStaticMarkup(<Settings />)).toContain(
+      "Auto-login is enabled but inactive",
+    );
+
+    withSettingsResponse({ oidcAutoLoginActive: true });
+    expect(renderToStaticMarkup(<Settings />)).not.toContain(
+      "Auto-login is enabled but inactive",
+    );
+  });
+
   test("hides the OIDC save button when every OIDC setting is managed", () => {
     withSettingsResponse({
       managedSettings: Object.fromEntries(
@@ -259,6 +275,8 @@ describe("Settings page", () => {
           "oidc_read_only_groups",
           "oidc_unmatched_role",
           "oidc_end_session",
+          "oidc_backchannel_logout",
+          "oidc_auto_login",
         ].map((key) => [key, `LUDASH_${key.toUpperCase()}`]),
       ),
     });

@@ -34,7 +34,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 
 | Method | Endpoint                              | Description                                                                        |
 | ------ | ------------------------------------- | ---------------------------------------------------------------------------------- |
-| GET    | `/api/auth/status`                    | Auth state, setup status, and OIDC availability.                                   |
+| GET    | `/api/auth/status`                    | Auth state, setup status, and OIDC availability. `oidcAutoLogin` is `true` when the login page should redirect straight to the identity provider. |
 | POST   | `/api/auth/setup`                     | Create the initial admin account.                                                  |
 | POST   | `/api/auth/login`                     | Password login.                                                                    |
 | POST   | `/api/auth/logout`                    | Clear the current session. SSO sessions may return a provider `redirectUrl`.       |
@@ -49,6 +49,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | POST   | `/api/auth/webauthn/login/verify`     | Complete passkey login.                                                            |
 | GET    | `/api/auth/oidc/login`                | Redirect to the configured OIDC provider.                                          |
 | GET    | `/api/auth/oidc/callback`             | OIDC callback handler.                                                             |
+| POST   | `/api/auth/oidc/backchannel-logout`   | OpenID Connect Back-Channel Logout endpoint for the identity provider. Accepts a form-encoded `logout_token`, ends the matching dashboard sessions (`sid` takes precedence over `sub`; with both, the user's sessions without a stored `sid` end too), and returns `200`. Repeated issuer/`jti` notifications return `200` without ending sessions again. Invalid tokens, or requests while `oidc_backchannel_logout` is off (the default), return `400` with `error: "invalid_request"`. Needs no session or CSRF token. |
 
 ## Dashboard and Settings
 
@@ -57,7 +58,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | GET    | `/api/dashboard/stats`             | Summary statistics.                                                           |
 | GET    | `/api/dashboard/systems`           | Systems with dashboard status metadata.                                       |
 | GET    | `/api/app-update`                  | Application update status.                                                    |
-| GET    | `/api/settings`                    | Current settings.                                                             |
+| GET    | `/api/settings`                    | Current settings. `oidcAutoLoginActive` is `false` while `oidc_auto_login` lacks a configured OIDC provider or disabled password login. |
 | PUT    | `/api/settings`                    | Update settings, including the `app_name` branding setting.                   |
 | GET    | `/api/settings/public`             | Unauthenticated language and branding (name, logo URLs, and colors).          |
 | GET    | `/api/settings/public/logo`        | Unauthenticated custom logo image; `404` when none is configured.             |
