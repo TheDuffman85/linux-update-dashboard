@@ -217,10 +217,17 @@ export function getAuthSetting(key: AuthSettingKey): string | undefined {
   return getAuthSettings([key]).get(key);
 }
 
-/** Whether OIDC issuer and client ID are present, regardless of provider reachability. */
-export function hasOidcSettings(): boolean {
+/**
+ * Whether OIDC issuer and client ID are present, regardless of provider reachability.
+ * `pending` holds settings about to be saved, which take precedence over the stored values.
+ */
+export function hasOidcSettings(pending: Record<string, unknown> = {}): boolean {
   const values = getAuthSettings(["oidc_issuer", "oidc_client_id"]);
-  return !!(values.get("oidc_issuer") && values.get("oidc_client_id"));
+  const value = (key: "oidc_issuer" | "oidc_client_id") =>
+    key in pending
+      ? String(pending[key] ?? "").trim()
+      : values.get(key);
+  return !!(value("oidc_issuer") && value("oidc_client_id"));
 }
 
 /** Whether any account that can sign in with a passkey has one registered. */

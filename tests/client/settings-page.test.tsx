@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router";
 
 const {
   mockUseSettingsResponse,
@@ -89,6 +90,18 @@ vi.mock("../../client/components/Modal", () => ({
 import Settings from "../../client/pages/Settings";
 import { DEFAULT_BRANDING_THEME } from "../../shared/branding-theme";
 
+function renderSettings(tab?: string) {
+  return renderToStaticMarkup(
+    <MemoryRouter initialEntries={[tab ? `/settings?tab=${tab}` : "/settings"]}>
+      <Settings />
+    </MemoryRouter>,
+  );
+}
+
+function countSaveButtons(html: string) {
+  return html.match(/>Save<\/button>/g)?.length ?? 0;
+}
+
 describe("Settings page", () => {
   beforeEach(() => {
     vi.stubGlobal("window", { isSecureContext: false });
@@ -137,10 +150,40 @@ describe("Settings page", () => {
     vi.unstubAllGlobals();
   });
 
+  test("opens the General tab by default and keeps the selected tab in the URL", () => {
+    const html = renderSettings();
+
+    expect(html).toContain('role="tablist"');
+    expect(html).toMatch(/id="settings-tab-general"[^>]*aria-selected="true"/);
+    expect(html).toMatch(/id="settings-tab-branding"[^>]*aria-selected="false"[^>]*tabindex="-1"/);
+    expect(html).toContain('id="settings-panel-general"');
+    expect(html).not.toContain("Application Name");
+
+    const branding = renderSettings("branding");
+    expect(branding).toMatch(/id="settings-tab-branding"[^>]*aria-selected="true"/);
+    expect(branding).toContain("Application Name");
+    expect(branding).not.toContain("Activity History");
+  });
+
+  test("falls back to the General tab for an unknown tab", () => {
+    const html = renderSettings("nope");
+
+    expect(html).toMatch(/id="settings-tab-general"[^>]*aria-selected="true"/);
+    expect(html).toContain("Activity History");
+  });
+
+  test("shows one Save button per tab, and none for API tokens", () => {
+    expect(countSaveButtons(renderSettings())).toBe(1);
+    expect(countSaveButtons(renderSettings("authentication"))).toBe(1);
+    expect(countSaveButtons(renderSettings("branding"))).toBe(1);
+    expect(countSaveButtons(renderSettings("api-tokens"))).toBe(0);
+  });
+
   test("does not render the embedded refresh schedule settings", () => {
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings();
 
     expect(html).toContain("Activity History");
+    expect(html).toContain("Connection Timeout");
     expect(html).toContain("Least-privilege root user check");
     expect(html).not.toContain("Min 5 seconds, max 120 seconds");
     expect(html).not.toContain("Min 10 seconds, max 900 seconds");
@@ -150,7 +193,7 @@ describe("Settings page", () => {
   });
 
   test("renders the branding section with the default logo controls", () => {
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings("branding");
 
     expect(html).toContain("Branding");
     expect(html).toContain("Application Name");
@@ -169,7 +212,7 @@ describe("Settings page", () => {
       theme: DEFAULT_BRANDING_THEME,
     });
 
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings("branding");
 
     expect(html).toContain("Use Default Logo");
     expect(html).toContain('src="/api/settings/public/logo?v=abc"');
@@ -183,7 +226,7 @@ describe("Settings page", () => {
       theme: DEFAULT_BRANDING_THEME,
     });
 
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings("branding");
     const darkField = html.slice(html.indexOf('data-testid="settings-logo-dark"'));
 
     expect(html).toContain("Remove Logo");
@@ -201,7 +244,7 @@ describe("Settings page", () => {
       },
     });
 
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings("branding");
 
     expect(html).toContain("Accent Color");
     expect(html).toContain("Neutral Tone");
@@ -213,7 +256,6 @@ describe("Settings page", () => {
       html,
     )?.[1];
     expect(darkPreviewStyle).toContain("--color-blue-600:#e11d48");
-    expect(html).toContain("Save Colors");
     expect(html).toContain("Restore Default Colors");
   });
 
@@ -234,7 +276,7 @@ describe("Settings page", () => {
       },
     });
 
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings("authentication");
 
     expect(html).toMatch(/<input id="oidc-issuer" disabled=""/);
     expect(html).not.toMatch(/<input id="oidc-client-id" disabled=""/);
@@ -242,8 +284,8 @@ describe("Settings page", () => {
     expect(html).toContain("Set by the LUDASH_OIDC_ISSUER environment variable.");
     expect(html).toContain("Set by the LUDASH_OIDC_ADMIN_GROUPS environment variable.");
     expect(html).toContain("Set by the LUDASH_PASSWORD_LOGIN_ENABLED environment variable.");
-    // Some OIDC fields stay editable, so the section keeps its save button.
-    expect(html).toContain("Save OIDC Settings");
+    // Some OIDC fields stay editable, so the tab keeps its Save button.
+    expect(countSaveButtons(html)).toBe(1);
   });
 
   test("warns when OIDC auto-login is enabled but inactive", () => {
@@ -252,20 +294,21 @@ describe("Settings page", () => {
       settings: { ...current.data.settings, oidc_auto_login: "true" },
       oidcAutoLoginActive: false,
     });
-    expect(renderToStaticMarkup(<Settings />)).toContain(
+    expect(renderSettings("authentication")).toContain(
       "Auto-login is enabled but inactive",
     );
 
     withSettingsResponse({ oidcAutoLoginActive: true });
-    expect(renderToStaticMarkup(<Settings />)).not.toContain(
+    expect(renderSettings("authentication")).not.toContain(
       "Auto-login is enabled but inactive",
     );
   });
 
-  test("hides the OIDC save button when every OIDC setting is managed", () => {
+  test("hides the Authentication Save button when every setting on the tab is managed", () => {
     withSettingsResponse({
       managedSettings: Object.fromEntries(
         [
+          "disable_password_login",
           "oidc_issuer",
           "oidc_client_id",
           "oidc_client_secret",
@@ -281,15 +324,15 @@ describe("Settings page", () => {
       ),
     });
 
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings("authentication");
 
-    expect(html).not.toContain("Save OIDC Settings");
+    expect(countSaveButtons(html)).toBe(0);
   });
 
   test("warns when password login stays enabled to avoid a lockout", () => {
     withSettingsResponse({ passwordLoginFallback: true });
 
-    const html = renderToStaticMarkup(<Settings />);
+    const html = renderSettings("authentication");
 
     expect(html).toContain(
       "Password login stays enabled because neither SSO nor a passkey is configured.",

@@ -315,7 +315,8 @@ settingsRouter.put("/", async (c) => {
     }
   }
 
-  // Prevent disabling password login without an alternative auth method
+  // Prevent disabling password login without an alternative auth method. OIDC settings
+  // saved in the same request count, so both can be changed together.
   if (normalizedBody.disable_password_login === "true") {
     const user = c.get("user");
 
@@ -327,7 +328,7 @@ settingsRouter.put("/", async (c) => {
       .get();
     const hasPasskeys = (passkeyCnt?.count ?? 0) > 0;
 
-    if (!hasPasskeys && !hasOidcSettings()) {
+    if (!hasPasskeys && !hasOidcSettings(normalizedBody)) {
       return c.json({
         error: "Cannot disable password login without a passkey or SSO configured",
       }, 400);

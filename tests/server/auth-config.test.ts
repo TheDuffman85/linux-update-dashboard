@@ -410,6 +410,42 @@ describe("deployment-managed auth settings", () => {
       expect(res.status).toBe(200);
       expect(readSetting("disable_password_login")).toBe("true");
     });
+
+    test("disabling password login accepts OIDC settings saved in the same request", async () => {
+      const res = await settingsApp().request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          disable_password_login: "true",
+          // Unreachable, so the provider discovery fails fast; the settings are saved anyway.
+          oidc_issuer: "http://127.0.0.1:1",
+          oidc_client_id: "ludash",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(readSetting("disable_password_login")).toBe("true");
+      expect(readSetting("oidc_issuer")).toBe("http://127.0.0.1:1");
+    });
+
+    test("disabling password login is refused when the same request clears OIDC", async () => {
+      writeSetting("oidc_issuer", "https://idp.example.com");
+      writeSetting("oidc_client_id", "ludash");
+
+      const res = await settingsApp().request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          disable_password_login: "true",
+          oidc_issuer: "",
+          oidc_client_id: "ludash",
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(readSetting("disable_password_login")).toBe("false");
+      expect(readSetting("oidc_issuer")).toBe("https://idp.example.com");
+    });
   });
 
   describe("auth routes", () => {
