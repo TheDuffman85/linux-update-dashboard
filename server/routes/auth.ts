@@ -6,7 +6,12 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { generateSecret, generateURI, verify } from "otplib";
 import { getDb } from "../db";
 import { users, webauthnCredentials } from "../db/schema";
-import { hashPassword, verifyPassword } from "../auth/password";
+import {
+  hashPassword,
+  isOidcOnlyAccount,
+  validatePassword,
+  verifyPassword,
+} from "../auth/password";
 import { config } from "../config";
 import { getEncryptor } from "../security";
 import {
@@ -130,14 +135,15 @@ function authThrottleResponse(c: Context, retryAfter: number) {
   return c.json({ error: "Too many authentication attempts" }, 429);
 }
 
-function validatePassword(password: string): string | null {
-  if (password.length < 8) return "Password must be at least 8 characters";
-  if (!/[a-z]/.test(password))
-    return "Password must contain a lowercase letter";
-  if (!/[A-Z]/.test(password))
-    return "Password must contain an uppercase letter";
-  if (!/\d/.test(password)) return "Password must contain a digit";
-  return null;
+function passwordChangeRequiredResponse(c: Context) {
+  return c.json(
+    { error: "Change your password to continue", code: "PASSWORD_CHANGE_REQUIRED" },
+    403,
+  );
+}
+
+function accountDisabledResponse(c: Context) {
+  return c.json({ error: "This account is disabled" }, 403);
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -148,12 +154,6 @@ function asObject(value: unknown): Record<string, unknown> | null {
 
 function isBearerTokenRequest(c: Context): boolean {
   return c.req.header("authorization")?.startsWith("Bearer ") === true;
-}
-
-function isOidcOnlyAccount(
-  user: { authProvider: string; passwordHash: string | null } | null,
-): boolean {
-  return Boolean(user && user.authProvider === "oidc" && !user.passwordHash);
 }
 
 function upsertOidcUser(params: {
@@ -509,6 +509,7 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
     return c.json({ error: "Invalid credentials" }, 401);
   }
   clearAuthFailures(passwordFailureBuckets, accountAttemptKey);
+  if (user!.disabled === 1) return accountDisabledResponse(c);
 
   if (user!.totpEnabled === 1 && user!.totpSecret) {
     const totpAttemptKey = String(user!.id);
@@ -588,6 +589,7 @@ auth.post("/totp/setup", rateLimit(5, 60_000), async (c) => {
       403,
     );
   }
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const db = getDb();
   const user = db
@@ -645,6 +647,7 @@ auth.post("/totp/enable", rateLimit(5, 60_000), async (c) => {
       403,
     );
   }
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const body = asObject(await c.req.json().catch(() => null));
   const code =
@@ -717,6 +720,7 @@ auth.delete("/totp", rateLimit(5, 60_000), async (c) => {
       403,
     );
   }
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const body = asObject(await c.req.json().catch(() => null));
   const currentPassword =
@@ -810,10 +814,20 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
   if (pwError) {
     return c.json({ error: pwError }, 400);
   }
+  if (newPassword === currentPassword) {
+    return c.json(
+      { error: "New password must be different from the current password" },
+      400,
+    );
+  }
 
   const newHash = await hashPassword(newPassword);
   db.update(users)
-    .set({ passwordHash: newHash, sessionVersion: user.sessionVersion + 1 })
+    .set({
+      passwordHash: newHash,
+      passwordChangeRequired: 0,
+      sessionVersion: user.sessionVersion + 1,
+    })
     .where(eq(users.id, session.userId))
     .run();
 
@@ -829,6 +843,7 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
 auth.post("/webauthn/register/options", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const db = getDb();
   const account = db
@@ -873,6 +888,7 @@ auth.post("/webauthn/register/options", async (c) => {
 auth.post("/webauthn/register/verify", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const account = getDb()
     .select({
@@ -1005,6 +1021,7 @@ auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
   if (!user) {
     return c.json({ error: "User not found" }, 400);
   }
+  if (user.disabled === 1) return accountDisabledResponse(c);
   if (isOidcOnlyAccount(user)) {
     return c.json(
       {
@@ -1198,6 +1215,10 @@ auth.get("/oidc/callback", async (c) => {
     }
 
     const user = upsertOidcUser({ ...result, role: result.role });
+    if (user.disabled === 1) {
+      console.warn(`OIDC user "${user.username}" is disabled and was denied`);
+      return c.redirect(`${targetOrigin}/login?error=oidc_unauthorized`);
+    }
 
     // Signing in again ends the identity's earlier sessions (see upsertOidcUser).
     await closeEndedStreams(

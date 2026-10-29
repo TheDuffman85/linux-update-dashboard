@@ -16,6 +16,9 @@ interface User {
   userId: number;
   username: string;
   role?: UserRole;
+  authMethod?: "password" | "passkey" | "oidc";
+  /** Set until the user replaces a password an administrator chose. */
+  passwordChangeRequired?: boolean;
 }
 
 export interface AuthState {

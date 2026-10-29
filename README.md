@@ -41,7 +41,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Scheduling:** cron-based refresh, update, autoremove, reboot (optionally only when required), and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
-- **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
+- **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, local users with admin or read-only roles, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
 - **Branding:** replace the application name, light and dark mode logos, and colors shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**. Accent color and neutral tone can be set separately for light and dark mode, with a live preview and a low-contrast warning.
 - **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, version/build info, and Docker-ready production packaging.
@@ -270,13 +270,13 @@ services:
       - LUDASH_PASSWORD_LOGIN_ENABLED=false
 ```
 
-Password login only stays disabled, whether from the environment or from Settings, while OIDC is configured (issuer and client ID) or at least one passkey exists. Otherwise it stays enabled, a warning is logged, and Settings shows a notice. If the identity provider becomes unreachable while password login is disabled, set `LUDASH_PASSWORD_LOGIN_ENABLED=true` and restart to sign in with a password again; password hashes are kept while password login is disabled.
+Password login only stays disabled, whether from the environment or from Settings, while OIDC is configured (issuer and client ID) or an enabled administrator has a passkey. Otherwise it stays enabled, a warning is logged, and Settings shows a notice. If the identity provider becomes unreachable while password login is disabled, set `LUDASH_PASSWORD_LOGIN_ENABLED=true` and restart to sign in with a password again; password hashes are kept while password login is disabled.
 
 ## Authentication and API
 
-Linux Update Dashboard supports password login, TOTP authenticator codes, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, TOTP secrets are encrypted at rest, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless passkeys or SSO are configured to prevent lockout. OIDC and password login can also be pinned from the deployment; see [Authentication settings from the environment](#authentication-settings-from-the-environment).
+Linux Update Dashboard supports password login, TOTP authenticator codes, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, TOTP secrets are encrypted at rest, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless an administrator has a passkey or SSO is configured, to prevent lockout. OIDC and password login can also be pinned from the deployment; see [Authentication settings from the environment](#authentication-settings-from-the-environment).
 
-TOTP can be enabled from **Settings > Password** after signing in with the account password. Once enabled, password sign-ins require a current authenticator app code.
+TOTP can be enabled from **Settings > My account** after signing in with the account password. Once enabled, password sign-ins require a current authenticator app code.
 
 For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oidc/callback`. Set `LUDASH_BASE_URL` before configuring OIDC so callback and origin validation match the public URL.
 
@@ -288,7 +288,7 @@ To end dashboard sessions when a user signs out at the identity provider, enable
 
 With **Sign in with SSO automatically** enabled (or `LUDASH_OIDC_AUTO_LOGIN=true`), the login page redirects straight to the identity provider. It only applies while OIDC is configured and password login is disabled; otherwise the setting stays inactive, Settings shows a notice, and the server logs why. After a logout, or when an SSO sign-in was denied, the login page is shown instead of redirecting, so users are not signed straight back in. Open `{LUDASH_BASE_URL}/login?local=1` to reach the login page anyway, for example to sign in with a passkey.
 
-Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, scripts, or settings. API tokens owned by a read-only user are always read-only. Local password accounts always have admin access.
+Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, or scripts. In Settings they only see **My account**. API tokens owned by a read-only user are always read-only.
 
 API tokens are for external integrations such as [gethomepage](https://gethomepage.dev/) widgets, scripts, monitoring, and Telegram command automation. Tokens can be read-only or read/write, expire after 30/60/90/365 days or never, are stored as SHA-256 hashes, are limited to 25 per user, and cannot access management endpoints or configure SSH connections.
 
@@ -297,6 +297,16 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 ```
 
 The endpoint catalog lives in [API.md](API.md).
+
+### Users and My account
+
+Under **Settings > Users**, administrators create local users with the admin or read-only role, change roles, disable and re-enable accounts, reset passwords, reset TOTP and passkeys, and delete users. A new or reset password can require a change at the next password sign-in; until then the user only sees a change-password page. Disabling, resetting, and deleting end the user's sessions, and a disabled user's API tokens stop working. User management changes are written to the server log.
+
+OIDC users are listed after their first sign-in. Their role comes from the identity provider on every sign-in, so they can only be deleted here; they are created again at their next SSO sign-in.
+
+To prevent lockouts, administrators cannot change, disable, or delete their own account there, at least one enabled administrator must remain, and while passkeys are the only sign-in method an enabled administrator must keep a passkey.
+
+**Settings > My account** is available to every user: language, time format, password, TOTP, and passkeys. Language and time format apply only to your own account; the values under **General** are the defaults for users who have not chosen their own, and the language there is also used for notifications.
 
 ## Supported Package Managers
 

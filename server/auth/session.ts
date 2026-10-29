@@ -31,6 +31,8 @@ export interface SessionData {
   authMethod?: "password" | "passkey" | "oidc";
   sessionVersion?: number;
   issuedAt?: number;
+  /** Set while a password session waits for the password an administrator chose to be replaced. */
+  passwordChangeRequired?: boolean;
 }
 
 export function normalizeUserRole(value: string | null | undefined): UserRole {
@@ -143,11 +145,13 @@ export async function verifySessionToken(
         role: users.role,
         oidcIssuer: users.oidcIssuer,
         oidcSubject: users.oidcSubject,
+        disabled: users.disabled,
+        passwordChangeRequired: users.passwordChangeRequired,
       })
       .from(users)
       .where(eq(users.id, userId))
       .get();
-    if (!user) return null;
+    if (!user || user.disabled === 1) return null;
     const tokenSessionVersion =
       typeof payload.sessionVersion === "number" ? payload.sessionVersion : 0;
     if (tokenSessionVersion !== user.sessionVersion) return null;
@@ -173,6 +177,9 @@ export async function verifySessionToken(
       authMethod,
       sessionVersion: tokenSessionVersion,
       issuedAt: payload.iat,
+      ...(authMethod === "password" && user.passwordChangeRequired === 1
+        ? { passwordChangeRequired: true }
+        : {}),
     };
   } catch {
     return null;

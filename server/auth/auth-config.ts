@@ -230,36 +230,67 @@ export function hasOidcSettings(pending: Record<string, unknown> = {}): boolean 
   return !!(value("oidc_issuer") && value("oidc_client_id"));
 }
 
-/** Whether any account that can sign in with a passkey has one registered. */
+/** Whether any enabled account that can sign in with a passkey has one registered. */
 export function hasUsablePasskeys(): boolean {
   const row = getDb()
     .select({ count: count() })
     .from(webauthnCredentials)
     .innerJoin(users, eq(users.id, webauthnCredentials.userId))
     .where(
-      sql`(${users.authProvider} != 'oidc' OR ${users.passwordHash} IS NOT NULL)`,
+      sql`${users.disabled} = 0 AND (${users.authProvider} != 'oidc' OR ${users.passwordHash} IS NOT NULL)`,
     )
     .get();
   return (row?.count ?? 0) > 0;
 }
 
+export interface AdminPasskeyExclusion {
+  /** Leave out one passkey, for example one that is about to be deleted. */
+  credentialId?: number;
+  /** Leave out every passkey of one account, for example one about to lose admin access. */
+  userId?: number;
+}
+
+/** Whether an enabled administrator can still sign in with a passkey. */
+export function hasAdminPasskey(exclude: AdminPasskeyExclusion = {}): boolean {
+  const row = getDb()
+    .select({ count: count() })
+    .from(webauthnCredentials)
+    .innerJoin(users, eq(users.id, webauthnCredentials.userId))
+    .where(
+      sql`${users.role} = 'admin' AND ${users.disabled} = 0
+        AND (${users.authProvider} != 'oidc' OR ${users.passwordHash} IS NOT NULL)
+        AND ${webauthnCredentials.id} != ${exclude.credentialId ?? -1}
+        AND ${users.id} != ${exclude.userId ?? -1}`,
+    )
+    .get();
+  return (row?.count ?? 0) > 0;
+}
+
+/**
+ * While passkeys are the only sign-in method, some administrator must keep one.
+ * A read-only user's passkey does not help, because nobody could administer the instance with it.
+ */
+export function wouldLockOutAdministrators(exclude: AdminPasskeyExclusion): boolean {
+  return isPasswordLoginDisabled() && !hasOidcSettings() && !hasAdminPasskey(exclude);
+}
+
 export interface PasswordLoginState {
   /** Effective state used for login. */
   disabled: boolean;
-  /** Password login was requested off but stays on because no other sign-in method exists. */
+  /** Password login was requested off but stays on because no administrator could sign in otherwise. */
   fallback: boolean;
 }
 
 export function getPasswordLoginState(): PasswordLoginState {
   const requestedDisabled = getAuthSetting("disable_password_login") === "true";
-  const fallback = requestedDisabled && !hasOidcSettings() && !hasUsablePasskeys();
+  const fallback = requestedDisabled && !hasOidcSettings() && !hasAdminPasskey();
 
   if (fallback && !_passwordLoginFallbackWarned) {
     const source = isAuthSettingManaged("disable_password_login")
       ? `${AUTH_SETTING_ENV_VARS.disable_password_login}=false`
       : "the saved setting";
     logger.warn(
-      `Password login is disabled by ${source}, but neither OIDC nor a passkey is configured; keeping password login enabled to avoid a lockout.`,
+      `Password login is disabled by ${source}, but neither OIDC nor an administrator passkey is configured; keeping password login enabled to avoid a lockout.`,
     );
   }
   _passwordLoginFallbackWarned = fallback;

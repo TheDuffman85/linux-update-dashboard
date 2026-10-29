@@ -27,7 +27,7 @@ import settingsRoutes from "../../server/routes/settings";
 
 const { default: authRoutes } = await import("../../server/routes/auth");
 
-const Hono = BaseHono<{ Variables: { user: { userId: number; username: string; isAdmin: boolean } } }>;
+const Hono = BaseHono<{ Variables: { user: { userId: number; username: string; role: "admin" | "read-only" } } }>;
 
 const AUTH_ENV_VARS = [
   "LUDASH_OIDC_ISSUER",
@@ -69,7 +69,7 @@ function readSetting(key: string): string | undefined {
 function settingsApp() {
   const app = new Hono();
   app.use("/api/settings/*", async (c, next) => {
-    c.set("user", { userId: 1, username: "admin", isAdmin: true });
+    c.set("user", { userId: 1, username: "admin", role: "admin" });
     await next();
   });
   app.route("/api/settings", settingsRoutes);

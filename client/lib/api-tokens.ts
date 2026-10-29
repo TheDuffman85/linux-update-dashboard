@@ -10,11 +10,12 @@ export interface ApiToken {
   createdAt: string;
 }
 
-export function useApiTokens() {
+export function useApiTokens(enabled = true) {
   return useQuery({
     queryKey: ["api-tokens"],
     queryFn: () =>
       apiFetch<{ tokens: ApiToken[] }>("/tokens").then((r) => r.tokens),
+    enabled,
   });
 }
 

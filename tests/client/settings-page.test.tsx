@@ -36,6 +36,11 @@ const {
 vi.mock("../../client/lib/settings", () => ({
   useSettingsResponse: mockUseSettingsResponse,
   useUpdateSettings: mockUseUpdateSettings,
+  useUpdatePreferences: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+vi.mock("../../client/components/UsersSettings", () => ({
+  UsersSettings: () => <div data-testid="users-settings" />,
 }));
 
 vi.mock("../../client/lib/branding", async (importOriginal) => ({
@@ -150,13 +155,17 @@ describe("Settings page", () => {
     vi.unstubAllGlobals();
   });
 
-  test("opens the General tab by default and keeps the selected tab in the URL", () => {
+  test("opens My account by default and keeps the selected tab in the URL", () => {
     const html = renderSettings();
 
     expect(html).toContain('role="tablist"');
-    expect(html).toMatch(/id="settings-tab-general"[^>]*aria-selected="true"/);
+    expect(html.indexOf('id="settings-tab-account"')).toBeLessThan(
+      html.indexOf('id="settings-tab-general"'),
+    );
+    expect(html).toMatch(/id="settings-tab-account"[^>]*aria-selected="true"/);
     expect(html).toMatch(/id="settings-tab-branding"[^>]*aria-selected="false"[^>]*tabindex="-1"/);
-    expect(html).toContain('id="settings-panel-general"');
+    expect(html).toContain('id="settings-panel-account"');
+    expect(html).not.toContain("Activity History");
     expect(html).not.toContain("Application Name");
 
     const branding = renderSettings("branding");
@@ -165,22 +174,23 @@ describe("Settings page", () => {
     expect(branding).not.toContain("Activity History");
   });
 
-  test("falls back to the General tab for an unknown tab", () => {
+  test("falls back to My account for an unknown tab", () => {
     const html = renderSettings("nope");
 
-    expect(html).toMatch(/id="settings-tab-general"[^>]*aria-selected="true"/);
-    expect(html).toContain("Activity History");
+    expect(html).toMatch(/id="settings-tab-account"[^>]*aria-selected="true"/);
+    expect(html).toContain("Preferences");
   });
 
   test("shows one Save button per tab, and none for API tokens", () => {
-    expect(countSaveButtons(renderSettings())).toBe(1);
+    expect(countSaveButtons(renderSettings("general"))).toBe(1);
+    expect(countSaveButtons(renderSettings("account"))).toBe(1);
     expect(countSaveButtons(renderSettings("authentication"))).toBe(1);
     expect(countSaveButtons(renderSettings("branding"))).toBe(1);
     expect(countSaveButtons(renderSettings("api-tokens"))).toBe(0);
   });
 
   test("does not render the embedded refresh schedule settings", () => {
-    const html = renderSettings();
+    const html = renderSettings("general");
 
     expect(html).toContain("Activity History");
     expect(html).toContain("Connection Timeout");
@@ -337,5 +347,43 @@ describe("Settings page", () => {
     expect(html).toContain(
       "Password login stays enabled because neither SSO nor a passkey is configured.",
     );
+  });
+
+  test("My account holds the personal preferences, password and TOTP", () => {
+    withSettingsResponse({
+      settings: { ...mockUseSettingsResponse().data.settings, language: "de" },
+    });
+
+    const html = renderSettings("account");
+
+    expect(html).toContain('id="settings-panel-account"');
+    expect(html).toContain("Preferences");
+    expect(html).toContain("Instance default (Deutsch)");
+    expect(html).toContain("Change Password");
+    expect(html).toContain("Two-factor authentication");
+    // Authentication keeps only the sign-in configuration.
+    const authentication = renderSettings("authentication");
+    expect(authentication).toContain("Password login");
+    expect(authentication).not.toContain("Change Password");
+  });
+
+  test("shows the Users tab to administrators", () => {
+    const html = renderSettings("users");
+
+    expect(html).toMatch(/id="settings-tab-users"[^>]*aria-selected="true"/);
+    expect(html).toContain('data-testid="users-settings"');
+  });
+
+  test("read-only users only see My account", () => {
+    mockUseAuth.mockReturnValue({ hasPassword: true, isReadOnly: true, refresh: vi.fn() });
+
+    for (const tab of [undefined, "general", "users", "authentication", "api-tokens"]) {
+      const html = renderSettings(tab);
+      expect(html).toMatch(/id="settings-tab-account"[^>]*aria-selected="true"/);
+      expect(html).not.toContain('id="settings-tab-general"');
+      expect(html).not.toContain('id="settings-tab-users"');
+      expect(html).not.toContain("Activity History");
+    }
+    expect(mockUseApiTokens).toHaveBeenLastCalledWith(false);
   });
 });

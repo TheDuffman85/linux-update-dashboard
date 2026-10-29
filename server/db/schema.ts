@@ -22,10 +22,26 @@ export const users = sqliteTable("users", {
   oidcSubject: text("oidc_subject"),
   isAdmin: integer("is_admin").notNull().default(0),
   role: text("role").notNull().default("admin"),
+  disabled: integer("disabled").notNull().default(0),
+  // Set when an administrator chose the password; cleared once the user replaces it.
+  passwordChangeRequired: integer("password_change_required").notNull().default(0),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
 });
+
+// Display preferences each user saves for themselves (language, time format).
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.key] })],
+);
 
 // OpenID Connect back-channel logout: provider session IDs that were logged out,
 // kept until the dashboard sessions bound to them have expired.

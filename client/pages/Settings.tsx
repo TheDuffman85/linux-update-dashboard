@@ -3,7 +3,11 @@ import { useSearchParams } from "react-router";
 import QRCode from "qrcode";
 import { Layout } from "../components/Layout";
 import { TabPanel, Tabs, type TabItem } from "../components/Tabs";
-import { useSettingsResponse, useUpdateSettings } from "../lib/settings";
+import {
+  useSettingsResponse,
+  useUpdatePreferences,
+  useUpdateSettings,
+} from "../lib/settings";
 import { validatePassword, validateRequiredText } from "../lib/form-validation";
 import {
   NUMERIC_SETTING_RULES,
@@ -45,6 +49,7 @@ import {
 import { AppLogo } from "../components/AppLogo";
 import { BrandingColorsSettings } from "../components/BrandingColorsSettings";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { UsersSettings } from "../components/UsersSettings";
 import { Modal } from "../components/Modal";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
@@ -129,12 +134,24 @@ const GENERAL_SETTING_KEYS = [
 // OIDC settings being saved.
 const AUTHENTICATION_SETTING_KEYS = ["disable_password_login", ...OIDC_SETTING_KEYS];
 
-const SETTINGS_TABS = ["general", "authentication", "api-tokens", "branding"] as const;
+const SETTINGS_TABS = [
+  "account",
+  "general",
+  "authentication",
+  "users",
+  "api-tokens",
+  "branding",
+] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
+// Read-only users only manage their own account.
+const READ_ONLY_SETTINGS_TABS: readonly SettingsTab[] = ["account"];
 const SETTINGS_TAB_PARAM = "tab";
 
-function parseSettingsTab(value: string | null): SettingsTab {
-  return SETTINGS_TABS.find((tab) => tab === value) ?? "general";
+function parseSettingsTab(
+  value: string | null,
+  available: readonly SettingsTab[],
+): SettingsTab {
+  return available.find((tab) => tab === value) ?? available[0];
 }
 
 type OidcListField = "oidc_scope" | "oidc_admin_groups" | "oidc_read_only_groups";
@@ -264,16 +281,23 @@ function ListEditor({
 
 export default function Settings() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = parseSettingsTab(searchParams.get(SETTINGS_TAB_PARAM));
-  const { data: settingsResponse, isLoading } = useSettingsResponse();
-  const updateSettings = useUpdateSettings();
-  const { addToast } = useToast();
   const {
     hasPassword,
+    isReadOnly,
     passkeysAvailable,
     totpEnabled,
     refresh: refreshAuth,
   } = useAuth();
+  const isAdmin = !isReadOnly;
+  const availableTabs = isAdmin ? SETTINGS_TABS : READ_ONLY_SETTINGS_TABS;
+  const activeTab = parseSettingsTab(
+    searchParams.get(SETTINGS_TAB_PARAM),
+    availableTabs,
+  );
+  const { data: settingsResponse, isLoading } = useSettingsResponse();
+  const updateSettings = useUpdateSettings();
+  const updatePreferences = useUpdatePreferences();
+  const { addToast } = useToast();
   const { browserLanguage, t } = useI18n();
   const { browserTimeFormat, formatDate } = useDateTime();
   const { logoUrl, logoDarkUrl, theme: brandingTheme } = useBranding();
@@ -303,7 +327,7 @@ export default function Settings() {
   const [newPasskeyName, setNewPasskeyName] = useState("");
   const [showNamePrompt, setShowNamePrompt] = useState(false);
 
-  const { data: apiTokens, isLoading: tokensLoading } = useApiTokens();
+  const { data: apiTokens, isLoading: tokensLoading } = useApiTokens(isAdmin);
   const createApiToken = useCreateApiToken();
   const renameApiToken = useRenameApiToken();
   const deleteApiToken = useDeleteApiToken();
@@ -334,6 +358,16 @@ export default function Settings() {
   const [totpDisablePassword, setTotpDisablePassword] = useState("");
 
   const [form, setForm] = useState<Record<string, string>>({});
+  // An empty value follows the instance default from General.
+  const [preferenceForm, setPreferenceForm] = useState({
+    language: "",
+    time_format: "",
+  });
+  const instanceLanguage = normalizeLanguagePreference(
+    settingsResponse?.settings[LANGUAGE_SETTING_KEY],
+  );
+  const instanceTimeFormat =
+    settingsResponse?.settings[TIME_FORMAT_SETTING_KEY] || BROWSER_TIME_FORMAT_SETTING;
   const [oidcListDrafts, setOidcListDrafts] = useState<
     Record<OidcListField, string>
   >({ oidc_scope: "", oidc_admin_groups: "", oidc_read_only_groups: "" });
@@ -346,8 +380,13 @@ export default function Settings() {
   );
   const saving = updateSettings.isPending || updateAppTheme.isPending;
 
-  // Icons are Lucide's SlidersHorizontal, KeyRound, CodeXml and Palette.
-  const settingsTabs: TabItem<SettingsTab>[] = [
+  // Icons are Lucide's CircleUser, SlidersHorizontal, KeyRound, Users, CodeXml and Palette.
+  const allSettingsTabs: TabItem<SettingsTab>[] = [
+    {
+      id: "account",
+      label: t("pages.settings.myAccount"),
+      icon: "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0M9 10a3 3 0 1 0 6 0a3 3 0 1 0-6 0M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662",
+    },
     {
       id: "general",
       label: t("pages.settings.general"),
@@ -357,6 +396,11 @@ export default function Settings() {
       id: "authentication",
       label: t("pages.settings.authentication"),
       icon: "M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4zM16 7.5a.5.5 0 1 0 1 0a.5.5 0 1 0-1 0",
+    },
+    {
+      id: "users",
+      label: t("pages.settings.users"),
+      icon: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M5 7a4 4 0 1 0 8 0a4 4 0 1 0-8 0M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
     },
     {
       id: "api-tokens",
@@ -369,13 +413,16 @@ export default function Settings() {
       icon: "M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8zM13 6.5a.5.5 0 1 0 1 0a.5.5 0 1 0-1 0M17 10.5a.5.5 0 1 0 1 0a.5.5 0 1 0-1 0M6 12.5a.5.5 0 1 0 1 0a.5.5 0 1 0-1 0M8 7.5a.5.5 0 1 0 1 0a.5.5 0 1 0-1 0",
     },
   ];
+  const settingsTabs = allSettingsTabs.filter((tab) =>
+    availableTabs.includes(tab.id),
+  );
 
   // Edits live in page state, so they survive switching tabs.
   const selectTab = (tab: SettingsTab) => {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        if (tab === "general") {
+        if (tab === availableTabs[0]) {
           next.delete(SETTINGS_TAB_PARAM);
         } else {
           next.set(SETTINGS_TAB_PARAM, tab);
@@ -402,6 +449,10 @@ export default function Settings() {
       }
       setStoredSecrets(secrets);
       setForm(cleanedForm);
+      setPreferenceForm({
+        language: settingsResponse.preferences?.language ?? "",
+        time_format: settingsResponse.preferences?.time_format ?? "",
+      });
     }
   }, [settingsResponse]);
 
@@ -508,6 +559,24 @@ export default function Settings() {
 
   const handleSaveGeneral = () => {
     void handleSave(GENERAL_SETTING_KEYS);
+  };
+
+  const handleSavePreferences = () => {
+    const language = normalizeLanguagePreference(
+      preferenceForm.language || instanceLanguage,
+    );
+    const toastT = (key: string, values?: TranslationValues) =>
+      translateForLanguage(resolveLanguagePreference(language), key, values);
+    updatePreferences.mutate(
+      {
+        [LANGUAGE_SETTING_KEY]: preferenceForm.language || null,
+        [TIME_FORMAT_SETTING_KEY]: preferenceForm.time_format || null,
+      },
+      {
+        onSuccess: () => addToast(toastT("pages.settings.settingsSaved"), "success"),
+        onError: (err) => addToast(err.message, "danger"),
+      },
+    );
   };
 
   const handleSaveAuthentication = () => {
@@ -843,7 +912,7 @@ export default function Settings() {
                 </p>
               </div>
               <div>
-                <label className={labelClass}>{t("pages.settings.language")}</label>
+                <label className={labelClass}>{t("pages.settings.defaultLanguage")}</label>
                 <select
                   value={form[LANGUAGE_SETTING_KEY] || BROWSER_LANGUAGE_SETTING}
                   onChange={(e) =>
@@ -866,12 +935,12 @@ export default function Settings() {
                   ))}
                 </select>
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  {t("pages.settings.usesYourBrowserPreferredLanguageByDefaultAnd")}
+                  {t("pages.settings.defaultLanguageHelp")}
                 </p>
               </div>
               <div>
                 <label className={labelClass}>
-                  {t("pages.settings.timeFormat")}
+                  {t("pages.settings.defaultTimeFormat")}
                 </label>
                 <select
                   value={
@@ -894,7 +963,7 @@ export default function Settings() {
                   <option value="24h">{t("pages.settings.timeFormat.24h")}</option>
                 </select>
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  {t("pages.settings.usesYourBrowserPreferredTimeFormatByDefault")}
+                  {t("pages.settings.defaultTimeFormatHelp")}
                 </p>
               </div>
             </div>
@@ -981,67 +1050,93 @@ export default function Settings() {
         </TabPanel>
       )}
 
-      {activeTab === "authentication" && (
-        <TabPanel idPrefix="settings" id="authentication">
-          {/* Password */}
-          <SettingSection title={t("pages.settings.password")}>
-            {(() => {
-              const hasAlternativeAuth =
-                (passkeys && passkeys.length > 0) ||
-                !!(form.oidc_issuer && form.oidc_client_id);
-              const passwordLoginEnvVar = managedSettings.disable_password_login;
-              const canDisable = hasAlternativeAuth && !passwordLoginEnvVar;
-              const checkboxDisabled =
-                !!passwordLoginEnvVar ||
-                (!canDisable && form.disable_password_login !== "true");
-              return (
-                <>
-                  <label
-                    className={`flex items-center gap-2 ${checkboxDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={form.disable_password_login === "true"}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          disable_password_login: e.target.checked
-                            ? "true"
-                            : "false",
-                        })
-                      }
-                      disabled={checkboxDisabled}
-                      className="rounded border-border"
-                    />
-                    <span className="text-sm">
-                      {t("pages.settings.disablePasswordLogin")}
-                    </span>
-                  </label>
-                  {passwordLoginEnvVar ? (
-                    <ManagedSettingHint envVar={passwordLoginEnvVar} />
-                  ) : !canDisable ? (
-                    <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                      {t(
-                        "pages.settings.registerAPasskeyOrConfigureSsoBeforeDisabling",
-                      )}
-                    </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-slate-400">
-                      {t("pages.settings.whenEnabledOnlyPasskeyAndSsoLoginMethods")}
-                    </p>
-                  )}
-                  {settingsResponse?.passwordLoginFallback && (
-                    <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                      {t("pages.settings.passwordLoginFallback")}
-                    </p>
-                  )}
-                </>
-              );
-            })()}
+      {activeTab === "account" && (
+        <TabPanel idPrefix="settings" id="account">
+          <SettingSection
+            title={t("pages.settings.preferences")}
+            description={t("pages.settings.preferencesDescription")}
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
+              <div>
+                <label htmlFor="account-language" className={labelClass}>
+                  {t("pages.settings.language")}
+                </label>
+                <select
+                  id="account-language"
+                  value={preferenceForm.language}
+                  onChange={(e) =>
+                    setPreferenceForm({ ...preferenceForm, language: e.target.value })
+                  }
+                  className={inputClass}
+                >
+                  <option value="">
+                    {t("pages.settings.instanceDefault", {
+                      value:
+                        instanceLanguage === BROWSER_LANGUAGE_SETTING
+                          ? t("pages.settings.browserDefaultLanguage", {
+                              language: getLanguageLabel(browserLanguage),
+                            })
+                          : getLanguageLabel(instanceLanguage),
+                    })}
+                  </option>
+                  <option value={BROWSER_LANGUAGE_SETTING}>
+                    {t("pages.settings.browserDefaultLanguage", {
+                      language: getLanguageLabel(browserLanguage),
+                    })}
+                  </option>
+                  {SUPPORTED_LANGUAGES.map((language) => (
+                    <option key={language.code} value={language.code}>
+                      {language.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="account-time-format" className={labelClass}>
+                  {t("pages.settings.timeFormat")}
+                </label>
+                <select
+                  id="account-time-format"
+                  value={preferenceForm.time_format}
+                  onChange={(e) =>
+                    setPreferenceForm({ ...preferenceForm, time_format: e.target.value })
+                  }
+                  className={inputClass}
+                >
+                  <option value="">
+                    {t("pages.settings.instanceDefault", {
+                      value: t(
+                        `pages.settings.timeFormat.${
+                          instanceTimeFormat === BROWSER_TIME_FORMAT_SETTING
+                            ? browserTimeFormat
+                            : instanceTimeFormat
+                        }`,
+                      ),
+                    })}
+                  </option>
+                  <option value={BROWSER_TIME_FORMAT_SETTING}>
+                    {t("pages.settings.browserDefaultTimeFormat", {
+                      format: t(`pages.settings.timeFormat.${browserTimeFormat}`),
+                    })}
+                  </option>
+                  <option value="12h">{t("pages.settings.timeFormat.12h")}</option>
+                  <option value="24h">{t("pages.settings.timeFormat.24h")}</option>
+                </select>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleSavePreferences}
+              disabled={updatePreferences.isPending}
+              className="mt-6 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+            >
+              {t("pages.settings.save")}
+            </button>
+          </SettingSection>
 
-            {hasPassword && (
+          {hasPassword && (
+            <SettingSection title={t("pages.settings.password")}>
               <>
-                <hr className="my-6 border-border" />
                 <h3 className="text-sm font-semibold mb-4">
                   {t("pages.settings.changePassword")}
                 </h3>
@@ -1282,8 +1377,8 @@ export default function Settings() {
                   )}
                 </Modal>
               </>
-            )}
-          </SettingSection>
+            </SettingSection>
+          )}
 
           {/* Passkeys — only in secure contexts where WebAuthn is available */}
           {window.isSecureContext && passkeysAvailable && (
@@ -1503,6 +1598,75 @@ export default function Settings() {
               />
             </SettingSection>
           )}
+
+        </TabPanel>
+      )}
+
+      {activeTab === "users" && isAdmin && (
+        <TabPanel idPrefix="settings" id="users">
+          <UsersSettings />
+        </TabPanel>
+      )}
+
+      {activeTab === "authentication" && (
+        <TabPanel idPrefix="settings" id="authentication">
+          {/* Password login */}
+          <SettingSection title={t("pages.settings.passwordLogin")}>
+            {(() => {
+              const hasAlternativeAuth =
+                (passkeys && passkeys.length > 0) ||
+                !!(form.oidc_issuer && form.oidc_client_id);
+              const passwordLoginEnvVar = managedSettings.disable_password_login;
+              const canDisable = hasAlternativeAuth && !passwordLoginEnvVar;
+              const checkboxDisabled =
+                !!passwordLoginEnvVar ||
+                (!canDisable && form.disable_password_login !== "true");
+              return (
+                <>
+                  <label
+                    className={`flex items-center gap-2 ${checkboxDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.disable_password_login === "true"}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          disable_password_login: e.target.checked
+                            ? "true"
+                            : "false",
+                        })
+                      }
+                      disabled={checkboxDisabled}
+                      className="rounded border-border"
+                    />
+                    <span className="text-sm">
+                      {t("pages.settings.disablePasswordLogin")}
+                    </span>
+                  </label>
+                  {passwordLoginEnvVar ? (
+                    <ManagedSettingHint envVar={passwordLoginEnvVar} />
+                  ) : !canDisable ? (
+                    <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                      {t(
+                        "pages.settings.registerAPasskeyOrConfigureSsoBeforeDisabling",
+                      )}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-400">
+                      {t("pages.settings.whenEnabledOnlyPasskeyAndSsoLoginMethods")}
+                    </p>
+                  )}
+                  {settingsResponse?.passwordLoginFallback && (
+                    <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                      {t("pages.settings.passwordLoginFallback")}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+
+          </SettingSection>
 
           {/* OIDC */}
           <SettingSection

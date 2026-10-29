@@ -14,7 +14,8 @@ Create and manage tokens from **Settings > API Tokens**.
 - Expiry options: 30, 60, 90, 365 days, or never.
 - Storage: only the SHA-256 token hash is stored; the plain token is shown once.
 - Limit: 25 tokens per user.
-- Scope: tokens cannot access `/api/auth`, `/api/settings`, `/api/tokens`, `/api/passkeys`, `/api/notifications`, `/api/schedules`, `/api/scripts`, or `/api/credentials`.
+- Scope: tokens cannot access `/api/auth`, `/api/settings`, `/api/tokens`, `/api/passkeys`, `/api/notifications`, `/api/schedules`, `/api/scripts`, `/api/credentials`, `/api/users`, or `/api/account`.
+- Owner: tokens stop working while their owner is disabled and are deleted with the owner.
 - SSH safety: tokens are also blocked from configuring SSH connections or script overrides.
 - Rate limit: failed bearer attempts are limited to 20/min per IP.
 
@@ -39,7 +40,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | POST   | `/api/auth/login`                     | Password login.                                                                    |
 | POST   | `/api/auth/logout`                    | Clear the current session. SSO sessions may return a provider `redirectUrl`.       |
 | GET    | `/api/auth/me`                        | Current user info.                                                                 |
-| POST   | `/api/auth/change-password`           | Change the current user's password.                                                |
+| POST   | `/api/auth/change-password`           | Change the current user's password. The new password must differ from the current one. |
 | POST   | `/api/auth/totp/setup`                | Start TOTP setup for the password-authenticated user.                             |
 | POST   | `/api/auth/totp/enable`               | Verify a TOTP code and enable authenticator-code sign-in.                         |
 | DELETE | `/api/auth/totp`                      | Disable TOTP after confirming the current password.                                |
@@ -58,7 +59,7 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | GET    | `/api/dashboard/stats`             | Summary statistics.                                                           |
 | GET    | `/api/dashboard/systems`           | Systems with dashboard status metadata.                                       |
 | GET    | `/api/app-update`                  | Application update status.                                                    |
-| GET    | `/api/settings`                    | Current settings. `oidcAutoLoginActive` is `false` while `oidc_auto_login` lacks a configured OIDC provider or disabled password login. |
+| GET    | `/api/settings`                    | Current settings and the signed-in user's `preferences`. `oidcAutoLoginActive` is `false` while `oidc_auto_login` lacks a configured OIDC provider or disabled password login. |
 | PUT    | `/api/settings`                    | Update settings, including the `app_name` branding setting.                   |
 | GET    | `/api/settings/public`             | Unauthenticated language and branding (name, logo URLs, and colors).          |
 | GET    | `/api/settings/public/logo`        | Unauthenticated custom logo image; `404` when none is configured.             |
@@ -73,7 +74,9 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 pinned by an environment variable to that variable's name (for example
 `{ "oidc_issuer": "LUDASH_OIDC_ISSUER" }`), and `passwordLoginFallback`, which
 is `true` while password login was set to disabled but stays enabled because
-neither OIDC nor a passkey is configured. Managed settings report their
+neither OIDC nor a passkey of an enabled administrator is configured. Read-only
+users get neither, and the sign-in settings (`disable_password_login` and the
+`oidc_*` keys) are left out for them. Managed settings report their
 effective value. A `PUT /api/settings` that includes a managed key is rejected
 with `409` and `{ "code": "MANAGED_BY_CONFIG", "keys": [...] }`, and nothing in
 that request is saved.
@@ -247,13 +250,55 @@ system references, either for SSH or for a secret config entry, cannot be
 deleted. Its references list the system, plus `pkgManager` and `key` for secret
 entries.
 
+`language` and `time_format` in `settings` are the instance defaults. Each user
+can override them for their own account; see [My Account](#my-account).
+
+## My Account
+
+Available to every signed-in user, including read-only users, but not to API tokens.
+
+| Method | Endpoint                   | Description                                                                 |
+| ------ | -------------------------- | --------------------------------------------------------------------------- |
+| GET    | `/api/account/preferences` | The user's own `language` and `time_format`; missing keys use the defaults. |
+| PUT    | `/api/account/preferences` | Save `{ "language": "de", "time_format": "24h" }`. `null` removes a value.  |
+
+`language` is `browser` or a language code, and `time_format` is `browser`,
+`12h`, or `24h`.
+
+## Users
+
+Administrators only; read-only users and API tokens get `403`.
+
+| Method | Endpoint                    | Description                                                                                        |
+| ------ | --------------------------- | -------------------------------------------------------------------------------------------------- |
+| GET    | `/api/users`                | List users with role, `source` (`local` or `oidc`), status, TOTP and passkey count.                |
+| POST   | `/api/users`                | Create a local user with `username`, `password`, `role`, and `requirePasswordChange` (default `true`). |
+| PATCH  | `/api/users/:id`            | Change `role` (`admin` or `read-only`) or `disabled`. Disabling ends the user's sessions.          |
+| POST   | `/api/users/:id/password`   | Set a new `password`, optionally with `requirePasswordChange` (default `true`). Ends the user's sessions. |
+| POST   | `/api/users/:id/reset-mfa`  | Remove the user's TOTP and passkeys and end their sessions.                                        |
+| DELETE | `/api/users/:id`            | Delete the user with their passkeys, API tokens, and preferences.                                  |
+
+Rules:
+
+- Administrators cannot change, disable, or delete their own account here.
+- At least one enabled administrator must remain.
+- OIDC users get their role from the identity provider on every sign-in and can only be deleted. They are created again at their next SSO sign-in.
+- While password login is disabled and OIDC is not configured, a change that would leave no enabled administrator with a passkey is rejected with `400`. The same applies to `DELETE /api/passkeys/:id`.
+
+While a user signs in with a password that an administrator chose and must
+change, every API except `GET /api/settings` and the `/api/auth` routes returns
+`403` with `{ "code": "PASSWORD_CHANGE_REQUIRED" }`, and passkey and TOTP
+enrollment are refused. `user.passwordChangeRequired` in `GET /api/auth/status`
+is `true` until `POST /api/auth/change-password` succeeds. Disabled users cannot
+sign in (`403`, `"This account is disabled"`).
+
 ## Passkeys
 
 | Method | Endpoint            | Description                               |
 | ------ | ------------------- | ----------------------------------------- |
 | GET    | `/api/passkeys`     | List passkeys for the authenticated user. |
 | PATCH  | `/api/passkeys/:id` | Rename a passkey.                         |
-| DELETE | `/api/passkeys/:id` | Remove a passkey.                         |
+| DELETE | `/api/passkeys/:id` | Remove a passkey. Refused for the last administrator passkey while it is the only sign-in method. |
 
 ## API Token Management
 

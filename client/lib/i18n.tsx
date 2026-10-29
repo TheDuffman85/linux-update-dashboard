@@ -175,7 +175,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const { data: publicSettingsResponse } = usePublicSettingsResponse(!loading && !user);
   const { t: translate, i18n } = useTranslation();
   const preference = normalizeLanguagePreference(
-    settingsResponse?.settings[LANGUAGE_SETTING_KEY] ??
+    settingsResponse?.preferences?.[LANGUAGE_SETTING_KEY] ??
+      settingsResponse?.settings[LANGUAGE_SETTING_KEY] ??
       publicSettingsResponse?.settings[LANGUAGE_SETTING_KEY],
   );
   const browserLanguage = getBrowserLanguage();

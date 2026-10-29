@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
-import { eq, count } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../db";
-import { settings, webauthnCredentials } from "../db/schema";
+import { settings } from "../db/schema";
 import {
   configureOidcFromSettings,
   DEFAULT_OIDC_GROUPS_CLAIM,
@@ -17,7 +17,9 @@ import {
   getManagedAuthSettings,
   getOidcAutoLoginState,
   getPasswordLoginState,
+  hasAdminPasskey,
   hasOidcSettings,
+  isAuthSettingKey,
   isAuthSettingManaged,
   MANAGED_BY_CONFIG_CODE,
   type AuthSettingKey,
@@ -33,6 +35,7 @@ import {
 } from "../services/settings-service";
 import type { SessionData } from "../auth/session";
 import { getConfiguredTimeZone } from "../time-zone";
+import { getUserPreferences } from "../services/user-service";
 import {
   APP_LOGO_DARK_SETTING_KEY,
   APP_LOGO_JPEG_SETTING_KEY,
@@ -194,13 +197,17 @@ settingsRouter.put("/branding/theme", async (c) => {
   return c.json({ status: "ok", branding: getPublicBranding() });
 });
 
-// Get all settings
+// Get all settings, plus the signed-in user's own preferences. Only administrators
+// see how sign-in is configured.
 settingsRouter.get("/", (c) => {
   const db = getDb();
+  const user = c.get("user");
+  const isAdmin = user.role === "admin";
   const allSettings = db.select().from(settings).orderBy(settings.key).all();
   const settingsMap: Record<string, string> = {};
   for (const s of allSettings) {
     if (HIDDEN_KEYS.includes(s.key)) continue;
+    if (!isAdmin && isAuthSettingKey(s.key)) continue;
     if (SENSITIVE_KEYS.includes(s.key) && s.value) {
       settingsMap[s.key] = "(stored)";
     } else if (isNumericSettingKey(s.key)) {
@@ -208,6 +215,15 @@ settingsRouter.get("/", (c) => {
     } else {
       settingsMap[s.key] = s.value;
     }
+  }
+  const preferences = getUserPreferences(user.userId);
+  if (!isAdmin) {
+    return c.json({
+      settings: settingsMap,
+      preferences,
+      numericSettingRules: getNumericSettingRules(),
+      timeZone: getConfiguredTimeZone(),
+    });
   }
   // Environment-managed auth settings report their effective value.
   const managedSettings = getManagedAuthSettings();
@@ -217,6 +233,7 @@ settingsRouter.get("/", (c) => {
   }
   return c.json({
     settings: settingsMap,
+    preferences,
     managedSettings,
     passwordLoginFallback: getPasswordLoginState().fallback,
     oidcAutoLoginActive: getOidcAutoLoginState().active,
@@ -315,24 +332,16 @@ settingsRouter.put("/", async (c) => {
     }
   }
 
-  // Prevent disabling password login without an alternative auth method. OIDC settings
-  // saved in the same request count, so both can be changed together.
-  if (normalizedBody.disable_password_login === "true") {
-    const user = c.get("user");
-
-    // Check if user has at least one passkey
-    const passkeyCnt = db
-      .select({ count: count() })
-      .from(webauthnCredentials)
-      .where(eq(webauthnCredentials.userId, user.userId))
-      .get();
-    const hasPasskeys = (passkeyCnt?.count ?? 0) > 0;
-
-    if (!hasPasskeys && !hasOidcSettings(normalizedBody)) {
-      return c.json({
-        error: "Cannot disable password login without a passkey or SSO configured",
-      }, 400);
-    }
+  // Prevent disabling password login unless an administrator can still sign in. OIDC
+  // settings saved in the same request count, so both can be changed together.
+  if (
+    normalizedBody.disable_password_login === "true" &&
+    !hasAdminPasskey() &&
+    !hasOidcSettings(normalizedBody)
+  ) {
+    return c.json({
+      error: "Cannot disable password login without an administrator passkey or SSO configured",
+    }, 400);
   }
 
   const encryptor = getEncryptor();

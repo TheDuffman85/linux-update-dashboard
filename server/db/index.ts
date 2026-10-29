@@ -185,7 +185,16 @@ export function initDatabase(
     oidc_subject TEXT,
     is_admin INTEGER NOT NULL DEFAULT 0,
     role TEXT NOT NULL DEFAULT 'admin',
+    disabled INTEGER NOT NULL DEFAULT 0,
+    password_change_required INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
   )`);
 
   _db.run(sql`CREATE TABLE IF NOT EXISTS oidc_revoked_sessions (
@@ -561,6 +570,18 @@ export function initDatabase(
   }
   try {
     _db.run(sql`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(
+      sql`ALTER TABLE users ADD COLUMN password_change_required INTEGER NOT NULL DEFAULT 0`,
+    );
   } catch {
     // Column already exists
   }

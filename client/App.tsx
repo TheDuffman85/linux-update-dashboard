@@ -9,11 +9,12 @@ import {
   getLanguageLabel,
   useI18n,
 } from "./lib/i18n";
-import { useUpdateSettings } from "./lib/settings";
+import { useUpdatePreferences, useUpdateSettings } from "./lib/settings";
 import { useDocumentBranding } from "./lib/branding";
 
 const Login = lazy(() => import("./pages/Login"));
 const Setup = lazy(() => import("./pages/Setup"));
+const PasswordChange = lazy(() => import("./pages/PasswordChange"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const SystemsList = lazy(() => import("./pages/SystemsList"));
 const SystemDetail = lazy(() => import("./pages/SystemDetail"));
@@ -77,13 +78,14 @@ function PermanentLanguagePrompt() {
   const { preference, browserLanguage, t } = useI18n();
   const { addToast } = useToast();
   const updateSettings = useUpdateSettings();
+  const updatePreferences = useUpdatePreferences();
 
   useEffect(() => {
     if (
       loading ||
       setupRequired ||
       !user ||
-      isReadOnly ||
+      user.passwordChangeRequired ||
       preference !== BROWSER_LANGUAGE_SETTING ||
       browserLanguage === "en" ||
       hasDismissedLanguagePrompt()
@@ -93,8 +95,14 @@ function PermanentLanguagePrompt() {
 
     dismissLanguagePrompt();
     const languageLabel = getLanguageLabel(browserLanguage);
+    // Administrators set the instance language, which notifications use too;
+    // read-only users only choose it for their own account.
+    const save = isReadOnly ? updatePreferences : updateSettings;
     addToast(
-      t("app.languagePrompt.message", { language: languageLabel }),
+      t(
+        isReadOnly ? "app.languagePrompt.messageAccount" : "app.languagePrompt.message",
+        { language: languageLabel },
+      ),
       "info",
       {
         durationMs: null,
@@ -103,7 +111,7 @@ function PermanentLanguagePrompt() {
             label: t("app.languagePrompt.useLanguage", { language: languageLabel }),
             variant: "primary",
             onClick: () => {
-              updateSettings.mutate(
+              save.mutate(
                 { [LANGUAGE_SETTING_KEY]: browserLanguage },
                 {
                   onSuccess: () => addToast(t("app.languagePrompt.saved"), "success"),
@@ -128,6 +136,7 @@ function PermanentLanguagePrompt() {
     preference,
     setupRequired,
     t,
+    updatePreferences,
     updateSettings,
     user,
   ]);
@@ -143,6 +152,15 @@ export default function App() {
 
   if (loading) {
     return <PageLoader message={backendUnavailable ? t("app.reconnectingToBackend") : undefined} />;
+  }
+
+  // Nothing else is reachable until the password an administrator chose is replaced.
+  if (user?.passwordChangeRequired) {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <PasswordChange />
+      </Suspense>
+    );
   }
 
   return (
@@ -225,9 +243,9 @@ export default function App() {
         <Route
           path="/settings"
           element={
-            <AdminGuard>
+            <AuthGuard>
               <Settings />
-            </AdminGuard>
+            </AuthGuard>
           }
         />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

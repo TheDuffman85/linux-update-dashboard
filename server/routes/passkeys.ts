@@ -3,6 +3,7 @@ import { eq, and } from "drizzle-orm";
 import { getDb } from "../db";
 import { users, webauthnCredentials } from "../db/schema";
 import type { SessionData } from "../auth/session";
+import { wouldLockOutAdministrators } from "../auth/auth-config";
 
 type AuthEnv = {
   Variables: {
@@ -129,6 +130,15 @@ passkeys.delete("/:id", (c) => {
 
   if (!existing) {
     return c.json({ error: "Not found" }, 404);
+  }
+  if (user.role === "admin" && wouldLockOutAdministrators({ credentialId: id })) {
+    return c.json(
+      {
+        error:
+          "Enable password login or configure OIDC before deleting the last administrator passkey",
+      },
+      400,
+    );
   }
 
   db.delete(webauthnCredentials)

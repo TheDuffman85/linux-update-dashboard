@@ -28,6 +28,8 @@ import notificationsRoutes from "./routes/notifications";
 import schedulesRoutes from "./routes/schedules";
 import passkeysRoutes from "./routes/passkeys";
 import apiTokensRoutes from "./routes/api-tokens";
+import usersRoutes from "./routes/users";
+import accountRoutes from "./routes/account";
 import credentialsRoutes from "./routes/credentials";
 import scriptsRoutes from "./routes/scripts";
 import appUpdateRoutes from "./routes/app-update";
@@ -134,6 +136,8 @@ export function createApp() {
   app.route("/api/credentials", credentialsRoutes);
   app.route("/api/passkeys", passkeysRoutes);
   app.route("/api/tokens", apiTokensRoutes);
+  app.route("/api/users", usersRoutes);
+  app.route("/api/account", accountRoutes);
   app.route("/api/scripts", scriptsRoutes);
   app.route("/api/app-update", appUpdateRoutes);
 
