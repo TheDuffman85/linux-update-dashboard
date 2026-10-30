@@ -41,10 +41,10 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Scheduling:** cron-based refresh, update, autoremove, reboot (optionally only when required), and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
-- **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, and API tokens for external integrations.
+- **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, local users with admin or read-only roles, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
 - **Branding:** replace the application name, light and dark mode logos, and colors shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**. Accent color and neutral tone can be set separately for light and dark mode, with a live preview and a low-contrast warning.
-- **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, version/build info, and Docker-ready production packaging.
+- **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, [links to systems by hostname](#linking-to-systems), version/build info, and Docker-ready production packaging.
 
 ## Screenshots
 
@@ -254,7 +254,9 @@ OIDC and password login are normally configured under **Settings**. Each of the 
 | `LUDASH_OIDC_ADMIN_GROUPS` | Admin groups | Comma-separated. |
 | `LUDASH_OIDC_READ_ONLY_GROUPS` | Read-only groups | Comma-separated. |
 | `LUDASH_OIDC_UNMATCHED_ROLE` | Access for unmatched users | `deny`, `admin`, or `read-only`. |
-| `LUDASH_OIDC_END_SESSION` | Sign out of the identity provider on logout | `true` or `false`. |
+| `LUDASH_OIDC_END_SESSION` | Sign out of the identity provider on logout | `true` or `false`. Default `false`. |
+| `LUDASH_OIDC_BACKCHANNEL_LOGOUT` | End sessions when signing out at the identity provider | `true` or `false`. Default `false`. |
+| `LUDASH_OIDC_AUTO_LOGIN` | Sign in with SSO automatically | `true` or `false`. Default `false`. Only active while OIDC is configured and password login is disabled. |
 | `LUDASH_PASSWORD_LOGIN_ENABLED` | Password login | `true` or `false`. |
 
 ```yaml
@@ -268,21 +270,25 @@ services:
       - LUDASH_PASSWORD_LOGIN_ENABLED=false
 ```
 
-Password login only stays disabled, whether from the environment or from Settings, while OIDC is configured (issuer and client ID) or at least one passkey exists. Otherwise it stays enabled, a warning is logged, and Settings shows a notice. If the identity provider becomes unreachable while password login is disabled, set `LUDASH_PASSWORD_LOGIN_ENABLED=true` and restart to sign in with a password again; password hashes are kept while password login is disabled.
+Password login only stays disabled, whether from the environment or from Settings, while OIDC is configured (issuer and client ID) or an enabled administrator has a passkey. Otherwise it stays enabled, a warning is logged, and Settings shows a notice. If the identity provider becomes unreachable while password login is disabled, set `LUDASH_PASSWORD_LOGIN_ENABLED=true` and restart to sign in with a password again; password hashes are kept while password login is disabled.
 
 ## Authentication and API
 
-Linux Update Dashboard supports password login, TOTP authenticator codes, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, TOTP secrets are encrypted at rest, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless passkeys or SSO are configured to prevent lockout. OIDC and password login can also be pinned from the deployment; see [Authentication settings from the environment](#authentication-settings-from-the-environment).
+Linux Update Dashboard supports password login, TOTP authenticator codes, passkeys, OpenID Connect SSO, and API tokens. Passwords use bcrypt, TOTP secrets are encrypted at rest, sessions are HTTP-only JWT cookies with rolling refresh, and password login cannot be disabled unless an administrator has a passkey or SSO is configured, to prevent lockout. OIDC and password login can also be pinned from the deployment; see [Authentication settings from the environment](#authentication-settings-from-the-environment).
 
-TOTP can be enabled from **Settings > Password** after signing in with the account password. Once enabled, password sign-ins require a current authenticator app code.
+TOTP can be enabled from **Settings > Profile** after signing in with the account password. Once enabled, password sign-ins require a current authenticator app code.
 
 For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oidc/callback`. Set `LUDASH_BASE_URL` before configuring OIDC so callback and origin validation match the public URL.
 
 OIDC settings also control the requested scopes (must include `openid`), the claim that carries group membership (default `groups`, read from the ID token and the UserInfo endpoint), and which groups get admin or read-only access. Admin groups take precedence over read-only groups. Users that match no configured group are denied by default; you can instead grant them admin or read-only access. Installations that already used OIDC before group mapping existed keep granting admin access to unmatched users, so existing SSO accounts are not locked out after upgrading. Role changes apply on the next SSO sign-in, and OIDC sessions expire after one day.
 
-When an SSO user logs out, the dashboard also ends their session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. You can turn this off under Settings → OIDC (SSO) to only clear the dashboard session.
+With **Sign out of the identity provider on logout** enabled under Settings → OIDC (SSO), or `LUDASH_OIDC_END_SESSION=true`, logging out of the dashboard also ends the SSO user's session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. It is off by default because the provider may reject the redirect until the post-logout redirect URI is registered; installations that already used OIDC when upgrading keep it on. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. Leave it off to only clear the dashboard session.
 
-Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, scripts, or settings. API tokens owned by a read-only user are always read-only. Local password accounts always have admin access.
+To end dashboard sessions when a user signs out at the identity provider, enable **End sessions when signing out at the identity provider** (or `LUDASH_OIDC_BACKCHANNEL_LOGOUT=true`) and register `{LUDASH_BASE_URL}/api/auth/oidc/backchannel-logout` as the back-channel logout URI with your provider (OpenID Connect Back-Channel Logout). While the setting is off, logout notifications are rejected. The provider must be able to reach the dashboard directly, and logout tokens must be signed with a key from the provider's JWKS or, for HMAC tokens, with the client secret. A logout token with a session ID (`sid`) ends only the sessions from that provider sign-in, even when it also names the user (`sub`); if it names the user, it also ends that user's sessions that carry no `sid`, such as sessions from before the upgrade. Without `sid`, it ends all dashboard sessions of the named user. Repeated notifications with the same issuer and token ID (`jti`) are acknowledged without ending later sign-ins.
+
+With **Sign in with SSO automatically** enabled (or `LUDASH_OIDC_AUTO_LOGIN=true`), the login page redirects straight to the identity provider. It only applies while OIDC is configured and password login is disabled; otherwise the setting stays inactive, Settings shows a notice, and the server logs why. After a logout, or when an SSO sign-in was denied, the login page is shown instead of redirecting, so users are not signed straight back in. Open `{LUDASH_BASE_URL}/login?local=1` to reach the login page anyway, for example to sign in with a passkey.
+
+Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, or scripts. In Settings they only see **Profile**. API tokens owned by a read-only user are always read-only.
 
 API tokens are for external integrations such as [gethomepage](https://gethomepage.dev/) widgets, scripts, monitoring, and Telegram command automation. Tokens can be read-only or read/write, expire after 30/60/90/365 days or never, are stored as SHA-256 hashes, are limited to 25 per user, and cannot access management endpoints or configure SSH connections.
 
@@ -291,6 +297,34 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 ```
 
 The endpoint catalog lives in [API.md](API.md).
+
+### Linking to systems
+
+Each system's page lives at `{LUDASH_BASE_URL}/systems/<id>`. To link to systems from another tool, such as a monitoring dashboard or a wiki, without looking up their IDs, open the systems list with one of these parameters:
+
+| Parameter | Effect |
+|---|---|
+| `host=<hostname>` | Lists the systems whose hostname or `hostname:port` matches the value exactly, ignoring case. System names are not matched. |
+| `search=<text>` | Opens the list with that text in the search field, matching the same columns as typing it there. |
+| `redirect=1` | Together with `host` or `search`: opens the system's page directly when exactly one system matches. With no match or several matches, the filtered list opens instead. |
+
+```text
+{LUDASH_BASE_URL}/systems?host=web1.example.com
+{LUDASH_BASE_URL}/systems?host=web1.example.com:2222&redirect=1
+{LUDASH_BASE_URL}/systems?search=debian
+```
+
+Hostnames are not unique: the same host can be added several times, for example with different users for APT and Flatpak. Such links therefore open the list rather than picking one system. If both `host` and `search` are given, `host` is used. Editing the search field removes `host` and `redirect` from the address, so the current search can be bookmarked or shared.
+
+### Users and Profile
+
+Under **Settings > Users**, administrators create local users with the admin or read-only role, change roles, disable and re-enable accounts, reset passwords, reset TOTP and passkeys, and delete users. A new or reset password can require a change at the next password sign-in; until then the user only sees a change-password page. Disabling, resetting, and deleting end the user's sessions, and a disabled user's API tokens stop working. User management changes are written to the server log.
+
+OIDC users are listed after their first sign-in. Their role comes from the identity provider on every sign-in, so they can only be deleted here; they are created again at their next SSO sign-in.
+
+To prevent lockouts, administrators cannot change, disable, or delete their own account there, at least one enabled administrator must remain, and while passkeys are the only sign-in method an enabled administrator must keep a passkey.
+
+**Settings > Profile** is available to every user: language, time format, password, TOTP, and passkeys. Language and time format apply only to your own account; the values under **General** are the defaults for users who have not chosen their own, and the language there is also used for notifications.
 
 ## Supported Package Managers
 

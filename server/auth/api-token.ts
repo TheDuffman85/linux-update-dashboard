@@ -35,7 +35,7 @@ export async function hashToken(token: string): Promise<string> {
 /**
  * Validate a bearer token.
  * Returns the associated user info + permission level, or null if
- * the token is unknown, expired, or the owning user no longer exists.
+ * the token is unknown, expired, or the owning user no longer exists or is disabled.
  * Updates `last_used_at` on success.
  */
 export async function validateToken(
@@ -52,13 +52,14 @@ export async function validateToken(
       expiresAt: apiTokens.expiresAt,
       username: users.username,
       role: users.role,
+      disabled: users.disabled,
     })
     .from(apiTokens)
     .innerJoin(users, eq(apiTokens.userId, users.id))
     .where(eq(apiTokens.tokenHash, hash))
     .get();
 
-  if (!row) return null;
+  if (!row || row.disabled === 1) return null;
 
   // Check expiry
   if (row.expiresAt) {

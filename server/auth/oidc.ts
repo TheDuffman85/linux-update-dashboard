@@ -1,8 +1,10 @@
 import * as client from "openid-client";
+import * as jose from "jose";
 import { getAuthSetting, getAuthSettings } from "./auth-config";
 import {
   DEFAULT_OIDC_GROUPS_CLAIM,
   DEFAULT_OIDC_SCOPE,
+  OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
   OIDC_END_SESSION_SETTING_KEY,
   parseCsvList,
   parseOidcScope,
@@ -14,6 +16,8 @@ import {
 export {
   DEFAULT_OIDC_GROUPS_CLAIM,
   DEFAULT_OIDC_SCOPE,
+  OIDC_AUTO_LOGIN_SETTING_KEY,
+  OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
   OIDC_END_SESSION_SETTING_KEY,
   parseCsvList,
   parseOidcScope,
@@ -36,6 +40,13 @@ export interface OidcPolicy extends OidcRolePolicy {
 let _config: client.Configuration | null = null;
 let _configured = false;
 let _clientId = "";
+let _clientSecret = "";
+let _jwks: { uri: string; keySet: ReturnType<typeof jose.createRemoteJWKSet> } | null =
+  null;
+
+const BACKCHANNEL_LOGOUT_EVENT =
+  "http://schemas.openid.net/event/backchannel-logout";
+const LOGOUT_TOKEN_MAX_AGE_SECONDS = 5 * 60;
 
 /** Readable error messages for openid-client error codes */
 const OIDC_ERROR_HINTS: Record<string, string> = {
@@ -159,6 +170,8 @@ export async function configureOidc(
       clientSecret || undefined,
     );
     _clientId = clientId;
+    _clientSecret = clientSecret;
+    _jwks = null;
     _configured = true;
     console.log(`OIDC configured successfully (issuer: ${issuer})`);
     return null;
@@ -218,7 +231,100 @@ export function getAuthorizationUrl(
 
 /** Whether logging out should also end the session at the identity provider. */
 export function isEndSessionEnabled(): boolean {
-  return getAuthSetting(OIDC_END_SESSION_SETTING_KEY) !== "false";
+  return getAuthSetting(OIDC_END_SESSION_SETTING_KEY) === "true";
+}
+
+/** Whether the provider may end dashboard sessions with back-channel logout tokens. */
+export function isBackchannelLogoutEnabled(): boolean {
+  return getAuthSetting(OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY) === "true";
+}
+
+export interface OidcLogoutIdentity {
+  issuer: string;
+  subject?: string;
+  sessionId?: string;
+  tokenId: string;
+  /** Unix seconds until which the token could still be accepted. */
+  tokenExpiresAt: number;
+}
+
+/**
+ * Validates an OpenID Connect Back-Channel Logout token and returns the
+ * identity whose sessions it ends, or null when the token is not acceptable.
+ */
+export async function verifyLogoutToken(
+  logoutToken: string,
+): Promise<OidcLogoutIdentity | null> {
+  if (!_config) throw new Error("OIDC not configured");
+  const metadata = _config.serverMetadata();
+  const jwksUri = metadata.jwks_uri;
+  if (!jwksUri) {
+    _jwks = null;
+  } else if (_jwks?.uri !== jwksUri) {
+    _jwks = { uri: jwksUri, keySet: jose.createRemoteJWKSet(new URL(jwksUri)) };
+  }
+  const keySet = _jwks?.keySet;
+  const clientSecret = _clientSecret;
+
+  try {
+    const { payload } = await jose.jwtVerify(
+      logoutToken,
+      async (header, token) => {
+        // Providers without a signing key use the client secret, as for their ID tokens.
+        if (header.alg.startsWith("HS")) {
+          if (!clientSecret) {
+            throw new Error(
+              "HMAC-signed logout token, but no client secret is configured",
+            );
+          }
+          return new TextEncoder().encode(clientSecret);
+        }
+        if (!keySet) throw new Error("OIDC provider has no jwks_uri");
+        return keySet(header, token);
+      },
+      {
+        issuer: metadata.issuer,
+        audience: _clientId,
+        maxTokenAge: LOGOUT_TOKEN_MAX_AGE_SECONDS,
+        requiredClaims: ["iat", "jti"],
+      },
+    );
+
+    const events = payload.events;
+    const event =
+      events && typeof events === "object"
+        ? (events as Record<string, unknown>)[BACKCHANNEL_LOGOUT_EVENT]
+        : undefined;
+    if (!event || typeof event !== "object") {
+      throw new Error("missing back-channel logout event");
+    }
+    if ("nonce" in payload) {
+      throw new Error("logout tokens must not contain a nonce");
+    }
+    if (typeof payload.jti !== "string" || !payload.jti) {
+      throw new Error("logout token has no token ID");
+    }
+    const subject =
+      typeof payload.sub === "string" && payload.sub ? payload.sub : undefined;
+    const sessionId =
+      typeof payload.sid === "string" && payload.sid ? payload.sid : undefined;
+    if (!subject && !sessionId) {
+      throw new Error("logout token has neither sub nor sid");
+    }
+    return {
+      issuer: metadata.issuer,
+      subject,
+      sessionId,
+      tokenId: payload.jti,
+      // maxTokenAge accepts the boundary second; keep the replay marker through it.
+      tokenExpiresAt: Math.ceil(payload.iat! + LOGOUT_TOKEN_MAX_AGE_SECONDS) + 1,
+    };
+  } catch (e) {
+    console.warn(
+      `Rejected OIDC back-channel logout token: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -279,6 +385,7 @@ export async function handleCallback(
   role: UserRole | null;
   issuer: string;
   subject: string;
+  sessionId?: string;
   idToken?: string;
 } | null> {
   if (!_config) throw new Error("OIDC not configured");
@@ -308,6 +415,8 @@ export async function handleCallback(
       ...resolved,
       issuer,
       subject,
+      sessionId:
+        typeof claims.sid === "string" && claims.sid ? claims.sid : undefined,
       idToken: tokens.id_token,
     };
   } catch (e: any) {

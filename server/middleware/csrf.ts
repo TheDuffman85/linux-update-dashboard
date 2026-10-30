@@ -5,6 +5,7 @@ import { isSecureRequest } from "../request-security";
 
 const CSRF_COOKIE = "ludash_csrf";
 const CSRF_HEADER = "x-csrf-token";
+const BACKCHANNEL_LOGOUT_PATH = "/api/auth/oidc/backchannel-logout";
 
 function ensureToken(c: Context): string | null {
   return getCookie(c, CSRF_COOKIE) ?? null;
@@ -37,6 +38,12 @@ export const csrfMiddleware = createMiddleware(async (c, next) => {
     !c.req.path.startsWith("/api/auth") &&
     c.req.header("authorization")?.startsWith("Bearer ")
   ) {
+    return next();
+  }
+
+  // The identity provider posts back-channel logout tokens server-to-server;
+  // the signed token, not a browser cookie, authenticates the request.
+  if (c.req.path === BACKCHANNEL_LOGOUT_PATH && c.req.method === "POST") {
     return next();
   }
 

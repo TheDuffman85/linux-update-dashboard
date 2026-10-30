@@ -7,12 +7,17 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { upgradeWebSocket } from "@hono/node-server";
 import { authMiddleware } from "./middleware/auth";
 import { csrfMiddleware } from "./middleware/csrf";
+import { getSessionToken } from "./auth/session";
 import {
   getPublicRequestOrigin,
   getTrustedPublicOrigin,
   rememberTrustedPublicOrigin,
 } from "./request-security";
 import * as outputStream from "./services/output-stream";
+import {
+  trackSessionSocket,
+  untrackSessionSocket,
+} from "./services/session-sockets";
 import * as notificationRuntime from "./services/notification-runtime";
 import authRoutes from "./routes/auth";
 import dashboardRoutes from "./routes/dashboard";
@@ -23,6 +28,8 @@ import notificationsRoutes from "./routes/notifications";
 import schedulesRoutes from "./routes/schedules";
 import passkeysRoutes from "./routes/passkeys";
 import apiTokensRoutes from "./routes/api-tokens";
+import usersRoutes from "./routes/users";
+import accountRoutes from "./routes/account";
 import credentialsRoutes from "./routes/credentials";
 import scriptsRoutes from "./routes/scripts";
 import appUpdateRoutes from "./routes/app-update";
@@ -129,6 +136,8 @@ export function createApp() {
   app.route("/api/credentials", credentialsRoutes);
   app.route("/api/passkeys", passkeysRoutes);
   app.route("/api/tokens", apiTokensRoutes);
+  app.route("/api/users", usersRoutes);
+  app.route("/api/account", accountRoutes);
   app.route("/api/scripts", scriptsRoutes);
   app.route("/api/app-update", appUpdateRoutes);
 
@@ -150,9 +159,15 @@ export function createApp() {
     upgradeWebSocket((c) => {
       const rawSystemId = c.req.param("id");
       const systemId = rawSystemId ? parseInt(rawSystemId, 10) : NaN;
+      // Read during the upgrade request; sockets authorized by a browser
+      // session are closed when that session ends.
+      const sessionToken = c.req.header("authorization")?.startsWith("Bearer ")
+        ? undefined
+        : getSessionToken(c);
 
       return {
         onOpen(_evt, ws) {
+          if (sessionToken) trackSessionSocket(ws, sessionToken);
           if (isNaN(systemId)) {
             ws.send(
               JSON.stringify({ type: "error", message: "Invalid system ID" }),
@@ -165,6 +180,7 @@ export function createApp() {
         },
 
         onClose(_evt, ws) {
+          untrackSessionSocket(ws);
           if (systemId) {
             outputStream.unsubscribe(systemId, ws);
           }

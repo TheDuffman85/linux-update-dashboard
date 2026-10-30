@@ -10,6 +10,7 @@ import { initSession } from "./auth/session";
 import { configureOidcFromSettings, getOidcPolicy } from "./auth/oidc";
 import {
   getManagedAuthSettings,
+  getOidcAutoLoginState,
   getPasswordLoginState,
   hasOidcSettings,
   initAuthConfig,
@@ -76,6 +77,9 @@ if (getPasswordLoginState().disabled) {
     );
   }
 }
+
+// Surface an enabled but inactive OIDC auto-login at startup.
+getOidcAutoLoginState();
 
 // Start background scheduler
 logger.info("Starting update scheduler");

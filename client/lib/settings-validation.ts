@@ -50,3 +50,21 @@ export function normalizeSettingsUpdate(
 
   return normalized;
 }
+
+/**
+ * Applies freshly loaded values to a form draft. Fields edited since the last
+ * load keep the edit, so saving one tab does not discard edits in another.
+ */
+export function mergeLoadedDraft<T extends Record<string, string>>(
+  draft: T,
+  previouslyLoaded: T,
+  loaded: T,
+): T {
+  const next: Record<string, string> = { ...loaded };
+  for (const [key, value] of Object.entries(draft)) {
+    if (value !== (previouslyLoaded[key] ?? "")) {
+      next[key] = value;
+    }
+  }
+  return next as T;
+}

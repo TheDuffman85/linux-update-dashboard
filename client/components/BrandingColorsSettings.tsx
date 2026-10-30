@@ -10,7 +10,6 @@ import {
   getAccentContrast,
   getResolvedThemeModeVariables,
   isDefaultBrandingTheme,
-  isSameBrandingTheme,
   normalizeHexColor,
   resolveThemeMode,
   type BrandingTheme,
@@ -18,8 +17,6 @@ import {
   type ThemeModeColors,
   type ThemeModeName,
 } from "../../shared/branding-theme";
-import { useUpdateAppTheme } from "../lib/branding";
-import { useToast } from "../context/ToastContext";
 import { useI18n } from "../lib/i18n";
 
 const secondaryButtonClass =
@@ -80,29 +77,28 @@ function ThemePreview({ theme, mode }: { theme: BrandingTheme; mode: ThemeModeNa
   );
 }
 
+// Edits the theme draft; the Settings page saves it together with the other branding settings.
 export function BrandingColorsSettings({
-  theme: savedTheme,
+  theme,
+  onChange,
+  disabled,
   inputClass,
   labelClass,
 }: {
   theme: BrandingTheme;
+  onChange: (theme: BrandingTheme) => void;
+  disabled: boolean;
   inputClass: string;
   labelClass: string;
 }) {
   const { t } = useI18n();
-  const { addToast } = useToast();
-  const updateAppTheme = useUpdateAppTheme();
-  const [draftTheme, setDraftTheme] = useState<BrandingTheme | null>(null);
   const [hexDrafts, setHexDrafts] = useState<Partial<Record<ThemeModeName, string>>>({});
-  const theme = draftTheme ?? savedTheme;
-  const hasChange = !isSameBrandingTheme(theme, savedTheme);
-  const disabled = updateAppTheme.isPending;
 
   const modeLabel = (mode: ThemeModeName) =>
     t(mode === "light" ? "pages.settings.lightMode" : "pages.settings.darkMode");
 
   const updateMode = (mode: ThemeModeName, colors: Partial<ThemeModeColors>) => {
-    setDraftTheme({ ...theme, [mode]: { ...theme[mode], ...colors } });
+    onChange({ ...theme, [mode]: { ...theme[mode], ...colors } });
   };
 
   const handleHexChange = (mode: ThemeModeName, value: string) => {
@@ -123,20 +119,8 @@ export function BrandingColorsSettings({
     });
   };
 
-  const handleSave = () => {
-    updateAppTheme.mutate(theme, {
-      onSuccess: () => {
-        setDraftTheme(null);
-        setHexDrafts({});
-        addToast(t("pages.settings.colorsSaved"), "success");
-      },
-      onError: (err) =>
-        addToast(err.message || t("pages.settings.failedToSaveColors"), "danger"),
-    });
-  };
-
   const handleRestoreDefaults = () => {
-    setDraftTheme(DEFAULT_BRANDING_THEME);
+    onChange(DEFAULT_BRANDING_THEME);
     setHexDrafts({});
   };
 
@@ -273,18 +257,6 @@ export function BrandingColorsSettings({
       </div>
 
       <div className="mt-6 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={disabled || !hasChange}
-          className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-        >
-          {updateAppTheme.isPending ? (
-            <span className="spinner spinner-sm" />
-          ) : (
-            t("pages.settings.saveColors")
-          )}
-        </button>
         <button
           type="button"
           onClick={handleRestoreDefaults}

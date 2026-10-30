@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { mockUseAuth, mockUseI18n, mockUseBranding } = vi.hoisted(() => ({
@@ -78,5 +78,52 @@ describe("Login page", () => {
 
     expect(html).toContain("Acme Patch Center");
     expect(html).toContain('src="/api/settings/public/logo?v=abc"');
+  });
+
+  describe("OIDC auto-login", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function renderWith(search: string, options: { suppressed?: boolean; oidcAutoLogin?: boolean } = {}) {
+      vi.stubGlobal("window", { location: { search } });
+      vi.stubGlobal("sessionStorage", {
+        getItem: () => (options.suppressed ? "true" : null),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      });
+      mockUseAuth.mockReturnValue({
+        login: vi.fn(),
+        refresh: vi.fn(),
+        oidcEnabled: true,
+        oidcAutoLogin: options.oidcAutoLogin ?? true,
+        passwordLoginDisabled: true,
+        passkeysEnabled: false,
+      });
+      mockUseI18n.mockReturnValue({ t: (key: string) => key });
+      return renderToStaticMarkup(<Login />);
+    }
+
+    test("announces the redirect to the identity provider", () => {
+      expect(renderWith("")).toContain("pages.login.redirectingToSso");
+    });
+
+    test("stays on the login page when the server reports auto-login as inactive", () => {
+      expect(renderWith("", { oidcAutoLogin: false })).not.toContain("pages.login.redirectingToSso");
+    });
+
+    test("?local=1 keeps the login page reachable", () => {
+      expect(renderWith("?local=1")).not.toContain("pages.login.redirectingToSso");
+    });
+
+    test("does not redirect right after a logout", () => {
+      expect(renderWith("", { suppressed: true })).not.toContain("pages.login.redirectingToSso");
+    });
+
+    test("shows a failed SSO sign-in instead of redirecting again", () => {
+      const html = renderWith("?error=oidc_unauthorized");
+      expect(html).not.toContain("pages.login.redirectingToSso");
+      expect(html).toContain("pages.login.oidcUnauthorized");
+    });
   });
 });

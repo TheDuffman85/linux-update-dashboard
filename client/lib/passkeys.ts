@@ -8,11 +8,12 @@ export interface Passkey {
   createdAt: string;
 }
 
-export function usePasskeys() {
+export function usePasskeys(enabled = true) {
   return useQuery({
     queryKey: ["passkeys"],
     queryFn: () =>
       apiFetch<{ passkeys: Passkey[] }>("/passkeys").then((r) => r.passkeys),
+    enabled,
   });
 }
 

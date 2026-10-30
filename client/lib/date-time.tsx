@@ -108,7 +108,8 @@ export function DateTimeProvider({ children }: { children: ReactNode }) {
     () => ({
       timeZone: data?.timeZone ?? null,
       timeFormat: normalizeTimeFormatPreference(
-        data?.settings[TIME_FORMAT_SETTING_KEY],
+        data?.preferences?.[TIME_FORMAT_SETTING_KEY] ??
+          data?.settings[TIME_FORMAT_SETTING_KEY],
       ),
     }),
     [data],

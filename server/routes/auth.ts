@@ -6,20 +6,37 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { generateSecret, generateURI, verify } from "otplib";
 import { getDb } from "../db";
 import { users, webauthnCredentials } from "../db/schema";
-import { hashPassword, verifyPassword } from "../auth/password";
+import {
+  hashPassword,
+  isOidcOnlyAccount,
+  validatePassword,
+  verifyPassword,
+} from "../auth/password";
 import { config } from "../config";
 import { getEncryptor } from "../security";
 import {
   createSession,
   getSession,
+  getSessionToken,
   clearSession,
   initSession,
+  isSessionVersionCurrent,
   OIDC_SESSION_LIFETIME,
 } from "../auth/session";
 import * as wa from "../auth/webauthn";
 import { issueWebAuthnChallenge, consumeWebAuthnChallenge } from "../auth/webauthn-challenge";
 import * as oidc from "../auth/oidc";
-import { hasUsablePasskeys, isPasswordLoginDisabled } from "../auth/auth-config";
+import {
+  getOidcAutoLoginState,
+  hasUsablePasskeys,
+  isPasswordLoginDisabled,
+} from "../auth/auth-config";
+import { applyOidcLogout } from "../auth/oidc-logout";
+import {
+  closeEndedSessionSockets,
+  closeSessionSockets,
+  rebindSessionSockets,
+} from "../services/session-sockets";
 import { rateLimit } from "../middleware/rate-limit";
 import {
   getKnownPublicOrigin,
@@ -119,14 +136,15 @@ function authThrottleResponse(c: Context, retryAfter: number) {
   return c.json({ error: "Too many authentication attempts" }, 429);
 }
 
-function validatePassword(password: string): string | null {
-  if (password.length < 8) return "Password must be at least 8 characters";
-  if (!/[a-z]/.test(password))
-    return "Password must contain a lowercase letter";
-  if (!/[A-Z]/.test(password))
-    return "Password must contain an uppercase letter";
-  if (!/\d/.test(password)) return "Password must contain a digit";
-  return null;
+function passwordChangeRequiredResponse(c: Context) {
+  return c.json(
+    { error: "Change your password to continue", code: "PASSWORD_CHANGE_REQUIRED" },
+    403,
+  );
+}
+
+function accountDisabledResponse(c: Context) {
+  return c.json({ error: "This account is disabled" }, 403);
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -137,12 +155,6 @@ function asObject(value: unknown): Record<string, unknown> | null {
 
 function isBearerTokenRequest(c: Context): boolean {
   return c.req.header("authorization")?.startsWith("Bearer ") === true;
-}
-
-function isOidcOnlyAccount(
-  user: { authProvider: string; passwordHash: string | null } | null,
-): boolean {
-  return Boolean(user && user.authProvider === "oidc" && !user.passwordHash);
 }
 
 function upsertOidcUser(params: {
@@ -330,6 +342,19 @@ function getWebAuthnParams(c: Context): { origin: string; rpId: string } {
 const OIDC_ID_TOKEN_COOKIE = "ludash_oidc_id_token";
 const MAX_ID_TOKEN_COOKIE_LENGTH = 3800;
 
+/**
+ * Live output streams are authorized when they connect. After a change that
+ * ends a user's sessions, keep this browser's streams on its reissued token
+ * and close the ones whose session ended.
+ */
+async function closeEndedStreams(
+  previousToken: string | undefined,
+  token: string,
+): Promise<void> {
+  if (previousToken) rebindSessionSockets(previousToken, token);
+  await closeEndedSessionSockets();
+}
+
 const auth = new Hono();
 
 // --- Status ---
@@ -373,6 +398,8 @@ auth.get("/status", async (c) => {
     authenticated: !!session,
     user: session || null,
     oidcEnabled,
+    // The login page redirects straight to the provider while SSO is the only sign-in method.
+    oidcAutoLogin: oidcEnabled && getOidcAutoLoginState().active,
     passwordLoginDisabled,
     passkeysEnabled,
     hasPassword,
@@ -483,6 +510,7 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
     return c.json({ error: "Invalid credentials" }, 401);
   }
   clearAuthFailures(passwordFailureBuckets, accountAttemptKey);
+  if (user!.disabled === 1) return accountDisabledResponse(c);
 
   if (user!.totpEnabled === 1 && user!.totpSecret) {
     const totpAttemptKey = String(user!.id);
@@ -512,6 +540,10 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
     clearAuthFailures(totpFailureBuckets, totpAttemptKey);
   }
 
+  // An administrator may have reset the credentials during verification.
+  if (!isSessionVersionCurrent(user!.id, user!.sessionVersion)) {
+    return c.json({ error: "Invalid credentials" }, 401);
+  }
   await createSession(c, user!.id, user!.username, "password");
   return c.json({
     status: "ok",
@@ -522,8 +554,10 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
 // --- Logout ---
 auth.post("/logout", async (c) => {
   const session = await getSession(c);
+  const sessionToken = getSessionToken(c);
   const idToken = getCookie(c, OIDC_ID_TOKEN_COOKIE);
   clearSession(c);
+  if (sessionToken) closeSessionSockets(sessionToken);
   deleteCookie(c, OIDC_ID_TOKEN_COOKIE, { path: "/" });
 
   // RP-initiated logout: send SSO users to the provider so its session ends too.
@@ -560,6 +594,7 @@ auth.post("/totp/setup", rateLimit(5, 60_000), async (c) => {
       403,
     );
   }
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const db = getDb();
   const user = db
@@ -617,6 +652,7 @@ auth.post("/totp/enable", rateLimit(5, 60_000), async (c) => {
       403,
     );
   }
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const body = asObject(await c.req.json().catch(() => null));
   const code =
@@ -666,7 +702,10 @@ auth.post("/totp/enable", rateLimit(5, 60_000), async (c) => {
     .where(eq(users.id, session.userId))
     .run();
   deleteCookie(c, TOTP_SETUP_COOKIE, { path: "/" });
-  await createSession(c, user.id, user.username, "password");
+  await closeEndedStreams(
+    getSessionToken(c),
+    await createSession(c, user.id, user.username, "password"),
+  );
 
   return c.json({ status: "ok", totpEnabled: true });
 });
@@ -686,6 +725,7 @@ auth.delete("/totp", rateLimit(5, 60_000), async (c) => {
       403,
     );
   }
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const body = asObject(await c.req.json().catch(() => null));
   const currentPassword =
@@ -719,7 +759,10 @@ auth.delete("/totp", rateLimit(5, 60_000), async (c) => {
     })
     .where(eq(users.id, session.userId))
     .run();
-  await createSession(c, user.id, user.username, "password");
+  await closeEndedStreams(
+    getSessionToken(c),
+    await createSession(c, user.id, user.username, "password"),
+  );
 
   return c.json({ status: "ok", totpEnabled: false });
 });
@@ -776,14 +819,27 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
   if (pwError) {
     return c.json({ error: pwError }, 400);
   }
+  if (newPassword === currentPassword) {
+    return c.json(
+      { error: "New password must be different from the current password" },
+      400,
+    );
+  }
 
   const newHash = await hashPassword(newPassword);
   db.update(users)
-    .set({ passwordHash: newHash, sessionVersion: user.sessionVersion + 1 })
+    .set({
+      passwordHash: newHash,
+      passwordChangeRequired: 0,
+      sessionVersion: user.sessionVersion + 1,
+    })
     .where(eq(users.id, session.userId))
     .run();
 
-  await createSession(c, user.id, user.username, "password");
+  await closeEndedStreams(
+    getSessionToken(c),
+    await createSession(c, user.id, user.username, "password"),
+  );
 
   return c.json({ status: "ok" });
 });
@@ -792,6 +848,7 @@ auth.post("/change-password", rateLimit(5, 60_000), async (c) => {
 auth.post("/webauthn/register/options", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const db = getDb();
   const account = db
@@ -836,6 +893,7 @@ auth.post("/webauthn/register/options", async (c) => {
 auth.post("/webauthn/register/verify", async (c) => {
   const session = await getSession(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
+  if (session.passwordChangeRequired) return passwordChangeRequiredResponse(c);
 
   const account = getDb()
     .select({
@@ -968,6 +1026,7 @@ auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
   if (!user) {
     return c.json({ error: "User not found" }, 400);
   }
+  if (user.disabled === 1) return accountDisabledResponse(c);
   if (isOidcOnlyAccount(user)) {
     return c.json(
       {
@@ -993,6 +1052,25 @@ auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
     );
 
     if (!verification.verified) {
+      return c.json({ error: "Verification failed" }, 400);
+    }
+
+    // An administrator may have removed the passkey or ended the account's
+    // sessions (MFA reset, disabling) during verification.
+    const credentialStillExists = db
+      .select({ id: webauthnCredentials.id })
+      .from(webauthnCredentials)
+      .where(
+        and(
+          eq(webauthnCredentials.id, credRow.id),
+          eq(webauthnCredentials.userId, user.id),
+        ),
+      )
+      .get();
+    if (
+      !credentialStillExists ||
+      !isSessionVersionCurrent(user.id, user.sessionVersion)
+    ) {
       return c.json({ error: "Verification failed" }, 400);
     }
 
@@ -1156,12 +1234,23 @@ auth.get("/oidc/callback", async (c) => {
           ),
         )
         .run();
+      await closeEndedSessionSockets();
       return c.redirect(`${targetOrigin}/login?error=oidc_unauthorized`);
     }
 
     const user = upsertOidcUser({ ...result, role: result.role });
+    if (user.disabled === 1) {
+      console.warn(`OIDC user "${user.username}" is disabled and was denied`);
+      return c.redirect(`${targetOrigin}/login?error=oidc_unauthorized`);
+    }
 
-    await createSession(c, user.id, user.username, "oidc");
+    // Signing in again ends the identity's earlier sessions (see upsertOidcUser).
+    await closeEndedStreams(
+      getSessionToken(c),
+      await createSession(c, user.id, user.username, "oidc", {
+        oidcSessionId: result.sessionId,
+      }),
+    );
     // Kept as id_token_hint for RP-initiated logout. Oversized tokens are
     // skipped; logout then falls back to client_id only.
     if (result.idToken && result.idToken.length <= MAX_ID_TOKEN_COOKIE_LENGTH) {
@@ -1180,6 +1269,60 @@ auth.get("/oidc/callback", async (c) => {
     console.error("OIDC callback error:", e);
     return c.json({ error: "OIDC authentication failed" }, 400);
   }
+});
+
+// OpenID Connect Back-Channel Logout: the provider calls this directly when an SSO session ends.
+auth.post("/oidc/backchannel-logout", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (!oidc.isConfigured()) {
+    return c.json(
+      { error: "invalid_request", error_description: "OIDC is not configured" },
+      400,
+    );
+  }
+  if (!oidc.isBackchannelLogoutEnabled()) {
+    return c.json(
+      {
+        error: "invalid_request",
+        error_description: "Back-channel logout is disabled",
+      },
+      400,
+    );
+  }
+
+  const body = await c.req.parseBody().catch(() => null);
+  const logoutToken =
+    typeof body?.logout_token === "string" ? body.logout_token : "";
+  if (!logoutToken) {
+    return c.json(
+      { error: "invalid_request", error_description: "Missing logout_token" },
+      400,
+    );
+  }
+
+  let identity: oidc.OidcLogoutIdentity | null;
+  try {
+    identity = await oidc.verifyLogoutToken(logoutToken);
+  } catch (e) {
+    console.warn(
+      `OIDC back-channel logout failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    identity = null;
+  }
+  if (!identity) {
+    return c.json(
+      { error: "invalid_request", error_description: "Invalid logout token" },
+      400,
+    );
+  }
+
+  const applied = applyOidcLogout({
+    ...identity,
+    sessionExpiresAt: Math.floor(Date.now() / 1000) + OIDC_SESSION_LIFETIME,
+  });
+  // Live output streams were authorized at upgrade time; end them too.
+  if (applied) await closeEndedSessionSockets();
+  return c.body(null, 200);
 });
 
 export default auth;

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { NUMERIC_SETTING_RULES, normalizeSettingsUpdate } from "../../client/lib/settings-validation";
+import {
+  NUMERIC_SETTING_RULES,
+  mergeLoadedDraft,
+  normalizeSettingsUpdate,
+} from "../../client/lib/settings-validation";
 
 describe("normalizeSettingsUpdate", () => {
   test("clamps numeric settings to their allowed ranges", () => {
@@ -55,5 +59,23 @@ describe("normalizeSettingsUpdate", () => {
       ssh_timeout_seconds: "240",
       cmd_timeout_seconds: "900",
     });
+  });
+});
+
+describe("mergeLoadedDraft", () => {
+  const loaded = { language: "en", time_format: "24h", app_name: "Old" };
+
+  test("keeps edited fields and takes the loaded value for the rest", () => {
+    expect(
+      mergeLoadedDraft(
+        { language: "de", time_format: "24h", app_name: "Old" },
+        loaded,
+        { language: "en", time_format: "12h", app_name: "New" },
+      ),
+    ).toEqual({ language: "de", time_format: "12h", app_name: "New" });
+  });
+
+  test("uses the loaded values on the first load", () => {
+    expect(mergeLoadedDraft<Record<string, string>>({}, {}, loaded)).toEqual(loaded);
   });
 });

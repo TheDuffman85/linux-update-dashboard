@@ -7,7 +7,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiFetch } from "../lib/client";
+import { setOidcAutoLoginSuppressed } from "../lib/oidc-auto-login";
 
 export type UserRole = "admin" | "read-only";
 
@@ -15,6 +17,9 @@ interface User {
   userId: number;
   username: string;
   role?: UserRole;
+  authMethod?: "password" | "passkey" | "oidc";
+  /** Set until the user replaces a password an administrator chose. */
+  passwordChangeRequired?: boolean;
 }
 
 export interface AuthState {
@@ -22,6 +27,7 @@ export interface AuthState {
   loading: boolean;
   setupRequired: boolean;
   oidcEnabled: boolean;
+  oidcAutoLogin: boolean;
   passwordLoginDisabled: boolean;
   passkeysEnabled: boolean;
   passkeysAvailable: boolean;
@@ -64,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading: true,
     setupRequired: false,
     oidcEnabled: false,
+    oidcAutoLogin: false,
     passwordLoginDisabled: false,
     passkeysEnabled: false,
     passkeysAvailable: false,
@@ -81,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authenticated: boolean;
         user: User | null;
         oidcEnabled: boolean;
+        oidcAutoLogin?: boolean;
         passwordLoginDisabled: boolean;
         passkeysEnabled: boolean;
         passkeysAvailable: boolean;
@@ -93,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading: false,
         setupRequired: data.setupRequired,
         oidcEnabled: data.oidcEnabled,
+        oidcAutoLogin: data.oidcAutoLogin === true,
         passwordLoginDisabled: data.passwordLoginDisabled,
         passkeysEnabled: data.passkeysEnabled,
         passkeysAvailable: data.passkeysAvailable,
@@ -123,6 +132,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(retryTimer.current);
   }, [refresh]);
 
+  const signedIn = !!state.user;
+  useEffect(() => {
+    if (signedIn) setOidcAutoLoginSuppressed(false);
+  }, [signedIn]);
+
+  // Cached responses hold per-user data such as preferences and passkeys, so
+  // they must not carry over to the next account.
+  const queryClient = useQueryClient();
+  const userId = state.user?.userId ?? null;
+  const cachedUserId = useRef(userId);
+  useEffect(() => {
+    const previousUserId = cachedUserId.current;
+    cachedUserId.current = userId;
+    // Signing out already cleared the cache, so signing in needs no reset.
+    if (previousUserId !== null && previousUserId !== userId) {
+      void queryClient.resetQueries();
+    }
+  }, [queryClient, userId]);
+
   const login = async (
     username: string,
     password: string,
@@ -139,6 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await apiFetch<{ redirectUrl?: string }>("/auth/logout", {
       method: "POST",
     });
+    setOidcAutoLoginSuppressed(true);
     // SSO sessions are also ended at the identity provider, which then
     // redirects back to the login page.
     if (res?.redirectUrl && /^https?:\/\//i.test(res.redirectUrl)) {

@@ -2,6 +2,7 @@ import { createMiddleware } from "hono/factory";
 import { eq, count } from "drizzle-orm";
 import { getSession, refreshSessionIfNeeded, type SessionData } from "../auth/session";
 import { validateToken } from "../auth/api-token";
+import { refreshSessionSockets } from "../services/session-sockets";
 import { getDb } from "../db";
 import { users } from "../db/schema";
 import { isLoopbackRequest, getClientIp } from "../request-security";
@@ -14,19 +15,27 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const MANAGEMENT_PREFIXES = [
   "/api/auth", "/api/settings", "/api/tokens",
   "/api/passkeys", "/api/notifications", "/api/schedules",
-  "/api/scripts", "/api/credentials",
+  "/api/scripts", "/api/credentials", "/api/users", "/api/account",
 ];
 
-function isManagementPath(path: string): boolean {
-  return MANAGEMENT_PREFIXES.some(
+// Areas where every signed-in user manages their own account.
+const ACCOUNT_PREFIXES = ["/api/passkeys", "/api/account"];
+
+function matchesPrefix(path: string, prefixes: string[]): boolean {
+  return prefixes.some(
     (prefix) => path === prefix || path.startsWith(`${prefix}/`),
   );
 }
 
+function isSettingsRead(path: string, method: string): boolean {
+  return SAFE_METHODS.has(method) && (path === "/api/settings" || path === "/api/settings/");
+}
+
 function isReadOnlyAllowedPath(path: string, method: string): boolean {
+  if (matchesPrefix(path, ACCOUNT_PREFIXES)) return true;
   if (!SAFE_METHODS.has(method)) return false;
-  if (path === "/api/settings" || path === "/api/settings/") return true;
-  return !isManagementPath(path);
+  if (isSettingsRead(path, method)) return true;
+  return !matchesPrefix(path, MANAGEMENT_PREFIXES);
 }
 
 // Rate-limit failed bearer token attempts: max 20 failures per IP per minute
@@ -133,6 +142,15 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
+    // Until the user replaces a password an administrator chose, only the settings
+    // the UI needs for its language and time format stay readable.
+    if (session.passwordChangeRequired && !isSettingsRead(path, c.req.method)) {
+      return c.json(
+        { error: "Change your password to continue", code: "PASSWORD_CHANGE_REQUIRED" },
+        403,
+      );
+    }
+
     if (
       session.role === "read-only" &&
       !isReadOnlyAllowedPath(path, c.req.method)
@@ -145,7 +163,8 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     // Avoid mutating cookies during WebSocket upgrade handshakes.
     if (!isWebSocketUpgrade) {
       // Rolling session: refresh token if it's past the halfway point
-      await refreshSessionIfNeeded(c);
+      const refreshedToken = await refreshSessionIfNeeded(c);
+      if (refreshedToken) refreshSessionSockets(refreshedToken);
     }
 
     return next();

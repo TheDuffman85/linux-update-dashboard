@@ -3,6 +3,7 @@ import {
   sqliteTable,
   text,
   integer,
+  primaryKey,
   real,
   unique,
 } from "drizzle-orm/sqlite-core";
@@ -21,10 +22,60 @@ export const users = sqliteTable("users", {
   oidcSubject: text("oidc_subject"),
   isAdmin: integer("is_admin").notNull().default(0),
   role: text("role").notNull().default("admin"),
+  disabled: integer("disabled").notNull().default(0),
+  // Set when an administrator chose the password; cleared once the user replaces it.
+  passwordChangeRequired: integer("password_change_required").notNull().default(0),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
 });
+
+// Display preferences each user saves for themselves (language, time format).
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.key] })],
+);
+
+// OpenID Connect back-channel logout: provider session IDs that were logged out,
+// kept until the dashboard sessions bound to them have expired.
+export const oidcRevokedSessions = sqliteTable(
+  "oidc_revoked_sessions",
+  {
+    issuer: text("issuer").notNull(),
+    sessionId: text("session_id").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.issuer, table.sessionId] })],
+);
+
+// Logout tokens already applied, so a repeated notification cannot revoke later sign-ins.
+export const oidcProcessedLogouts = sqliteTable(
+  "oidc_processed_logouts",
+  {
+    issuer: text("issuer").notNull(),
+    tokenId: text("token_id").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.issuer, table.tokenId] })],
+);
+
+// Bumped by a logout to end an identity's sessions that carry no provider session ID.
+export const oidcLogoutVersions = sqliteTable(
+  "oidc_logout_versions",
+  {
+    issuer: text("issuer").notNull(),
+    subject: text("subject").notNull(),
+    version: integer("version").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.issuer, table.subject] })],
+);
 
 export const webauthnCredentials = sqliteTable("webauthn_credentials", {
   id: integer("id").primaryKey({ autoIncrement: true }),

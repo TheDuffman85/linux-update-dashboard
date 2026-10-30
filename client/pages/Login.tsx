@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { AppLogo } from "../components/AppLogo";
 import { ApiError, apiFetch } from "../lib/client";
 import { useI18n } from "../lib/i18n";
 import { useBranding } from "../lib/branding";
+import { isOidcAutoLoginSuppressed } from "../lib/oidc-auto-login";
 
 function base64urlToBuffer(base64url: string): ArrayBuffer {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
@@ -26,6 +27,7 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
 export default function Login() {
   const {
     login,
+    oidcAutoLogin,
     oidcEnabled,
     passwordLoginDisabled,
     passkeysEnabled,
@@ -47,6 +49,18 @@ export default function Login() {
   );
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  // ?local=1 keeps the login page reachable, for example to sign in with a
+  // passkey. A failed SSO sign-in stays on the page to show the error.
+  const [redirectingToSso] = useState(() => {
+    if (!oidcAutoLogin || isOidcAutoLoginSuppressed()) return false;
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("local") !== "1" && !params.has("error");
+  });
+
+  useEffect(() => {
+    if (redirectingToSso) window.location.replace("/api/auth/oidc/login");
+  }, [redirectingToSso]);
 
   const handlePasswordLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -196,6 +210,14 @@ export default function Login() {
           >
             {error}
           </div>
+        )}
+        {redirectingToSso && (
+          <p
+            role="status"
+            className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400"
+          >
+            {t("pages.login.redirectingToSso")}
+          </p>
         )}
         {notice && !error && (
           <div
