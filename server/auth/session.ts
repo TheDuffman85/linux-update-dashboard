@@ -46,6 +46,20 @@ export interface CreateSessionOptions {
   sessionId?: string;
 }
 
+/**
+ * Whether the account's sessions are unchanged since `sessionVersion` was read.
+ * Sign-ins recheck this after verifying credentials, because an administrator
+ * may have revoked them (password or MFA reset, disabling) in the meantime.
+ */
+export function isSessionVersionCurrent(userId: number, sessionVersion: number): boolean {
+  const user = getDb()
+    .select({ sessionVersion: users.sessionVersion })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
+  return user?.sessionVersion === sessionVersion;
+}
+
 export async function createSession(
   c: Context,
   userId: number,

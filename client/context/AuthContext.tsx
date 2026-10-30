@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiFetch } from "../lib/client";
 import { setOidcAutoLoginSuppressed } from "../lib/oidc-auto-login";
 
@@ -135,6 +136,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (signedIn) setOidcAutoLoginSuppressed(false);
   }, [signedIn]);
+
+  // Cached responses hold per-user data such as preferences and passkeys, so
+  // they must not carry over to the next account.
+  const queryClient = useQueryClient();
+  const userId = state.user?.userId ?? null;
+  const cachedUserId = useRef(userId);
+  useEffect(() => {
+    const previousUserId = cachedUserId.current;
+    cachedUserId.current = userId;
+    // Signing out already cleared the cache, so signing in needs no reset.
+    if (previousUserId !== null && previousUserId !== userId) {
+      void queryClient.resetQueries();
+    }
+  }, [queryClient, userId]);
 
   const login = async (
     username: string,

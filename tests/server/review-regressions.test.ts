@@ -30,6 +30,8 @@ import { validateProxyJumpConfiguration } from "../../server/services/system-ser
 import * as scheduler from "../../server/services/scheduler";
 import * as scheduleService from "../../server/services/schedule-service";
 import { initSession } from "../../server/auth/session";
+import * as webauthn from "../../server/auth/webauthn";
+import { resetUserSecondFactors } from "../../server/services/user-service";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import ssh2 from "ssh2";
 import {
@@ -177,6 +179,47 @@ test("rejects replay of a real signed zero-counter passkey assertion", async () 
         .some((cookie) => cookie.startsWith("ludash_session=")),
     ).toBe(i === 0);
   }
+});
+test("rejects a passkey sign-in when MFA is reset during verification", async () => {
+  const db = getDb();
+  const user = db
+    .insert(users)
+    .values({ username: "review", passwordHash: "unused" })
+    .returning()
+    .get();
+  const credentialId = randomBytes(32).toString("base64url");
+  db.insert(webauthnCredentials)
+    .values({ userId: user.id, credentialId, publicKey: "unused", signCount: 0 })
+    .run();
+  vi.spyOn(webauthn, "verifyAuthentication").mockImplementation(async () => {
+    resetUserSecondFactors(user.id);
+    return {
+      verified: true,
+      authenticationInfo: { newCounter: 1 },
+    } as Awaited<ReturnType<typeof webauthn.verifyAuthentication>>;
+  });
+  const app = createApp();
+  const optionsResponse = await post(app, "webauthn/login/options", {
+    username: "review",
+  });
+  const challengeCookie = optionsResponse.headers
+    .getSetCookie()
+    .find((cookie) => cookie.startsWith("webauthn_challenge="))!
+    .split(";")[0];
+
+  const res = await post(
+    app,
+    "webauthn/login/verify",
+    { id: credentialId },
+    challengeCookie,
+  );
+
+  expect(res.status).toBe(400);
+  expect(
+    res.headers
+      .getSetCookie()
+      .some((cookie) => cookie.startsWith("ludash_session=")),
+  ).toBe(false);
 });
 test("streams all existing remote log lines", async () => {
   const path = join(dir, "remote.log");

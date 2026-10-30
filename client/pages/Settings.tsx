@@ -11,6 +11,7 @@ import {
 import { validatePassword, validateRequiredText } from "../lib/form-validation";
 import {
   NUMERIC_SETTING_RULES,
+  mergeLoadedDraft,
   normalizeIntegerSetting,
   normalizeSettingsUpdate,
   type NumericSettingKey,
@@ -133,6 +134,8 @@ const GENERAL_SETTING_KEYS = [
 // Saved in one request, so the server validates disabling password login against the
 // OIDC settings being saved.
 const AUTHENTICATION_SETTING_KEYS = ["disable_password_login", ...OIDC_SETTING_KEYS];
+// Loaded as "(stored)" and shown as an empty field while a value is stored.
+const SECRET_SETTING_KEYS = ["oidc_client_secret"];
 
 const SETTINGS_TABS = [
   "account",
@@ -363,6 +366,9 @@ export default function Settings() {
     language: "",
     time_format: "",
   });
+  // The last loaded or saved values tell edited fields apart when the settings reload.
+  const loadedFormRef = useRef<Record<string, string>>({});
+  const loadedPreferencesRef = useRef(preferenceForm);
   const instanceLanguage = normalizeLanguagePreference(
     settingsResponse?.settings[LANGUAGE_SETTING_KEY],
   );
@@ -441,18 +447,25 @@ export default function Settings() {
     if (settingsResponse?.settings) {
       const cleanedForm = { ...settingsResponse.settings };
       const secrets: Record<string, boolean> = {};
-      for (const key of ["oidc_client_secret"]) {
+      for (const key of SECRET_SETTING_KEYS) {
         if (cleanedForm[key] === "(stored)") {
           secrets[key] = true;
           cleanedForm[key] = "";
         }
       }
-      setStoredSecrets(secrets);
-      setForm(cleanedForm);
-      setPreferenceForm({
+      const loadedPreferences = {
         language: settingsResponse.preferences?.language ?? "",
         time_format: settingsResponse.preferences?.time_format ?? "",
-      });
+      };
+      const previousForm = loadedFormRef.current;
+      const previousPreferences = loadedPreferencesRef.current;
+      loadedFormRef.current = cleanedForm;
+      loadedPreferencesRef.current = loadedPreferences;
+      setStoredSecrets(secrets);
+      setForm((prev) => mergeLoadedDraft(prev, previousForm, cleanedForm));
+      setPreferenceForm((prev) =>
+        mergeLoadedDraft(prev, previousPreferences, loadedPreferences),
+      );
     }
   }, [settingsResponse]);
 
@@ -540,6 +553,17 @@ export default function Settings() {
         editableKeys.length > 0
           ? await updateSettings.mutateAsync(normalizedData)
           : undefined;
+      // Saved values count as loaded, so they no longer read as edits even
+      // when the reloaded settings come back unchanged.
+      const saved = { ...normalizedData };
+      for (const k of SECRET_SETTING_KEYS) {
+        if (!(k in saved)) continue;
+        const sent = saved[k];
+        saved[k] = "";
+        setStoredSecrets((prev) => ({ ...prev, [k]: sent !== "" }));
+        setForm((prev) => (prev[k] === sent ? { ...prev, [k]: "" } : prev));
+      }
+      loadedFormRef.current = { ...loadedFormRef.current, ...saved };
       if (res?.oidcError) {
         addToast(
           toastT("pages.settings.settingsSavedButOidcConfigurationFailedError", {
@@ -567,13 +591,17 @@ export default function Settings() {
     );
     const toastT = (key: string, values?: TranslationValues) =>
       translateForLanguage(resolveLanguagePreference(language), key, values);
+    const saved = { ...preferenceForm };
     updatePreferences.mutate(
       {
-        [LANGUAGE_SETTING_KEY]: preferenceForm.language || null,
-        [TIME_FORMAT_SETTING_KEY]: preferenceForm.time_format || null,
+        [LANGUAGE_SETTING_KEY]: saved.language || null,
+        [TIME_FORMAT_SETTING_KEY]: saved.time_format || null,
       },
       {
-        onSuccess: () => addToast(toastT("pages.settings.settingsSaved"), "success"),
+        onSuccess: () => {
+          loadedPreferencesRef.current = saved;
+          addToast(toastT("pages.settings.settingsSaved"), "success");
+        },
         onError: (err) => addToast(err.message, "danger"),
       },
     );

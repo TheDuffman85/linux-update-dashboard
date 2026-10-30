@@ -20,6 +20,7 @@ import {
   getSessionToken,
   clearSession,
   initSession,
+  isSessionVersionCurrent,
   OIDC_SESSION_LIFETIME,
 } from "../auth/session";
 import * as wa from "../auth/webauthn";
@@ -539,6 +540,10 @@ auth.post("/login", rateLimit(5, 60_000), async (c) => {
     clearAuthFailures(totpFailureBuckets, totpAttemptKey);
   }
 
+  // An administrator may have reset the credentials during verification.
+  if (!isSessionVersionCurrent(user!.id, user!.sessionVersion)) {
+    return c.json({ error: "Invalid credentials" }, 401);
+  }
   await createSession(c, user!.id, user!.username, "password");
   return c.json({
     status: "ok",
@@ -1047,6 +1052,25 @@ auth.post("/webauthn/login/verify", rateLimit(5, 60_000), async (c) => {
     );
 
     if (!verification.verified) {
+      return c.json({ error: "Verification failed" }, 400);
+    }
+
+    // An administrator may have removed the passkey or ended the account's
+    // sessions (MFA reset, disabling) during verification.
+    const credentialStillExists = db
+      .select({ id: webauthnCredentials.id })
+      .from(webauthnCredentials)
+      .where(
+        and(
+          eq(webauthnCredentials.id, credRow.id),
+          eq(webauthnCredentials.userId, user.id),
+        ),
+      )
+      .get();
+    if (
+      !credentialStillExists ||
+      !isSessionVersionCurrent(user.id, user.sessionVersion)
+    ) {
       return c.json({ error: "Verification failed" }, 400);
     }
 
