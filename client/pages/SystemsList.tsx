@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
 import Sortable from "sortablejs";
 import { Layout } from "../components/Layout";
 import { SearchField } from "../components/SearchField";
@@ -22,7 +22,7 @@ import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
 import { RepositorySourcesPanel } from "../components/systems/RepositorySourcesPanel";
 import { getHostKeyStatusBadgeLabel } from "../lib/host-key-status";
-import { filterSystems, getLifecycleBadge } from "../lib/system-search";
+import { filterSystems, findSystemsByHost, getLifecycleBadge } from "../lib/system-search";
 import { useSettings } from "../lib/settings";
 import { useI18n } from "../lib/i18n";
 
@@ -54,7 +54,18 @@ export default function SystemsList() {
   const reorderSystems = useReorderSystems();
   const { addToast } = useToast();
   const { t } = useI18n();
-  const [search, setSearch] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const hostLookup = searchParams.get("host")?.trim() ?? "";
+  const search = hostLookup || (searchParams.get("search") ?? "");
+  // `host=` lists exact hostname matches until the search field is edited.
+  const matchSystems = (items: System[]) =>
+    hostLookup ? findSystemsByHost(items, hostLookup) : filterSystems(items, search, t);
+  // `redirect=1` opens the system directly when the link matches exactly one system.
+  const redirectRequested = ["1", "true"].includes(searchParams.get("redirect") ?? "");
+  const redirectMatches = redirectRequested && systems ? matchSystems(systems) : [];
+  const redirectTarget = redirectRequested && search.trim() && redirectMatches.length === 1
+    ? redirectMatches[0]
+    : null;
   const searchActive = search.trim().length > 0;
   const [showForm, setShowForm] = useState(false);
   const [duplicateSource, setDuplicateSource] = useState<System | null>(null);
@@ -73,9 +84,19 @@ export default function SystemsList() {
   const sudoersPreview = useSudoersPreview(sudoersSystem?.id ?? 0, {
     enabled: sudoersSystem !== null,
   });
-  const filteredSystems = filterSystems(orderedSystems, search, t);
+  const filteredSystems = matchSystems(orderedSystems);
   const reorderDisabled = searchActive || reorderSystems.isPending;
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
+
+  useEffect(() => {
+    if (!redirectRequested || !systems || redirectTarget) return;
+    // Only redirect when the link is opened, not when a later refresh narrows the matches.
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete("redirect");
+      return next;
+    }, { replace: true });
+  }, [redirectRequested, redirectTarget, setSearchParams, systems]);
 
   useEffect(() => {
     systemsRef.current = systems ?? [];
@@ -89,8 +110,8 @@ export default function SystemsList() {
     if (targetSystem && !isReadOnly) {
       setEditSystem(targetSystem);
     }
-    navigate(location.pathname, { replace: true, state: null });
-  }, [isReadOnly, location.pathname, navigate, routeEditSystemId, systems]);
+    navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: null });
+  }, [isReadOnly, location.pathname, location.search, navigate, routeEditSystemId, systems]);
 
   useEffect(() => {
     orderedSystemsRef.current = orderedSystems;
@@ -142,6 +163,21 @@ export default function SystemsList() {
   useEffect(() => {
     sortableRef.current?.option("disabled", reorderDisabled);
   }, [reorderDisabled]);
+
+  const setSearch = (value: string) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete("host");
+      next.delete("redirect");
+      if (value) next.set("search", value);
+      else next.delete("search");
+      return next;
+    }, { replace: true });
+  };
+
+  if (redirectTarget) {
+    return <Navigate to={`/systems/${redirectTarget.id}`} replace />;
+  }
 
   const handleCreate = (data: Parameters<typeof createSystem.mutate>[0]) => {
     createSystem.mutate(data, {

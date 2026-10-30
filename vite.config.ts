@@ -39,6 +39,9 @@ function formatDevBuildVersion(date: Date = new Date()): string {
   return `dev-${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}${String(date.getUTCHours()).padStart(2, "0")}${String(date.getUTCMinutes()).padStart(2, "0")}`;
 }
 
+// Backend port for the dev proxy; matches the server's own LUDASH_PORT setting.
+const BACKEND_PORT = Number.parseInt(process.env.LUDASH_PORT || "", 10) || 3001;
+
 const APP_BRANCH =
   process.env.VITE_APP_BRANCH || git("rev-parse --abbrev-ref HEAD");
 const APP_VERSION =
@@ -62,7 +65,7 @@ export default defineConfig({
           const proxyReq = http.request(
             {
               hostname: "localhost",
-              port: 3001,
+              port: BACKEND_PORT,
               path: req.url,
               method: req.method,
               headers: req.headers,
@@ -117,7 +120,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://localhost:3001",
+        target: `http://localhost:${BACKEND_PORT}`,
         changeOrigin: true,
       },
     },

@@ -53,10 +53,20 @@ fi
 BACKEND_PID=""
 FRONTEND_PID=""
 
+# pnpm does not forward SIGTERM to the processes it starts, so stop the whole tree.
+kill_tree() {
+  local pid="$1"
+  local child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill "$pid" >/dev/null 2>&1 || true
+}
+
 stop_pid() {
   local pid="$1"
   if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
-    kill "$pid" >/dev/null 2>&1 || true
+    kill_tree "$pid"
     wait "$pid" 2>/dev/null || true
   fi
 }

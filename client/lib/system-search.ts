@@ -36,6 +36,20 @@ export function getLifecycleBadge(
   return null;
 }
 
+// Exact, case-insensitive lookup used by `/systems?host=` links from external tools.
+// Hostnames are not unique, so callers must handle zero or several matches.
+export function findSystemsByHost<T extends Pick<System, "hostname" | "port">>(
+  systems: T[],
+  host: string,
+): T[] {
+  const query = host.trim().toLowerCase();
+  if (!query) return [];
+  return systems.filter((system) =>
+    [system.hostname, `${system.hostname}:${system.port}`]
+      .some((value) => value.trim().toLowerCase() === query),
+  );
+}
+
 export function filterSystems<T extends SearchableSystem>(
   systems: T[],
   search: string,

@@ -65,7 +65,7 @@ vi.mock("../../client/components/Layout", () => ({
 import { translateForLanguage } from "../../client/lib/i18n";
 import type { System } from "../../client/lib/systems";
 
-import { filterSystems } from "../../client/lib/system-search";
+import { filterSystems, findSystemsByHost } from "../../client/lib/system-search";
 
 import SystemsList, { getEditSystemIdFromRouteState } from "../../client/pages/SystemsList";
 
@@ -200,6 +200,70 @@ describe("SystemsList", () => {
     expect(filterSystems(systems, "approved", t)).toEqual([]);
     expect(filterSystems(systems, "missing", t)).toEqual([]);
     expect(filterSystems(systems, "", t)).toBe(systems);
+  });
+
+  test("finds systems for host links by exact hostname or hostname:port, not by name", () => {
+    const systems = [
+      { id: 1, name: "Alpha", hostname: "alpha.local", port: 22 },
+      { id: 2, name: "Alpha Flatpak", hostname: "alpha.local", port: 2222 },
+      { id: 3, name: "beta.local", hostname: "192.0.2.30", port: 22 },
+    ];
+    expect(findSystemsByHost(systems, " ALPHA.local ").map((system) => system.id)).toEqual([1, 2]);
+    expect(findSystemsByHost(systems, "alpha.local:2222").map((system) => system.id)).toEqual([2]);
+    expect(findSystemsByHost(systems, "192.0.2.30").map((system) => system.id)).toEqual([3]);
+    expect(findSystemsByHost(systems, "alpha")).toEqual([]);
+    expect(findSystemsByHost(systems, "beta.local")).toEqual([]);
+    expect(findSystemsByHost(systems, "alpha.loc")).toEqual([]);
+    expect(findSystemsByHost(systems, "  ")).toEqual([]);
+  });
+
+  test("lists exact host matches without redirecting unless requested", () => {
+    const base: System = mockUseSystems().data[0];
+    mockUseSystems.mockReturnValue({
+      data: [base, { ...base, id: 2, name: "Alpha Mirror", hostname: "alpha.local.example" }],
+      isLoading: false,
+      refetch: vi.fn(),
+    });
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={["/systems?host=alpha.local"]}><SystemsList /></MemoryRouter>,
+    );
+    expect(html).toContain('value="alpha.local"');
+    expect(html).toContain("/systems/1");
+    expect(html).not.toContain("/systems/2");
+  });
+
+  test("redirects host and search links with redirect=1 when exactly one system matches", () => {
+    for (const entry of ["/systems?host=ALPHA.local&redirect=1", "/systems?search=alp&redirect=true"]) {
+      const html = renderToStaticMarkup(<MemoryRouter initialEntries={[entry]}><SystemsList /></MemoryRouter>);
+      expect(html, entry).not.toContain('aria-label="Search systems"');
+    }
+  });
+
+  test("falls back to the filtered list when a redirect link does not match exactly one system", () => {
+    const base: System = mockUseSystems().data[0];
+    mockUseSystems.mockReturnValue({
+      data: [base, { ...base, id: 2, name: "Alpha Flatpak", username: "flatpak" }],
+      isLoading: false,
+      refetch: vi.fn(),
+    });
+    for (const entry of ["/systems?host=alpha.local&redirect=1", "/systems?search=alpha&redirect=1"]) {
+      const html = renderToStaticMarkup(<MemoryRouter initialEntries={[entry]}><SystemsList /></MemoryRouter>);
+      expect(html, entry).toContain('aria-label="Search systems"');
+      expect(html, entry).toContain("Alpha Flatpak");
+    }
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={["/systems?host=missing.local&redirect=1"]}><SystemsList /></MemoryRouter>,
+    );
+    expect(html).toContain('value="missing.local"');
+    expect(html).toContain("No systems match your search");
+  });
+
+  test("applies the search query parameter without redirecting by default", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={["/systems?search=alp"]}><SystemsList /></MemoryRouter>,
+    );
+    expect(html).toContain('value="alp"');
+    expect(html).toContain("alpha.local");
   });
 
   test("renders a sudoers setup action and keeps its modal closed by default", () => {

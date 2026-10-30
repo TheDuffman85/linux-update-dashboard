@@ -155,7 +155,7 @@ describe("Settings page", () => {
     vi.unstubAllGlobals();
   });
 
-  test("opens My account by default and keeps the selected tab in the URL", () => {
+  test("opens Profile by default and keeps the selected tab in the URL", () => {
     const html = renderSettings();
 
     expect(html).toContain('role="tablist"');
@@ -174,7 +174,7 @@ describe("Settings page", () => {
     expect(branding).not.toContain("Activity History");
   });
 
-  test("falls back to My account for an unknown tab", () => {
+  test("falls back to Profile for an unknown tab", () => {
     const html = renderSettings("nope");
 
     expect(html).toMatch(/id="settings-tab-account"[^>]*aria-selected="true"/);
@@ -349,7 +349,7 @@ describe("Settings page", () => {
     );
   });
 
-  test("My account holds the personal preferences, password and TOTP", () => {
+  test("Profile holds the personal preferences, password and TOTP", () => {
     withSettingsResponse({
       settings: { ...mockUseSettingsResponse().data.settings, language: "de" },
     });
@@ -374,7 +374,7 @@ describe("Settings page", () => {
     expect(html).toContain('data-testid="users-settings"');
   });
 
-  test("read-only users only see My account", () => {
+  test("read-only users only see Profile", () => {
     mockUseAuth.mockReturnValue({ hasPassword: true, isReadOnly: true, refresh: vi.fn() });
 
     for (const tab of [undefined, "general", "users", "authentication", "api-tokens"]) {
