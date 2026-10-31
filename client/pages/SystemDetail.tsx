@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, type ComponentProps } from "react";
-import { useParams, useNavigate } from "react-router";
+import { useParams, useNavigate, useLocation } from "react-router";
 import { Layout } from "../components/Layout";
 import { SearchField } from "../components/SearchField";
 import { AgoLabel } from "../components/AgoLabel";
@@ -10,6 +10,7 @@ import { Modal } from "../components/Modal";
 import { TerminalText } from "../components/TerminalText";
 import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
+import { ActivityIcon, AvailableUpdatesIcon, InstalledPackagesIcon, SYSTEM_SECTION_IDS } from "../components/SystemSectionIcons";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useSystem,
@@ -342,9 +343,10 @@ export function AvailableUpdatesSection({
   ).selectedCount;
   const selectedOutsideSearch = selectedCount - matchingSelectedCount;
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
+    <div id={SYSTEM_SECTION_IDS.availableUpdates} className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6 scroll-mt-24">
       <div className="px-4 py-3 border-b border-border flex flex-wrap gap-2 items-center justify-between">
-        <h2 className="text-sm font-semibold">
+        <h2 className="text-sm font-semibold flex flex-wrap items-center gap-1.5">
+          <AvailableUpdatesIcon className="w-4 h-4 text-slate-400" />
           {t("pages.systemDetail.availableUpdates")}
           {updates.length > 0 && (
             <Badge variant="warning" small>
@@ -522,9 +524,10 @@ export function InstalledPackagesSection({
   const filteredPackages = filterInstalledPackages(installedPackages, search);
 
   return (
-    <details className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6">
+    <details id={SYSTEM_SECTION_IDS.installedPackages} className="bg-white dark:bg-slate-800 rounded-xl border border-border mb-6 scroll-mt-24">
       <summary className="px-4 py-3 flex items-center justify-between cursor-pointer select-none">
-        <span className="text-sm font-semibold">
+        <span className="text-sm font-semibold flex items-center gap-1.5">
+          <InstalledPackagesIcon className="w-4 h-4 text-slate-400" />
           {t("pages.systemDetail.installedPackages")}
           <Badge variant="muted" small>{installedPackages.length}</Badge>
         </span>
@@ -2278,6 +2281,7 @@ function HistoryList({
 export default function SystemDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const systemId = parseInt(id!, 10);
   const { data, isLoading, dataUpdatedAt } = useSystem(systemId);
   const { data: settings } = useSettings();
@@ -2324,6 +2328,20 @@ export default function SystemDetail() {
     setSelectedPackageNames([]);
     updatesSignatureRef.current = null;
   }, [systemId]);
+
+  // Jump to the section linked from the dashboard (e.g. #installed-packages) once
+  // the system has loaded; collapsed <details> sections are opened first.
+  const hasSystemData = !!data;
+  const scrolledLocationKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hasSystemData || !location.hash) return;
+    if (scrolledLocationKeyRef.current === location.key) return;
+    scrolledLocationKeyRef.current = location.key;
+    const section = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (!section) return;
+    if (section instanceof HTMLDetailsElement) section.open = true;
+    section.scrollIntoView({ block: "start" });
+  }, [hasSystemData, location.hash, location.key]);
 
   // When the WebSocket signals an active operation, kick the query into polling mode
   // (refetchInterval only activates when activeOperation is already in cached data)
@@ -3016,9 +3034,12 @@ export default function SystemDetail() {
       />
 
       {/* History */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-border">
+      <div id={SYSTEM_SECTION_IDS.activity} className="bg-white dark:bg-slate-800 rounded-xl border border-border scroll-mt-24">
         <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold">{t("pages.systemDetail.activity")}</h2>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            <ActivityIcon className="w-4 h-4 text-slate-400" />
+            {t("pages.systemDetail.activity")}
+          </h2>
         </div>
         <div className="p-4">
           <HistoryList

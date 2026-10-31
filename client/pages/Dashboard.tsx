@@ -6,6 +6,7 @@ import { AgoLabel } from "../components/AgoLabel";
 import { Badge } from "../components/Badge";
 import { Modal } from "../components/Modal";
 import { DashboardSystemGroups } from "../components/dashboard/DashboardSystemGroups";
+import { ActivityIcon, AvailableUpdatesIcon, InstalledPackagesIcon, SYSTEM_SECTION_IDS } from "../components/SystemSectionIcons";
 import { useDashboardStats, useDashboardSystems } from "../lib/dashboard";
 import { useRefreshCache, useUpgradeAllBatch } from "../lib/updates";
 import {
@@ -383,75 +384,96 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
   const maintaining = updateState === "maintaining";
   const dotColor = getSystemStatusDotClass(updateState, system);
 
+  const sectionLinks = [
+    { id: SYSTEM_SECTION_IDS.availableUpdates, label: t("pages.systemDetail.availableUpdates"), Icon: AvailableUpdatesIcon },
+    { id: SYSTEM_SECTION_IDS.installedPackages, label: t("pages.systemDetail.installedPackages"), Icon: InstalledPackagesIcon },
+    { id: SYSTEM_SECTION_IDS.activity, label: t("pages.systemDetail.activity"), Icon: ActivityIcon },
+  ];
+
   return (
-    <Link
-      to={`/systems/${system.id}`}
-      className="block bg-white dark:bg-slate-800 rounded-xl border border-border p-4 hover:bg-slate-100 hover:border-slate-300 dark:hover:bg-slate-700 dark:hover:border-slate-600 transition-colors"
-    >
-      <div className="flex items-center gap-2 mb-2 min-w-0">
-        {upgrading || maintaining || checking ? (
-          <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || maintaining ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
-        ) : (
-          <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
-        )}
-        <h3 className="font-medium text-sm truncate">{system.name}</h3>
-      </div>
-      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-        {system.hostname}
-        {system.port !== 22 && `:${system.port}`}
-      </p>
-      {system.osName && (
-        <p className="text-xs text-slate-400 truncate mt-0.5">{system.osName}</p>
-      )}
-      <div className="flex items-center justify-between mt-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {updateState === "upgrading" ? (
-            <Badge variant="info" small>{t("pages.dashboard.upgrading")}</Badge>
-          ) : updateState === "maintaining" ? (
-            <Badge variant="info" small>{t("pages.dashboard.maintaining")}</Badge>
-          ) : updateState === "checking" ? (
-            <Badge variant="muted" small>{t("pages.dashboard.checking")}</Badge>
-          ) : updateState === "unreachable" ? (
-            <Badge variant="danger" small>{t("pages.dashboard.unreachable")}</Badge>
-          ) : updateState === "check_failed" ? (
-            <Badge variant="danger" small>{t("pages.dashboard.checkFailed")}</Badge>
-          ) : updateState === "check_warning" ? (
-            <Badge variant="warning" small>{t("pages.dashboard.checkWarning")}</Badge>
-          ) : updateState === "updates_available" ? (
-            <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: system.updateCount })}</Badge>
-          ) : updateState === "lifecycle_warning" ? (
-            <Badge variant={system.osLifecycleStatus === "eol" ? "danger" : "warning"} small>{getLifecycleWarningLabel(system, t)}</Badge>
-          ) : updateState === "up_to_date" ? (
-            <Badge variant="success" small>{t("pages.dashboard.upToDate")}</Badge>
+    <div className="relative bg-white dark:bg-slate-800 rounded-xl border border-border hover:bg-slate-100 hover:border-slate-300 dark:hover:bg-slate-700 dark:hover:border-slate-600 transition-colors">
+      <Link
+        to={`/systems/${system.id}`}
+        className="block p-4 rounded-xl"
+      >
+        <div className="flex items-center gap-2 mb-2 min-w-0 pr-24">
+          {upgrading || maintaining || checking ? (
+            <span className={`spinner spinner-sm !w-3.5 !h-3.5 shrink-0 ${upgrading || maintaining ? "!border-blue-500" : "!border-sky-400"} !border-t-transparent`} />
           ) : (
-            <Badge variant="muted" small>{t("pages.dashboard.unchecked")}</Badge>
+            <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
           )}
-          {updateState === "check_warning" && system.updateCount > 0 && (
-            <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: system.updateCount })}</Badge>
-          )}
-          {system.securityCount > 0 && (
-            <Badge variant="danger" small>{t("pages.dashboard.countSecurity", { count: system.securityCount })}</Badge>
-          )}
-          {system.keptBackCount > 0 && (
-            <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: system.keptBackCount })}</Badge>
-          )}
-          {system.needsReboot === 1 && (
-            <span className="text-amber-500" title={t("pages.dashboard.rebootRequired")}>
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </span>
+          <h3 className="font-medium text-sm truncate">{system.name}</h3>
+        </div>
+        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+          {system.hostname}
+          {system.port !== 22 && `:${system.port}`}
+        </p>
+        {system.osName && (
+          <p className="text-xs text-slate-400 truncate mt-0.5">{system.osName}</p>
+        )}
+        <div className="flex items-center justify-between mt-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {updateState === "upgrading" ? (
+              <Badge variant="info" small>{t("pages.dashboard.upgrading")}</Badge>
+            ) : updateState === "maintaining" ? (
+              <Badge variant="info" small>{t("pages.dashboard.maintaining")}</Badge>
+            ) : updateState === "checking" ? (
+              <Badge variant="muted" small>{t("pages.dashboard.checking")}</Badge>
+            ) : updateState === "unreachable" ? (
+              <Badge variant="danger" small>{t("pages.dashboard.unreachable")}</Badge>
+            ) : updateState === "check_failed" ? (
+              <Badge variant="danger" small>{t("pages.dashboard.checkFailed")}</Badge>
+            ) : updateState === "check_warning" ? (
+              <Badge variant="warning" small>{t("pages.dashboard.checkWarning")}</Badge>
+            ) : updateState === "updates_available" ? (
+              <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: system.updateCount })}</Badge>
+            ) : updateState === "lifecycle_warning" ? (
+              <Badge variant={system.osLifecycleStatus === "eol" ? "danger" : "warning"} small>{getLifecycleWarningLabel(system, t)}</Badge>
+            ) : updateState === "up_to_date" ? (
+              <Badge variant="success" small>{t("pages.dashboard.upToDate")}</Badge>
+            ) : (
+              <Badge variant="muted" small>{t("pages.dashboard.unchecked")}</Badge>
+            )}
+            {updateState === "check_warning" && system.updateCount > 0 && (
+              <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: system.updateCount })}</Badge>
+            )}
+            {system.securityCount > 0 && (
+              <Badge variant="danger" small>{t("pages.dashboard.countSecurity", { count: system.securityCount })}</Badge>
+            )}
+            {system.keptBackCount > 0 && (
+              <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: system.keptBackCount })}</Badge>
+            )}
+            {system.needsReboot === 1 && (
+              <span className="text-amber-500" title={t("pages.dashboard.rebootRequired")}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </span>
+            )}
+          </div>
+          {system.cacheTimestamp && (
+            <AgoLabel
+              timestamp={system.cacheTimestamp}
+              stale={system.isStale}
+              className="text-[10px]"
+            />
           )}
         </div>
-        {system.cacheTimestamp && (
-          <AgoLabel
-            timestamp={system.cacheTimestamp}
-            stale={system.isStale}
-            className="text-[10px]"
-          />
-        )}
+      </Link>
+      <div data-dashboard-system-section-links className="absolute top-3 right-3 flex items-center gap-0.5">
+        {sectionLinks.map(({ id, label, Icon }) => (
+          <Link
+            key={id}
+            to={`/systems/${system.id}#${id}`}
+            title={label}
+            aria-label={`${system.name}: ${label}`}
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-200 hover:text-blue-600 dark:text-slate-500 dark:hover:bg-slate-600 dark:hover:text-blue-400 transition-colors"
+          >
+            <Icon className="w-4 h-4" />
+          </Link>
+        ))}
       </div>
-    </Link>
+    </div>
   );
 }
 
