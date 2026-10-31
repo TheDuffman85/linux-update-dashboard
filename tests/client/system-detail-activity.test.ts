@@ -920,7 +920,7 @@ describe("InstalledPackagesSection", () => {
       cacheTimestamp: "2026-06-01 10:00:00",
     }));
 
-    expect(html).toMatch(/<details class="[^"]*"><summary/);
+    expect(html).toMatch(/<details id="installed-packages" class="[^"]*"><summary/);
     expect(html).not.toMatch(/<details[^>]* open/);
     expect(html).toContain("Installed Packages");
     expect(html).toContain('title="');

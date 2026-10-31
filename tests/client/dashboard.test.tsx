@@ -303,6 +303,22 @@ describe("Dashboard", () => {
     expect(html).not.toMatch(/<button[^>]*>(?:(?!<\/button>).)*Total Updates/);
   });
 
+  test("links system cards directly to the detail page sections", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('href="/systems/1"');
+    expect(html).toContain('href="/systems/1#available-updates"');
+    expect(html).toContain('href="/systems/1#installed-packages"');
+    expect(html).toContain('href="/systems/1#activity"');
+    expect(html).toContain('aria-label="Alpha: Available Updates"');
+    expect(html).toContain('aria-label="Alpha: Installed Packages"');
+    expect(html).toContain('aria-label="Alpha: Activity"');
+  });
+
   test("filters dashboard groups, reveals collapsed matches, and disables editing during search", () => {
     const base: System = mockUseDashboardSystems().data[0];
     const systems = [
