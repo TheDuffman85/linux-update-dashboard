@@ -40,7 +40,7 @@
     "prettier": "^3.9.10",
     "prettier-plugin-sh": "^0.20.2",
     "qrcode": "^1.5.4",
-    "react-i18next": "^17.1.8",
+    "react-i18next": "^17.1.9",
     "sortablejs": "^1.15.7",
     "ssh2": "^1.17.0",
     "ws": "^8.22.0"
