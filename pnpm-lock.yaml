@@ -209,8 +209,8 @@ importers:
         specifier: ^4.2.0
         version: 4.2.0
       nodemailer:
-        specifier: ^10.2.1
-        version: 10.2.1
+        specifier: ^10.3.1
+        version: 10.3.1
       openid-client:
         specifier: ^6.8.8
         version: 6.8.8
@@ -1713,8 +1713,8 @@ packages:
     resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
     engines: {node: ^18 || ^20 || >= 21}
 
-  nodemailer@10.2.1:
-    resolution: {integrity: sha512-ZrDNsPFoDMwefNs7sJwrYiEJ/CG4ClJWDZv05iNJsEBWa8GRDry1QJHTJxsuTAY9eDDKjX4k+q3SxslXJOao7w==}
+  nodemailer@10.3.1:
+    resolution: {integrity: sha512-uF0AFsJC07Y1vdW7p580DKAnh7rAO+4UPSSB3mDCPNDufoiaOebV6JmrzpxB14OjEEEiBsNdYoM2Y+fN8M7BBA==}
     engines: {node: '>=20.0.0'}
 
   oauth4webapi@3.8.8:
@@ -3216,7 +3216,7 @@ snapshots:
 
   node-addon-api@8.9.2: {}
 
-  nodemailer@10.2.1: {}
+  nodemailer@10.3.1: {}
 
   oauth4webapi@3.8.8: {}
 
