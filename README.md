@@ -44,7 +44,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, local users with admin or read-only roles, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
 - **Branding:** replace the application name, light and dark mode logos, and colors shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**. Accent color and neutral tone can be set separately for light and dark mode, with a live preview and a low-contrast warning.
-- **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, [links to systems by hostname](#linking-to-systems), version/build info, and Docker-ready production packaging.
+- **Operator-friendly UI:** light, dark, or system-following theme, activity history, real-time command output, dashboard status summaries with `is:` search filters, quick links from dashboard cards to a system's updates, packages, and activity, [links to systems by hostname](#linking-to-systems), version/build info, and Docker-ready production packaging.
 
 ## Screenshots
 
@@ -285,7 +285,7 @@ If the provider cannot be reached at startup or when saving the settings, the da
 
 OIDC settings also control the requested scopes (must include `openid`), the claim that carries group membership (default `groups`, read from the ID token and the UserInfo endpoint), and which groups get admin or read-only access. Admin groups take precedence over read-only groups. Users that match no configured group are denied by default; you can instead grant them admin or read-only access. Installations that already used OIDC before group mapping existed keep granting admin access to unmatched users, so existing SSO accounts are not locked out after upgrading. Role changes apply on the next SSO sign-in, and OIDC sessions expire after one day.
 
-With **Sign out of the identity provider on logout** enabled under Settings → OIDC (SSO), or `LUDASH_OIDC_END_SESSION=true`, logging out of the dashboard also ends the SSO user's session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. It is off by default because the provider may reject the redirect until the post-logout redirect URI is registered; installations that already used OIDC when upgrading keep it on. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. Leave it off to only clear the dashboard session.
+With **Sign out of the identity provider on logout** enabled under Settings → Authentication → OIDC (SSO), or `LUDASH_OIDC_END_SESSION=true`, logging out of the dashboard also ends the SSO user's session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. It is off by default because the provider may reject the redirect until the post-logout redirect URI is registered; installations that already used OIDC when upgrading keep it on. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. Leave it off to only clear the dashboard session.
 
 To end dashboard sessions when a user signs out at the identity provider, enable **End sessions when signing out at the identity provider** (or `LUDASH_OIDC_BACKCHANNEL_LOGOUT=true`) and register `{LUDASH_BASE_URL}/api/auth/oidc/backchannel-logout` as the back-channel logout URI with your provider (OpenID Connect Back-Channel Logout). While the setting is off, logout notifications are rejected. The provider must be able to reach the dashboard directly, and logout tokens must be signed with a key from the provider's JWKS or, for HMAC tokens, with the client secret. A logout token with a session ID (`sid`) ends only the sessions from that provider sign-in, even when it also names the user (`sub`); if it names the user, it also ends that user's sessions that carry no `sid`, such as sessions from before the upgrade. Without `sid`, it ends all dashboard sessions of the named user. Repeated notifications with the same issuer and token ID (`jti`) are acknowledged without ending later sign-ins.
 
@@ -352,7 +352,9 @@ Usernames from a provider can change and are not proof of ownership, so only tur
 
 To prevent lockouts, administrators cannot change, disable, or delete their own account there, at least one enabled administrator must remain, and while passkeys are the only sign-in method an enabled administrator must keep a passkey.
 
-**Settings > Profile** is available to every user: language, time format, password, TOTP, and passkeys. Language and time format apply only to your own account; the values under **General** are the defaults for users who have not chosen their own, and the language there is also used for notifications.
+**Settings > Profile** is available to every user: language, time format, password, TOTP, passkeys, and the SSO link. Language and time format apply only to your own account; the values under **General** are the defaults for users who have not chosen their own, and the language there is also used for notifications.
+
+The theme is chosen at the bottom of the sidebar: light, dark, or following the operating system, which is the default. The choice is stored in the browser, not in the account.
 
 ## Supported Package Managers
 
@@ -401,7 +403,9 @@ Each group, including **Ungrouped**, has an **Upgrade priority** from `0` to `99
 
 Each system has an **Upgrade All** switch in dashboard Edit mode. Turning it off leaves the system available in the **Upgrade All Systems** modal but unchecked by default. Checkbox changes made inside the modal apply only to that run and do not change the saved preselection.
 
-The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The preference is stored in the browser and is disabled by default. Groups can be collapsed outside Edit mode without changing their display or upgrade priority.
+The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The **Group upgrade** toggle adds an **Upgrade** button to each group that has systems with updates. Both preferences are stored in the browser and are disabled by default. Groups can be collapsed individually or all at once outside Edit mode without changing their display or upgrade priority.
+
+The dashboard search also accepts status filters: `is:uptodate`, `is:updates`, `is:reboot`, `is:os-warning`, `is:issues`, and `is:unreachable`. Prefix a filter with `-` to exclude those systems. Clicking a status card at the top of the dashboard applies its filter.
 
 ## Scheduling and Upgrade All priorities
 
@@ -551,7 +555,7 @@ If a sudo password is configured, it is sent only over the live SSH stdin stream
 
 The dashboard records `/etc/os-release` fields during refreshes and compares them with a bundled lifecycle catalog. Warnings appear on the dashboard, systems list, and system detail page when a release is near EOL, fully EOL, or in reduced support such as Debian LTS after regular Debian Security Support.
 
-The warning window is configurable from **Settings > Lifecycle Warnings** and defaults to 180 days. Supported catalog keys are `ubuntu`, `debian`, `devuan`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Derivatives are matched only by their own `ID`; a distribution that is merely `ID_LIKE=debian` shows an unknown lifecycle status instead of being compared against unrelated Debian releases.
+The warning window is configurable with **EOL Warning Window** under **Settings > General** and defaults to 180 days. Supported catalog keys are `ubuntu`, `debian`, `devuan`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Derivatives are matched only by their own `ID`; a distribution that is merely `ID_LIKE=debian` shows an unknown lifecycle status instead of being compared against unrelated Debian releases.
 
 Lifecycle data is generated at build time by `scripts/generate-distro-lifecycle-data.mjs` from `https://endoflife.date/api`. The generated data lives in `server/generated/distro-lifecycle-data.json`, with `server/default-distro-lifecycle-catalog.json` as an offline fallback. `pnpm run build` runs the generator before compiling and keeps or falls back to local data if the remote API is unavailable.
 
@@ -614,7 +618,7 @@ If a login banner is sent by the SSH server, Test Connection shows it below the 
 ├── scripts/                  # Build-time helper scripts
 ├── server/                   # Hono backend, auth, db, routes, services, ssh
 ├── shared/                   # Code used by both client and server (branding theme)
-├── tests/server/             # Vitest server and integration tests
+├── tests/                    # Vitest client, server, shared, and integration tests
 ├── run.sh                    # Local dev/production/test runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
 ├── vite.config.ts            # Vite + Tailwind config
@@ -639,11 +643,12 @@ pnpm run dev:server
 pnpm run dev:client
 pnpm test
 pnpm run check
+pnpm run screenshots   # regenerate the README screenshots; needs Chrome and free ports 3001 and 5173
 ```
 
 ### Test Systems
 
-`./run.sh test` stops running services, builds and starts 17 Docker SSH fixtures, builds the frontend, and starts the production server on `:3001`. Add test systems in the dashboard with `host.docker.internal` or `172.17.0.1` on Linux and the matching SSH port.
+`./run.sh test` stops running services, builds and starts 18 Docker SSH fixtures, builds the frontend, and starts the production server on `:3001`. Add test systems in the dashboard with `host.docker.internal` or `172.17.0.1` on Linux and the matching SSH port.
 
 Shared credentials:
 
