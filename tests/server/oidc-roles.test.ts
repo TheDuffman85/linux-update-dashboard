@@ -72,7 +72,16 @@ describe("OIDC role mapping", () => {
       { roles: ["ops"] },
       { ...policy, groupsClaim: "roles" },
     );
-    expect(result).toEqual({ username: "alice", email: undefined, role: "admin" });
+    expect(result).toEqual({ username: "alice", preferredUsername: "alice", email: undefined, role: "admin" });
+  });
+
+  test("only a provided preferred_username counts as one, not a fallback", () => {
+    const fromEmail = resolveOidcClaims({ sub: "s", email: "a@example.com" }, undefined, policy);
+    expect(fromEmail).toMatchObject({ username: "a@example.com" });
+    expect(fromEmail?.preferredUsername).toBeUndefined();
+    expect(
+      resolveOidcClaims({ sub: "s", preferred_username: " alice " }, undefined, policy),
+    ).toMatchObject({ username: "alice", preferredUsername: "alice" });
   });
 
   test("scopes must include openid", () => {

@@ -27,3 +27,8 @@ export function isOidcOnlyAccount(
 ): boolean {
   return Boolean(user && user.authProvider === "oidc" && !user.passwordHash);
 }
+
+/** Local accounts that can also sign in with a linked SSO identity. */
+export function isLinkedAccount(user: { oidcLinkedAt: string | null } | null | undefined): boolean {
+  return Boolean(user?.oidcLinkedAt);
+}

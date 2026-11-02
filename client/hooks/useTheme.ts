@@ -3,45 +3,55 @@ import {
   useContext,
   useState,
   useEffect,
-  useCallback,
   createElement,
   type ReactNode,
 } from "react";
 
+export type ThemePreference = "light" | "dark" | "system";
 type Theme = "light" | "dark";
 
 interface ThemeContextType {
-  theme: Theme;
-  toggle: () => void;
+  preference: ThemePreference;
+  setPreference: (preference: ThemePreference) => void;
 }
 
+const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
+
 const ThemeContext = createContext<ThemeContextType>({
-  theme: "light",
-  toggle: () => {},
+  preference: "system",
+  setPreference: () => {},
 });
 
+function getSystemTheme(): Theme {
+  return window.matchMedia(DARK_SCHEME_QUERY).matches ? "dark" : "light";
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === "undefined") return "light";
-    const stored = localStorage.getItem("theme") as Theme | null;
-    if (stored) return stored;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
+  const [preference, setPreference] = useState<ThemePreference>(() => {
+    const stored = localStorage.getItem("theme");
+    return stored === "light" || stored === "dark" ? stored : "system";
   });
+  const [systemTheme, setSystemTheme] = useState<Theme>(getSystemTheme);
+  const theme = preference === "system" ? systemTheme : preference;
+
+  useEffect(() => {
+    const media = window.matchMedia(DARK_SCHEME_QUERY);
+    const onChange = () => setSystemTheme(getSystemTheme());
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const toggle = useCallback(() => {
-    setTheme((t) => (t === "dark" ? "light" : "dark"));
-  }, []);
+  useEffect(() => {
+    localStorage.setItem("theme", preference);
+  }, [preference]);
 
   return createElement(
     ThemeContext.Provider,
-    { value: { theme, toggle } },
+    { value: { preference, setPreference } },
     children
   );
 }

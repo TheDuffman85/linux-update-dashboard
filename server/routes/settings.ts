@@ -5,6 +5,7 @@ import { settings } from "../db/schema";
 import {
   configureOidcFromSettings,
   DEFAULT_OIDC_GROUPS_CLAIM,
+  OIDC_AUTO_LINK_SETTING_KEY,
   OIDC_AUTO_LOGIN_SETTING_KEY,
   OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
   OIDC_END_SESSION_SETTING_KEY,
@@ -24,6 +25,7 @@ import {
   MANAGED_BY_CONFIG_CODE,
   type AuthSettingKey,
 } from "../auth/auth-config";
+import { logger } from "../logger";
 import { getEncryptor } from "../security";
 import * as updateService from "../services/update-service";
 import * as notificationRuntime from "../services/notification-runtime";
@@ -325,6 +327,7 @@ settingsRouter.put("/", async (c) => {
     OIDC_END_SESSION_SETTING_KEY,
     OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
     OIDC_AUTO_LOGIN_SETTING_KEY,
+    OIDC_AUTO_LINK_SETTING_KEY,
   ]) {
     if (key in normalizedBody) {
       const value = normalizedBody[key];
@@ -388,6 +391,13 @@ settingsRouter.put("/", async (c) => {
     "concurrent_connections" in normalizedBody
   ) {
     syncSSHManagerWithSettings();
+  }
+
+  if (OIDC_AUTO_LINK_SETTING_KEY in normalizedBody) {
+    logger.info("Authentication settings: automatic linking by username changed", {
+      actor: c.get("user").username,
+      enabled: normalizedBody[OIDC_AUTO_LINK_SETTING_KEY] === "true",
+    });
   }
 
   // Log right away when this change leaves auto-login enabled but inactive.

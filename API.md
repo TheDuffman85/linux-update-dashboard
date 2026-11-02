@@ -50,6 +50,10 @@ curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/s
 | POST   | `/api/auth/webauthn/login/verify`     | Complete passkey login.                                                            |
 | GET    | `/api/auth/oidc/login`                | Redirect to the configured OIDC provider.                                          |
 | GET    | `/api/auth/oidc/callback`             | OIDC callback handler.                                                             |
+| GET    | `/api/auth/oidc/link`                 | SSO link state of the current account, including an identity waiting for confirmation. |
+| POST   | `/api/auth/oidc/link/start`           | Start linking an SSO identity from a password or passkey session. Returns the provider `redirectUrl`. The callback holds the identity without changing anything. |
+| POST   | `/api/auth/oidc/link/confirm`         | Link the waiting identity after verifying `password` and, if enabled, `totpCode`. Merges a separate SSO account of the identity. Password or passkey session only. |
+| DELETE | `/api/auth/oidc/link`                 | Unlink the SSO identity after verifying `password` and, if enabled, `totpCode`. Password or passkey session only. |
 | POST   | `/api/auth/oidc/backchannel-logout`   | OpenID Connect Back-Channel Logout endpoint for the identity provider. Accepts a form-encoded `logout_token`, ends the matching dashboard sessions (`sid` takes precedence over `sub`; with both, the user's sessions without a stored `sid` end too), and returns `200`. Repeated issuer/`jti` notifications return `200` without ending sessions again. Invalid tokens, or requests while `oidc_backchannel_logout` is off (the default), return `400` with `error: "invalid_request"`. Needs no session or CSRF token. |
 
 ## Dashboard and Settings
@@ -271,11 +275,12 @@ Administrators only; read-only users and API tokens get `403`.
 
 | Method | Endpoint                    | Description                                                                                        |
 | ------ | --------------------------- | -------------------------------------------------------------------------------------------------- |
-| GET    | `/api/users`                | List users with role, `source` (`local` or `oidc`), status, TOTP and passkey count.                |
+| GET    | `/api/users`                | List users with role, `source` (`local` or `oidc`), status, TOTP and passkey count, and `oidcLink` (the linked SSO identity and its role, or `null`). |
 | POST   | `/api/users`                | Create a local user with `username`, `password`, `role`, and `requirePasswordChange` (default `true`). |
 | PATCH  | `/api/users/:id`            | Change `role` (`admin` or `read-only`) or `disabled`. Disabling ends the user's sessions.          |
 | POST   | `/api/users/:id/password`   | Set a new `password`, optionally with `requirePasswordChange` (default `true`). Ends the user's sessions. |
 | POST   | `/api/users/:id/reset-mfa`  | Remove the user's TOTP and passkeys and end their sessions.                                        |
+| POST   | `/api/users/:id/unlink-oidc` | Remove the user's linked SSO identity and end their sessions. Tokens limited by the SSO role now follow the local role, without gaining access. |
 | DELETE | `/api/users/:id`            | Delete the user with their passkeys, API tokens, and preferences.                                  |
 
 Rules:
@@ -310,6 +315,8 @@ These routes manage API tokens and cannot be called with API tokens.
 | POST   | `/api/tokens`     | Create a token with `name`, `expiresInDays`, and `readOnly`. |
 | PATCH  | `/api/tokens/:id` | Rename a token.                                              |
 | DELETE | `/api/tokens/:id` | Revoke a token.                                              |
+
+On an account with a linked SSO identity, tokens with `roleSource: "oidc"` are limited by the SSO role instead of the local role. SSO sessions only see and manage those tokens, and tokens they create get that source.
 
 ## WebSocket
 

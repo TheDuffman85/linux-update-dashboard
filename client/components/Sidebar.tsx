@@ -68,7 +68,7 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
         <div className="p-3 border-t border-border">
           <div className="flex items-center justify-between">
             <span className="flex min-w-0 flex-col">
-              <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
+              <span className="text-xs text-slate-500 dark:text-slate-400 truncate" title={user?.username}>
                 {user?.username}
               </span>
               {isReadOnly && (

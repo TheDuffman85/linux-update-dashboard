@@ -42,6 +42,7 @@ const AUTH_ENV_VARS = [
   "LUDASH_OIDC_END_SESSION",
   "LUDASH_OIDC_BACKCHANNEL_LOGOUT",
   "LUDASH_OIDC_AUTO_LOGIN",
+  "LUDASH_OIDC_AUTO_LINK_USERNAME",
   "LUDASH_PASSWORD_LOGIN_ENABLED",
 ];
 
@@ -131,6 +132,7 @@ describe("deployment-managed auth settings", () => {
         LUDASH_OIDC_END_SESSION: "off",
         LUDASH_OIDC_BACKCHANNEL_LOGOUT: "on",
         LUDASH_OIDC_AUTO_LOGIN: "1",
+        LUDASH_OIDC_AUTO_LINK_USERNAME: "yes",
         LUDASH_PASSWORD_LOGIN_ENABLED: "no",
       });
 
@@ -146,6 +148,7 @@ describe("deployment-managed auth settings", () => {
         oidc_end_session: "false",
         oidc_backchannel_logout: "true",
         oidc_auto_login: "true",
+        oidc_auto_link_username: "true",
         disable_password_login: "true",
       });
     });

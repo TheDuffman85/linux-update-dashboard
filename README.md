@@ -44,7 +44,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, local users with admin or read-only roles, and API tokens for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
 - **Branding:** replace the application name, light and dark mode logos, and colors shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**. Accent color and neutral tone can be set separately for light and dark mode, with a live preview and a low-contrast warning.
-- **Operator-friendly UI:** dark/light mode, activity history, real-time command output, dashboard status summaries, [links to systems by hostname](#linking-to-systems), version/build info, and Docker-ready production packaging.
+- **Operator-friendly UI:** light, dark, or system-following theme, activity history, real-time command output, dashboard status summaries with `is:` search filters, quick links from dashboard cards to a system's updates, packages, and activity, [links to systems by hostname](#linking-to-systems), version/build info, and Docker-ready production packaging.
 
 ## Screenshots
 
@@ -87,8 +87,8 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 Prerequisites:
 
-- Node.js 24.22.1 LTS
-- pnpm 12.15.0 through Corepack or global install
+- Node.js 24.22.2 LTS
+- pnpm 12.16.1 through Corepack or global install
 - SSH access to at least one Linux server
 
 ```bash
@@ -96,7 +96,7 @@ git clone https://github.com/TheDuffman85/linux-update-dashboard.git
 cd linux-update-dashboard
 
 corepack enable
-corepack prepare pnpm@12.15.0 --activate
+corepack prepare pnpm@12.16.1 --activate
 pnpm install
 
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
@@ -257,6 +257,7 @@ OIDC and password login are normally configured under **Settings**. Each of the 
 | `LUDASH_OIDC_END_SESSION` | Sign out of the identity provider on logout | `true` or `false`. Default `false`. |
 | `LUDASH_OIDC_BACKCHANNEL_LOGOUT` | End sessions when signing out at the identity provider | `true` or `false`. Default `false`. |
 | `LUDASH_OIDC_AUTO_LOGIN` | Sign in with SSO automatically | `true` or `false`. Default `false`. Only active while OIDC is configured and password login is disabled. |
+| `LUDASH_OIDC_AUTO_LINK_USERNAME` | Link existing accounts by username | `true` or `false`. Default `false`. See [Linking local and SSO sign-in](#linking-local-and-sso-sign-in). |
 | `LUDASH_PASSWORD_LOGIN_ENABLED` | Password login | `true` or `false`. |
 
 ```yaml
@@ -280,9 +281,11 @@ TOTP can be enabled from **Settings > Profile** after signing in with the accoun
 
 For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oidc/callback`. Set `LUDASH_BASE_URL` before configuring OIDC so callback and origin validation match the public URL.
 
+If the provider cannot be reached at startup or when saving the settings, the dashboard still runs with local sign-in, retries every minute, and turns SSO on without a restart once the provider responds.
+
 OIDC settings also control the requested scopes (must include `openid`), the claim that carries group membership (default `groups`, read from the ID token and the UserInfo endpoint), and which groups get admin or read-only access. Admin groups take precedence over read-only groups. Users that match no configured group are denied by default; you can instead grant them admin or read-only access. Installations that already used OIDC before group mapping existed keep granting admin access to unmatched users, so existing SSO accounts are not locked out after upgrading. Role changes apply on the next SSO sign-in, and OIDC sessions expire after one day.
 
-With **Sign out of the identity provider on logout** enabled under Settings → OIDC (SSO), or `LUDASH_OIDC_END_SESSION=true`, logging out of the dashboard also ends the SSO user's session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. It is off by default because the provider may reject the redirect until the post-logout redirect URI is registered; installations that already used OIDC when upgrading keep it on. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. Leave it off to only clear the dashboard session.
+With **Sign out of the identity provider on logout** enabled under Settings → Authentication → OIDC (SSO), or `LUDASH_OIDC_END_SESSION=true`, logging out of the dashboard also ends the SSO user's session at the identity provider (OpenID Connect RP-initiated logout), so the next SSO sign-in asks for credentials again. It is off by default because the provider may reject the redirect until the post-logout redirect URI is registered; installations that already used OIDC when upgrading keep it on. This requires the provider to advertise an `end_session_endpoint`; register `{LUDASH_BASE_URL}/login` as a post-logout redirect URI with your provider. Leave it off to only clear the dashboard session.
 
 To end dashboard sessions when a user signs out at the identity provider, enable **End sessions when signing out at the identity provider** (or `LUDASH_OIDC_BACKCHANNEL_LOGOUT=true`) and register `{LUDASH_BASE_URL}/api/auth/oidc/backchannel-logout` as the back-channel logout URI with your provider (OpenID Connect Back-Channel Logout). While the setting is off, logout notifications are rejected. The provider must be able to reach the dashboard directly, and logout tokens must be signed with a key from the provider's JWKS or, for HMAC tokens, with the client secret. A logout token with a session ID (`sid`) ends only the sessions from that provider sign-in, even when it also names the user (`sub`); if it names the user, it also ends that user's sessions that carry no `sid`, such as sessions from before the upgrade. Without `sid`, it ends all dashboard sessions of the named user. Repeated notifications with the same issuer and token ID (`jti`) are acknowledged without ending later sign-ins.
 
@@ -322,9 +325,36 @@ Under **Settings > Users**, administrators create local users with the admin or 
 
 OIDC users are listed after their first sign-in. Their role comes from the identity provider on every sign-in, so they can only be deleted here; they are created again at their next SSO sign-in.
 
+Accounts with a linked SSO identity are shown as **Local + SSO** with both roles. They are managed like local accounts, and **Remove SSO link** removes the identity without touching the local sign-in.
+
+### Linking local and SSO sign-in
+
+A local account can also sign in with one SSO identity, so a single account has both sign-in methods and local sign-in stays available during an identity provider outage. The strictest setup is still a separate emergency account that is not linked to anything; linking is for when you want one account per person.
+
+**To link an account**, sign in with your password or a passkey and open **Settings → Profile → Single sign-on → Link SSO identity**. After you sign in at the identity provider, the dashboard shows the identity it received and asks for your password and, if enabled, your authenticator code. Identities are matched by issuer and subject (`iss` + `sub`), never by username or email. An identity the group settings deny cannot be linked.
+
+If the identity already has a separate SSO account, such as `admin#oidc-1a2b3c4d5e6f`, confirming the link merges it into the local account and removes it. Its API tokens move over and keep working with the same access. Its display preferences are dropped in favor of the local account's. A disabled SSO account is not merged; delete it first if that person should have access again.
+
+**What each sign-in method can do on a linked account:**
+
+- Password and passkey sessions use the local role set under **Settings → Users**. Nothing from the identity provider changes it, ends those sessions, or blocks that sign-in. A local username is never renamed.
+- SSO sessions use the role from the identity provider, last updated at SSO sign-in. A denied identity loses SSO access only. SSO sessions cannot change the password, TOTP, passkeys or the link, and only see API tokens created through SSO. Those tokens, marked **SSO role**, are limited by the SSO role instead of the local role.
+- Disabling or deleting the account applies to both sign-in methods. So do local credential changes and resets, which end all of the account's sessions.
+- Last-administrator checks count either role, but the SSO role only while its provider is still the configured one. Unlinking is refused when the account's SSO role is the last administrator access.
+
+**Removing someone from the identity provider does not remove their local password.** The dashboard cannot detect this until they try to use SSO, so also disable their account under **Settings → Users**.
+
+**To unlink an account**, use the same section with your password and authenticator code, or **Remove SSO link** as another administrator. This ends the account's sessions, and the next SSO sign-in creates a separate account again. API tokens created through SSO stay valid but follow the local role, and they lose write access if either role was read-only. If the identity provider's issuer changes, existing links stop working; local sign-in keeps working, and each account has to be unlinked and linked again.
+
+**Linking existing accounts by username** (**Settings → Authentication → OIDC (SSO)**, or `LUDASH_OIDC_AUTO_LINK_USERNAME=true`) is off by default and meant for migrations. While it is on, an allowed SSO sign-in links automatically to an enabled local account with exactly the same `preferred_username`, and merges any separate SSO account of that identity, without asking for the local password. Accounts already linked, accounts created while the setting is on, and accounts that were unlinked are left out. These links are logged as warnings and marked **Linked by username (unverified)**.
+
+Usernames from a provider can change and are not proof of ownership, so only turn this on when your provider controls them, and turn it off after migrating. Anyone who gets a matching username at the provider is linked to that account, although they only get their SSO role and none of its local credentials or tokens. Such a mix-up keeps the real owner's identity out until an administrator removes the link.
+
 To prevent lockouts, administrators cannot change, disable, or delete their own account there, at least one enabled administrator must remain, and while passkeys are the only sign-in method an enabled administrator must keep a passkey.
 
-**Settings > Profile** is available to every user: language, time format, password, TOTP, and passkeys. Language and time format apply only to your own account; the values under **General** are the defaults for users who have not chosen their own, and the language there is also used for notifications.
+**Settings > Profile** is available to every user: language, time format, password, TOTP, passkeys, and the SSO link. Language and time format apply only to your own account; the values under **General** are the defaults for users who have not chosen their own, and the language there is also used for notifications.
+
+The theme is chosen at the bottom of the sidebar: light, dark, or following the operating system, which is the default. The choice is stored in the browser, not in the account.
 
 ## Supported Package Managers
 
@@ -373,7 +403,9 @@ Each group, including **Ungrouped**, has an **Upgrade priority** from `0` to `99
 
 Each system has an **Upgrade All** switch in dashboard Edit mode. Turning it off leaves the system available in the **Upgrade All Systems** modal but unchecked by default. Checkbox changes made inside the modal apply only to that run and do not change the saved preselection.
 
-The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The preference is stored in the browser and is disabled by default. Groups can be collapsed outside Edit mode without changing their display or upgrade priority.
+The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The **Group upgrade** toggle adds an **Upgrade** button to each group that has systems with updates. Both preferences are stored in the browser and are disabled by default. Groups can be collapsed individually or all at once outside Edit mode without changing their display or upgrade priority.
+
+The dashboard search also accepts status filters: `is:uptodate`, `is:updates`, `is:reboot`, `is:os-warning`, `is:issues`, and `is:unreachable`. Prefix a filter with `-` to exclude those systems. Clicking a status card at the top of the dashboard applies its filter.
 
 ## Scheduling and Upgrade All priorities
 
@@ -523,7 +555,7 @@ If a sudo password is configured, it is sent only over the live SSH stdin stream
 
 The dashboard records `/etc/os-release` fields during refreshes and compares them with a bundled lifecycle catalog. Warnings appear on the dashboard, systems list, and system detail page when a release is near EOL, fully EOL, or in reduced support such as Debian LTS after regular Debian Security Support.
 
-The warning window is configurable from **Settings > Lifecycle Warnings** and defaults to 180 days. Supported catalog keys are `ubuntu`, `debian`, `devuan`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Derivatives are matched only by their own `ID`; a distribution that is merely `ID_LIKE=debian` shows an unknown lifecycle status instead of being compared against unrelated Debian releases.
+The warning window is configurable with **EOL Warning Window** under **Settings > General** and defaults to 180 days. Supported catalog keys are `ubuntu`, `debian`, `devuan`, `fedora`, `rhel`, `rocky`, `almalinux`, `centos`, `centos-stream`, `alpine`, and `proxmox`. Derivatives are matched only by their own `ID`; a distribution that is merely `ID_LIKE=debian` shows an unknown lifecycle status instead of being compared against unrelated Debian releases.
 
 Lifecycle data is generated at build time by `scripts/generate-distro-lifecycle-data.mjs` from `https://endoflife.date/api`. The generated data lives in `server/generated/distro-lifecycle-data.json`, with `server/default-distro-lifecycle-catalog.json` as an offline fallback. `pnpm run build` runs the generator before compiling and keeps or falls back to local data if the remote API is unavailable.
 
@@ -586,7 +618,7 @@ If a login banner is sent by the SSH server, Test Connection shows it below the 
 ├── scripts/                  # Build-time helper scripts
 ├── server/                   # Hono backend, auth, db, routes, services, ssh
 ├── shared/                   # Code used by both client and server (branding theme)
-├── tests/server/             # Vitest server and integration tests
+├── tests/                    # Vitest client, server, shared, and integration tests
 ├── run.sh                    # Local dev/production/test runner
 ├── reset-dev-branch.sh       # Reset dev branch to main
 ├── vite.config.ts            # Vite + Tailwind config
@@ -611,11 +643,12 @@ pnpm run dev:server
 pnpm run dev:client
 pnpm test
 pnpm run check
+pnpm run screenshots   # regenerate the README screenshots; needs Chrome and free ports 3001 and 5173
 ```
 
 ### Test Systems
 
-`./run.sh test` stops running services, builds and starts 17 Docker SSH fixtures, builds the frontend, and starts the production server on `:3001`. Add test systems in the dashboard with `host.docker.internal` or `172.17.0.1` on Linux and the matching SSH port.
+`./run.sh test` stops running services, builds and starts 18 Docker SSH fixtures, builds the frontend, and starts the production server on `:3001`. Add test systems in the dashboard with `host.docker.internal` or `172.17.0.1` on Linux and the matching SSH port.
 
 Shared credentials:
 

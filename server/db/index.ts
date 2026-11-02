@@ -125,6 +125,12 @@ const DEFAULT_SETTINGS = [
       "Accept OIDC back-channel logout notifications so signing out at the provider ends dashboard sessions",
   },
   {
+    key: "oidc_auto_link_username",
+    value: "false",
+    description:
+      "Link SSO sign-ins to existing local accounts with the same username, without verifying ownership",
+  },
+  {
     key: "oidc_auto_login",
     value: "false",
     description:
@@ -187,6 +193,12 @@ export function initDatabase(
     role TEXT NOT NULL DEFAULT 'admin',
     disabled INTEGER NOT NULL DEFAULT 0,
     password_change_required INTEGER NOT NULL DEFAULT 0,
+    oidc_linked_at TEXT,
+    oidc_link_method TEXT,
+    oidc_username TEXT,
+    oidc_role TEXT,
+    oidc_session_version INTEGER NOT NULL DEFAULT 0,
+    oidc_auto_link_blocked INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
@@ -486,6 +498,7 @@ export function initDatabase(
     name TEXT,
     token_hash TEXT NOT NULL UNIQUE,
     read_only INTEGER NOT NULL DEFAULT 1,
+    role_source TEXT NOT NULL DEFAULT 'local',
     expires_at TEXT,
     last_used_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -584,6 +597,21 @@ export function initDatabase(
     );
   } catch {
     // Column already exists
+  }
+  for (const column of [
+    sql`ALTER TABLE users ADD COLUMN oidc_linked_at TEXT`,
+    sql`ALTER TABLE users ADD COLUMN oidc_link_method TEXT`,
+    sql`ALTER TABLE users ADD COLUMN oidc_username TEXT`,
+    sql`ALTER TABLE users ADD COLUMN oidc_role TEXT`,
+    sql`ALTER TABLE users ADD COLUMN oidc_session_version INTEGER NOT NULL DEFAULT 0`,
+    sql`ALTER TABLE users ADD COLUMN oidc_auto_link_blocked INTEGER NOT NULL DEFAULT 0`,
+    sql`ALTER TABLE api_tokens ADD COLUMN role_source TEXT NOT NULL DEFAULT 'local'`,
+  ]) {
+    try {
+      _db.run(column);
+    } catch {
+      // Column already exists
+    }
   }
   _db.run(sql`
     CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity_idx

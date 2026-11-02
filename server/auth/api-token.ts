@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { apiTokens, users } from "../db/schema";
-import { normalizeUserRole } from "./session";
+import { normalizeLinkedSsoRole, normalizeUserRole } from "./session";
 import type { UserRole } from "./oidc";
 
 export interface ApiTokenData {
@@ -49,9 +49,12 @@ export async function validateToken(
       id: apiTokens.id,
       userId: apiTokens.userId,
       readOnly: apiTokens.readOnly,
+      roleSource: apiTokens.roleSource,
       expiresAt: apiTokens.expiresAt,
       username: users.username,
       role: users.role,
+      oidcRole: users.oidcRole,
+      oidcLinkedAt: users.oidcLinkedAt,
       disabled: users.disabled,
     })
     .from(apiTokens)
@@ -73,7 +76,10 @@ export async function validateToken(
     .where(eq(apiTokens.id, row.id))
     .run();
 
-  const role = normalizeUserRole(row.role);
+  const role =
+    row.roleSource === "oidc" && row.oidcLinkedAt
+      ? normalizeLinkedSsoRole(row.oidcRole)
+      : normalizeUserRole(row.role);
   return {
     userId: row.userId,
     username: row.username,

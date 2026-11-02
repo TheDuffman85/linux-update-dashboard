@@ -7,6 +7,7 @@ import { getDb } from "../db";
 import { users } from "../db/schema";
 import { isSecureRequest } from "../request-security";
 import type { UserRole } from "./oidc";
+import { isLinkedAccount } from "./password";
 import {
   getOidcLogoutVersion,
   INITIAL_OIDC_LOGOUT_VERSION,
@@ -33,10 +34,17 @@ export interface SessionData {
   issuedAt?: number;
   /** Set while a password session waits for the password an administrator chose to be replaced. */
   passwordChangeRequired?: boolean;
+  /** An SSO session on a local account with a linked identity; it cannot touch local credentials. */
+  linkedSso?: boolean;
 }
 
 export function normalizeUserRole(value: string | null | undefined): UserRole {
   return value === "read-only" ? "read-only" : "admin";
+}
+
+/** The access a linked account's SSO sign-ins get; a missing value never grants admin. */
+export function normalizeLinkedSsoRole(value: string | null | undefined): UserRole {
+  return value === "admin" ? "admin" : "read-only";
 }
 
 export interface CreateSessionOptions {
@@ -74,6 +82,8 @@ export async function createSession(
       authProvider: users.authProvider,
       oidcIssuer: users.oidcIssuer,
       oidcSubject: users.oidcSubject,
+      oidcLinkedAt: users.oidcLinkedAt,
+      oidcSessionVersion: users.oidcSessionVersion,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -99,6 +109,9 @@ export async function createSession(
     sessionId,
     ...(authMethod === "oidc" && oidcSessionId ? { sid: oidcSessionId } : {}),
     ...(oidcLogoutVersion ? { oidcLogoutVersion } : {}),
+    ...(authMethod === "oidc" && isLinkedAccount(user)
+      ? { oidcSessionVersion: user!.oidcSessionVersion }
+      : {}),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime(`${lifetime}s`)
@@ -159,6 +172,9 @@ export async function verifySessionToken(
         role: users.role,
         oidcIssuer: users.oidcIssuer,
         oidcSubject: users.oidcSubject,
+        oidcLinkedAt: users.oidcLinkedAt,
+        oidcRole: users.oidcRole,
+        oidcSessionVersion: users.oidcSessionVersion,
         disabled: users.disabled,
         passwordChangeRequired: users.passwordChangeRequired,
       })
@@ -171,6 +187,8 @@ export async function verifySessionToken(
     if (tokenSessionVersion !== user.sessionVersion) return null;
     const authMethod = payload.authMethod as SessionData["authMethod"];
     if (authMethod === "oidc" && user.authProvider !== "oidc") return null;
+    const linkedSso = authMethod === "oidc" && isLinkedAccount(user);
+    if (linkedSso && payload.oidcSessionVersion !== user.oidcSessionVersion) return null;
     if (
       authMethod === "oidc" &&
       user.oidcIssuer &&
@@ -187,13 +205,14 @@ export async function verifySessionToken(
     return {
       userId,
       username: payload.username as string,
-      role: normalizeUserRole(user.role),
+      role: linkedSso ? normalizeLinkedSsoRole(user.oidcRole) : normalizeUserRole(user.role),
       authMethod,
       sessionVersion: tokenSessionVersion,
       issuedAt: payload.iat,
       ...(authMethod === "password" && user.passwordChangeRequired === 1
         ? { passwordChangeRequired: true }
         : {}),
+      ...(linkedSso ? { linkedSso } : {}),
     };
   } catch {
     return null;

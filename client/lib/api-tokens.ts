@@ -5,6 +5,8 @@ export interface ApiToken {
   id: number;
   name: string | null;
   readOnly: number;
+  /** "oidc" tokens are limited by the SSO role of a linked account. */
+  roleSource?: "local" | "oidc";
   expiresAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;

@@ -27,6 +27,13 @@ function parseId(raw: string): number | null {
   return id;
 }
 
+// An SSO session on a linked account only reaches the tokens limited by the SSO role.
+function ownedBy(user: SessionData) {
+  return user.linkedSso
+    ? and(eq(apiTokens.userId, user.userId), eq(apiTokens.roleSource, "oidc"))
+    : eq(apiTokens.userId, user.userId);
+}
+
 // List tokens for the authenticated user
 tokens.get("/", (c) => {
   const user = c.get("user");
@@ -36,12 +43,13 @@ tokens.get("/", (c) => {
       id: apiTokens.id,
       name: apiTokens.name,
       readOnly: apiTokens.readOnly,
+      roleSource: apiTokens.roleSource,
       expiresAt: apiTokens.expiresAt,
       lastUsedAt: apiTokens.lastUsedAt,
       createdAt: apiTokens.createdAt,
     })
     .from(apiTokens)
-    .where(eq(apiTokens.userId, user.userId))
+    .where(ownedBy(user))
     .all();
 
   return c.json({ tokens: rows });
@@ -100,6 +108,7 @@ tokens.post("/", async (c) => {
       name,
       tokenHash,
       readOnly,
+      roleSource: user.linkedSso ? "oidc" : "local",
       expiresAt,
     })
     .returning({ id: apiTokens.id })
@@ -131,14 +140,14 @@ tokens.patch("/:id", async (c) => {
   const existing = db
     .select({ id: apiTokens.id })
     .from(apiTokens)
-    .where(and(eq(apiTokens.id, id), eq(apiTokens.userId, user.userId)))
+    .where(and(eq(apiTokens.id, id), ownedBy(user)))
     .get();
 
   if (!existing) return c.json({ error: "Not found" }, 404);
 
   db.update(apiTokens)
     .set({ name: name.trim() })
-    .where(and(eq(apiTokens.id, id), eq(apiTokens.userId, user.userId)))
+    .where(and(eq(apiTokens.id, id), ownedBy(user)))
     .run();
 
   return c.json({ status: "ok" });
@@ -154,13 +163,13 @@ tokens.delete("/:id", (c) => {
   const existing = db
     .select({ id: apiTokens.id })
     .from(apiTokens)
-    .where(and(eq(apiTokens.id, id), eq(apiTokens.userId, user.userId)))
+    .where(and(eq(apiTokens.id, id), ownedBy(user)))
     .get();
 
   if (!existing) return c.json({ error: "Not found" }, 404);
 
   db.delete(apiTokens)
-    .where(and(eq(apiTokens.id, id), eq(apiTokens.userId, user.userId)))
+    .where(and(eq(apiTokens.id, id), ownedBy(user)))
     .run();
 
   return c.json({ status: "ok" });

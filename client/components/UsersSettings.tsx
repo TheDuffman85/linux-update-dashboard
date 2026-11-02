@@ -10,6 +10,7 @@ import { useDateTime } from "../lib/date-time";
 import {
   useCreateUser,
   useDeleteUser,
+  useRemoveUserOidcLink,
   useResetUserMfa,
   useResetUserPassword,
   useUpdateUser,
@@ -100,7 +101,7 @@ function PasswordFields({
 }
 
 type PendingAction =
-  | { kind: "delete" | "reset-mfa" | "disable"; user: ManagedUser }
+  | { kind: "delete" | "reset-mfa" | "disable" | "remove-link"; user: ManagedUser }
   | null;
 
 export function UsersSettings() {
@@ -112,6 +113,7 @@ export function UsersSettings() {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
   const resetMfa = useResetUserMfa();
+  const removeOidcLink = useRemoveUserOidcLink();
   const deleteUser = useDeleteUser();
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -223,14 +225,17 @@ export function UsersSettings() {
       changeAccess(user, { disabled: true }, done);
       return;
     }
-    const mutation = kind === "delete" ? deleteUser : resetMfa;
+    const mutation =
+      kind === "delete" ? deleteUser : kind === "remove-link" ? removeOidcLink : resetMfa;
     mutation.mutate(user.id, {
       onSuccess: () => {
         addToast(
           t(
             kind === "delete"
               ? "pages.settings.users.deleted"
-              : "pages.settings.users.mfaReset",
+              : kind === "remove-link"
+                ? "pages.settings.users.oidcLinkRemoved"
+                : "pages.settings.users.mfaReset",
           ),
           "success",
         );
@@ -263,6 +268,13 @@ export function UsersSettings() {
             username: pending.user.username,
           }),
           confirmLabel: t("pages.settings.users.resetMfa"),
+        },
+        "remove-link": {
+          title: t("pages.settings.users.removeOidcLinkTitle"),
+          message: t("pages.settings.users.removeOidcLinkMessage", {
+            username: pending.user.username,
+          }),
+          confirmLabel: t("pages.settings.users.removeOidcLink"),
         },
         disable: {
           title: t("pages.settings.users.disableTitle"),
@@ -316,10 +328,17 @@ export function UsersSettings() {
                       </Badge>
                     )}
                     <Badge variant="muted" small>
-                      {local
-                        ? t("pages.settings.users.sourceLocal")
-                        : t("pages.settings.users.sourceOidc")}
+                      {user.oidcLink
+                        ? t("pages.settings.users.sourceLinked")
+                        : local
+                          ? t("pages.settings.users.sourceLocal")
+                          : t("pages.settings.users.sourceOidc")}
                     </Badge>
+                    {user.oidcLink?.method === "username" && (
+                      <Badge variant="warning" small>
+                        {t("pages.settings.users.linkedByUsername")}
+                      </Badge>
+                    )}
                     {user.disabled && (
                       <Badge variant="danger" small>
                         {t("pages.settings.users.disabled")}
@@ -346,6 +365,17 @@ export function UsersSettings() {
                       .filter(Boolean)
                       .join(" · ")}
                   </p>
+                  {user.oidcLink && (
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {t("pages.settings.users.linkedIdentity", {
+                        username: user.oidcLink.username ?? "",
+                        role:
+                          user.oidcLink.role === "admin"
+                            ? t("pages.settings.users.roleAdmin")
+                            : t("pages.settings.users.roleReadOnly"),
+                      })}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -403,6 +433,15 @@ export function UsersSettings() {
                           className={actionButtonClass}
                         >
                           {t("pages.settings.users.resetMfa")}
+                        </button>
+                      )}
+                      {user.oidcLink && (
+                        <button
+                          type="button"
+                          onClick={() => setPending({ kind: "remove-link", user })}
+                          className={actionButtonClass}
+                        >
+                          {t("pages.settings.users.removeOidcLink")}
                         </button>
                       )}
                     </>
