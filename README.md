@@ -87,8 +87,8 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 Prerequisites:
 
-- Node.js 24.22.1 LTS
-- pnpm 12.15.0 through Corepack or global install
+- Node.js 24.22.2 LTS
+- pnpm 12.16.1 through Corepack or global install
 - SSH access to at least one Linux server
 
 ```bash
@@ -96,7 +96,7 @@ git clone https://github.com/TheDuffman85/linux-update-dashboard.git
 cd linux-update-dashboard
 
 corepack enable
-corepack prepare pnpm@12.15.0 --activate
+corepack prepare pnpm@12.16.1 --activate
 pnpm install
 
 export LUDASH_ENCRYPTION_KEY=$(openssl rand -base64 32)
