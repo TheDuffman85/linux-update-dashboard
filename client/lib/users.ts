@@ -12,6 +12,14 @@ export interface ManagedUser {
   passwordChangeRequired: boolean;
   totpEnabled: boolean;
   passkeyCount: number;
+  /** The SSO identity of a local account that can use both sign-in methods. */
+  oidcLink: {
+    issuer: string;
+    username: string | null;
+    role: UserRole;
+    method: "verified" | "username";
+    linkedAt: string;
+  } | null;
   createdAt: string;
   current: boolean;
 }
@@ -82,6 +90,12 @@ export function useResetUserPassword() {
 export function useResetUserMfa() {
   return useUserMutation((id: number) =>
     apiFetch<UserResponse>(`/users/${id}/reset-mfa`, { method: "POST" }),
+  );
+}
+
+export function useRemoveUserOidcLink() {
+  return useUserMutation((id: number) =>
+    apiFetch<UserResponse>(`/users/${id}/unlink-oidc`, { method: "POST" }),
   );
 }
 

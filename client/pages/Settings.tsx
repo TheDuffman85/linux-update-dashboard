@@ -51,6 +51,7 @@ import { AppLogo } from "../components/AppLogo";
 import { BrandingColorsSettings } from "../components/BrandingColorsSettings";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { UsersSettings } from "../components/UsersSettings";
+import { OidcLinkSettings } from "../components/OidcLinkSettings";
 import { Modal } from "../components/Modal";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
@@ -119,6 +120,7 @@ const OIDC_SETTING_KEYS = [
   "oidc_end_session",
   "oidc_backchannel_logout",
   "oidc_auto_login",
+  "oidc_auto_link_username",
 ];
 
 const GENERAL_SETTING_KEYS = [
@@ -359,6 +361,7 @@ export default function Settings() {
   const [totpQrDataUrl, setTotpQrDataUrl] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [totpDisablePassword, setTotpDisablePassword] = useState("");
+  const [autoLinkConfirmOpen, setAutoLinkConfirmOpen] = useState(false);
 
   const [form, setForm] = useState<Record<string, string>>({});
   // An empty value follows the instance default from General.
@@ -1627,6 +1630,7 @@ export default function Settings() {
             </SettingSection>
           )}
 
+          <OidcLinkSettings />
         </TabPanel>
       )}
 
@@ -1968,6 +1972,44 @@ export default function Settings() {
                   <ManagedSettingHint envVar={managedSettings.oidc_auto_login} />
                 </span>
               </label>
+              <label
+                className={`lg:col-span-2 flex items-start gap-2 ${managedSettings.oidc_auto_link_username ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.oidc_auto_link_username === "true"}
+                  disabled={!!managedSettings.oidc_auto_link_username}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setAutoLinkConfirmOpen(true);
+                    } else {
+                      setForm({ ...form, oidc_auto_link_username: "false" });
+                    }
+                  }}
+                  className="mt-0.5 rounded border-border"
+                />
+                <span>
+                  <span className="block text-sm">
+                    {t("pages.settings.oidcAutoLink")}
+                  </span>
+                  <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    {t("pages.settings.oidcAutoLinkHelp")}
+                  </span>
+                  <ManagedSettingHint envVar={managedSettings.oidc_auto_link_username} />
+                </span>
+              </label>
+              <ConfirmDialog
+                open={autoLinkConfirmOpen}
+                onClose={() => setAutoLinkConfirmOpen(false)}
+                onConfirm={() => {
+                  setForm({ ...form, oidc_auto_link_username: "true" });
+                  setAutoLinkConfirmOpen(false);
+                }}
+                title={t("pages.settings.oidcAutoLinkConfirmTitle")}
+                message={t("pages.settings.oidcAutoLinkConfirmMessage")}
+                confirmLabel={t("pages.settings.oidcAutoLinkConfirm")}
+                danger
+              />
             </div>
           </SettingSection>
           {!allAuthSettingsManaged && (
@@ -2072,6 +2114,11 @@ export default function Settings() {
                             ? t("pages.settings.readOnly")
                             : t("pages.settings.readWrite")}
                         </span>
+                        {tk.roleSource === "oidc" && (
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                            {t("pages.settings.tokenSsoRole")}
+                          </span>
+                        )}
                         {isExpired ? (
                           <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">
                             {t("pages.settings.expired")}

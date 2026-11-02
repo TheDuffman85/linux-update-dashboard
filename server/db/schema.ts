@@ -25,6 +25,16 @@ export const users = sqliteTable("users", {
   disabled: integer("disabled").notNull().default(0),
   // Set when an administrator chose the password; cleared once the user replaces it.
   passwordChangeRequired: integer("password_change_required").notNull().default(0),
+  // Set when a local account has a linked SSO identity: "verified" by its owner, or
+  // matched by "username". SSO sessions of such an account use the SSO role and
+  // session version below, so the identity provider cannot affect local sign-ins.
+  oidcLinkedAt: text("oidc_linked_at"),
+  oidcLinkMethod: text("oidc_link_method"),
+  oidcUsername: text("oidc_username"),
+  oidcRole: text("oidc_role"),
+  oidcSessionVersion: integer("oidc_session_version").notNull().default(0),
+  // Keeps automatic linking by username away from this account.
+  oidcAutoLinkBlocked: integer("oidc_auto_link_blocked").notNull().default(0),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
@@ -484,6 +494,8 @@ export const apiTokens = sqliteTable("api_tokens", {
   name: text("name"),
   tokenHash: text("token_hash").notNull().unique(),
   readOnly: integer("read_only").notNull().default(1),
+  // "oidc" tokens of a linked account are limited by its SSO role instead of its local role.
+  roleSource: text("role_source").notNull().default("local"),
   expiresAt: text("expires_at"),
   lastUsedAt: text("last_used_at"),
   createdAt: text("created_at")

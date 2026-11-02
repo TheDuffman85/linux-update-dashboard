@@ -29,6 +29,12 @@ passkeys.use("*", async (c, next) => {
       403,
     );
   }
+  if (session.linkedSso) {
+    return c.json(
+      { error: "Sign in with your password or a passkey to manage passkeys" },
+      403,
+    );
+  }
   return next();
 });
 

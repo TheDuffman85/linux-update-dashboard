@@ -21,6 +21,26 @@ export interface OidcLogout {
   sessionExpiresAt: number;
 }
 
+type UserUpdater = Pick<ReturnType<typeof getDb>, "update">;
+
+/**
+ * Ends an identity's SSO sessions. A local account with this identity linked keeps
+ * its local sessions, so the identity provider cannot sign out the recovery path.
+ */
+export function endOidcIdentitySessions(
+  db: UserUpdater,
+  issuer: string,
+  subject: string,
+): void {
+  db.update(users)
+    .set({
+      sessionVersion: sql`${users.sessionVersion} + CASE WHEN ${users.oidcLinkedAt} IS NULL THEN 1 ELSE 0 END`,
+      oidcSessionVersion: sql`${users.oidcSessionVersion} + CASE WHEN ${users.oidcLinkedAt} IS NULL THEN 0 ELSE 1 END`,
+    })
+    .where(and(eq(users.oidcIssuer, issuer), eq(users.oidcSubject, subject)))
+    .run();
+}
+
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -94,15 +114,7 @@ export function applyOidcLogout(logout: OidcLogout): boolean {
         }
       }
     } else {
-      tx.update(users)
-        .set({ sessionVersion: sql`${users.sessionVersion} + 1` })
-        .where(
-          and(
-            eq(users.oidcIssuer, logout.issuer),
-            eq(users.oidcSubject, logout.subject!),
-          ),
-        )
-        .run();
+      endOidcIdentitySessions(tx, logout.issuer, logout.subject!);
     }
     return true;
   });

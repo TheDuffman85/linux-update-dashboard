@@ -16,6 +16,7 @@ import {
 export {
   DEFAULT_OIDC_GROUPS_CLAIM,
   DEFAULT_OIDC_SCOPE,
+  OIDC_AUTO_LINK_SETTING_KEY,
   OIDC_AUTO_LOGIN_SETTING_KEY,
   OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
   OIDC_END_SESSION_SETTING_KEY,
@@ -47,6 +48,12 @@ let _jwks: { uri: string; keySet: ReturnType<typeof jose.createRemoteJWKSet> } |
 const BACKCHANNEL_LOGOUT_EVENT =
   "http://schemas.openid.net/event/backchannel-logout";
 const LOGOUT_TOKEN_MAX_AGE_SECONDS = 5 * 60;
+const CONFIGURE_RETRY_MS = 60_000;
+
+// Only the latest attempt may apply, so a slow one cannot overwrite newer settings.
+let _configureAttempt = 0;
+let _configureRetry: ReturnType<typeof setTimeout> | null = null;
+let _lastConfigureError: string | null = null;
 
 /** Readable error messages for openid-client error codes */
 const OIDC_ERROR_HINTS: Record<string, string> = {
@@ -124,7 +131,13 @@ export function resolveOidcClaims(
   idClaims: Record<string, unknown>,
   userinfo: Record<string, unknown> | undefined,
   policy: OidcRolePolicy,
-): { username: string; email?: string; role: UserRole | null } | null {
+): {
+  username: string;
+  /** Set only when the provider sent the claim; `username` can also come from a fallback. */
+  preferredUsername?: string;
+  email?: string;
+  role: UserRole | null;
+} | null {
   const merged = { ...idClaims, ...(userinfo ?? {}) };
   const username = (
     (typeof merged.preferred_username === "string" &&
@@ -146,6 +159,9 @@ export function resolveOidcClaims(
 
   return {
     username,
+    ...(typeof merged.preferred_username === "string" && merged.preferred_username.trim()
+      ? { preferredUsername: username }
+      : {}),
     email: typeof merged.email === "string" ? merged.email : undefined,
     role: resolveOidcRole(policy, groups),
   };
@@ -156,19 +172,24 @@ export async function configureOidc(
   clientId: string,
   clientSecret: string,
 ): Promise<string | null> {
+  const attempt = ++_configureAttempt;
   if (!issuer || !clientId) {
     _configured = false;
+    _lastConfigureError = null;
     return null;
   }
 
   const discoveryUrl = `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`;
 
   try {
-    _config = await client.discovery(
+    const configuration = await client.discovery(
       new URL(issuer),
       clientId,
       clientSecret || undefined,
     );
+    if (attempt !== _configureAttempt) return null;
+    _config = configuration;
+    _lastConfigureError = null;
     _clientId = clientId;
     _clientSecret = clientSecret;
     _jwks = null;
@@ -176,6 +197,7 @@ export async function configureOidc(
     console.log(`OIDC configured successfully (issuer: ${issuer})`);
     return null;
   } catch (e: any) {
+    if (attempt !== _configureAttempt) return null;
     _configured = false;
     const code: string = e?.code || "UNKNOWN";
     const msg: string = e?.message || String(e);
@@ -183,27 +205,59 @@ export async function configureOidc(
       OIDC_ERROR_HINTS[code] ||
       "Verify the issuer URL is correct and the provider is reachable.";
     const detail = `Failed to configure OIDC: ${msg}\n  Code: ${code}\n  Issuer URL: ${issuer}\n  Discovery endpoint: ${discoveryUrl}\n  ${hint}`;
-    console.error(detail);
+    // Retries repeat the same failure, so log it once until it changes.
+    if (detail !== _lastConfigureError) {
+      console.error(`${detail}\n  SSO sign-in stays off until the provider responds; retrying every minute.`);
+    }
+    _lastConfigureError = detail;
     return `${msg} — ${hint}`;
   }
 }
 
-/** Configures OIDC from the effective issuer, client ID and secret. */
-export function configureOidcFromSettings(): Promise<string | null> {
+function clearOidcConfigureRetry(): void {
+  if (_configureRetry) clearTimeout(_configureRetry);
+  _configureRetry = null;
+}
+
+function scheduleOidcConfigureRetry(): void {
+  clearOidcConfigureRetry();
+  _configureRetry = setTimeout(() => {
+    _configureRetry = null;
+    configureOidcFromSettings().catch((e) => {
+      console.warn(`OIDC retry failed: ${e instanceof Error ? e.message : String(e)}`);
+      scheduleOidcConfigureRetry();
+    });
+  }, CONFIGURE_RETRY_MS);
+  _configureRetry.unref?.();
+}
+
+/**
+ * Configures OIDC from the effective issuer, client ID and secret. While the
+ * provider cannot be reached it keeps retrying, so SSO comes back without a restart.
+ */
+export async function configureOidcFromSettings(): Promise<string | null> {
+  clearOidcConfigureRetry();
   const values = getAuthSettings([
     "oidc_issuer",
     "oidc_client_id",
     "oidc_client_secret",
   ]);
-  return configureOidc(
+  const error = await configureOidc(
     values.get("oidc_issuer") || "",
     values.get("oidc_client_id") || "",
     values.get("oidc_client_secret") || "",
   );
+  if (error) scheduleOidcConfigureRetry();
+  return error;
 }
 
 export function isConfigured(): boolean {
   return _configured;
+}
+
+/** Issuer the provider reports, as used in identities; null while OIDC is not configured. */
+export function getConfiguredIssuer(): string | null {
+  return _configured && _config ? _config.serverMetadata().issuer : null;
 }
 
 export function getAuthorizationUrl(
@@ -211,6 +265,7 @@ export function getAuthorizationUrl(
   nonce: string,
   redirectUri: string,
   scope = DEFAULT_OIDC_SCOPE,
+  prompt?: string,
 ): string {
   if (!_config) throw new Error("OIDC not configured");
 
@@ -221,6 +276,7 @@ export function getAuthorizationUrl(
     scope,
     state,
     nonce,
+    ...(prompt ? { prompt } : {}),
   });
 
   const authEndpoint = _config.serverMetadata().authorization_endpoint;
@@ -381,6 +437,7 @@ export async function handleCallback(
   expectedState?: string,
 ): Promise<{
   username: string;
+  preferredUsername?: string;
   email?: string;
   role: UserRole | null;
   issuer: string;

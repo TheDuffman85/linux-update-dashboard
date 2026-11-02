@@ -257,6 +257,7 @@ OIDC and password login are normally configured under **Settings**. Each of the 
 | `LUDASH_OIDC_END_SESSION` | Sign out of the identity provider on logout | `true` or `false`. Default `false`. |
 | `LUDASH_OIDC_BACKCHANNEL_LOGOUT` | End sessions when signing out at the identity provider | `true` or `false`. Default `false`. |
 | `LUDASH_OIDC_AUTO_LOGIN` | Sign in with SSO automatically | `true` or `false`. Default `false`. Only active while OIDC is configured and password login is disabled. |
+| `LUDASH_OIDC_AUTO_LINK_USERNAME` | Link existing accounts by username | `true` or `false`. Default `false`. See [Linking local and SSO sign-in](#linking-local-and-sso-sign-in). |
 | `LUDASH_PASSWORD_LOGIN_ENABLED` | Password login | `true` or `false`. |
 
 ```yaml
@@ -279,6 +280,8 @@ Linux Update Dashboard supports password login, TOTP authenticator codes, passke
 TOTP can be enabled from **Settings > Profile** after signing in with the account password. Once enabled, password sign-ins require a current authenticator app code.
 
 For OIDC, configure the provider callback URL as `{LUDASH_BASE_URL}/api/auth/oidc/callback`. Set `LUDASH_BASE_URL` before configuring OIDC so callback and origin validation match the public URL.
+
+If the provider cannot be reached at startup or when saving the settings, the dashboard still runs with local sign-in, retries every minute, and turns SSO on without a restart once the provider responds.
 
 OIDC settings also control the requested scopes (must include `openid`), the claim that carries group membership (default `groups`, read from the ID token and the UserInfo endpoint), and which groups get admin or read-only access. Admin groups take precedence over read-only groups. Users that match no configured group are denied by default; you can instead grant them admin or read-only access. Installations that already used OIDC before group mapping existed keep granting admin access to unmatched users, so existing SSO accounts are not locked out after upgrading. Role changes apply on the next SSO sign-in, and OIDC sessions expire after one day.
 
@@ -321,6 +324,31 @@ Hostnames are not unique: the same host can be added several times, for example 
 Under **Settings > Users**, administrators create local users with the admin or read-only role, change roles, disable and re-enable accounts, reset passwords, reset TOTP and passkeys, and delete users. A new or reset password can require a change at the next password sign-in; until then the user only sees a change-password page. Disabling, resetting, and deleting end the user's sessions, and a disabled user's API tokens stop working. User management changes are written to the server log.
 
 OIDC users are listed after their first sign-in. Their role comes from the identity provider on every sign-in, so they can only be deleted here; they are created again at their next SSO sign-in.
+
+Accounts with a linked SSO identity are shown as **Local + SSO** with both roles. They are managed like local accounts, and **Remove SSO link** removes the identity without touching the local sign-in.
+
+### Linking local and SSO sign-in
+
+A local account can also sign in with one SSO identity, so a single account has both sign-in methods and local sign-in stays available during an identity provider outage. The strictest setup is still a separate emergency account that is not linked to anything; linking is for when you want one account per person.
+
+**To link an account**, sign in with your password or a passkey and open **Settings → Profile → Single sign-on → Link SSO identity**. After you sign in at the identity provider, the dashboard shows the identity it received and asks for your password and, if enabled, your authenticator code. Identities are matched by issuer and subject (`iss` + `sub`), never by username or email. An identity the group settings deny cannot be linked.
+
+If the identity already has a separate SSO account, such as `admin#oidc-1a2b3c4d5e6f`, confirming the link merges it into the local account and removes it. Its API tokens move over and keep working with the same access. Its display preferences are dropped in favor of the local account's. A disabled SSO account is not merged; delete it first if that person should have access again.
+
+**What each sign-in method can do on a linked account:**
+
+- Password and passkey sessions use the local role set under **Settings → Users**. Nothing from the identity provider changes it, ends those sessions, or blocks that sign-in. A local username is never renamed.
+- SSO sessions use the role from the identity provider, last updated at SSO sign-in. A denied identity loses SSO access only. SSO sessions cannot change the password, TOTP, passkeys or the link, and only see API tokens created through SSO. Those tokens, marked **SSO role**, are limited by the SSO role instead of the local role.
+- Disabling or deleting the account applies to both sign-in methods. So do local credential changes and resets, which end all of the account's sessions.
+- Last-administrator checks count either role, but the SSO role only while its provider is still the configured one. Unlinking is refused when the account's SSO role is the last administrator access.
+
+**Removing someone from the identity provider does not remove their local password.** The dashboard cannot detect this until they try to use SSO, so also disable their account under **Settings → Users**.
+
+**To unlink an account**, use the same section with your password and authenticator code, or **Remove SSO link** as another administrator. This ends the account's sessions, and the next SSO sign-in creates a separate account again. API tokens created through SSO stay valid but follow the local role, and they lose write access if either role was read-only. If the identity provider's issuer changes, existing links stop working; local sign-in keeps working, and each account has to be unlinked and linked again.
+
+**Linking existing accounts by username** (**Settings → Authentication → OIDC (SSO)**, or `LUDASH_OIDC_AUTO_LINK_USERNAME=true`) is off by default and meant for migrations. While it is on, an allowed SSO sign-in links automatically to an enabled local account with exactly the same `preferred_username`, and merges any separate SSO account of that identity, without asking for the local password. Accounts already linked, accounts created while the setting is on, and accounts that were unlinked are left out. These links are logged as warnings and marked **Linked by username (unverified)**.
+
+Usernames from a provider can change and are not proof of ownership, so only turn this on when your provider controls them, and turn it off after migrating. Anyone who gets a matching username at the provider is linked to that account, although they only get their SSO role and none of its local credentials or tokens. Such a mix-up keeps the real owner's identity out until an administrator removes the link.
 
 To prevent lockouts, administrators cannot change, disable, or delete their own account there, at least one enabled administrator must remain, and while passkeys are the only sign-in method an enabled administrator must keep a passkey.
 

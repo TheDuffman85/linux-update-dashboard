@@ -5,6 +5,7 @@ import { resolveSecretEnv } from "../env-secrets";
 import { logger } from "../logger";
 import { getEncryptor } from "../security";
 import {
+  OIDC_AUTO_LINK_SETTING_KEY,
   OIDC_AUTO_LOGIN_SETTING_KEY,
   OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
   OIDC_END_SESSION_SETTING_KEY,
@@ -33,6 +34,7 @@ export const AUTH_SETTING_ENV_VARS = {
   [OIDC_END_SESSION_SETTING_KEY]: "LUDASH_OIDC_END_SESSION",
   [OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY]: "LUDASH_OIDC_BACKCHANNEL_LOGOUT",
   [OIDC_AUTO_LOGIN_SETTING_KEY]: "LUDASH_OIDC_AUTO_LOGIN",
+  [OIDC_AUTO_LINK_SETTING_KEY]: "LUDASH_OIDC_AUTO_LINK_USERNAME",
   disable_password_login: "LUDASH_PASSWORD_LOGIN_ENABLED",
 } as const;
 
@@ -130,6 +132,7 @@ export function loadAuthEnvOverrides(): AuthEnvOverrides {
     OIDC_END_SESSION_SETTING_KEY,
     OIDC_BACKCHANNEL_LOGOUT_SETTING_KEY,
     OIDC_AUTO_LOGIN_SETTING_KEY,
+    OIDC_AUTO_LINK_SETTING_KEY,
   ] as const) {
     const value = readEnv(env[key]);
     if (value) overrides[key] = String(parseBooleanEnv(env[key], value));
@@ -300,6 +303,11 @@ export function getPasswordLoginState(): PasswordLoginState {
 
 export function isPasswordLoginDisabled(): boolean {
   return getPasswordLoginState().disabled;
+}
+
+/** Whether SSO sign-ins may link to existing local accounts with the same username. */
+export function isOidcAutoLinkEnabled(): boolean {
+  return getAuthSetting(OIDC_AUTO_LINK_SETTING_KEY) === "true";
 }
 
 export interface OidcAutoLoginState {

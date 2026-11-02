@@ -39,6 +39,10 @@ vi.mock("../../client/lib/settings", () => ({
   useUpdatePreferences: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
+vi.mock("../../client/components/OidcLinkSettings", () => ({
+  OidcLinkSettings: () => null,
+}));
+
 vi.mock("../../client/components/UsersSettings", () => ({
   UsersSettings: () => <div data-testid="users-settings" />,
 }));
@@ -330,6 +334,7 @@ describe("Settings page", () => {
           "oidc_end_session",
           "oidc_backchannel_logout",
           "oidc_auto_login",
+          "oidc_auto_link_username",
         ].map((key) => [key, `LUDASH_${key.toUpperCase()}`]),
       ),
     });

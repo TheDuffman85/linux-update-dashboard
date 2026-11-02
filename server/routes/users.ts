@@ -1,7 +1,12 @@
 import { Hono, type Context } from "hono";
 import type { SessionData } from "../auth/session";
 import type { UserRole } from "../auth/oidc";
-import { hashPassword, isOidcOnlyAccount, validatePassword } from "../auth/password";
+import {
+  hashPassword,
+  isLinkedAccount,
+  isOidcOnlyAccount,
+  validatePassword,
+} from "../auth/password";
 import { wouldLockOutAdministrators } from "../auth/auth-config";
 import { closeEndedSessionSockets } from "../services/session-sockets";
 import { logger } from "../logger";
@@ -10,10 +15,12 @@ import {
   createLocalUser,
   deleteUser,
   getUserById,
+  isActiveAdmin,
   listUsers,
   resetUserPassword,
   resetUserSecondFactors,
   summarizeUser,
+  unlinkOidcIdentity,
   updateUserAccess,
   type ManagedUser,
 } from "../services/user-service";
@@ -55,10 +62,6 @@ function getManagedUser(
     return { error: "OIDC users are managed by the identity provider", status: 400 };
   }
   return { user };
-}
-
-function isActiveAdmin(user: ManagedUser): boolean {
-  return user.role === "admin" && user.disabled === 0;
 }
 
 function logUserChange(c: Context<AuthEnv>, action: string, user: ManagedUser, fields = {}) {
@@ -178,6 +181,30 @@ usersRouter.post("/:id/reset-mfa", async (c) => {
   resetUserSecondFactors(user.id);
   await closeEndedSessionSockets();
   logUserChange(c, "reset TOTP and passkeys", user);
+  return c.json({
+    status: "ok",
+    user: summarizeUser(getUserById(user.id)!, c.get("user").userId),
+  });
+});
+
+usersRouter.post("/:id/unlink-oidc", async (c) => {
+  const managed = getManagedUser(c, {
+    localOnly: true,
+    selfError: "Use your profile to unlink your own SSO identity",
+  });
+  if ("error" in managed) return c.json({ error: managed.error }, managed.status);
+  const { user } = managed;
+  if (!isLinkedAccount(user)) {
+    return c.json({ error: "This account has no linked SSO identity" }, 400);
+  }
+  if (!unlinkOidcIdentity(user.id)) {
+    return c.json({ error: "At least one active administrator is required" }, 400);
+  }
+  await closeEndedSessionSockets();
+  logUserChange(c, "removed SSO link", user, {
+    issuer: user.oidcIssuer,
+    ssoUsername: user.oidcUsername,
+  });
   return c.json({
     status: "ok",
     user: summarizeUser(getUserById(user.id)!, c.get("user").userId),
