@@ -34,6 +34,8 @@ vi.mock("../../server/auth/oidc", async (importOriginal) => ({
 const { default: authRoutes } = await import("../../server/routes/auth");
 const { default: usersRoutes } = await import("../../server/routes/users");
 const { default: tokensRoutes } = await import("../../server/routes/api-tokens");
+
+const WRITE_PERMISSIONS = ["updates:check", "updates:apply", "systems:organize", "systems:remove"];
 const { default: passkeysRoutes } = await import("../../server/routes/passkeys");
 
 const ISSUER = "https://idp.example.com";
@@ -164,7 +166,7 @@ describe("linking local and SSO sign-in", () => {
   async function addToken(userId: number, token: string, values: Partial<typeof apiTokens.$inferInsert> = {}) {
     getDb()
       .insert(apiTokens)
-      .values({ userId, tokenHash: await hashToken(token), readOnly: 0, ...values })
+      .values({ userId, tokenHash: await hashToken(token), permissions: JSON.stringify(WRITE_PERMISSIONS), ...values })
       .run();
   }
 
@@ -642,8 +644,8 @@ describe("linking local and SSO sign-in", () => {
       "API tokens keep their access: SSO $ssoRole, local $localRole",
       async ({ ssoRole, localRole, readOnly }) => {
         const ssoId = await ssoAccount(ssoRole);
-        await addToken(ssoId, "ludash_merged", { readOnly: 0 });
-        expect(await validateToken("ludash_merged")).toMatchObject({ readOnly });
+        await addToken(ssoId, "ludash_merged");
+        expect(await validateToken("ludash_merged")).toMatchObject({ permissions: readOnly ? [] : WRITE_PERMISSIONS });
 
         getDb().update(users).set({ role: localRole }).where(eq(users.id, adminId)).run();
         await linkedAdmin(identity({ role: ssoRole }));
@@ -652,7 +654,7 @@ describe("linking local and SSO sign-in", () => {
           userId: adminId,
           username: "admin",
           role: ssoRole,
-          readOnly,
+          permissions: readOnly ? [] : WRITE_PERMISSIONS,
         });
       },
     );
@@ -690,7 +692,7 @@ describe("linking local and SSO sign-in", () => {
     test("the account's own tokens stay limited by the local role", async () => {
       await addToken(adminId, "ludash_local");
       await linkedAdmin(identity({ role: "read-only" }));
-      expect(await validateToken("ludash_local")).toMatchObject({ role: "admin", readOnly: false });
+      expect(await validateToken("ludash_local")).toMatchObject({ role: "admin", permissions: WRITE_PERMISSIONS });
     });
   });
 
@@ -703,11 +705,11 @@ describe("linking local and SSO sign-in", () => {
 
       const created = await sso.request("/api/tokens", {
         method: "POST",
-        body: { name: "sso", readOnly: false },
+        body: { name: "sso", permissions: WRITE_PERMISSIONS },
       });
       expect(created.status).toBe(200);
       const { token, id } = (await created.json()) as { token: string; id: number };
-      expect(await validateToken(token)).toMatchObject({ role: "admin", readOnly: false });
+      expect(await validateToken(token)).toMatchObject({ role: "admin", permissions: WRITE_PERMISSIONS });
 
       const list = (await (await sso.request("/api/tokens")).json()) as { tokens: Array<{ name: string }> };
       expect(list.tokens.map((t) => t.name)).toEqual(["sso"]);
@@ -716,8 +718,8 @@ describe("linking local and SSO sign-in", () => {
 
       // The identity provider's demotion reaches the token, not the local role.
       await ssoSignIn(browser(), identity({ role: "read-only" }));
-      expect(await validateToken(token)).toMatchObject({ role: "read-only", readOnly: true });
-      expect(await validateToken("ludash_local")).toMatchObject({ role: "admin", readOnly: false });
+      expect(await validateToken(token)).toMatchObject({ role: "read-only", permissions: [] });
+      expect(await validateToken("ludash_local")).toMatchObject({ role: "admin", permissions: WRITE_PERMISSIONS });
       expect((await sso.request(`/api/tokens/${id}`)).status).toBe(401);
     });
 
@@ -788,7 +790,7 @@ describe("linking local and SSO sign-in", () => {
           body: { password: PASSWORD },
         });
         expect(res.status).toBe(200);
-        expect(await validateToken("ludash_sso")).toMatchObject({ role, readOnly });
+        expect(await validateToken("ludash_sso")).toMatchObject({ role, permissions: readOnly ? [] : WRITE_PERMISSIONS });
       },
     );
 
@@ -894,7 +896,7 @@ describe("linking local and SSO sign-in", () => {
       await ssoSignIn(browser(), identity({ username: "admin", preferredUsername: "admin" }));
 
       expect(getDb().select().from(users).all().map((u) => u.username)).toEqual(["admin"]);
-      expect(await validateToken("ludash_merged")).toMatchObject({ userId: adminId, readOnly: false });
+      expect(await validateToken("ludash_merged")).toMatchObject({ userId: adminId, permissions: WRITE_PERMISSIONS });
     });
 
     test("ignores usernames that came from a fallback claim", async () => {

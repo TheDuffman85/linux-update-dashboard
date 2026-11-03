@@ -493,7 +493,8 @@ export const apiTokens = sqliteTable("api_tokens", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name"),
   tokenHash: text("token_hash").notNull().unique(),
-  readOnly: integer("read_only").notNull().default(1),
+  // JSON list of write permissions; every token can read.
+  permissions: text("permissions").notNull().default("[]"),
   // "oidc" tokens of a linked account are limited by its SSO role instead of its local role.
   roleSource: text("role_source").notNull().default("local"),
   expiresAt: text("expires_at"),

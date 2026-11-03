@@ -47,6 +47,10 @@ import {
   isSameBrandingTheme,
   type BrandingTheme,
 } from "../../shared/branding-theme";
+import {
+  API_TOKEN_PERMISSIONS,
+  type ApiTokenPermission,
+} from "../../shared/api-token-permissions";
 import { AppLogo } from "../components/AppLogo";
 import { BrandingColorsSettings } from "../components/BrandingColorsSettings";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -72,6 +76,33 @@ import {
   TIME_FORMAT_SETTING_KEY,
   useDateTime,
 } from "../lib/date-time";
+
+const TOKEN_PERMISSION_LABELS: Record<ApiTokenPermission, { label: string; description: string }> = {
+  "updates:check": {
+    label: "pages.settings.tokenPermUpdatesCheck",
+    description: "pages.settings.tokenPermUpdatesCheckDesc",
+  },
+  "updates:apply": {
+    label: "pages.settings.tokenPermUpdatesApply",
+    description: "pages.settings.tokenPermUpdatesApplyDesc",
+  },
+  "systems:organize": {
+    label: "pages.settings.tokenPermSystemsOrganize",
+    description: "pages.settings.tokenPermSystemsOrganizeDesc",
+  },
+  "systems:remove": {
+    label: "pages.settings.tokenPermSystemsRemove",
+    description: "pages.settings.tokenPermSystemsRemoveDesc",
+  },
+  "systems:add": {
+    label: "pages.settings.tokenPermSystemsAdd",
+    description: "pages.settings.tokenPermSystemsAddDesc",
+  },
+  "systems:edit": {
+    label: "pages.settings.tokenPermSystemsEdit",
+    description: "pages.settings.tokenPermSystemsEditDesc",
+  },
+};
 
 function SettingSection({
   title,
@@ -344,7 +375,7 @@ export default function Settings() {
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [newTokenName, setNewTokenName] = useState("");
   const [newTokenExpiry, setNewTokenExpiry] = useState("30");
-  const [newTokenReadOnly, setNewTokenReadOnly] = useState(true);
+  const [newTokenPermissions, setNewTokenPermissions] = useState<ApiTokenPermission[]>([]);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [tokenCopied, setTokenCopied] = useState(false);
 
@@ -2103,17 +2134,20 @@ export default function Settings() {
                             )}
                           </button>
                         )}
-                        <span
-                          className={`ml-2 text-xs px-1.5 py-0.5 rounded ${
-                            tk.readOnly
-                              ? "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
-                              : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                          }`}
-                        >
-                          {tk.readOnly
-                            ? t("pages.settings.readOnly")
-                            : t("pages.settings.readWrite")}
-                        </span>
+                        {tk.permissions.length === 0 ? (
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                            {t("pages.settings.readOnly")}
+                          </span>
+                        ) : (
+                          tk.permissions.map((permission) => (
+                            <span
+                              key={permission}
+                              className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                            >
+                              {t(TOKEN_PERMISSION_LABELS[permission].label)}
+                            </span>
+                          ))
+                        )}
                         {tk.roleSource === "oidc" && (
                           <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
                             {t("pages.settings.tokenSsoRole")}
@@ -2187,23 +2221,6 @@ export default function Settings() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">
-                    {t("pages.settings.permission")}
-                  </label>
-                  <select
-                    value={newTokenReadOnly ? "readonly" : "readwrite"}
-                    onChange={(e) =>
-                      setNewTokenReadOnly(e.target.value === "readonly")
-                    }
-                    className="px-3 py-2 text-sm rounded-lg border border-border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="readonly">{t("pages.settings.readOnly")}</option>
-                    <option value="readwrite">
-                      {t("pages.settings.readWrite2")}
-                    </option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">
                     {t("pages.settings.validFor")}
                   </label>
                   <select
@@ -2218,13 +2235,42 @@ export default function Settings() {
                     <option value="0">{t("pages.settings.neverExpires")}</option>
                   </select>
                 </div>
+                <fieldset className="w-full">
+                  <legend className="block text-xs font-medium text-slate-500 mb-1">
+                    {t("pages.settings.tokenPermissionsLegend")}
+                  </legend>
+                  <div className="space-y-1.5">
+                    {API_TOKEN_PERMISSIONS.map((permission) => (
+                      <label key={permission} className="flex items-start gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={newTokenPermissions.includes(permission)}
+                          onChange={(e) =>
+                            setNewTokenPermissions((current) =>
+                              e.target.checked
+                                ? [...current, permission]
+                                : current.filter((entry) => entry !== permission),
+                            )
+                          }
+                        />
+                        <span>
+                          {t(TOKEN_PERMISSION_LABELS[permission].label)}
+                          <span className="block text-xs text-slate-500">
+                            {t(TOKEN_PERMISSION_LABELS[permission].description)}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
                 <button
                   onClick={() => {
                     createApiToken.mutate(
                       {
                         name: newTokenName.trim() || undefined,
                         expiresInDays: parseInt(newTokenExpiry, 10),
-                        readOnly: newTokenReadOnly,
+                        permissions: newTokenPermissions,
                       },
                       {
                         onSuccess: (data) => {
@@ -2233,7 +2279,7 @@ export default function Settings() {
                           setShowTokenForm(false);
                           setNewTokenName("");
                           setNewTokenExpiry("30");
-                          setNewTokenReadOnly(true);
+                          setNewTokenPermissions([]);
                         },
                         onError: (err) =>
                           addToast(
@@ -2257,7 +2303,7 @@ export default function Settings() {
                     setShowTokenForm(false);
                     setNewTokenName("");
                     setNewTokenExpiry("30");
-                    setNewTokenReadOnly(true);
+                    setNewTokenPermissions([]);
                   }}
                   className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                 >

@@ -38,7 +38,7 @@ describe("scripts routes security", () => {
       userId: user.id,
       name: "writer",
       tokenHash: await hashToken(token),
-      readOnly: 0,
+      permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]',
     }).run();
     return token;
   }

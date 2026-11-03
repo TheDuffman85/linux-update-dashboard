@@ -46,7 +46,7 @@ async function createBearerToken(): Promise<string> {
     userId: user.id,
     name: "writer",
     tokenHash: await hashToken(token),
-    readOnly: 0,
+    permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]',
   }).run();
   return token;
 }
@@ -1343,13 +1343,13 @@ describe("systems reorder route", () => {
         path: "/api/systems",
         method: "POST",
         body: JSON.stringify({ scriptOverrides: {} }),
-        error: "API tokens cannot configure SSH connections",
+        error: "This token needs the systems:add permission",
       },
       {
         path: "/api/systems/1",
         method: "PUT",
         body: JSON.stringify({ scriptOverrides: {} }),
-        error: "API tokens cannot configure SSH connections",
+        error: "This token needs the systems:edit permission",
       },
       {
         path: "/api/systems/1/script-overrides",
@@ -1417,7 +1417,9 @@ describe("systems reorder route", () => {
 
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({
-        error: "API tokens cannot configure SSH connections",
+        error: entry.path.endsWith("/systems")
+          ? "This token needs the systems:add permission"
+          : "This token needs the systems:edit permission",
       });
     }
   });
@@ -1472,12 +1474,15 @@ describe("systems reorder route", () => {
       }, { incoming }),
     ]);
 
-    for (const res of responses) {
+    const errors = await Promise.all(responses.map(async (res) => {
       expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({
-        error: "API tokens cannot configure SSH connections",
-      });
-    }
+      return (await res.json()).error;
+    }));
+    expect(errors).toEqual([
+      "This token needs the systems:add permission",
+      "This token needs the systems:edit permission",
+      "This token needs the systems:add or systems:edit permission",
+    ]);
 
     expect(getDb().select().from(systems).all()).toHaveLength(1);
     expect(getDb().select().from(systems).where(eq(systems.id, systemId)).get()?.name).toBe("Existing");

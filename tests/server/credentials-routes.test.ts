@@ -41,7 +41,7 @@ describe("credentials routes", () => {
       userId: user.id,
       name: readOnly ? "reader" : "writer",
       tokenHash: await hashToken(token),
-      readOnly: readOnly ? 1 : 0,
+      permissions: readOnly ? "[]" : '["updates:check","updates:apply","systems:organize","systems:remove"]',
     }).run();
     return token;
   }

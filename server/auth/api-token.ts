@@ -3,12 +3,17 @@ import { getDb } from "../db";
 import { apiTokens, users } from "../db/schema";
 import { normalizeLinkedSsoRole, normalizeUserRole } from "./session";
 import type { UserRole } from "./oidc";
+import {
+  parseApiTokenPermissions,
+  type ApiTokenPermission,
+} from "../../shared/api-token-permissions";
 
 export interface ApiTokenData {
+  id: number;
   userId: number;
   username: string;
   role: UserRole;
-  readOnly: boolean;
+  permissions: ApiTokenPermission[];
 }
 
 /**
@@ -48,7 +53,7 @@ export async function validateToken(
     .select({
       id: apiTokens.id,
       userId: apiTokens.userId,
-      readOnly: apiTokens.readOnly,
+      permissions: apiTokens.permissions,
       roleSource: apiTokens.roleSource,
       expiresAt: apiTokens.expiresAt,
       username: users.username,
@@ -81,10 +86,11 @@ export async function validateToken(
       ? normalizeLinkedSsoRole(row.oidcRole)
       : normalizeUserRole(row.role);
   return {
+    id: row.id,
     userId: row.userId,
     username: row.username,
     role,
     // A token never grants more than its owner's role allows.
-    readOnly: row.readOnly === 1 || role === "read-only",
+    permissions: role === "read-only" ? [] : parseApiTokenPermissions(row.permissions),
   };
 }

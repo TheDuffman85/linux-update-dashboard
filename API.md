@@ -10,13 +10,13 @@ State-changing browser requests are protected by CSRF middleware. Bearer token r
 
 Create and manage tokens from **Settings > API Tokens**.
 
-- Permission levels: read-only (`GET`, `HEAD`, `OPTIONS`) or read/write.
+- Access: every token can read (`GET`, `HEAD`, `OPTIONS`). Write access comes from the token's permissions. See [Token permissions](#token-permissions).
 - Expiry options: 30, 60, 90, 365 days, or never.
 - Storage: only the SHA-256 token hash is stored; the plain token is shown once.
 - Limit: 25 tokens per user.
 - Scope: tokens cannot access `/api/auth`, `/api/settings`, `/api/tokens`, `/api/passkeys`, `/api/notifications`, `/api/schedules`, `/api/scripts`, `/api/credentials`, `/api/users`, or `/api/account`.
 - Owner: tokens stop working while their owner is disabled and are deleted with the owner.
-- SSH safety: tokens are also blocked from configuring SSH connections or script overrides.
+- SSH safety: tokens cannot change script overrides, `pkgManagerConfigs`, or `repositorySourceEditingEnabled`, or edit repository sources. Without `systems:add` or `systems:edit` they cannot configure SSH connections.
 - Rate limit: failed bearer attempts are limited to 20/min per IP.
 
 Example:
@@ -24,6 +24,31 @@ Example:
 ```bash
 curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/stats
 ```
+
+### Token permissions
+
+Every token can read. Write access depends on these permissions:
+
+| Permission         | Allows                                                                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `updates:check`    | Check systems, refresh the cache, cancel running operations.                                                                           |
+| `updates:apply`    | Upgrades, autoremove, package-issue repair actions, reboot.                                                                            |
+| `systems:organize` | Dashboard groups, order, priorities, upgrade options, hiding updates, dismissing notices and issues, revoking a trusted host key.      |
+| `systems:remove`   | `DELETE /api/systems/:id`.                                                                                                             |
+| `systems:add`      | `POST /api/systems` and `POST /api/systems/test-connection` for new systems.                                                           |
+| `systems:edit`     | `PUT /api/systems/:id`, `POST /api/systems/test-connection` including existing systems and their host keys, revoking a trusted host key. |
+
+A missing permission returns `403`. A token never exceeds its owner's role, so a token of a read-only user or SSO role can only read, whatever its permissions.
+
+Tokens from before permissions existed were migrated: read-only tokens have no permissions, and read/write tokens have `updates:check`, `updates:apply`, `systems:organize`, and `systems:remove`.
+
+`systems:add` and `systems:edit` let the token choose the host a stored credential connects to, so a stored password or sudo password is sent to that host. Only grant them to tokens you protect like an administrator password.
+
+To add a system with host-key verification:
+
+1. Call `POST /api/systems/test-connection` with `hostname`, `port`, and `credentialId`. For an unknown host, the response contains `hostKeyChallenges` and `trustChallengeToken`.
+2. Compare the challenge's `fingerprintSha256` with the expected fingerprint, then repeat the call with `trustChallengeToken` and the challenges as `approvedHostKeys`. The response contains `validatedConfigToken` and `detectedManagers`.
+3. Call `POST /api/systems` with `name`, the same connection fields, and `validatedConfigToken`.
 
 ## Health
 
@@ -104,7 +129,7 @@ generated, and `neutral` is one of `slate`, `gray`, `zinc`, `neutral`, or
 `stone`. `null` uses the default; in `dark`, `null` uses the `light` setting
 instead. Sending all values as `null` restores the default colors.
 
-`GET /api/app-update` is available to read-only and read/write API tokens. It
+`GET /api/app-update` is available to all API tokens. It
 returns the current version and branch, the latest remote version, whether an
 update is available, and release/repository URLs when available.
 
@@ -114,20 +139,20 @@ update is available, and release/repository URLs when available.
 | ------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/systems`                                     | List systems with update counts. Supports `?scope=visible`.                                                                   |
 | GET    | `/api/systems/:id`                                 | System detail with updates, installed packages, issues, history, and command reference.                                       |
-| POST   | `/api/systems`                                     | Add a system. API tokens cannot use this route.                                                                               |
+| POST   | `/api/systems`                                     | Add a system. API tokens need `systems:add`.                                                                                  |
 | PUT    | `/api/systems/reorder`                             | Reorder systems.                                                                                                              |
-| PUT    | `/api/systems/:id`                                 | Update system configuration. API tokens cannot use this route.                                                                |
+| PUT    | `/api/systems/:id`                                 | Update system configuration. API tokens need `systems:edit`.                                                                  |
 | PUT    | `/api/systems/:id/upgrade-mode`                    | Toggle the system's default full-upgrade/aggressive upgrade behavior where supported.                                         |
 | PUT    | `/api/systems/:id/update-priority`                 | Set the system's Upgrade All priority (0–99) within its dashboard group.                                                       |
 | PUT    | `/api/systems/:id/upgrade-all-exclusion`           | Set whether a system is preselected for Upgrade All by default (using the inverse `excluded` flag).                            |
-| POST   | `/api/systems/test-connection`                     | Test SSH connectivity, host-key trust, and package-manager detection for a proposed config. API tokens cannot use this route. |
+| POST   | `/api/systems/test-connection`                     | Test SSH connectivity, host-key trust, and package-manager detection for a proposed config. API tokens need `systems:add` for a new system or `systems:edit` for an existing one. |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system.                                                                                                              |
 | POST   | `/api/systems/:id/dismiss-needs-reboot`            | Dismiss a stale reboot-needed indicator.                                                                                      |
 | POST   | `/api/systems/:id/dismiss-root-user-banner`        | Dismiss the root-user info banner.                                                                                            |
 | POST   | `/api/systems/:id/dismiss-os-lifecycle-warning`    | Dismiss the current OS lifecycle warning snapshot.                                                                            |
 | POST   | `/api/systems/:id/revoke-host-key`                 | Clear the stored trusted host key.                                                                                            |
 | PUT    | `/api/systems/:id/script-overrides`                | Update per-system script overrides. API tokens cannot use this route.                                                         |
-| DELETE | `/api/systems/:id`                                 | Remove a system.                                                                                                              |
+| DELETE | `/api/systems/:id`                                 | Remove a system. API tokens need `systems:remove`.                                                                            |
 | GET    | `/api/systems/:id/sudoers-preview`                 | Generate least-privilege sudoers setup instructions.                                                                          |
 | GET    | `/api/systems/:id/repository-sources`              | Read the repository source files of the active package managers over SSH (credentials masked). Each file includes `sha256`, `editable`, and `editBlockedReason`; returns `502` when the host cannot be read. |
 | PUT    | `/api/systems/:id/repository-sources`              | Replace one repository source file with `{ path, content, baseSha256, dryRun? }`. Requires **Allow repository source editing** on the system (`repositorySourceEditingEnabled` when creating or updating the system, default off); not available to API tokens. `dryRun` returns the diff without writing. Returns `409` when the file changed on the host or an operation is running, `400` with `line` for invalid syntax. |
@@ -136,6 +161,10 @@ update is available, and release/repository URLs when available.
 | POST   | `/api/systems/:id/hidden-updates`                  | Hide one visible update from counts and dashboards.                                                                           |
 | DELETE | `/api/systems/:id/hidden-updates/:hiddenUpdateId`  | Unhide an update.                                                                                                             |
 | POST   | `/api/systems/:id/package-issues/:issueId/dismiss` | Dismiss a visible package-manager issue.                                                                                      |
+
+API tokens get `403` when `POST /api/systems` or `PUT /api/systems/:id` includes
+`scriptOverrides`, `pkgManagerConfigs`, or `repositorySourceEditingEnabled`. Omit
+these fields from the body, including when sending back a `GET` response.
 
 `POST /api/systems` and `PUT /api/systems/:id` accept `pkgManagerSecretRefs`, which
 assigns secret credentials to secret config entries:
@@ -311,8 +340,8 @@ These routes manage API tokens and cannot be called with API tokens.
 
 | Method | Endpoint          | Description                                                  |
 | ------ | ----------------- | ------------------------------------------------------------ |
-| GET    | `/api/tokens`     | List tokens for the authenticated user.                      |
-| POST   | `/api/tokens`     | Create a token with `name`, `expiresInDays`, and `readOnly`. |
+| GET    | `/api/tokens`     | List tokens for the authenticated user, each with its effective `permissions`. |
+| POST   | `/api/tokens`     | Create a token with `name`, `expiresInDays`, and a `permissions` list. Without permissions the token can only read. `readOnly` is no longer accepted and returns `400`. |
 | PATCH  | `/api/tokens/:id` | Rename a token.                                              |
 | DELETE | `/api/tokens/:id` | Revoke a token.                                              |
 

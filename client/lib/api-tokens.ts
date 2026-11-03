@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
+import type { ApiTokenPermission } from "../../shared/api-token-permissions";
 
 export interface ApiToken {
   id: number;
   name: string | null;
-  readOnly: number;
+  /** Write permissions the token holds; empty for a token that can only read. */
+  permissions: ApiTokenPermission[];
   /** "oidc" tokens are limited by the SSO role of a linked account. */
   roleSource?: "local" | "oidc";
   expiresAt: string | null;
@@ -27,7 +29,7 @@ export function useCreateApiToken() {
     mutationFn: (params: {
       name?: string;
       expiresInDays?: number;
-      readOnly?: boolean;
+      permissions?: ApiTokenPermission[];
     }) =>
       apiFetch<{ token: string; id: number }>("/tokens", {
         method: "POST",

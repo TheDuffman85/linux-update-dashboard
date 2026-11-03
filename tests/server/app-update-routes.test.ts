@@ -70,7 +70,6 @@ describe("app update routes", () => {
         userId: user.id,
         name: "read-only app update status",
         tokenHash: await hashToken(token),
-        readOnly: 1,
       })
       .run();
 

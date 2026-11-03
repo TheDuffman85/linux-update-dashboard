@@ -223,7 +223,7 @@ describe("read-only enforcement", () => {
     const token = "ludash_readonly_owner_token";
     getDb()
       .insert(apiTokens)
-      .values({ userId: viewerId, name: "t", tokenHash: await hashToken(token), readOnly: 0 })
+      .values({ userId: viewerId, name: "t", tokenHash: await hashToken(token), permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]' })
       .run();
     const headers = { authorization: `Bearer ${token}` };
     expect((await app.request("/api/systems", { headers }, { incoming })).status).toBe(200);
