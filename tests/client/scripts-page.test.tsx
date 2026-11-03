@@ -291,6 +291,53 @@ describe("Scripts page", () => {
     expect(html).toContain("script-code max-h-64 overflow-x-auto overflow-y-auto");
   });
 
+  test("lists upgrade scripts and offers to make them the default", () => {
+    mockUseScripts.mockReturnValue({
+      data: {
+        scripts: [
+          {
+            id: "custom:1",
+            readonly: false,
+            name: "Stop cluster",
+            description: null,
+            type: "system",
+            operation: "pre_upgrade",
+            pkgManager: null,
+            isDefault: false,
+            steps: [{ label: "Stop", command: "true" }],
+            parserConfig: null,
+            systemInfoConfig: null,
+            sourceScriptId: null,
+          },
+          {
+            id: "custom:2",
+            readonly: false,
+            name: "Custom reboot",
+            description: null,
+            type: "system",
+            operation: "reboot",
+            pkgManager: null,
+            isDefault: false,
+            steps: [{ label: "Reboot", command: "true" }],
+            parserConfig: null,
+            systemInfoConfig: null,
+            sourceScriptId: null,
+          },
+        ],
+        packageManagers: [],
+        placeholders: [],
+        operationProfiles: [],
+      },
+      isLoading: false,
+    });
+
+    const html = renderToStaticMarkup(<Scripts />);
+
+    expect(html).toContain("Stop cluster");
+    expect(html).toContain("Pre-upgrade");
+    expect(html).toContain('aria-label="Set Stop cluster as default"');
+  });
+
   test("summarizes package manager management while collapsed by default", () => {
     mockUseScripts.mockReturnValue({
       data: {

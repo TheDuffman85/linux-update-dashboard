@@ -51,6 +51,8 @@ const OPERATION_LABELS: Record<ScriptOperation, string> = {
   upgrade_selected: "Upgrade selected",
   system_info: "System info",
   reboot: "Reboot",
+  pre_upgrade: "Pre-upgrade",
+  post_upgrade: "Post-upgrade",
 };
 const OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
   detect: "pages.scripts.operation.detect",
@@ -63,6 +65,8 @@ const OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
   upgrade_selected: "pages.scripts.operation.upgradeSelected",
   system_info: "pages.scripts.operation.systemInfo",
   reboot: "pages.scripts.operation.reboot",
+  pre_upgrade: "pages.scripts.operation.preUpgrade",
+  post_upgrade: "pages.scripts.operation.postUpgrade",
 };
 const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
   {
@@ -185,6 +189,30 @@ const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
     relevantPlaceholders: ["{{sudo:COMMAND}}"],
     defaultStepBadge: "streamed only",
   },
+  {
+    operation: "pre_upgrade",
+    label: OPERATION_LABELS.pre_upgrade,
+    allowedTypes: ["system"],
+    purpose: "Runs once before an upgrade on every system that uses it, for example to stop a cluster manager.",
+    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code skips the upgrade and the post-upgrade script, so undo any partial work in this script.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  {
+    operation: "post_upgrade",
+    label: OPERATION_LABELS.post_upgrade,
+    allowedTypes: ["system"],
+    purpose: "Runs once after an upgrade on every system that uses it, even if the upgrade failed or was cancelled.",
+    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, failed, cancelled, or unknown.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code marks the upgrade as failed and offers to run the script again from the system page.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
 ];
 const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
   "detect",
@@ -196,7 +224,7 @@ const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
   "full_upgrade_all",
   "upgrade_selected",
 ];
-const SYSTEM_OPERATIONS: ScriptOperation[] = ["system_info", "reboot"];
+const SYSTEM_OPERATIONS: ScriptOperation[] = ["system_info", "reboot", "pre_upgrade", "post_upgrade"];
 const BUILTIN_PACKAGE_MANAGERS = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap", "deb-get"];
 const BUILTIN_PACKAGE_MANAGER_LABELS: Record<string, string> = {
   apt: "APT",

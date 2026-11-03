@@ -18,6 +18,8 @@ import {
   useUpdateSystem,
   useRebootSystem,
   useDismissNeedsReboot,
+  useDismissPostUpgradePending,
+  useRunPostUpgradeScript,
   useDismissRootUserBanner,
   useDismissOsLifecycleWarning,
   useSolvePackageIssue,
@@ -747,6 +749,26 @@ function getOperationNoticeCopy(
         message: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningMessage", "The reboot operation completed with warnings."),
       },
     },
+    pre_upgrade: {
+      failed: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.preUpgradeFailedTitle", "Pre-upgrade script failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.preUpgradeFailedMessage", "The upgrade was skipped because the pre-upgrade script did not succeed."),
+      },
+      warning: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.preUpgradeWarningTitle", "Pre-upgrade script interrupted"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.preUpgradeWarningMessage", "The dashboard restarted while the pre-upgrade script was running."),
+      },
+    },
+    post_upgrade: {
+      failed: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.postUpgradeFailedTitle", "Post-upgrade script failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.postUpgradeFailedMessage", "The post-upgrade script did not succeed, so services it restores may still be stopped."),
+      },
+      warning: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.postUpgradeWarningTitle", "Post-upgrade script interrupted"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.postUpgradeWarningMessage", "The dashboard restarted while the post-upgrade script was running."),
+      },
+    },
     repository_source_edit: {
       failed: {
         title: translateOrFallback(t, "pages.systemDetail.notice.repositorySourceEditFailedTitle", "Repository source update failed"),
@@ -776,6 +798,20 @@ function getOperationNoticeCopy(
           message: translateOrFallback(t, "pages.systemDetail.notice.operationWarningMessage", "The latest operation completed with warnings."),
         }
   );
+}
+
+function isUpgradeScriptAction(action: string): boolean {
+  return action === "pre_upgrade" || action === "post_upgrade";
+}
+
+/**
+ * A successful script run says nothing about the upgrade before it, so that
+ * upgrade's result still counts. It does replace any earlier script failure.
+ */
+export function getLatestOperationNoticeEntry(history: HistoryEntry[]): HistoryEntry | null {
+  const latest = history[0] ?? null;
+  if (!latest || !isUpgradeScriptAction(latest.action) || latest.status !== "success") return latest;
+  return history.find((entry) => !isUpgradeScriptAction(entry.action)) ?? latest;
 }
 
 export function getOperationNoticeState(
@@ -1224,6 +1260,8 @@ export function getActivityTitle(
   if (action === "full_upgrade_all") return translateOrFallback(t, "pages.systemDetail.activity.fullUpgradedAllPackages", "Full upgraded all packages");
   if (action === "reboot") return translateOrFallback(t, "pages.systemDetail.activity.rebootedSystem", "Rebooted system");
   if (action === "package_manager_repair") return translateOrFallback(t, "pages.systemDetail.activity.repairedPackageManager", "Repaired package manager");
+  if (action === "pre_upgrade") return translateOrFallback(t, "pages.systemDetail.activity.ranPreUpgradeScript", "Ran pre-upgrade script");
+  if (action === "post_upgrade") return translateOrFallback(t, "pages.systemDetail.activity.ranPostUpgradeScript", "Ran post-upgrade script");
   if (action === "repository_source_edit") {
     const path = packagesList.join(", ") || "repository source";
     return translateOrFallback(t, "pages.systemDetail.activity.editedRepositorySource", `Edited ${path}`, { path });
@@ -2296,6 +2334,8 @@ export default function SystemDetail() {
   const cancelOperation = useCancelOperation();
   const rebootSystem = useRebootSystem();
   const dismissNeedsReboot = useDismissNeedsReboot();
+  const runPostUpgradeScript = useRunPostUpgradeScript();
+  const dismissPostUpgradePending = useDismissPostUpgradePending();
   const dismissRootUserBanner = useDismissRootUserBanner();
   const dismissOsLifecycleWarning = useDismissOsLifecycleWarning();
   const solvePackageIssue = useSolvePackageIssue();
@@ -2396,6 +2436,7 @@ export default function SystemDetail() {
   const autoremoving = !postOperationRechecking && (autoremove.isPending || activeOp?.type === "autoremove");
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
   const repairingPackageIssue = solvePackageIssue.isPending || activeOp?.type === "package_manager_repair";
+  const runningPostUpgradeScript = runPostUpgradeScript.isPending || activeOp?.type === "post_upgrade";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
   const dismissingRootUserBanner = dismissRootUserBanner.isPending;
   const dismissingOsLifecycleWarning = dismissOsLifecycleWarning.isPending;
@@ -2438,7 +2479,7 @@ export default function SystemDetail() {
   const selectedOutsideSearch = packageSelectionState.selectedCount - getPackageSelectionState(selectedAvailablePackageNames, matchingUpdates).selectedCount;
   const updatesPanelState = translateUpdatesPanelState(getUpdatesPanelState(system, updates.length), updates.length, t);
   const latestOperationNoticeState: OperationNoticeState | null = history.length > 0
-    ? getOperationNoticeState(history[0], updates.length, t)
+    ? getOperationNoticeState(getLatestOperationNoticeEntry(history), updates.length, t)
     : getCheckOperationNoticeState(updatesPanelState);
   const dedupedOperationNoticeState: OperationNoticeState | null =
     latestOperationNoticeState && isCheckOperationNoticeState(latestOperationNoticeState)
@@ -2458,6 +2499,8 @@ export default function SystemDetail() {
   const upgradeConfirmMessage = [
     t("pages.systemDetail.upgradeAllMessage", { count: system.updateCount, systemName: system.name }),
     ...upgradeBehaviorNotes,
+    ...(system.upgradeScripts?.pre ? [t("pages.systemDetail.upgradeHookNote.pre")] : []),
+    ...(system.upgradeScripts?.post ? [t("pages.systemDetail.upgradeHookNote.post")] : []),
   ].join(" ");
   const autoremoveSupport = system.autoremoveSupport ?? { supportedManagers: [], skippedManagers: [] };
   const hasAutoremoveAction = shouldShowAutoremoveAction(autoremoveSupport);
@@ -2465,7 +2508,8 @@ export default function SystemDetail() {
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || hasRebootAction || autoremoving;
   const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction || hasRebootAction;
-  const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue;
+  const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue || runningPostUpgradeScript;
+  const showPostUpgradePendingBanner = !!system.postUpgradePendingAt && !activeOp;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport, t);
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
   const showRootUserBanner = rootUserCheckEnabled && shouldShowRootUserInfoBanner(system);
@@ -2585,6 +2629,25 @@ export default function SystemDetail() {
     setShowDismissNeedsRebootConfirm(false);
     dismissNeedsReboot.mutate(systemId, {
       onSuccess: () => addToast(t("pages.systemDetail.toast.rebootWarningDismissed"), "success"),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleRunPostUpgradeScript = () => {
+    runPostUpgradeScript.mutate(systemId, {
+      onSuccess: (result) => addToast(
+        result.status === "success"
+          ? t("pages.systemDetail.toast.postUpgradeScriptFinished")
+          : t("pages.systemDetail.toast.postUpgradeScriptFailed"),
+        result.status === "success" ? "success" : "danger",
+      ),
+      onError: (err) => addToast(err.message, "danger"),
+    });
+  };
+
+  const handleDismissPostUpgradePending = () => {
+    dismissPostUpgradePending.mutate(systemId, {
+      onSuccess: () => addToast(t("pages.systemDetail.toast.postUpgradeWarningDismissed"), "success"),
       onError: (err) => addToast(err.message, "danger"),
     });
   };
@@ -2966,6 +3029,37 @@ export default function SystemDetail() {
       />
 
       <OperationNoticeBanner state={displayedOperationNoticeState} />
+
+      {/* Post-upgrade script that did not finish */}
+      {showPostUpgradePendingBanner && (
+        <div className="flex items-center gap-2 px-4 py-3 mb-6 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm">
+          <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span className="font-medium">{t("pages.systemDetail.postUpgradePending")}</span>
+          <span className="text-amber-600 dark:text-amber-500 flex-1">{t("pages.systemDetail.postUpgradePendingDescription")}</span>
+          {!isReadOnly && (
+          <>
+          {system.upgradeScripts?.post && (
+            <button
+              onClick={handleRunPostUpgradeScript}
+              disabled={upgradeActionsBusy || dismissPostUpgradePending.isPending}
+              className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+            >
+              {t("pages.systemDetail.runPostUpgradeScript")}
+            </button>
+          )}
+          <button
+            onClick={handleDismissPostUpgradePending}
+            disabled={upgradeActionsBusy || dismissPostUpgradePending.isPending}
+            className="px-3 py-1 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-900/30 text-amber-700 dark:text-amber-400 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            {t("pages.systemDetail.dismiss")}
+          </button>
+          </>
+          )}
+        </div>
+      )}
 
       {/* Reboot required warning */}
       {system.needsReboot === 1 && (

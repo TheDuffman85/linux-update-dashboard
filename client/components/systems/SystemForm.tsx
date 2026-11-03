@@ -27,6 +27,7 @@ import {
 } from "../../lib/host-key-status";
 import {
   buildOperationKey,
+  NO_UPGRADE_SCRIPT,
   useScripts,
   type ScriptOperation,
 } from "../../lib/scripts";
@@ -75,6 +76,8 @@ const SCRIPT_OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
   upgrade_selected: "pages.scripts.operation.upgradeSelected",
   system_info: "pages.scripts.operation.systemInfo",
   reboot: "pages.scripts.operation.reboot",
+  pre_upgrade: "pages.scripts.operation.preUpgrade",
+  post_upgrade: "pages.scripts.operation.postUpgrade",
 };
 
 function isLoopbackHost(hostname: string): boolean {
@@ -448,7 +451,7 @@ export function SystemForm({
     "full_upgrade_all",
     "upgrade_selected",
   ];
-  const systemScriptOperations: ScriptOperation[] = ["system_info", "reboot"];
+  const systemScriptOperations: ScriptOperation[] = ["system_info", "reboot", "pre_upgrade", "post_upgrade"];
   const operationLabels = Object.fromEntries(
     Object.entries(SCRIPT_OPERATION_LABEL_KEYS).map(([operation, labelKey]) => [
       operation,
@@ -459,6 +462,22 @@ export function SystemForm({
     (scriptsData?.scripts ?? []).filter(
       (script) => script.operation === operation && script.pkgManager === pkgManager,
     );
+  const isUpgradeScriptOperation = (operation: ScriptOperation) =>
+    operation === "pre_upgrade" || operation === "post_upgrade";
+  const defaultUpgradeScript = (operation: ScriptOperation) =>
+    compatibleScripts(operation, null).find((script) => script.isDefault);
+  const upgradeScriptApplies = (operation: ScriptOperation) => {
+    const override = scriptOverrides[buildOperationKey(operation, null)];
+    if (override === NO_UPGRADE_SCRIPT) return false;
+    return !!override || !!defaultUpgradeScript(operation);
+  };
+  const standardScriptLabel = (operation: ScriptOperation) => {
+    if (!isUpgradeScriptOperation(operation)) return t("common.standard");
+    const script = defaultUpgradeScript(operation);
+    return script
+      ? t("components.systemForm.standardWithDefault", { name: script.name })
+      : t("components.systemForm.standardNoDefault");
+  };
   const setScriptOverride = (operation: ScriptOperation, pkgManager: string | null, scriptId: string) => {
     const key = buildOperationKey(operation, pkgManager);
     setScriptOverrides((prev) => {
@@ -1367,7 +1386,10 @@ export function SystemForm({
                             onChange={(e) => setScriptOverride(operation, null, e.target.value)}
                             className={inputClass}
                           >
-                            <option value="">{t("common.standard")}</option>
+                            <option value="">{standardScriptLabel(operation)}</option>
+                            {isUpgradeScriptOperation(operation) && (
+                              <option value={NO_UPGRADE_SCRIPT}>{t("components.systemForm.noUpgradeScript")}</option>
+                            )}
                             {options.map((script) => (
                               <option key={script.id} value={script.id}>
                                 {script.name}{script.readonly ? ` (${t("pages.scripts.builtIn2")})` : ""}
@@ -1378,6 +1400,11 @@ export function SystemForm({
                       );
                     })}
                   </div>
+                  {upgradeScriptApplies("pre_upgrade") && !upgradeScriptApplies("post_upgrade") && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {t("components.systemForm.preWithoutPostWarning")}
+                      </p>
+                    )}
                 </div>
 
                 {visibleScriptPackageManagers.map((manager) => (

@@ -7,16 +7,25 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install --global pnpm@12.16.1
 
-# Install dependencies
-FROM base AS deps
+# Production dependencies, installed per target platform because they include
+# native addons.
+FROM base AS prod-deps
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod
 
-# Build client
-FROM deps AS build
+# Check, test, and build once on the builder's own platform. The output is
+# platform independent, and running this under QEMU takes over 10 minutes.
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-trixie-slim AS build
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install --global pnpm@12.16.1
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 ARG APP_VERSION=""
 ARG APP_BUILD_DATE=""
@@ -34,8 +43,7 @@ ENV VITE_APP_REPO_URL=$APP_REPO_URL
 COPY . .
 RUN pnpm run check \
     && pnpm run test \
-    && pnpm run build \
-    && pnpm prune --prod
+    && pnpm run build
 
 # Production image
 FROM base AS production
@@ -46,12 +54,15 @@ ARG APP_BRANCH=""
 ARG APP_REPOSITORY=""
 ARG APP_REPO_URL=""
 
-COPY --from=build /app/node_modules ./node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/assets ./assets
 COPY --from=build /app/package.json ./
 COPY docker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh && mkdir -p /data
+# Tests only run on the builder's platform, so confirm the native addons load
+# on this one.
+RUN node -e "new (require('better-sqlite3'))(':memory:').close(); require('ssh2')"
 
 ENV NODE_ENV=production
 ENV LUDASH_DB_PATH=/data/dashboard.db

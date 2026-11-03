@@ -890,12 +890,24 @@ export class SSHConnectionManager {
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const signal = options?.signal ?? null;
+    if (signal?.aborted) {
+      return { stdout: "", stderr: "Operation cancelled", exitCode: EXIT_CANCELLED };
+    }
     const secretInput = activeSecretInput(options?.secretInput);
     const { setupCmd, useSudoStdin } = buildPersistentSetupCommand(
       command,
       !!sudoPassword,
       secretInput?.preamble() ?? ""
     );
+
+    // Setup is short and is not cancelled midway: the command may already have
+    // started by then, and only setup's output says which process to stop.
+    // Collected separately because a timeout discards the result's output, and
+    // that output is the only proof that the command started.
+    let streamedSetupOutput = "";
+    const onSetupData = (chunk: string, stream: "stdout" | "stderr") => {
+      if (stream === "stdout") streamedSetupOutput += chunk;
+    };
 
     // The setup command forwards its stdin into the script's FIFO, so the
     // secrets (and then the sudo password) reach the preamble in order.
@@ -905,8 +917,8 @@ export class SSHConnectionManager {
           setupCmd,
           30,
           secretInput.stdinPrefix() + (useSudoStdin && sudoPassword ? sudoPassword + "\n" : ""),
-          undefined,
-          signal,
+          onSetupData,
+          null,
           secretInput
         )
       : await this.runCommand(
@@ -914,21 +926,20 @@ export class SSHConnectionManager {
           setupCmd,
           30,
           useSudoStdin ? sudoPassword : undefined,
-          undefined,
-          signal
+          onSetupData
         );
-    const info = this.parseNohupOutput(setupResult.stdout);
+    const setupStdout = setupResult.stdout || streamedSetupOutput;
+    const info = this.parseNohupOutput(setupStdout);
+    // A setup cut short only counts if the whole line arrived, because a
+    // truncated path would make the monitor follow the wrong file.
+    const launchLineComplete = setupResult.exitCode === 0 || /LUDASH_BG [^\n]*\n/.test(setupStdout);
 
-    if (setupResult.exitCode === EXIT_CANCELLED) {
-      return setupResult;
-    }
-
-    if (!info || setupResult.exitCode !== 0) {
+    if (!info || !launchLineComplete) {
       logger.warn("SSH nohup setup failed", {
-        error: sanitizeOutput(setupResult.stderr || setupResult.stdout),
+        error: sanitizeOutput(setupResult.stderr || setupStdout),
       });
       return {
-        stdout: setupResult.stdout,
+        stdout: setupStdout,
         stderr:
           setupResult.stderr ||
           "Failed to start SSH-safe background command",
@@ -938,13 +949,21 @@ export class SSHConnectionManager {
 
     options?.onPersistentInfo?.(info);
 
-    if (signal?.aborted) {
-      await this.cancelPersistentCommand(conn, info);
+    if (setupResult.exitCode !== 0) {
+      logger.warn("SSH nohup setup ended early after starting the command", {
+        error: sanitizeOutput(setupResult.stderr),
+      });
       return {
         stdout: "",
-        stderr: "Operation cancelled",
-        exitCode: EXIT_CANCELLED,
+        stderr:
+          "SSH connection lost right after starting the command. The process continues on the remote system under nohup.",
+        exitCode: EXIT_MONITORING_LOST,
+        persistentInfo: info,
       };
+    }
+
+    if (signal?.aborted) {
+      return this.stopPersistentCommand(conn, info, "");
     }
 
     const tailResult = await this.runTailMonitor(
@@ -960,12 +979,7 @@ export class SSHConnectionManager {
     this.persistentOutput.set(info, { bytes: tailResult.bytesRead, text: tailResult.stdout });
 
     if (tailResult.cancelled) {
-      await this.cancelPersistentCommand(conn, info);
-      return {
-        stdout: tailResult.stdout,
-        stderr: "Operation cancelled",
-        exitCode: EXIT_CANCELLED,
-      };
+      return this.stopPersistentCommand(conn, info, tailResult.stdout);
     }
 
     if (tailResult.monitoringLost) {
@@ -979,15 +993,20 @@ export class SSHConnectionManager {
     }
 
     // Phase 3: Read exit code from the exit file
-    const exitResult = await this.runCommand(
-      conn,
-      `cat "${info.exitFile}" 2>/dev/null`,
-      10
-    );
-    const exitCode = parseInt(exitResult.stdout.trim(), 10);
+    const exitCode = await this.readExitCode(conn, info);
+    if (exitCode === null) {
+      return {
+        stdout: tailResult.stdout,
+        stderr:
+          "SSH connection lost before the command's result could be read.",
+        exitCode: EXIT_MONITORING_LOST,
+        persistentInfo: info,
+      };
+    }
 
-    // Phase 4: Cleanup temp files
-    this.runCommand(
+    // Phase 4: Cleanup temp files. Callers often disconnect right after this
+    // returns, which would kill a cleanup still in flight and leave output behind.
+    await this.runCommand(
       conn,
       `rm -f "${info.logFile}" "${info.exitFile}"`,
       10
@@ -996,8 +1015,19 @@ export class SSHConnectionManager {
     return {
       stdout: tailResult.stdout,
       stderr: "",
-      exitCode: isNaN(exitCode) ? -1 : exitCode,
+      exitCode,
     };
+  }
+
+  /**
+   * Returns null when the connection failed, which says nothing about the
+   * command. An exit file that was read but holds no number gives -1.
+   */
+  private async readExitCode(conn: Client, info: PersistentCommandInfo): Promise<number | null> {
+    const result = await this.runCommand(conn, `cat "${info.exitFile}" 2>/dev/null`, 10).catch(() => null);
+    if (!result || result.exitCode === -1) return null;
+    const exitCode = parseInt(result.stdout.trim(), 10);
+    return isNaN(exitCode) ? -1 : exitCode;
   }
 
   private parseNohupOutput(stdout: string): PersistentCommandInfo | null {
@@ -1013,10 +1043,32 @@ export class SSHConnectionManager {
     };
   }
 
+  /**
+   * Only reports a cancel once the stop command reached the host. Otherwise the
+   * command is still running, so the caller gets what it needs to reconnect.
+   */
+  private async stopPersistentCommand(
+    conn: Client,
+    info: PersistentCommandInfo,
+    stdout: string,
+  ): Promise<PersistentCommandResult> {
+    if (await this.cancelPersistentCommand(conn, info)) {
+      this.persistentOutput.delete(info);
+      return { stdout, stderr: "Operation cancelled", exitCode: EXIT_CANCELLED };
+    }
+    return {
+      stdout,
+      stderr: "SSH connection lost before the stop command reached the host. The process continues on the remote system under nohup.",
+      exitCode: EXIT_MONITORING_LOST,
+      persistentInfo: info,
+    };
+  }
+
+  /** Returns false when the stop command could not be delivered to the host. */
   private async cancelPersistentCommand(
     conn: Client,
     info: PersistentCommandInfo
-  ): Promise<void> {
+  ): Promise<boolean> {
     const scriptCleanup = info.scriptFile
       ? ` ${shellSingleQuote(info.scriptFile)}`
       : "";
@@ -1031,7 +1083,8 @@ export class SSHConnectionManager {
       'printf "%s" "130" > "$EXITFILE" 2>/dev/null || true',
       `rm -f "$LOGFILE" "$EXITFILE"${scriptCleanup}`,
     ].join("; ");
-    await this.runCommand(conn, cancelCommand, 10).catch(() => {});
+    const result = await this.runCommand(conn, cancelCommand, 10).catch(() => null);
+    return !!result && result.exitCode !== -1;
   }
 
   private runTailMonitor(
@@ -1093,7 +1146,7 @@ export class SSHConnectionManager {
       signal?.addEventListener("abort", onAbort, { once: true });
 
       const tailCommand = buildTailMonitorCommand(logFile, pid, outputOffset);
-      conn.exec(wrapRemoteCommand(tailCommand), (err, tailStream) => {
+      const onTailOpened = (err: Error | undefined, tailStream: ClientChannel) => {
         if (err) {
           conn.removeListener("error", onConnError);
           conn.removeListener("close", onConnClose);
@@ -1130,7 +1183,14 @@ export class SSHConnectionManager {
           conn.removeListener("close", onConnClose);
           finish(true);
         });
-      });
+      };
+
+      // ssh2 throws here instead of calling back once the socket has gone.
+      try {
+        conn.exec(wrapRemoteCommand(tailCommand), onTailOpened);
+      } catch {
+        finish(true, false, true);
+      }
     });
   }
 
@@ -1144,12 +1204,20 @@ export class SSHConnectionManager {
     info: PersistentCommandInfo,
     timeout?: number,
     onData?: (chunk: string, stream: "stdout" | "stderr") => void,
-    options?: RunCommandOptions
+    options?: RunCommandOptions & { signal?: AbortSignal | null }
   ): Promise<PersistentCommandResult> {
     const cmdTimeout = timeout || this.defaultCmdTimeout;
     const secretInput = activeSecretInput(options?.secretInput);
     const redact = (text: string) => secretInput ? secretInput.redact(text) : text;
     const previousOutput = this.persistentOutput.get(info) ?? { bytes: 0, text: "" };
+    // These checks report a dropped connection as an exit code, and an empty
+    // answer must not be mistaken for a process that has already ended.
+    const monitoringLost = (): PersistentCommandResult => ({
+      stdout: previousOutput.text,
+      stderr: "SSH connection lost again during monitoring.",
+      exitCode: EXIT_MONITORING_LOST,
+      persistentInfo: info,
+    });
 
     // Check if the log file still exists (it won't if the server rebooted and /tmp was cleared)
     const checkLog = await this.runCommand(
@@ -1157,6 +1225,7 @@ export class SSHConnectionManager {
       `test -f "${info.logFile}" && echo "exists" || echo "gone"`,
       10
     );
+    if (checkLog.exitCode !== 0) return monitoringLost();
     if (checkLog.stdout.trim() === "gone") {
       return {
         stdout: "",
@@ -1171,15 +1240,12 @@ export class SSHConnectionManager {
       `test -f "${info.exitFile}" && echo "exists" || echo "gone"`,
       10
     );
+    if (checkExit.exitCode !== 0) return monitoringLost();
 
     if (checkExit.stdout.trim() === "exists") {
       // Process finished — read exit code and remaining output
-      const exitResult = await this.runCommand(
-        conn,
-        `cat "${info.exitFile}" 2>/dev/null`,
-        10
-      );
-      const exitCode = parseInt(exitResult.stdout.trim(), 10);
+      const exitCode = await this.readExitCode(conn, info);
+      if (exitCode === null) return monitoringLost();
 
       const logResult = await this.runCommand(
         conn,
@@ -1200,7 +1266,7 @@ export class SSHConnectionManager {
       return {
         stdout: redact(logResult.stdout),
         stderr: "",
-        exitCode: isNaN(exitCode) ? -1 : exitCode,
+        exitCode,
       };
     }
 
@@ -1210,6 +1276,7 @@ export class SSHConnectionManager {
       `[ -d "/proc/${info.pid}" ] && echo "alive" || echo "dead"`,
       10
     );
+    if (pidCheck.exitCode !== 0) return monitoringLost();
 
     if (pidCheck.stdout.trim() === "alive") {
       // Re-attach tail monitor
@@ -1219,7 +1286,7 @@ export class SSHConnectionManager {
         info.pid,
         cmdTimeout,
         onData,
-        undefined,
+        options?.signal,
         previousOutput.bytes,
         secretInput,
       );
@@ -1228,6 +1295,10 @@ export class SSHConnectionManager {
         bytes: previousOutput.bytes + tailResult.bytesRead,
         text: combinedOutput,
       });
+
+      if (tailResult.cancelled) {
+        return this.stopPersistentCommand(conn, info, combinedOutput);
+      }
 
       if (tailResult.monitoringLost) {
         return {
@@ -1239,12 +1310,15 @@ export class SSHConnectionManager {
       }
 
       // Process finished — read exit code
-      const exitResult = await this.runCommand(
-        conn,
-        `cat "${info.exitFile}" 2>/dev/null`,
-        10
-      );
-      const exitCode = parseInt(exitResult.stdout.trim(), 10);
+      const exitCode = await this.readExitCode(conn, info);
+      if (exitCode === null) {
+        return {
+          stdout: combinedOutput,
+          stderr: "SSH connection lost again during monitoring.",
+          exitCode: EXIT_MONITORING_LOST,
+          persistentInfo: info,
+        };
+      }
 
       // Cleanup
       this.runCommand(
@@ -1256,7 +1330,7 @@ export class SSHConnectionManager {
       return {
         stdout: combinedOutput,
         stderr: "",
-        exitCode: isNaN(exitCode) ? -1 : exitCode,
+        exitCode,
       };
     }
 

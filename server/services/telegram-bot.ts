@@ -441,7 +441,8 @@ async function ensureCommandToken(
     userId: actorUserId,
     name: buildTokenName(notificationId, currentConfig.chatId),
     tokenHash,
-    readOnly: 0,
+    // Only what the bot's commands call.
+    permissions: JSON.stringify(["updates:check", "updates:apply"]),
     expiresAt: null,
   }).returning({ id: apiTokens.id }).get();
 

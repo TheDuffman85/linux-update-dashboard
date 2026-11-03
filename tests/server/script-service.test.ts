@@ -17,6 +17,7 @@ import {
   exportCustomPackageManagerBundle,
   formatShellCommand,
   getBuiltinScripts,
+  getScriptById,
   getSystemOverrides,
   importCustomPackageManagerBundle,
   listScriptUsages,
@@ -27,6 +28,8 @@ import {
   renderCommandTemplate,
   resolveRuntimeSteps,
   setSystemOverrides,
+  NO_UPGRADE_SCRIPT,
+  resolveScript,
   updateScript,
   updateCustomPackageManager,
 } from "../../server/services/script-service";
@@ -307,7 +310,7 @@ describe("script service", () => {
       type: "system",
       operation: "detect",
       steps: [{ label: "Detect", command: "true" }],
-    })).toThrow(/system_info or reboot/);
+    })).toThrow(/system_info, reboot, pre_upgrade, or post_upgrade/);
 
     expect(() => createScript({
       name: "Too many steps",
@@ -1281,5 +1284,85 @@ describe("script service", () => {
     deleteCustomPackageManager("brewlinux");
 
     expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(false);
+  });
+
+  describe("upgrade hook selection", () => {
+    const hookInput = (name: string, operation: "pre_upgrade" | "post_upgrade" = "pre_upgrade") => ({
+      name,
+      type: "system" as const,
+      operation,
+      pkgManager: null,
+      steps: [{ label: "Run", command: "{{sudo:systemctl stop pacemaker}}" }],
+    });
+    const addSystem = (name: string) => getDb().insert(systems).values({
+      name,
+      hostname: `${name}.local`,
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+
+    test("does not run a script that is neither assigned nor the default", () => {
+      createScript(hookInput("Stop cluster"));
+      const systemId = addSystem("node");
+
+      expect(resolveScript(systemId, "pre_upgrade")).toBeNull();
+      expect(resolveRuntimeSteps({ systemId, operation: "pre_upgrade" })).toEqual([]);
+    });
+
+    test("runs an assigned script and protects it from deletion", () => {
+      const script = createScript(hookInput("Stop cluster"));
+      const systemId = addSystem("node");
+
+      setSystemOverrides(systemId, { "system/pre_upgrade": script.id });
+
+      expect(resolveScript(systemId, "pre_upgrade")?.id).toBe(script.id);
+      expect(resolveRuntimeSteps({ systemId, operation: "pre_upgrade" })[0]?.command).toContain("sudo -S");
+      expect(() => deleteScript(script.id)).toThrow(/assigned/);
+    });
+
+    test("a default applies to every system except those that chose otherwise", () => {
+      const fallback = createScript({ ...hookInput("Default stop"), isDefault: true });
+      const specific = createScript(hookInput("Special stop"));
+      const usesDefault = addSystem("uses-default");
+      const optedOut = addSystem("opted-out");
+      const usesSpecific = addSystem("uses-specific");
+      setSystemOverrides(optedOut, { "system/pre_upgrade": NO_UPGRADE_SCRIPT });
+      setSystemOverrides(usesSpecific, { "system/pre_upgrade": specific.id });
+
+      expect(resolveScript(usesDefault, "pre_upgrade")?.id).toBe(fallback.id);
+      expect(resolveScript(optedOut, "pre_upgrade")).toBeNull();
+      expect(resolveRuntimeSteps({ systemId: optedOut, operation: "pre_upgrade" })).toEqual([]);
+      expect(resolveScript(usesSpecific, "pre_upgrade")?.id).toBe(specific.id);
+
+      expect(listScriptUsages(fallback.id).map((usage) => usage.systemId)).toEqual([usesDefault]);
+      expect(getSystemOverrides(optedOut)).toEqual({ "system/pre_upgrade": NO_UPGRADE_SCRIPT });
+    });
+
+    test("a pre-upgrade default does not apply to the post-upgrade operation", () => {
+      createScript({ ...hookInput("Default stop"), isDefault: true });
+      const systemId = addSystem("node");
+
+      expect(resolveScript(systemId, "post_upgrade")).toBeNull();
+    });
+
+    test("a new default replaces the previous one", () => {
+      const first = createScript({ ...hookInput("First"), isDefault: true });
+      const second = createScript({ ...hookInput("Second"), isDefault: true });
+      const systemId = addSystem("node");
+
+      expect(resolveScript(systemId, "pre_upgrade")?.id).toBe(second.id);
+      expect(getScriptById(first.id)?.isDefault).toBe(false);
+    });
+
+    test("opting out is only possible for upgrade scripts", () => {
+      const systemId = addSystem("node");
+
+      expect(() => setSystemOverrides(systemId, { "system/reboot": NO_UPGRADE_SCRIPT })).toThrow(/cannot be set/);
+      expect(() => setSystemOverrides(systemId, { "apt/upgrade_all": NO_UPGRADE_SCRIPT })).toThrow(/cannot be set/);
+    });
+
+    test("package manager scripts cannot use the upgrade script operations", () => {
+      expect(() => createScript({ ...hookInput("Hook"), type: "package_manager", pkgManager: "apt" }))
+        .toThrow(/cannot use system operations/);
+    });
   });
 });

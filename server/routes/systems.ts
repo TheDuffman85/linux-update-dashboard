@@ -20,6 +20,7 @@ import {
   saveRepositorySource,
 } from "../services/repository-source-service";
 import { sanitizeOutput } from "../utils/sanitize";
+import type { ApiTokenPermission } from "../../shared/api-token-permissions";
 import { resolveSystemCredential } from "../services/credential-service";
 import { getActivityHistoryLimit } from "../services/settings-service";
 import {
@@ -46,6 +47,9 @@ import { validateSecretRefCredentials } from "../services/package-manager-secret
 type SystemsEnv = {
   Variables: {
     apiToken?: boolean;
+    user?: { username?: string };
+    apiTokenId?: number;
+    apiTokenPermissions?: ApiTokenPermission[];
   };
 };
 
@@ -65,6 +69,36 @@ function parseId(raw: string): number | null {
 
 function isApiTokenRequest(c: Context<SystemsEnv>): boolean {
   return c.get("apiToken") === true;
+}
+
+// These change what the dashboard runs on a host, which goes beyond adding or
+// editing its connection, so tokens with those permissions still cannot set them.
+const FIELDS_CLOSED_TO_API_TOKENS = [
+  "scriptOverrides",
+  "pkgManagerConfigs",
+  "repositorySourceEditingEnabled",
+];
+
+function getApiTokenFieldDenial(
+  c: Context<SystemsEnv>,
+  body: Record<string, unknown>,
+): string | null {
+  if (!isApiTokenRequest(c)) return null;
+  const field = FIELDS_CLOSED_TO_API_TOKENS.find((key) => body[key] !== undefined);
+  return field ? `API tokens cannot set ${field}` : null;
+}
+
+function logApiTokenSystemChange(
+  c: Context<SystemsEnv>,
+  action: string,
+  systemId: number,
+): void {
+  if (!isApiTokenRequest(c)) return;
+  logger.info(`API token: ${action}`, {
+    actor: c.get("user")?.username,
+    tokenId: c.get("apiTokenId"),
+    systemId,
+  });
 }
 
 const VALID_HOSTNAME = /^[a-zA-Z0-9]([a-zA-Z0-9._:-]*[a-zA-Z0-9])?$/;
@@ -665,6 +699,10 @@ systems.get("/:id", (c) => {
       activeOperation: updateService.getActiveOperation(id) ?? upgradeBatchService.getQueuedOrRunningOperation(id),
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
       autoremoveSupport: updateService.getAutoremoveSupport(id),
+      upgradeScripts: {
+        pre: !!scriptService.resolveScript(id, "pre_upgrade"),
+        post: !!scriptService.resolveScript(id, "post_upgrade"),
+      },
     },
     commandReference: buildCommandReference({
       id,
@@ -846,13 +884,12 @@ systems.delete("/:id/hidden-updates/:hiddenUpdateId", (c) => {
 
 // Create system
 systems.post("/", async (c) => {
-  if (isApiTokenRequest(c)) {
-    return c.json({ error: "API tokens cannot configure SSH connections" }, 403);
-  }
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
+  const tokenFieldDenial = getApiTokenFieldDenial(c, body);
+  if (tokenFieldDenial) return c.json({ error: tokenFieldDenial }, 403);
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const sourceIdCandidate =
@@ -943,6 +980,8 @@ systems.post("/", async (c) => {
     if (response) return response;
     throw error;
   }
+
+  logApiTokenSystemChange(c, "system created", systemId);
 
   // Trigger initial check in background
   await notificationRuntime.syncSystemState(systemId);
@@ -1045,15 +1084,14 @@ systems.put("/:id/upgrade-all-exclusion", async (c) => {
 
 // Update system
 systems.put("/:id", async (c) => {
-  if (isApiTokenRequest(c)) {
-    return c.json({ error: "API tokens cannot configure SSH connections" }, 403);
-  }
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
   }
+  const tokenFieldDenial = getApiTokenFieldDenial(c, body);
+  if (tokenFieldDenial) return c.json({ error: tokenFieldDenial }, 403);
   const validationError = validateSystemInput(body);
   if (validationError) return c.json({ error: validationError }, 400);
   const parsedConfig = parseConnectionConfig(body, id);
@@ -1135,6 +1173,8 @@ systems.put("/:id", async (c) => {
     throw error;
   }
 
+  logApiTokenSystemChange(c, "system updated", id);
+
   hiddenUpdateService.reconcileCachedKeptBackAutoHide(id);
 
   await notificationRuntime.syncSystemState(id);
@@ -1196,6 +1236,14 @@ systems.post("/:id/dismiss-needs-reboot", async (c) => {
   return c.json({ status: "ok" });
 });
 
+systems.post("/:id/dismiss-post-upgrade-pending", (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (!systemService.getSystem(id)) return c.json({ error: "System not found" }, 404);
+  systemService.setPostUpgradePending(id, false);
+  return c.json({ status: "ok" });
+});
+
 systems.post("/:id/dismiss-root-user-banner", (c) => {
   const id = parseId(c.req.param("id"));
   if (!id) return c.json({ error: "Invalid system ID" }, 400);
@@ -1237,15 +1285,13 @@ systems.delete("/:id", async (c) => {
     if (response) return response;
     throw error;
   }
+  logApiTokenSystemChange(c, "system deleted", id);
   await notificationRuntime.syncSystemState(id);
   return c.json({ status: "ok" });
 });
 
 // Test connection with provided credentials
 systems.post("/test-connection", async (c) => {
-  if (isApiTokenRequest(c)) {
-    return c.json({ error: "API tokens cannot configure SSH connections" }, 403);
-  }
   const body = asObject(await c.req.json().catch(() => null));
   if (!body) {
     return c.json({ error: "Invalid request body" }, 400);
@@ -1288,6 +1334,14 @@ systems.post("/test-connection", async (c) => {
   const approvedHostKeys = parseApprovedHostKeys(body.approvedHostKeys);
   if (!approvedHostKeys) {
     return c.json({ error: "approvedHostKeys must be an array of host-key approvals" }, 400);
+  }
+  // A token that may only add systems must not touch the trust of existing ones.
+  if (
+    isApiTokenRequest(c) &&
+    !c.get("apiTokenPermissions")?.includes("systems:edit") &&
+    (systemId || approvedHostKeys.some((approval) => approval.systemId))
+  ) {
+    return c.json({ error: "This token needs the systems:edit permission for existing systems" }, 403);
   }
 
   const system: Record<string, unknown> = {

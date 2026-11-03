@@ -2,6 +2,8 @@ import { createMiddleware } from "hono/factory";
 import { eq, count } from "drizzle-orm";
 import { getSession, refreshSessionIfNeeded, type SessionData } from "../auth/session";
 import { validateToken } from "../auth/api-token";
+import { getTokenWriteDenial } from "../auth/api-token-access";
+import type { ApiTokenPermission } from "../../shared/api-token-permissions";
 import { refreshSessionSockets } from "../services/session-sockets";
 import { getDb } from "../db";
 import { users } from "../db/schema";
@@ -12,7 +14,7 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 // Management areas closed to API tokens and read-only users. Read-only users
 // may still read general settings because the UI needs them (language, time format).
-const MANAGEMENT_PREFIXES = [
+export const MANAGEMENT_PREFIXES = [
   "/api/auth", "/api/settings", "/api/tokens",
   "/api/passkeys", "/api/notifications", "/api/schedules",
   "/api/scripts", "/api/credentials", "/api/users", "/api/account",
@@ -56,6 +58,8 @@ type AuthEnv = {
   Variables: {
     user: SessionData;
     apiToken: boolean;
+    apiTokenId: number;
+    apiTokenPermissions: ApiTokenPermission[];
   };
 };
 
@@ -122,9 +126,11 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
         return c.json({ error: "API tokens cannot access management endpoints" }, 403);
       }
 
-      // Enforce read-only permission
-      if (tokenData.readOnly && !SAFE_METHODS.has(c.req.method)) {
-        return c.json({ error: "This token is read-only" }, 403);
+      if (!SAFE_METHODS.has(c.req.method)) {
+        const denial = getTokenWriteDenial(c.req.method, path, tokenData.permissions);
+        if (denial) {
+          return c.json({ error: denial }, 403);
+        }
       }
 
       c.set("user", {
@@ -133,6 +139,8 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
         role: tokenData.role,
       });
       c.set("apiToken", true);
+      c.set("apiTokenId", tokenData.id);
+      c.set("apiTokenPermissions", tokenData.permissions);
       return next();
     }
 

@@ -164,7 +164,7 @@ describe("telegram notification routes", () => {
       userId: 1,
       name: "telegram:test",
       tokenHash: "token-hash",
-      readOnly: 0,
+      permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]',
       expiresAt: null,
     }).returning({ id: apiTokens.id }).get();
 
@@ -243,7 +243,7 @@ describe("telegram notification routes", () => {
       userId: 1,
       name: "telegram:test",
       tokenHash: "old-token-hash",
-      readOnly: 0,
+      permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]',
       expiresAt: null,
     }).returning({ id: apiTokens.id }).get();
 
@@ -300,7 +300,7 @@ describe("telegram notification routes", () => {
       userId: 1,
       name: "telegram:expired",
       tokenHash: "expired-token-hash",
-      readOnly: 0,
+      permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]',
       expiresAt: "2000-01-01 00:00:00",
     }).returning({ id: apiTokens.id }).get();
 

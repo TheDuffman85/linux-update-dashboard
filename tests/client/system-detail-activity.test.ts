@@ -21,6 +21,7 @@ import {
   toggleSelectedPackageName,
   resolveCurrentActivitySession,
   shouldShowAutoremoveAction,
+  getLatestOperationNoticeEntry,
   getOperationNoticeState,
   OperationNoticeBanner,
   OsLifecycleWarningBanner,
@@ -237,6 +238,30 @@ describe("OperationNoticeBanner", () => {
     expect(html).toContain("mb-6");
     expect(html).toContain("bg-red-50");
     expect(html).not.toContain("mx-4");
+  });
+
+  test("a successful upgrade script does not hide the failure of the upgrade before it", () => {
+    const entry = { pkgManager: "system", startedAt: "2026-01-01 00:00:00" };
+    const failedUpgrade = createHistoryEntry({ ...entry, id: 2, action: "upgrade_all", status: "failed", error: "dpkg error" });
+    const postScript = createHistoryEntry({ ...entry, id: 3, action: "post_upgrade", status: "success" });
+
+    expect(getLatestOperationNoticeEntry([postScript, failedUpgrade])?.id).toBe(2);
+
+    const failedPostScript = createHistoryEntry({ ...entry, id: 4, action: "post_upgrade", status: "failed", error: "exit 1" });
+    expect(getLatestOperationNoticeEntry([failedPostScript, failedUpgrade])?.id).toBe(4);
+    expect(getOperationNoticeState(failedPostScript, 0)?.title).toBe("Post-upgrade script failed");
+
+    // Running the script again by hand clears its own earlier failure.
+    const fixedPostScript = createHistoryEntry({ ...entry, id: 5, action: "post_upgrade", status: "success" });
+    const finishedUpgrade = createHistoryEntry({ ...entry, id: 1, action: "upgrade_all", status: "success" });
+    const notice = getLatestOperationNoticeEntry([fixedPostScript, failedPostScript, finishedUpgrade]);
+    expect(notice?.id).toBe(1);
+    expect(getOperationNoticeState(notice, 0)).toBeNull();
+  });
+
+  test("names upgrade scripts in the activity list", () => {
+    expect(getActivityTitle("pre_upgrade", [])).toBe("Ran pre-upgrade script");
+    expect(getActivityTitle("post_upgrade", [])).toBe("Ran post-upgrade script");
   });
 
   test("renders failed upgrade activity as the same page-level banner", () => {

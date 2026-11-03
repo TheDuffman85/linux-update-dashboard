@@ -165,6 +165,24 @@ const OIDC_END_SESSION_DEFAULT_MIGRATION_KEY =
   "oidc_end_session_default_migrated";
 const MAX_SCHEDULE_NAME_LENGTH = 100;
 
+// Replaces the read-only/read-write choice of API tokens with permission lists.
+// The list is what read/write tokens could do at the time and must stay as it is.
+function migrateApiTokenAccessToPermissions(sqlite: BetterSqlite3.Database): void {
+  const columns = sqlite.prepare("PRAGMA table_info(api_tokens)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "read_only")) return;
+
+  sqlite.transaction(() => {
+    sqlite
+      .prepare(
+        `UPDATE api_tokens
+         SET permissions = CASE WHEN read_only = 0 THEN ? ELSE '[]' END
+         WHERE permissions IS NULL OR (read_only = 0 AND permissions = '[]')`,
+      )
+      .run(JSON.stringify(["updates:check", "updates:apply", "systems:organize", "systems:remove"]));
+    sqlite.exec("ALTER TABLE api_tokens DROP COLUMN read_only");
+  })();
+}
+
 export function initDatabase(
   dbPath: string,
 ): BetterSQLite3Database<typeof schema> {
@@ -497,7 +515,7 @@ export function initDatabase(
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT,
     token_hash TEXT NOT NULL UNIQUE,
-    read_only INTEGER NOT NULL DEFAULT 1,
+    permissions TEXT NOT NULL DEFAULT '[]',
     role_source TEXT NOT NULL DEFAULT 'local',
     expires_at TEXT,
     last_used_at TEXT,
@@ -606,6 +624,7 @@ export function initDatabase(
     sql`ALTER TABLE users ADD COLUMN oidc_session_version INTEGER NOT NULL DEFAULT 0`,
     sql`ALTER TABLE users ADD COLUMN oidc_auto_link_blocked INTEGER NOT NULL DEFAULT 0`,
     sql`ALTER TABLE api_tokens ADD COLUMN role_source TEXT NOT NULL DEFAULT 'local'`,
+    sql`ALTER TABLE api_tokens ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'`,
   ]) {
     try {
       _db.run(column);
@@ -613,6 +632,7 @@ export function initDatabase(
       // Column already exists
     }
   }
+  migrateApiTokenAccessToPermissions(_sqlite);
   _db.run(sql`
     CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity_idx
     ON users(oidc_issuer, oidc_subject)
@@ -1223,21 +1243,43 @@ export function initDatabase(
     // Column already exists
   }
 
+  // Set while a post-upgrade script still has to run, so one that never ran
+  // stays visible across restarts.
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN post_upgrade_pending_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Lets a batch reattach to a pre- or post-upgrade script after a restart.
+  try {
+    _db.run(sql`ALTER TABLE upgrade_batch_items ADD COLUMN hook_progress TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Keeps a failed script holding later priorities across a restart.
+  try {
+    _db.run(sql`ALTER TABLE upgrade_batch_items ADD COLUMN hook_failed INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
   // Cleanup: if the dashboard restarted mid-operation, SSH-safe maintenance is
   // expected to continue remotely and should show a warning instead of failure.
   _db.run(sql`UPDATE update_history
     SET status = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove') THEN 'warning'
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove', 'pre_upgrade', 'post_upgrade') THEN 'warning'
       ELSE 'failed'
     END,
     completed_at = datetime('now'),
     output = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove')
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove', 'pre_upgrade', 'post_upgrade')
         THEN 'Server restarted while operation was in progress'
       ELSE output
     END,
     error = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove')
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove', 'pre_upgrade', 'post_upgrade')
         THEN NULL
       ELSE 'Server restarted while operation was in progress'
     END

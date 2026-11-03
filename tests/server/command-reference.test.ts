@@ -29,6 +29,45 @@ function createSystem(overrides?: Partial<{
 }
 
 describe("buildCommandReference", () => {
+  test("includes assigned upgrade hooks so the sudoers file covers them", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "ludash-command-reference-hooks-"));
+    initEncryptor(randomBytes(32).toString("base64"));
+    initDatabase(join(tempDir, "dashboard.db"));
+    try {
+      const inserted = getDb().insert(systems).values({
+        name: "Node",
+        hostname: "node.local",
+        username: "updater",
+        pkgManager: "apt",
+        detectedPkgManagers: JSON.stringify(["apt"]),
+      }).returning({ id: systems.id }).get();
+      for (const [operation, command] of [
+        ["pre_upgrade", "{{sudo:systemctl stop pacemaker}}"],
+        ["post_upgrade", "{{sudo:systemctl start pacemaker}}"],
+      ] as const) {
+        const script = createScript({
+          name: operation,
+          type: "system",
+          operation,
+          pkgManager: null,
+          steps: [{ label: "Run", command }],
+        });
+        setSystemOverrides(inserted.id, { [buildOperationKey(operation, null)]: script.id });
+      }
+
+      const reference = buildCommandReference(createSystem({ id: inserted.id }));
+
+      expect(reference.exact.find((entry) => entry.category === "pre_upgrade")?.id).toBe("pre_upgrade:0");
+      expect(reference.exact.find((entry) => entry.category === "post_upgrade")?.id).toBe("post_upgrade:0");
+      const sudoers = reference.sudoers.map((entry) => entry.command);
+      expect(sudoers).toContain("systemctl stop pacemaker");
+      expect(sudoers).toContain("systemctl start pacemaker");
+    } finally {
+      closeDatabase();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("reuses detection, system-info, parser, and reboot builders for exact commands", () => {
     const reference = buildCommandReference(createSystem());
 

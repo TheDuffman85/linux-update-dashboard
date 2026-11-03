@@ -524,6 +524,38 @@ db.prepare(`
   recent,
 });
 
+const insertUpgradeScript = db.prepare(`
+  INSERT INTO custom_scripts (
+    id, name, description, type, operation, pkg_manager, is_default, steps,
+    parser_config, system_info_config, source_script_id, created_at, updated_at
+  ) VALUES (
+    @id, @name, @description, 'system', @operation, NULL, 1, @steps,
+    NULL, NULL, NULL, @older, @recent
+  )
+`);
+insertUpgradeScript.run({
+  id: 2,
+  name: "Stop cluster manager",
+  description: "Stops the cluster manager before patching.",
+  operation: "pre_upgrade",
+  steps: JSON.stringify([
+    { label: "Stop cluster manager", command: "{{sudo:systemctl stop pacemaker}}" },
+  ]),
+  older,
+  recent,
+});
+insertUpgradeScript.run({
+  id: 3,
+  name: "Start cluster manager",
+  description: "Starts the cluster manager again after patching, even if the upgrade failed.",
+  operation: "post_upgrade",
+  steps: JSON.stringify([
+    { label: "Start cluster manager", command: "{{sudo:systemctl start pacemaker}}" },
+  ]),
+  older,
+  recent,
+});
+
 db.prepare(`
   INSERT INTO system_script_overrides (system_id, operation_key, script_id, created_at, updated_at)
   VALUES (1, 'apt/check_updates', 'custom:1', @older, @recent)

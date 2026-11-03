@@ -37,11 +37,11 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
-- **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
+- **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, assign overrides per system, and run pre- and post-upgrade scripts around upgrades on all systems or selected ones.
 - **Scheduling:** cron-based refresh, update, autoremove, reboot (optionally only when required), and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
-- **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, local users with admin or read-only roles, and API tokens for external integrations.
+- **Authentication:** password login with optional TOTP, passkeys/WebAuthn, OpenID Connect SSO, local users with admin or read-only roles, and API tokens with per-token permissions for external integrations.
 - **Localized UI:** Arabic, English, German, French, Hindi, Japanese, Portuguese, Spanish, Russian, and Chinese with browser-language detection.
 - **Branding:** replace the application name, light and dark mode logos, and colors shown in the sidebar, browser tab, sign-in page, and authenticator apps from **Settings > Branding**. Accent color and neutral tone can be set separately for light and dark mode, with a live preview and a low-contrast warning.
 - **Operator-friendly UI:** light, dark, or system-following theme, activity history, real-time command output, dashboard status summaries with `is:` search filters, quick links from dashboard cards to a system's updates, packages, and activity, [links to systems by hostname](#linking-to-systems), version/build info, and Docker-ready production packaging.
@@ -74,6 +74,9 @@ A self-hosted web app for managing Linux package updates across multiple servers
 </p>
 <p>
   <a href="screenshots/9.png"><img src="screenshots/9.png" alt="Settings" width="48%"></a>
+  <a href="screenshots/15.png"><img src="screenshots/15.png" alt="API tokens with permissions" width="48%"></a>
+</p>
+<p>
   <a href="screenshots/14.png"><img src="screenshots/14.png" alt="Dashboard groups with upgrade priorities and status badges" width="48%"></a>
 </p>
 
@@ -291,9 +294,13 @@ To end dashboard sessions when a user signs out at the identity provider, enable
 
 With **Sign in with SSO automatically** enabled (or `LUDASH_OIDC_AUTO_LOGIN=true`), the login page redirects straight to the identity provider. It only applies while OIDC is configured and password login is disabled; otherwise the setting stays inactive, Settings shows a notice, and the server logs why. After a logout, or when an SSO sign-in was denied, the login page is shown instead of redirecting, so users are not signed straight back in. Open `{LUDASH_BASE_URL}/login?local=1` to reach the login page anyway, for example to sign in with a passkey.
 
-Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, or scripts. In Settings they only see **Profile**. API tokens owned by a read-only user are always read-only.
+Read-only users can view the dashboard, systems, available updates, and activity history, but cannot run checks, upgrades, or reboots, change systems, or open credentials, schedules, notifications, or scripts. In Settings they only see **Profile**. API tokens owned by a read-only user can only read, whatever their permissions.
 
-API tokens are for external integrations such as [gethomepage](https://gethomepage.dev/) widgets, scripts, monitoring, and Telegram command automation. Tokens can be read-only or read/write, expire after 30/60/90/365 days or never, are stored as SHA-256 hashes, are limited to 25 per user, and cannot access management endpoints or configure SSH connections.
+API tokens are for external integrations such as [gethomepage](https://gethomepage.dev/) widgets, scripts, monitoring, and Telegram command automation. Every token can read and gets write access only from the permissions you choose: checking for updates, applying updates, organizing systems, removing systems, adding systems, and editing systems. Tokens expire after 30/60/90/365 days or never, are stored as SHA-256 hashes, are limited to 25 per user, and cannot access management endpoints.
+
+Existing tokens are migrated automatically: read-only tokens keep read access only, and read/write tokens get every permission except adding and editing systems. After this migration, the database no longer works with older versions of the app, so back it up before upgrading if you might roll back.
+
+A token that can add or edit systems chooses which host a stored credential connects to, so stored passwords are sent to that host; protect it like an administrator password. See [Token permissions](API.md#token-permissions) for the details and how to add a system through the API.
 
 ```bash
 curl -H "Authorization: Bearer ludash_..." http://localhost:3001/api/dashboard/stats
@@ -395,6 +402,7 @@ Each group, including **Ungrouped**, has an **Upgrade priority** from `0` to `99
 - Lower priority numbers run first.
 - Groups with the same priority run in parallel.
 - The next priority starts only after all systems at the current priority finish.
+- A [pre- or post-upgrade script](#pre--and-post-upgrade-scripts) that does not finish cancels the later priorities in that group, so a rolling upgrade does not take down another node.
 - Each system also has an **Upgrade priority** from `0` to `99` within its current group (including **Ungrouped**), with a default of `1`.
 - Lower-priority-number systems run first within that group, while systems with the same priority run in parallel.
 - System priority is scoped to its group, so groups sharing a priority progress through their own system priorities independently.
@@ -454,7 +462,7 @@ Telegram notification setup:
 
 Bindings use single-use deep links that expire after 10 minutes and show `unbound`, `pending`, or `bound` status. Changing the bot token clears the binding.
 
-Optional commands are private-chat-only, disabled by default, scoped to the channel's systems, and backed by an auto-generated write-capable API token. The token is revoked when commands are disabled, the chat is unlinked, the channel is deleted, or the bot token changes. Supported commands are `/help`, `/version`, `/menu`, `/status`, `/refresh <system-id|all>`, `/packages <system-id>`, `/upgrade <system-id|all>`, `/fullupgrade <system-id|all>`, and `/upgradepkg <system-id> <package>`. Mutating commands require confirmation buttons that expire after 5 minutes.
+Optional commands are private-chat-only, disabled by default, scoped to the channel's systems, and backed by an auto-generated API token that can check for and apply updates. The token is revoked when commands are disabled, the chat is unlinked, the channel is deleted, or the bot token changes. Supported commands are `/help`, `/version`, `/menu`, `/status`, `/refresh <system-id|all>`, `/packages <system-id>`, `/upgrade <system-id|all>`, `/fullupgrade <system-id|all>`, and `/upgradepkg <system-id> <package>`. Mutating commands require confirmation buttons that expire after 5 minutes.
 
 ### Webhooks
 
@@ -466,7 +474,7 @@ Webhook delivery defaults to a 10-second timeout, 2 retries, and a 30-second ret
 
 ## Script Customization and Sudoers
 
-The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, and reboots.
+The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, reboots, and pre- and post-upgrade scripts.
 
 Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
 
@@ -475,6 +483,7 @@ Importable custom package-manager bundles live in [`examples/`](examples/), incl
 - Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`.
 - Custom package managers can define display labels, parser regexes, optional config entries, and import/export bundles.
 - Config entries can be marked **secret** for tokens and passwords. See [Secret config entries](#secret-config-entries).
+- Pre- and post-upgrade scripts can run commands around an upgrade. See [Pre- and post-upgrade scripts](#pre--and-post-upgrade-scripts).
 - Used scripts and package managers are protected from accidental deletion.
 
 Command placeholders include `{{package}}`, `{{packages}}`, `{{quotedPackage}}`, `{{quotedPackages}}`, `{{manager}}`, `{{config.someKey}}`, and `{{sudo:COMMAND}}`. Custom parser regexes should use named capture groups such as `packageName`, `newVersion`, `currentVersion`, `architecture`, and `repository`.
@@ -491,6 +500,33 @@ sudo visudo -cf /etc/sudoers.d/updater-updater
 ```
 
 Package maintenance remains privileged because package scripts run as root. The goal is to limit the dashboard account to the required maintenance commands.
+
+### Pre- and post-upgrade scripts
+
+Use these to prepare a system for patching and restore it afterwards, for example to stop a cluster manager and start it again. Create a custom script with the **Pre-upgrade** or **Post-upgrade** operation on the **Scripts** page. A script only runs where you turn it on:
+
+- **On every system:** star it on the **Scripts** page to make it the default. It then runs on all systems that have no choice of their own, including ones you add later.
+- **On one system:** under **Scripts** in the system form, pick the script. **Standard** follows the default, and **None** opts the system out, so it stays out even if the default changes.
+
+Each script runs once per upgrade, however many package managers the system has. They wrap Upgrade All, full upgrades, and selected-package upgrades from every source, including schedules, MQTT, Telegram, and the API. Autoremove, repairs, and reboots do not trigger them.
+
+| Situation | Upgrade | Post-upgrade script |
+|---|---|---|
+| Pre-upgrade script exits non-zero | Skipped | Does not run, so undo any partial work in the pre-upgrade script |
+| Pre-upgrade script is cancelled or interrupted | Skipped | Does not run; the system page offers to run it |
+| Upgrade succeeds, fails, or is cancelled | Ran | Runs |
+| SSH drops or the host reboots during the upgrade | Reconnects | Runs after reconnecting |
+| The host does not come back within 5 minutes | Unknown | Does not run, because the upgrade may still be running; the system page offers to run it |
+| The dashboard restarts during an **Upgrade All Systems** run | Resumes | Runs when the upgrade finishes |
+| The dashboard restarts during a script in an **Upgrade All Systems** run | Not repeated | Attaches to the running step and runs the remaining steps |
+| The dashboard restarts during any other upgrade | Continues on the host | Does not run; the system page offers to run it |
+| You cancel while the dashboard is reconnecting and the host cannot be reached | Unknown | Does not run, because the upgrade may still be running; the system page offers to run it |
+
+- **Failures:** a failed pre- or post-upgrade script fails the operation. In an **Upgrade All Systems** run, it also cancels the later priorities in the same dashboard group. Cancelling a pre-upgrade script does the same once it has started on the host, or when a post-upgrade script is already pending, because the node may still be out of service. Update schedules are different: they upgrade systems one at a time and continue with the next system. A post-upgrade script that did not finish leaves a warning on the system page, with buttons to run it or dismiss the warning. Before you run it, check that no upgrade is still running on the host.
+- **Steps:** each step runs as its own command with its own shell state, and a failed step stops the script.
+- **Sudo:** when the system has a dashboard sudo password, use one `{{sudo:COMMAND}}` per step, because the password is delivered once per step. Scripts that apply to the system, including defaults, are included in the **Sudoers setup** output.
+- **Environment:** `LUDASH_OPERATION` holds `upgrade_all`, `full_upgrade_all`, `upgrade_package`, or `manual`. Post-upgrade scripts also get `LUDASH_UPGRADE_RESULT` with `success`, `failed`, `cancelled`, or `unknown`. `sudo` usually does not pass these on, so read them in the script itself.
+- **Write them to be safe to repeat:** running a pending script from the system page repeats it, and a step that was just starting when the dashboard restarted can run again.
 
 ### Secret config entries
 
@@ -546,6 +582,7 @@ Upgrade operations and autoremove run through detached remote scripts with `nohu
 | Full/dist upgrade | Yes |
 | Upgrade selected packages | Yes |
 | Autoremove unused packages/runtimes | Yes |
+| Pre- and post-upgrade scripts | Yes |
 | Check for updates | No, read-only and retryable |
 | Reboot | No, fire-and-forget |
 
@@ -593,7 +630,7 @@ If a login banner is sent by the SSH server, Test Connection shows it below the 
 - State-changing API requests require a per-session CSRF token header.
 - API inputs use strict type, format, and range validation.
 - Auth endpoints are rate-limited: setup 3/min, login and WebAuthn verify 5/min, and failed bearer token attempts 20/min per IP.
-- API tokens are hash-only, can be read-only, skip CSRF as stateless bearer requests, and are blocked from management endpoints and SSH connection configuration.
+- API tokens are hash-only, limited to chosen permissions, skip CSRF as stateless bearer requests, and are blocked from management endpoints. They can only configure SSH connections with the opt-in add or edit permission.
 - Password login uses timing-safe dummy-hash comparisons to reduce username enumeration risk.
 - OIDC client secrets are encrypted at rest and can use private/self-signed CAs through `NODE_EXTRA_CA_CERTS`.
 - Per-system mutexes and a semaphore-based SSH connection limit prevent conflicting or runaway SSH operations.
@@ -617,7 +654,7 @@ If a login banner is sent by the SSH server, Test Connection shows it below the 
 ├── screenshots/              # README screenshots and capture scripts
 ├── scripts/                  # Build-time helper scripts
 ├── server/                   # Hono backend, auth, db, routes, services, ssh
-├── shared/                   # Code used by both client and server (branding theme)
+├── shared/                   # Code used by both client and server (branding theme, API token permissions)
 ├── tests/                    # Vitest client, server, shared, and integration tests
 ├── run.sh                    # Local dev/production/test runner
 ├── reset-dev-branch.sh       # Reset dev branch to main

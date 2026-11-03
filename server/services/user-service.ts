@@ -378,7 +378,7 @@ export function unlinkOidcIdentity(userId: number): boolean {
     if (!user || wouldUnlinkRemoveLastAdmin(user)) return false;
     const ssoTokens = and(eq(apiTokens.userId, userId), eq(apiTokens.roleSource, "oidc"));
     if (normalizeLinkedSsoRole(user.oidcRole) !== "admin") {
-      tx.update(apiTokens).set({ readOnly: 1 }).where(ssoTokens).run();
+      tx.update(apiTokens).set({ permissions: "[]" }).where(ssoTokens).run();
     }
     tx.update(apiTokens).set({ roleSource: "local" }).where(ssoTokens).run();
     tx.update(users)

@@ -623,7 +623,7 @@ describe("schedules routes and migration", () => {
       userId: user.id,
       name: "writer",
       tokenHash: await hashToken(token),
-      readOnly: 0,
+      permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]',
     }).run();
 
     const protectedApp = new Hono();

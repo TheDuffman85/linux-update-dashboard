@@ -185,6 +185,27 @@ describe("Settings page", () => {
     expect(html).toContain("Preferences");
   });
 
+  test("shows the permissions of each token, and read-only for tokens without any", () => {
+    const base = { expiresAt: null, lastUsedAt: null, createdAt: "2026-01-01 00:00:00" };
+    mockUseApiTokens.mockReturnValue({
+      data: [{ ...base, id: 1, name: "homepage", permissions: [] }],
+      isLoading: false,
+    });
+    const reader = renderSettings("api-tokens");
+    expect(reader).toContain("Read-only");
+    expect(reader).not.toContain("Add systems");
+
+    mockUseApiTokens.mockReturnValue({
+      data: [{ ...base, id: 2, name: "automation", permissions: ["systems:add", "systems:remove"] }],
+      isLoading: false,
+    });
+    const writer = renderSettings("api-tokens");
+    expect(writer).toContain("Add systems");
+    expect(writer).toContain("Remove systems");
+    expect(writer).not.toContain("Edit systems");
+    expect(writer).not.toContain("Read-only");
+  });
+
   test("shows one Save button per tab, and none for API tokens", () => {
     expect(countSaveButtons(renderSettings("general"))).toBe(1);
     expect(countSaveButtons(renderSettings("account"))).toBe(1);

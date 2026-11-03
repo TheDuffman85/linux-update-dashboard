@@ -191,6 +191,7 @@ export const systems = sqliteTable("systems", {
   updatePriority: integer("update_priority").notNull().default(1),
   hidden: integer("hidden").notNull().default(0),
   needsReboot: integer("needs_reboot").notNull().default(0),
+  postUpgradePendingAt: text("post_upgrade_pending_at"),
   systemInfoUpdatedAt: text("system_info_updated_at"),
   isReachable: integer("is_reachable").notNull().default(0),
   lastSeenAt: text("last_seen_at"),
@@ -394,6 +395,8 @@ export const upgradeBatchItems = sqliteTable("upgrade_batch_items", {
   remoteExitFile: text("remote_exit_file"),
   remoteScriptFile: text("remote_script_file"),
   preUpgradeUpdateCount: integer("pre_upgrade_update_count"),
+  hookProgress: text("hook_progress"),
+  hookFailed: integer("hook_failed").notNull().default(0),
   error: text("error"),
   createdAt: text("created_at")
     .notNull()
@@ -493,7 +496,8 @@ export const apiTokens = sqliteTable("api_tokens", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name"),
   tokenHash: text("token_hash").notNull().unique(),
-  readOnly: integer("read_only").notNull().default(1),
+  // JSON list of write permissions; every token can read.
+  permissions: text("permissions").notNull().default("[]"),
   // "oidc" tokens of a linked account are limited by its SSO role instead of its local role.
   roleSource: text("role_source").notNull().default("local"),
   expiresAt: text("expires_at"),

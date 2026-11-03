@@ -13,7 +13,12 @@ export type ScriptOperation =
   | "full_upgrade_all"
   | "upgrade_selected"
   | "system_info"
-  | "reboot";
+  | "reboot"
+  | "pre_upgrade"
+  | "post_upgrade";
+
+/** Override value that opts a system out of a default upgrade script. */
+export const NO_UPGRADE_SCRIPT = "none";
 
 export interface ScriptStep {
   label: string;

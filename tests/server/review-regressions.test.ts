@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -35,6 +35,8 @@ import { resetUserSecondFactors } from "../../server/services/user-service";
 import { initEncryptor, getEncryptor } from "../../server/security";
 import ssh2 from "ssh2";
 import {
+  EXIT_CANCELLED,
+  EXIT_MONITORING_LOST,
   buildTailMonitorCommand,
   initSSHManager,
   getSSHManager,
@@ -548,6 +550,350 @@ test("stops maintenance steps on failure and preserves explicit exit status", as
     promisify(execFile)("sh", ["-c", command]),
   ).rejects.toMatchObject({ code: 7, stdout: "failed" });
 });
+
+test.each([
+  ["log file", "test -f \"/tmp/review.log\""],
+  ["exit file", "test -f \"/tmp/review.exit\""],
+  ["process", "/proc/"],
+])(
+  "a connection lost while checking the %s does not report the command as ended",
+  async (_name, failingCheck) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const runCommand = vi.spyOn(manager, "runCommand").mockImplementation(
+      async (_conn, command) =>
+        command.includes(failingCheck)
+          ? { stdout: "", stderr: "SSH connection closed", exitCode: -1 }
+          : {
+              stdout: command.includes(".log") ? "exists" : "gone",
+              stderr: "",
+              exitCode: 0,
+            },
+    );
+    const info = { pid: 123, logFile: "/tmp/review.log", exitFile: "/tmp/review.exit" };
+
+    const result = await manager.resumePersistentCommand(new EventEmitter() as Client, info, 10);
+
+    expect(result).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: info });
+    expect(runCommand.mock.calls.some(([, command]) => command.startsWith("rm -f"))).toBe(false);
+  },
+);
+
+describe("a persistent command whose setup is cut short", () => {
+  const LAUNCH_LINE = "LUDASH_BG PID=123 LOG=/tmp/review.log EXIT=/tmp/review.exit SCRIPT=/tmp/review.sh";
+  const INFO = { pid: 123, logFile: "/tmp/review.log", exitFile: "/tmp/review.exit", scriptFile: "/tmp/review.sh" };
+
+  /** A connection whose setup command prints `output` and then never finishes on its own. */
+  function createConn(output: string, afterOutput?: (conn: Client) => void) {
+    const conn = new EventEmitter() as Client;
+    const exec = vi.fn((_command: string, callback: (error: Error | null, stream: unknown) => void) => {
+      const stream = new EventEmitter() as EventEmitter & {
+        stderr: EventEmitter;
+        close: () => void;
+        end: () => void;
+      };
+      stream.stderr = new EventEmitter();
+      stream.close = () => {};
+      stream.end = () => {};
+      callback(null, stream);
+      queueMicrotask(() => {
+        if (output) stream.emit("data", Buffer.from(output));
+        afterOutput?.(conn);
+      });
+    });
+    conn.exec = exec as unknown as Client["exec"];
+    return { conn, exec };
+  }
+
+  test.each([
+    ["closes", (conn: Client) => conn.emit("close")],
+    ["ends", (conn: Client) => conn.emit("end")],
+    ["fails", (conn: Client) => conn.emit("error", new Error("read ECONNRESET"))],
+  ])("reconnects to a confirmed start when the connection %s", async (_name, drop) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const { conn, exec } = createConn(`${LAUNCH_LINE}\n`, drop);
+    const onPersistentInfo = vi.fn();
+
+    const result = await manager.runPersistentCommand(conn, "echo command", 10, undefined, undefined, {
+      onPersistentInfo,
+    });
+
+    expect(result).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: INFO });
+    expect(onPersistentInfo).toHaveBeenCalledWith(INFO);
+    // Only setup ran, so nothing tried to monitor over the dead connection.
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  test("reconnects to a confirmed start when setup stalls until it times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = initSSHManager(1, 1, 1, getEncryptor());
+      const { conn } = createConn(`${LAUNCH_LINE}\n`);
+
+      const running = manager.runPersistentCommand(conn, "echo command", 10);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(await running).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: INFO });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("reconnects when setup exits non-zero after confirming the start", async () => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    vi.spyOn(manager, "runCommand").mockResolvedValue({ stdout: `${LAUNCH_LINE}\n`, stderr: "", exitCode: 1 });
+
+    const result = await manager.runPersistentCommand(new EventEmitter() as Client, "echo command", 10);
+
+    expect(result).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: INFO });
+  });
+
+  test.each([
+    ["no output", ""],
+    ["unrelated output", "mktemp: failed\n"],
+    ["a cut-off start line", "LUDASH_BG PID=123 LOG=/tmp/review.log EXIT=/tmp/rev"],
+  ])("reports a failure when setup leaves %s", async (_name, output) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const { conn } = createConn(output, (connection) => connection.emit("close"));
+    const onPersistentInfo = vi.fn();
+
+    const result = await manager.runPersistentCommand(conn, "echo command", 10, undefined, undefined, {
+      onPersistentInfo,
+    });
+
+    expect(result.exitCode).toBe(-1);
+    expect(result.persistentInfo).toBeUndefined();
+    expect(onPersistentInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe("a persistent command that loses its connection after starting", () => {
+  const LAUNCH_LINE = "LUDASH_BG PID=123 LOG=/tmp/review.log EXIT=/tmp/review.exit SCRIPT=/tmp/review.sh";
+  const INFO = { pid: 123, logFile: "/tmp/review.log", exitFile: "/tmp/review.exit", scriptFile: "/tmp/review.sh" };
+  const CONNECTION_FAILURES = [
+    ["a failed command", async () => ({ stdout: "", stderr: "SSH connection closed", exitCode: -1 })],
+    ["a thrown error", async () => { throw new Error("Not connected"); }],
+  ] as const;
+
+  /** A monitor that sees the command end normally, then the given answer to reading its exit file. */
+  function createFinishedConn() {
+    const conn = new EventEmitter() as Client;
+    conn.exec = ((_command: string, callback: (error: Error | null, stream: unknown) => void) => {
+      const stream = new EventEmitter() as EventEmitter & { stderr: EventEmitter; close: () => void };
+      stream.stderr = new EventEmitter();
+      stream.close = () => {};
+      callback(null, stream);
+      queueMicrotask(() => stream.emit("close"));
+    }) as unknown as Client["exec"];
+    return conn;
+  }
+
+  function isCleanup(command: string) {
+    return command.startsWith("rm -f");
+  }
+
+  test("reconnects when the monitor cannot open because the socket has gone", async () => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    vi.spyOn(manager, "runCommand").mockResolvedValue({ stdout: `${LAUNCH_LINE}\n`, stderr: "", exitCode: 0 });
+    const conn = new EventEmitter() as Client;
+    conn.exec = (() => {
+      throw new Error("Not connected");
+    }) as unknown as Client["exec"];
+
+    const result = await manager.runPersistentCommand(conn, "echo command", 10);
+
+    expect(result).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: INFO });
+    expect(conn.listenerCount("close")).toBe(0);
+    expect(conn.listenerCount("error")).toBe(0);
+  });
+
+  test.each(CONNECTION_FAILURES)("keeps the exit file when reading it hits %s", async (_name, failure) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const runCommand = vi.spyOn(manager, "runCommand").mockImplementation(async (_conn, command) => {
+      if (command.startsWith("cat")) return failure();
+      return { stdout: `${LAUNCH_LINE}\n`, stderr: "", exitCode: 0 };
+    });
+
+    const result = await manager.runPersistentCommand(createFinishedConn(), "echo command", 10);
+
+    expect(result).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: INFO });
+    expect(runCommand.mock.calls.some(([, command]) => isCleanup(command))).toBe(false);
+  });
+
+  test.each(CONNECTION_FAILURES)("a resumed command that already ended stays resumable after %s", async (_name, failure) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const runCommand = vi.spyOn(manager, "runCommand").mockImplementation(async (_conn, command) => {
+      if (command.startsWith("cat")) return failure();
+      return { stdout: "exists", stderr: "", exitCode: 0 };
+    });
+
+    const result = await manager.resumePersistentCommand(new EventEmitter() as Client, INFO, 10);
+
+    expect(result).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: INFO });
+    expect(runCommand.mock.calls.some(([, command]) => isCleanup(command))).toBe(false);
+  });
+
+  test.each(CONNECTION_FAILURES)("a re-attached monitor stays resumable after %s", async (_name, failure) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const runCommand = vi.spyOn(manager, "runCommand").mockImplementation(async (_conn, command) => {
+      if (command.startsWith("cat")) return failure();
+      return {
+        stdout: command.includes("/proc/") ? "alive" : command.includes(".exit") ? "gone" : "exists",
+        stderr: "",
+        exitCode: 0,
+      };
+    });
+
+    const result = await manager.resumePersistentCommand(createFinishedConn(), INFO, 10);
+
+    expect(result).toMatchObject({ exitCode: EXIT_MONITORING_LOST, persistentInfo: INFO });
+    expect(runCommand.mock.calls.some(([, command]) => isCleanup(command))).toBe(false);
+  });
+
+  test("an exit file that holds no number is still a failed result, not a lost connection", async () => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    vi.spyOn(manager, "runCommand").mockImplementation(async (_conn, command) => {
+      if (command.startsWith("cat")) return { stdout: "", stderr: "", exitCode: 1 };
+      return { stdout: `${LAUNCH_LINE}\n`, stderr: "", exitCode: 0 };
+    });
+
+    const result = await manager.runPersistentCommand(createFinishedConn(), "echo command", 10);
+
+    expect(result.exitCode).toBe(-1);
+    expect(result.persistentInfo).toBeUndefined();
+  });
+});
+
+describe("cancelling a persistent command", () => {
+  const SETUP_OUTPUT = "LUDASH_BG PID=123 LOG=/tmp/review.log EXIT=/tmp/review.exit SCRIPT=/tmp/review.sh";
+  const INFO = { pid: 123, logFile: "/tmp/review.log", exitFile: "/tmp/review.exit", scriptFile: "/tmp/review.sh" };
+
+  function createConn() {
+    const conn = new EventEmitter() as Client;
+    conn.exec = ((_command: string, callback: (error: Error | null, stream: unknown) => void) => {
+      const stream = new EventEmitter() as EventEmitter & { stderr: EventEmitter; close: () => void };
+      stream.stderr = new EventEmitter();
+      stream.close = () => {};
+      callback(null, stream);
+    }) as unknown as Client["exec"];
+    return conn;
+  }
+
+  function mockRemote(manager: ReturnType<typeof initSSHManager>, stopExitCode: number, onSetup?: () => void) {
+    const stopCommands: string[] = [];
+    const runCommand = vi.spyOn(manager, "runCommand").mockImplementation(async (_conn, command) => {
+      if (command.includes("kill -TERM")) {
+        stopCommands.push(command);
+        return { stdout: "", stderr: "", exitCode: stopExitCode };
+      }
+      onSetup?.();
+      return { stdout: SETUP_OUTPUT, stderr: "", exitCode: 0 };
+    });
+    return { runCommand, stopCommands };
+  }
+
+  const outcomes = [
+    ["reaches the host", 0, EXIT_CANCELLED],
+    ["is lost with the connection", -1, EXIT_MONITORING_LOST],
+  ] as const;
+
+  function expectOutcome(
+    result: { exitCode: number; persistentInfo?: unknown },
+    expectedExitCode: number,
+    stopCommands: string[],
+  ) {
+    expect(stopCommands).toHaveLength(1);
+    expect(result.exitCode).toBe(expectedExitCode);
+    expect(result.persistentInfo).toEqual(expectedExitCode === EXIT_MONITORING_LOST ? INFO : undefined);
+  }
+
+  test.each(outcomes)("while monitoring, when the stop command %s", async (_name, stopExitCode, expected) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const conn = createConn();
+    const { stopCommands } = mockRemote(manager, stopExitCode);
+    const controller = new AbortController();
+
+    const running = manager.runPersistentCommand(conn, "echo command", 10, undefined, undefined, {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(conn.listenerCount("close")).toBeGreaterThan(0));
+    controller.abort();
+
+    expectOutcome(await running, expected, stopCommands);
+  });
+
+  test.each(outcomes)("while starting, when the stop command %s", async (_name, stopExitCode, expected) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const controller = new AbortController();
+    const { runCommand, stopCommands } = mockRemote(manager, stopExitCode, () => controller.abort());
+    const onPersistentInfo = vi.fn();
+
+    const result = await manager.runPersistentCommand(createConn(), "echo command", 10, undefined, undefined, {
+      signal: controller.signal,
+      onPersistentInfo,
+    });
+
+    // The setup output is the only record of which process to stop, so setup must not be abandoned.
+    expect(runCommand.mock.calls[0][5]).toBeUndefined();
+    expect(onPersistentInfo).toHaveBeenCalledWith(INFO);
+    expectOutcome(result, expected, stopCommands);
+  });
+
+  test("a cancel that came before the start runs nothing", async () => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const { runCommand } = mockRemote(manager, 0);
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await manager.runPersistentCommand(createConn(), "echo command", 10, undefined, undefined, {
+      signal: controller.signal,
+    });
+
+    expect(result.exitCode).toBe(EXIT_CANCELLED);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+test.each([
+  ["delivered", 0, EXIT_CANCELLED],
+  ["lost with the connection", -1, EXIT_MONITORING_LOST],
+])(
+  "cancelling a resumed command whose stop command is %s",
+  async (_name, stopExitCode, expectedExitCode) => {
+    const manager = initSSHManager(1, 1, 1, getEncryptor());
+    const conn = new EventEmitter() as Client;
+    const close = vi.fn();
+    conn.exec = ((_command: string, callback: (error: Error | null, stream: unknown) => void) => {
+      const stream = new EventEmitter() as EventEmitter & { stderr: EventEmitter; close: () => void };
+      stream.stderr = new EventEmitter();
+      stream.close = close;
+      callback(null, stream);
+    }) as unknown as Client["exec"];
+    const stopCommands: string[] = [];
+    vi.spyOn(manager, "runCommand").mockImplementation(async (_conn, command) => {
+      if (command.includes("kill -TERM")) {
+        stopCommands.push(command);
+        return { stdout: "", stderr: "", exitCode: stopExitCode };
+      }
+      return {
+        stdout: command.includes("/proc/") ? "alive" : command.includes(".exit") ? "gone" : "exists",
+        stderr: "",
+        exitCode: 0,
+      };
+    });
+    const controller = new AbortController();
+    const info = { pid: 123, logFile: "/tmp/review.log", exitFile: "/tmp/review.exit" };
+
+    const resumed = manager.resumePersistentCommand(conn, info, 10, undefined, { signal: controller.signal });
+    await vi.waitFor(() => expect(conn.listenerCount("close")).toBeGreaterThan(0));
+    controller.abort();
+    const result = await resumed;
+
+    expect(close).toHaveBeenCalled();
+    expect(stopCommands).toHaveLength(1);
+    expect(result.exitCode).toBe(expectedExitCode);
+    expect(result.persistentInfo).toEqual(expectedExitCode === EXIT_MONITORING_LOST ? info : undefined);
+  },
+);
 
 test.each(["running", "finished"])(
   "resumes a %s remote log without replaying emitted bytes",

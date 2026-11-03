@@ -226,6 +226,29 @@ async function prepareSession(cdp) {
   );
 }
 
+async function seedApiTokens(cdp) {
+  await evaluate(
+    cdp,
+    `(async () => {
+      const csrf = document.cookie.split("; ").find((v) => v.startsWith("ludash_csrf="))?.split("=")[1] || "";
+      const tokens = [
+        { name: "Homepage widget", permissions: [] },
+        { name: "Monitoring", permissions: ["updates:check"] },
+        { name: "Provisioning", permissions: ["systems:add", "systems:remove"] },
+      ];
+      for (const token of tokens) {
+        await fetch("/api/tokens", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": decodeURIComponent(csrf) },
+          body: JSON.stringify(token),
+        });
+      }
+      return true;
+    })()`,
+  );
+}
+
 async function screenshot(cdp, name) {
   await evaluate(
     cdp,
@@ -301,6 +324,11 @@ async function main() {
 
       await navigate(cdp, "/settings");
       await screenshot(cdp, "9.png");
+
+      await seedApiTokens(cdp);
+      await navigate(cdp, "/settings?tab=api-tokens");
+      await clickByText(cdp, "Generate New Token");
+      await screenshot(cdp, "15.png");
 
       await navigate(cdp, "/schedules");
       await screenshot(cdp, "10.png");

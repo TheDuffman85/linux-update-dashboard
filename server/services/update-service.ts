@@ -1,7 +1,14 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { updateCache, updateHistory } from "../db/schema";
-import { getSSHManager, EXIT_MONITORING_LOST, EXIT_FILES_GONE, EXIT_CANCELLED, type PersistentCommandInfo } from "../ssh/connection";
+import {
+  getSSHManager,
+  EXIT_MONITORING_LOST,
+  EXIT_FILES_GONE,
+  EXIT_CANCELLED,
+  type PersistentCommandInfo,
+  type PersistentCommandResult,
+} from "../ssh/connection";
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName } from "../ssh/parsers/types";
@@ -34,6 +41,7 @@ import {
   setActiveOperation,
   throwIfActiveOperationCancelled,
   OperationCancelledError,
+  renewActiveOperationSignal,
   type ActiveOperation,
 } from "./active-operation-store";
 import { requestNotificationRuntimeSystemSync } from "./notification-runtime-events";
@@ -47,11 +55,19 @@ import {
   parseInstalledPackagesWithScript,
   resolveRuntimeSteps,
   resolveScript,
+  type ScriptStep,
 } from "./script-service";
 
 type VisibleCachedUpdate = ReturnType<typeof hiddenUpdateService.getVisibleCachedUpdates>[number];
 export type DefaultUpgradeModeOverride = "standard" | "aggressive";
-type OperationResult = { success: boolean; output: string; warning?: boolean; cancelled?: boolean };
+type OperationResult = {
+  success: boolean;
+  output: string;
+  warning?: boolean;
+  cancelled?: boolean;
+  /** A pre- or post-upgrade script failed, so later systems in a rolling upgrade should wait. */
+  hookFailed?: boolean;
+};
 type RebootResult = { success: boolean; message: string; blocked?: boolean };
 
 export interface UpgradeAllCommandSnapshot {
@@ -86,7 +102,30 @@ interface UpgradeAllExecutionOptions {
     command: string;
     info: PersistentCommandInfo;
   }) => void;
+  /** Continues a pre- or post-upgrade script that a dashboard restart interrupted. */
+  resumeHook?: UpgradeHookProgress;
+  onHookProgress?: (progress: UpgradeHookProgress) => void;
 }
+
+/**
+ * Enough to pick a script up again after a dashboard restart. The steps are a
+ * snapshot, so editing the script in between cannot shift the step position.
+ */
+interface UpgradeHookProgressBase {
+  steps: ScriptStep[];
+  /** The step in progress, or `steps.length` once every step has finished. */
+  stepIndex: number;
+  /** Set once the step has started on the host. It keeps running under nohup. */
+  persistentInfo: PersistentCommandInfo | null;
+}
+
+export type UpgradeHookProgress =
+  | (UpgradeHookProgressBase & { phase: "pre_upgrade"; wasPostPending: boolean })
+  | (UpgradeHookProgressBase & {
+      phase: "post_upgrade";
+      upgradeResult: OperationResult;
+      completion?: { recheck: boolean };
+    });
 
 function withDefaultUpgradeModeOverride(
   configs: PackageManagerConfigs | null,
@@ -248,6 +287,8 @@ async function withLock<T>(
 // Reconnection settings for when SSH drops during an upgrade
 const RECONNECT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const RECONNECT_INTERVAL_MS = 15 * 1000;     // retry every 15 seconds
+// Stops following a remote command that never finishes across repeated drops.
+const RECONNECT_MONITORING_LIMIT_MS = 6 * 60 * 60 * 1000;
 
 function isExpectedRebootDisconnect(message: string): boolean {
   return /ECONNRESET|connection reset|SSH connection (?:closed|ended)|connection (?:closed|ended)|\bclosed\b|\bended\b/i.test(message);
@@ -258,6 +299,8 @@ interface ReconnectionResult {
   stdout: string;
   stderr: string;
   serverRebooted: boolean;
+  /** The host never came back, so the remote command may still be running. */
+  timedOut?: boolean;
   persistentInfo?: PersistentCommandInfo;
 }
 
@@ -530,6 +573,7 @@ async function attemptReconnection(
   preUpgradeUpdateCount: number,
   onData: (chunk: string, stream: "stdout" | "stderr") => void,
   secretInput: SecretInput | null = null,
+  options?: { inferResultFromUpdateCount?: boolean },
 ): Promise<ReconnectionResult> {
   const system = systemService.getSystem(systemId);
   if (!system) {
@@ -537,6 +581,12 @@ async function attemptReconnection(
   }
 
   const sshManager = getSSHManager();
+  const signal = getCancellationSignal(systemId);
+  const cancelledUnreached = (): ReconnectionResult => {
+    const message = "Operation cancelled, but the host could not be reached, so the remote command may still be running.";
+    outputStream.publish(systemId, { type: "warning", message });
+    return { exitCode: EXIT_CANCELLED, stdout: "", stderr: message, serverRebooted: false, timedOut: true };
+  };
 
   outputStream.publish(systemId, {
     type: "warning",
@@ -544,13 +594,16 @@ async function attemptReconnection(
   });
   outputStream.publish(systemId, { type: "phase", phase: "reconnecting" });
 
-  const startTime = Date.now();
+  const monitoringStartTime = Date.now();
+  let startTime = monitoringStartTime;
   let attempt = 0;
   const maxAttempts = Math.ceil(RECONNECT_TIMEOUT_MS / RECONNECT_INTERVAL_MS);
 
   while (Date.now() - startTime < RECONNECT_TIMEOUT_MS) {
     attempt++;
-    await new Promise((r) => setTimeout(r, RECONNECT_INTERVAL_MS));
+    await waitForRetry(RECONNECT_INTERVAL_MS, signal);
+    // Cancelling gets one immediate try to stop the command, not a wait for the host.
+    const finalAttempt = !!signal?.aborted;
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     outputStream.publish(systemId, {
@@ -566,6 +619,7 @@ async function attemptReconnection(
       });
     } catch {
       // Connection failed — server still down, keep retrying
+      if (finalAttempt) return cancelledUnreached();
       continue;
     }
 
@@ -575,8 +629,43 @@ async function attemptReconnection(
         persistentInfo,
         3600,
         onData,
-        { secretInput },
+        { secretInput, signal },
       );
+
+      if (result.exitCode === EXIT_MONITORING_LOST) {
+        // The command is still running, so this is not a result. Reaching the
+        // host again earns a new reconnect window.
+        sshManager.disconnect(conn);
+        conn = null;
+        if (finalAttempt) return cancelledUnreached();
+        if (Date.now() - monitoringStartTime < RECONNECT_MONITORING_LIMIT_MS) {
+          startTime = Date.now();
+          attempt = 0;
+        }
+        outputStream.publish(systemId, {
+          type: "warning",
+          message: "SSH connection lost again. Attempting to reconnect...",
+        });
+        continue;
+      }
+
+      if (result.exitCode === EXIT_FILES_GONE && signal?.aborted) {
+        // Nothing is left to stop, and the user has stopped waiting for a result.
+        sshManager.disconnect(conn);
+        conn = null;
+        return { exitCode: EXIT_CANCELLED, stdout: "", stderr: "Operation cancelled", serverRebooted: false };
+      }
+
+      if (result.exitCode === EXIT_FILES_GONE && options?.inferResultFromUpdateCount === false) {
+        sshManager.disconnect(conn);
+        conn = null;
+        return {
+          exitCode: -1,
+          stdout: "",
+          stderr: "The result is unknown because the remote temp files no longer exist (server likely rebooted).",
+          serverRebooted: true,
+        };
+      }
 
       if (result.exitCode === EXIT_FILES_GONE) {
         // Server rebooted — /tmp was cleared. Infer result from update count.
@@ -664,9 +753,12 @@ async function attemptReconnection(
         try { sshManager.disconnect(conn); } catch {}
       }
       // Reconnected but something failed — keep retrying
+      if (finalAttempt) return cancelledUnreached();
       continue;
     }
   }
+
+  if (signal?.aborted) return cancelledUnreached();
 
   // Timeout — could not reconnect
   outputStream.publish(systemId, {
@@ -679,6 +771,7 @@ async function attemptReconnection(
     stdout: "",
     stderr: `Reconnection timed out after ${Math.round(RECONNECT_TIMEOUT_MS / 1000)}s`,
     serverRebooted: false,
+    timedOut: true,
   };
 }
 
@@ -1453,6 +1546,449 @@ export async function solvePackageManagerIssue(
   });
 }
 
+const UPGRADE_HOOK_LABELS = {
+  pre_upgrade: "Pre-upgrade script",
+  post_upgrade: "Post-upgrade script",
+} as const;
+// The host may still be restarting services when the post-upgrade script is due.
+const POST_UPGRADE_CONNECT_ATTEMPTS = 4;
+const UPGRADE_STATE_UNKNOWN_REASON =
+  "the host did not come back, so the upgrade may still be running. Run it from the system page once the upgrade has finished.";
+
+type UpgradeHookKind = keyof typeof UPGRADE_HOOK_LABELS;
+type UpgradeHookStatus = "success" | "failed" | "cancelled";
+
+interface UpgradeHookRunResult {
+  status: UpgradeHookStatus;
+  message: string;
+  /** False when the script never started on the host, so it changed nothing. */
+  remoteStarted: boolean;
+  exitCode: number | null;
+}
+
+interface PostUpgradeOutcome {
+  status: UpgradeHookStatus | "skipped";
+  message: string;
+}
+
+interface UpgradeHookSession {
+  systemId: number;
+  operation: ActiveOperation["type"];
+  preSteps: ScriptStep[];
+  postSteps: ScriptStep[];
+  setupError: string | null;
+  wasPostPending: boolean;
+  /** Post only undoes what pre did, so it waits until pre has passed. */
+  preStagePassed: boolean;
+  /** Set once post has been dealt with, so every exit path can finalize safely. */
+  postOutcome: PostUpgradeOutcome | null | undefined;
+  postBlockedReason: string | null;
+  resumeHook?: UpgradeHookProgress;
+  onHookProgress?: (progress: UpgradeHookProgress) => void;
+}
+
+function buildUpgradeHookCommand(command: string, env: Record<string, string>): string {
+  // Values come from fixed internal lists and never from user input.
+  const exports = Object.entries(env).map(([key, value]) => `${key}=${value}; export ${key}`);
+  return [...exports, command].join("\n");
+}
+
+function createUpgradeHookSession(
+  systemId: number,
+  operation: ActiveOperation["type"],
+  options?: Pick<UpgradeAllExecutionOptions, "resumeHook" | "onHookProgress">,
+): UpgradeHookSession {
+  const session: UpgradeHookSession = {
+    systemId,
+    operation,
+    preSteps: [],
+    postSteps: [],
+    setupError: null,
+    wasPostPending: false,
+    preStagePassed: false,
+    postOutcome: undefined,
+    postBlockedReason: null,
+    resumeHook: options?.resumeHook,
+    onHookProgress: options?.onHookProgress,
+  };
+  try {
+    session.preSteps = resolveRuntimeSteps({ systemId, operation: "pre_upgrade" });
+    session.postSteps = resolveRuntimeSteps({ systemId, operation: "post_upgrade" });
+  } catch (error) {
+    session.setupError = error instanceof Error ? error.message : String(error);
+  }
+  return session;
+}
+
+function waitForRetry(ms: number, signal: AbortSignal | null): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
+
+/**
+ * Runs a hook on its own connection, so the caller must not be holding one. Each
+ * step is its own remote command because the sudo password is delivered once per
+ * command, and a script that stops a service often needs several privileged steps.
+ */
+async function runUpgradeHookSteps(
+  systemId: number,
+  kind: UpgradeHookKind,
+  steps: ScriptStep[],
+  env: Record<string, string>,
+  options: {
+    connectAttempts?: number;
+    resume?: { stepIndex: number; persistentInfo: PersistentCommandInfo | null };
+    onProgress?: (stepIndex: number, persistentInfo: PersistentCommandInfo | null) => void;
+  } = {},
+): Promise<UpgradeHookRunResult> {
+  const { connectAttempts = 1, resume, onProgress } = options;
+  const label = UPGRADE_HOOK_LABELS[kind];
+  const startIndex = resume?.stepIndex ?? 0;
+  if (startIndex >= steps.length && !resume?.persistentInfo) {
+    return { status: "success", message: `${label} finished`, remoteStarted: true, exitCode: 0 };
+  }
+  const sshManager = getSSHManager();
+  const signal = getCancellationSignal(systemId);
+  const commands = steps.map((step) => ({
+    label: `${label}: ${step.label}`,
+    command: buildUpgradeHookCommand(step.command, env),
+  }));
+  const histId = insertStartedEntry(
+    systemId,
+    kind,
+    "system",
+    commands.slice(startIndex).map((step) => step.command).join("\n\n"),
+    getCurrentTimestamp(),
+  );
+
+  const activitySteps: ActivityStep[] = [];
+  let remoteStarted = startIndex > 0;
+  let current: { label: string; command: string; startedAt: string; output: string } | null = null;
+  const onData = (chunk: string, stream: "stdout" | "stderr") => {
+    if (current) current.output += chunk;
+    outputStream.publish(systemId, { type: "output", data: chunk, stream });
+  };
+  const recordCurrentStep = (status: UpgradeHookStatus, error: string | null) => {
+    if (!current) return;
+    activitySteps.push(createActivityStep({
+      label: current.label,
+      pkgManager: "system",
+      command: current.command,
+      output: current.output || null,
+      error,
+      status,
+      startedAt: current.startedAt,
+      completedAt: getCurrentTimestamp(),
+    }));
+    current = null;
+  };
+  const finish = (
+    status: UpgradeHookStatus,
+    message: string,
+    exitCode: number | null,
+  ): UpgradeHookRunResult => {
+    const error = status === "success" ? null : message;
+    recordCurrentStep(status, error);
+    finishEntry(histId, status, {
+      steps: activitySteps,
+      output: activitySteps.map((step) => step.output ?? "").join("").slice(0, STEP_OUTPUT_LIMIT),
+      error: error ?? undefined,
+    });
+    if (status === "cancelled") outputStream.publish(systemId, { type: "warning", message });
+    if (status === "failed") outputStream.publish(systemId, { type: "error", message });
+    return { status, message, remoteStarted, exitCode };
+  };
+
+  let conn: Awaited<ReturnType<typeof sshManager.connect>> | undefined;
+  try {
+    const system = systemService.getSystem(systemId);
+    if (!system) return finish("failed", `${label} failed: system not found`, null);
+    const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
+
+    for (const [index, step] of commands.entries()) {
+      if (index < startIndex) continue;
+      const startedAt = getCurrentTimestamp();
+      current = { ...step, startedAt, output: "" };
+      outputStream.publish(systemId, { type: "started", command: step.command, pkgManager: "system", startedAt });
+      outputStream.publish(systemId, { type: "phase", phase: step.label });
+
+      const interrupted = index === startIndex ? resume?.persistentInfo : null;
+      let result: PersistentCommandResult;
+      if (interrupted) {
+        // The step is still running on the host, so attach to it instead of starting it again.
+        remoteStarted = true;
+        setActiveOperationPersistentInfo(systemId, interrupted);
+        result = { stdout: "", stderr: "", exitCode: EXIT_MONITORING_LOST, persistentInfo: interrupted };
+      } else {
+        for (let attempt = 1; !conn; attempt++) {
+          throwIfActiveOperationCancelled(systemId);
+          try {
+            conn = await sshManager.connect(system as Record<string, unknown>, { systemId });
+          } catch (error) {
+            if (attempt >= connectAttempts) throw error;
+            onData(`Could not connect over SSH, retrying in ${RECONNECT_INTERVAL_MS / 1000}s...\n`, "stderr");
+            await waitForRetry(RECONNECT_INTERVAL_MS, signal);
+          }
+        }
+        throwIfActiveOperationCancelled(systemId);
+
+        result = await sshManager.runPersistentCommand(conn, step.command, 3600, sudoPassword, onData, {
+          signal,
+          onPersistentInfo: (info) => {
+            remoteStarted = true;
+            setActiveOperationPersistentInfo(systemId, info);
+            onProgress?.(index, info);
+          },
+        });
+      }
+      let { stdout, stderr, exitCode } = result;
+
+      if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+        if (conn) {
+          try { sshManager.disconnect(conn); } catch {}
+          conn = undefined;
+        }
+        const reconnected = await attemptReconnection(systemId, result.persistentInfo, 0, onData, null, {
+          inferResultFromUpdateCount: false,
+        });
+        stdout = reconnected.stdout || stdout;
+        stderr = reconnected.stderr;
+        exitCode = reconnected.exitCode;
+      }
+
+      if (isCancelledResult(exitCode)) return finish("cancelled", `${label} cancelled`, null);
+
+      if (exitCode !== 0) {
+        if (current && !current.output) current.output = stdout;
+        const detail = sanitizeOutput(stderr || "").trim();
+        return finish(
+          "failed",
+          `${label} failed at "${step.label.slice(label.length + 2)}" with exit code ${exitCode}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
+          exitCode,
+        );
+      }
+
+      if (current && !current.output) current.output = stdout;
+      recordCurrentStep("success", null);
+      onProgress?.(index + 1, null);
+    }
+    return finish("success", `${label} finished`, 0);
+  } catch (error) {
+    if (isOperationCancelledError(error)) return finish("cancelled", `${label} cancelled`, null);
+    return finish("failed", `${label} failed: ${String(error)}`, null);
+  } finally {
+    if (conn) sshManager.disconnect(conn);
+  }
+}
+
+/**
+ * Returns the result to stop with when the upgrade must not go ahead. A resumed
+ * upgrade already ran its pre-upgrade script before the dashboard restarted.
+ */
+async function runPreUpgradeHook(
+  session: UpgradeHookSession,
+  resuming: boolean,
+): Promise<OperationResult | null> {
+  const { systemId } = session;
+  if (session.setupError) {
+    session.postOutcome = null;
+    const message = `Could not prepare the upgrade scripts: ${session.setupError}`;
+    outputStream.publish(systemId, { type: "error", message });
+    return { success: false, output: message, hookFailed: true };
+  }
+
+  // The flag is already set by the interrupted run, so it cannot answer this any more.
+  const interrupted = session.resumeHook?.phase === "pre_upgrade" ? session.resumeHook : undefined;
+  if (session.postSteps.length > 0) {
+    session.wasPostPending = interrupted
+      ? interrupted.wasPostPending
+      : !!systemService.getSystem(systemId)?.postUpgradePendingAt;
+    if (!session.wasPostPending) systemService.setPostUpgradePending(systemId, true);
+  }
+  if (resuming || (!interrupted && session.preSteps.length === 0)) {
+    session.preStagePassed = true;
+    return null;
+  }
+
+  const steps = interrupted?.steps ?? session.preSteps;
+  const reportProgress = (stepIndex: number, persistentInfo: PersistentCommandInfo | null) => {
+    session.onHookProgress?.({
+      phase: "pre_upgrade",
+      steps,
+      stepIndex,
+      persistentInfo,
+      wasPostPending: session.wasPostPending,
+    });
+  };
+  if (!interrupted) reportProgress(0, null);
+  const result = await runUpgradeHookSteps(
+    systemId,
+    "pre_upgrade",
+    steps,
+    { LUDASH_OPERATION: session.operation },
+    { resume: interrupted, onProgress: reportProgress },
+  );
+  if (result.status === "success") {
+    session.preStagePassed = true;
+    return null;
+  }
+
+  session.postOutcome = null;
+  // Exiting non-zero is a deliberate veto and the script undoes its own work, so
+  // only a run with an unknown end state still needs the post-upgrade script.
+  const endStateKnown = !result.remoteStarted || (result.exitCode !== null && result.exitCode > 0);
+  if (session.postSteps.length > 0 && !session.wasPostPending && endStateKnown) {
+    systemService.setPostUpgradePending(systemId, false);
+  }
+  if (result.status !== "cancelled") {
+    return { success: false, output: result.message, hookFailed: true };
+  }
+  // Cancelling is not a veto, so the script may have stopped halfway. Later nodes
+  // wait whenever this one may still need recovery.
+  const recoveryPending = !endStateKnown || session.wasPostPending;
+  return {
+    success: false,
+    output: result.message,
+    cancelled: true,
+    ...(recoveryPending ? { hookFailed: true } : {}),
+  };
+}
+
+async function runPostUpgradeHook(
+  session: UpgradeHookSession,
+  result: OperationResult,
+  completion?: { recheck: boolean },
+): Promise<PostUpgradeOutcome | null> {
+  if (session.postOutcome !== undefined) return session.postOutcome;
+  if (!session.preStagePassed) {
+    session.postOutcome = null;
+    return null;
+  }
+  const { systemId } = session;
+
+  if (session.postSteps.length === 0) {
+    session.postOutcome = null;
+    return null;
+  }
+
+  if (session.postBlockedReason) {
+    const message = `${UPGRADE_HOOK_LABELS.post_upgrade} did not run: ${session.postBlockedReason}`;
+    outputStream.publish(systemId, { type: "warning", message });
+    session.postOutcome = { status: "skipped", message };
+    return session.postOutcome;
+  }
+
+  // Claim the run first so a failure later in finalizing cannot start it twice.
+  session.postOutcome = { status: "failed", message: `${UPGRADE_HOOK_LABELS.post_upgrade} did not finish` };
+  renewActiveOperationSignal(systemId);
+  const interrupted = session.resumeHook?.phase === "post_upgrade" ? session.resumeHook : undefined;
+  const reportProgress = (stepIndex: number, persistentInfo: PersistentCommandInfo | null) => {
+    session.onHookProgress?.({
+      phase: "post_upgrade",
+      steps: session.postSteps,
+      stepIndex,
+      persistentInfo,
+      upgradeResult: { ...result, output: sanitizeOutput(result.output).slice(0, STEP_ERROR_LIMIT) },
+      completion,
+    });
+  };
+  if (!interrupted) reportProgress(0, null);
+  const hookResult = await runUpgradeHookSteps(
+    systemId,
+    "post_upgrade",
+    session.postSteps,
+    {
+      LUDASH_OPERATION: session.operation,
+      LUDASH_UPGRADE_RESULT: result.cancelled ? "cancelled" : result.success ? "success" : "failed",
+    },
+    { connectAttempts: POST_UPGRADE_CONNECT_ATTEMPTS, resume: interrupted, onProgress: reportProgress },
+  );
+  if (hookResult.status === "success") systemService.setPostUpgradePending(systemId, false);
+  session.postOutcome = { status: hookResult.status, message: hookResult.message };
+  return session.postOutcome;
+}
+
+/**
+ * The one exit for an upgrade: runs the post-upgrade script, then the recheck,
+ * then publishes `done`. Every path that leaves an upgrade must disconnect first,
+ * because the script needs its own connection from the same limited pool.
+ */
+async function finalizeUpgrade(
+  session: UpgradeHookSession,
+  result: OperationResult,
+  completion?: { recheck: boolean },
+): Promise<OperationResult> {
+  const { systemId } = session;
+  const post = await runPostUpgradeHook(session, result, completion);
+
+  if (completion) {
+    if (completion.recheck) {
+      // Cancelling the script should not also cancel the recheck after a real upgrade.
+      if (post?.status === "cancelled") renewActiveOperationSignal(systemId);
+      setActiveOperationPhase(systemId, "rechecking");
+      await requestNotificationRuntimeSystemSync(systemId);
+      outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
+      await checkUpdatesUnlocked(systemId, true);
+    }
+    syncSystemNotificationHash(systemId);
+  }
+
+  const merged: OperationResult = !post || post.status === "success"
+    ? result
+    : {
+        ...result,
+        success: false,
+        warning: false,
+        hookFailed: true,
+        cancelled: result.cancelled || post.status === "cancelled",
+        output: [result.output, post.message].filter(Boolean).join("\n\n"),
+      };
+  outputStream.publish(systemId, { type: "done", success: merged.success, completedAt: getCurrentTimestamp() });
+  return merged;
+}
+
+/** Re-runs a post-upgrade script that did not finish, from the system page. */
+export async function runPendingPostUpgradeScript(systemId: number): Promise<OperationResult> {
+  return withLock(systemId, async () => {
+    const system = systemService.getSystem(systemId);
+    if (!system) return { success: false, output: "System not found" };
+    setActiveOperation(systemId, { type: "post_upgrade", startedAt: getCurrentTimestamp() });
+    await requestNotificationRuntimeSystemSync(systemId);
+    outputStream.resetStream(systemId);
+    try {
+      const steps = resolveRuntimeSteps({ systemId, operation: "post_upgrade" });
+      if (steps.length === 0) {
+        const output = "No post-upgrade script is assigned to this system";
+        outputStream.publish(systemId, { type: "error", message: output });
+        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
+        return { success: false, output };
+      }
+      const result = await runUpgradeHookSteps(systemId, "post_upgrade", steps, {
+        LUDASH_OPERATION: "manual",
+        LUDASH_UPGRADE_RESULT: "unknown",
+      });
+      if (result.status === "success") systemService.setPostUpgradePending(systemId, false);
+      const success = result.status === "success";
+      outputStream.publish(systemId, { type: "done", success, completedAt: getCurrentTimestamp() });
+      return {
+        success,
+        output: result.message,
+        cancelled: result.status === "cancelled",
+        hookFailed: !success,
+      };
+    } finally {
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
+    }
+  });
+}
+
 export async function applyUpgradeAll(
   systemId: number,
   options?: UpgradeAllExecutionOptions,
@@ -1467,6 +2003,13 @@ export async function applyUpgradeAll(
     const system = systemService.getSystem(systemId);
     if (!system) {
       return { success: false, output: "System not found" };
+    }
+    if (options?.resumeHook?.phase === "post_upgrade") {
+      // The upgrade already ended before the restart, so only its script is left.
+      const hooks = createUpgradeHookSession(systemId, "upgrade_all", options);
+      hooks.postSteps = options.resumeHook.steps;
+      hooks.preStagePassed = true;
+      return await finalizeUpgrade(hooks, options.resumeHook.upgradeResult, options.resumeHook.completion);
     }
     const pkgManagerConfigs = withDefaultUpgradeModeOverride(
       getSystemPackageManagerConfigs(system),
@@ -1494,7 +2037,19 @@ export async function applyUpgradeAll(
     const signal = getCancellationSignal(systemId);
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
+    const hooks = createUpgradeHookSession(systemId, "upgrade_all", options);
     try {
+      throwIfActiveOperationCancelled(systemId);
+      const preHookStop = await runPreUpgradeHook(hooks, !!options?.resume);
+      if (preHookStop) {
+        if (options?.queuedHistoryId) {
+          finishEntry(options.queuedHistoryId, preHookStop.cancelled ? "cancelled" : "failed", {
+            error: preHookStop.output,
+          });
+          unfinishedHistoryId = undefined;
+        }
+        return await finalizeUpgrade(hooks, preHookStop);
+      }
       throwIfActiveOperationCancelled(systemId);
       if (!options?.resume) {
         publishSshConnectionStep(
@@ -1598,6 +2153,29 @@ export async function applyUpgradeAll(
             );
 
         let { stdout, stderr, exitCode } = result;
+        if ("timedOut" in result && result.timedOut) {
+          hooks.postBlockedReason = UPGRADE_STATE_UNKNOWN_REASON;
+        }
+
+        if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+          // Connection lost — attempt reconnection
+          try { sshManager.disconnect(conn!); } catch {}
+          conn = undefined;
+
+          const reconResult = await attemptReconnection(
+            systemId,
+            result.persistentInfo,
+            preCount,
+            onDataCb,
+            secretInput,
+          );
+          if (reconResult.timedOut) hooks.postBlockedReason = UPGRADE_STATE_UNKNOWN_REASON;
+
+          stdout = reconResult.stdout || stdout;
+          stderr = reconResult.stderr;
+          exitCode = reconResult.exitCode;
+          reconnectionUsed = true;
+        }
 
         if (isCancelledResult(exitCode)) {
           const stepCompletedAt = getCurrentTimestamp();
@@ -1617,27 +2195,11 @@ export async function applyUpgradeAll(
             error: "Operation cancelled",
           });
           outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
-          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-          return { success: false, output: "Operation cancelled", cancelled: true };
-        }
-
-        if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
-          // Connection lost — attempt reconnection
-          try { sshManager.disconnect(conn!); } catch {}
-          conn = undefined;
-
-          const reconResult = await attemptReconnection(
-            systemId,
-            result.persistentInfo,
-            preCount,
-            onDataCb,
-            secretInput,
-          );
-
-          stdout = reconResult.stdout || stdout;
-          stderr = reconResult.stderr;
-          exitCode = reconResult.exitCode;
-          reconnectionUsed = true;
+          if (conn) {
+            sshManager.disconnect(conn);
+            conn = undefined;
+          }
+          return await finalizeUpgrade(hooks, { success: false, output: "Operation cancelled", cancelled: true });
         }
 
         const success = exitCode === 0;
@@ -1681,8 +2243,11 @@ export async function applyUpgradeAll(
         finishEntry(options.queuedHistoryId, "failed", {
           error: "No upgrade command available",
         });
-        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-        return { success: false, output: "No upgrade command available" };
+        if (conn) {
+          sshManager.disconnect(conn);
+          conn = undefined;
+        }
+        return await finalizeUpgrade(hooks, { success: false, output: "No upgrade command available" });
       }
 
       // Re-check after upgrade (skip if reconnection already ran one)
@@ -1690,23 +2255,20 @@ export async function applyUpgradeAll(
         sshManager.disconnect(conn);
         conn = undefined;
       }
-      if (!reconnectionUsed) {
-        setActiveOperationPhase(systemId, "rechecking");
-        await requestNotificationRuntimeSystemSync(systemId);
-        outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-        await checkUpdatesUnlocked(systemId, true);
-      }
-      syncSystemNotificationHash(systemId);
-
-      const combinedOutput = allOutputs.join("\n\n");
-      outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
-      return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
+      return await finalizeUpgrade(
+        hooks,
+        { success: overallSuccess, output: allOutputs.join("\n\n"), warning: reconnectionUsed && overallSuccess },
+        { recheck: !reconnectionUsed },
+      );
     } catch (e) {
+      if (conn) {
+        sshManager.disconnect(conn);
+        conn = undefined;
+      }
       if (isOperationCancelledError(e)) {
         if (unfinishedHistoryId) finishEntry(unfinishedHistoryId, "cancelled", { error: e.message });
         outputStream.publish(systemId, { type: "warning", message: e.message });
-        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-        return { success: false, output: e.message, cancelled: true };
+        return await finalizeUpgrade(hooks, { success: false, output: e.message, cancelled: true });
       }
       if (unfinishedHistoryId) {
         finishEntry(unfinishedHistoryId, "failed", { error: String(e) });
@@ -1731,8 +2293,7 @@ export async function applyUpgradeAll(
         }
       );
       outputStream.publish(systemId, { type: "error", message: String(e) });
-      outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-      return { success: false, output: String(e) };
+      return await finalizeUpgrade(hooks, { success: false, output: String(e) });
     } finally {
       if (conn) sshManager.disconnect(conn);
     }
@@ -2011,7 +2572,11 @@ export async function applyFullUpgradeAll(
     const signal = getCancellationSignal(systemId);
     const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
     let conn;
+    const hooks = createUpgradeHookSession(systemId, "full_upgrade_all");
     try {
+      throwIfActiveOperationCancelled(systemId);
+      const preHookStop = await runPreUpgradeHook(hooks, false);
+      if (preHookStop) return await finalizeUpgrade(hooks, preHookStop);
       throwIfActiveOperationCancelled(systemId);
       publishSshConnectionStep(
         (msg) => outputStream.publish(systemId, msg),
@@ -2069,6 +2634,31 @@ export async function applyFullUpgradeAll(
 
         let { stdout, stderr, exitCode } = result;
 
+        if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+          try { sshManager.disconnect(conn!); } catch {}
+          conn = undefined;
+
+          const preCount = db
+            .select()
+            .from(updateCache)
+            .where(eq(updateCache.systemId, systemId))
+            .all().length;
+
+          const reconResult = await attemptReconnection(
+            systemId,
+            result.persistentInfo,
+            preCount,
+            onDataCb,
+            secretInput,
+          );
+          if (reconResult.timedOut) hooks.postBlockedReason = UPGRADE_STATE_UNKNOWN_REASON;
+
+          stdout = reconResult.stdout || stdout;
+          stderr = reconResult.stderr;
+          exitCode = reconResult.exitCode;
+          reconnectionUsed = true;
+        }
+
         if (isCancelledResult(exitCode)) {
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || stdout || stderr;
@@ -2087,32 +2677,11 @@ export async function applyFullUpgradeAll(
             error: "Operation cancelled",
           });
           outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
-          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-          return { success: false, output: "Operation cancelled", cancelled: true };
-        }
-
-        if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
-          try { sshManager.disconnect(conn!); } catch {}
-          conn = undefined;
-
-          const preCount = db
-            .select()
-            .from(updateCache)
-            .where(eq(updateCache.systemId, systemId))
-            .all().length;
-
-          const reconResult = await attemptReconnection(
-            systemId,
-            result.persistentInfo,
-            preCount,
-            onDataCb,
-            secretInput,
-          );
-
-          stdout = reconResult.stdout || stdout;
-          stderr = reconResult.stderr;
-          exitCode = reconResult.exitCode;
-          reconnectionUsed = true;
+          if (conn) {
+            sshManager.disconnect(conn);
+            conn = undefined;
+          }
+          return await finalizeUpgrade(hooks, { success: false, output: "Operation cancelled", cancelled: true });
         }
 
         const success = exitCode === 0;
@@ -2155,22 +2724,19 @@ export async function applyFullUpgradeAll(
         sshManager.disconnect(conn);
         conn = undefined;
       }
-      if (!reconnectionUsed) {
-        setActiveOperationPhase(systemId, "rechecking");
-        await requestNotificationRuntimeSystemSync(systemId);
-        outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-        await checkUpdatesUnlocked(systemId, true);
-      }
-      syncSystemNotificationHash(systemId);
-
-      const combinedOutput = allOutputs.join("\n\n");
-      outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
-      return { success: overallSuccess, output: combinedOutput, warning: reconnectionUsed && overallSuccess };
+      return await finalizeUpgrade(
+        hooks,
+        { success: overallSuccess, output: allOutputs.join("\n\n"), warning: reconnectionUsed && overallSuccess },
+        { recheck: !reconnectionUsed },
+      );
     } catch (e) {
+      if (conn) {
+        sshManager.disconnect(conn);
+        conn = undefined;
+      }
       if (isOperationCancelledError(e)) {
         outputStream.publish(systemId, { type: "warning", message: e.message });
-        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-        return { success: false, output: e.message, cancelled: true };
+        return await finalizeUpgrade(hooks, { success: false, output: e.message, cancelled: true });
       }
       logHistory(
         systemId,
@@ -2193,8 +2759,7 @@ export async function applyFullUpgradeAll(
         }
       );
       outputStream.publish(systemId, { type: "error", message: String(e) });
-      outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-      return { success: false, output: String(e) };
+      return await finalizeUpgrade(hooks, { success: false, output: String(e) });
     } finally {
       if (conn) sshManager.disconnect(conn);
     }
@@ -2257,8 +2822,12 @@ export async function applyUpgradePackages(
       let overallSuccess = true;
       let reconnectionUsed = false;
       let conn;
+      const hooks = createUpgradeHookSession(systemId, "upgrade_package");
 
       try {
+        throwIfActiveOperationCancelled(systemId);
+        const preHookStop = await runPreUpgradeHook(hooks, false);
+        if (preHookStop) return await finalizeUpgrade(hooks, preHookStop);
         throwIfActiveOperationCancelled(systemId);
         publishSshConnectionStep(
           (msg) => outputStream.publish(systemId, msg),
@@ -2318,6 +2887,25 @@ export async function applyUpgradePackages(
 
           let { stdout, stderr, exitCode } = result;
 
+          if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
+            try { sshManager.disconnect(conn!); } catch {}
+            conn = null;
+
+            const reconResult = await attemptReconnection(
+              systemId,
+              result.persistentInfo,
+              selected.packageNames.length,
+              onDataCb,
+              secretInput,
+            );
+            if (reconResult.timedOut) hooks.postBlockedReason = UPGRADE_STATE_UNKNOWN_REASON;
+
+            stdout = reconResult.stdout || stdout;
+            stderr = reconResult.stderr;
+            exitCode = reconResult.exitCode;
+            reconnectionUsed = true;
+          }
+
           if (isCancelledResult(exitCode)) {
             const stepCompletedAt = getCurrentTimestamp();
             const combinedOutput = streamedOutput || stdout || stderr;
@@ -2338,30 +2926,11 @@ export async function applyUpgradePackages(
               error: "Operation cancelled",
             });
             outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
-            outputStream.publish(systemId, {
-              type: "done",
-              success: false,
-              completedAt: getCurrentTimestamp(),
-            });
-            return { success: false, output: "Operation cancelled", cancelled: true };
-          }
-
-          if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
-            try { sshManager.disconnect(conn!); } catch {}
-            conn = null;
-
-            const reconResult = await attemptReconnection(
-              systemId,
-              result.persistentInfo,
-              selected.packageNames.length,
-              onDataCb,
-              secretInput,
-            );
-
-            stdout = reconResult.stdout || stdout;
-            stderr = reconResult.stderr;
-            exitCode = reconResult.exitCode;
-            reconnectionUsed = true;
+            if (conn) {
+              sshManager.disconnect(conn);
+              conn = null;
+            }
+            return await finalizeUpgrade(hooks, { success: false, output: "Operation cancelled", cancelled: true });
           }
 
           const success = exitCode === 0;
@@ -2405,31 +2974,23 @@ export async function applyUpgradePackages(
           conn = null;
         }
 
-        if (!reconnectionUsed) {
-          setActiveOperationPhase(systemId, "rechecking");
-          await requestNotificationRuntimeSystemSync(systemId);
-          outputStream.publish(systemId, { type: "phase", phase: "rechecking" });
-          await checkUpdatesUnlocked(systemId, true);
-        }
-
-        syncSystemNotificationHash(systemId);
-
-        const combinedOutput = allOutputs.join("\n\n");
-        outputStream.publish(systemId, {
-          type: "done",
-          success: overallSuccess,
-          completedAt: getCurrentTimestamp(),
-        });
-        return {
-          success: overallSuccess,
-          output: combinedOutput,
-          warning: reconnectionUsed && overallSuccess,
-        };
+        return await finalizeUpgrade(
+          hooks,
+          {
+            success: overallSuccess,
+            output: allOutputs.join("\n\n"),
+            warning: reconnectionUsed && overallSuccess,
+          },
+          { recheck: !reconnectionUsed },
+        );
       } catch (e) {
+        if (conn) {
+          sshManager.disconnect(conn);
+          conn = null;
+        }
         if (isOperationCancelledError(e)) {
           outputStream.publish(systemId, { type: "warning", message: e.message });
-          outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-          return { success: false, output: e.message, cancelled: true };
+          return await finalizeUpgrade(hooks, { success: false, output: e.message, cancelled: true });
         }
         logHistory(systemId, "upgrade_package", Array.from(groupedUpdates.keys()).join(","), "failed", {
           packageCount: selected.packageNames.length,
@@ -2448,8 +3009,7 @@ export async function applyUpgradePackages(
           error: String(e),
         });
         outputStream.publish(systemId, { type: "error", message: String(e) });
-        outputStream.publish(systemId, { type: "done", success: false, completedAt: getCurrentTimestamp() });
-        return { success: false, output: String(e) };
+        return await finalizeUpgrade(hooks, { success: false, output: String(e) });
       } finally {
         if (conn) sshManager.disconnect(conn);
       }

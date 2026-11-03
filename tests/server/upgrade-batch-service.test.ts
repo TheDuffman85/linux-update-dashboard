@@ -145,6 +145,197 @@ describe("upgrade batch service", () => {
     expect(started).toContain(inserted[3].id);
   });
 
+  test("a failed upgrade script holds back later priorities in its group only", async () => {
+    const db = getDb();
+    const groups = db.insert(dashboardGroups).values([
+      { name: "Cluster", sortOrder: 0, updatePriority: 1 },
+      { name: "Other", sortOrder: 1, updatePriority: 1 },
+    ]).returning({ id: dashboardGroups.id }).all();
+    const inserted = db.insert(systems).values([
+      { name: "Node 1", hostname: "n1.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]', dashboardGroupId: groups[0].id, updatePriority: 1 },
+      { name: "Node 2", hostname: "n2.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]', dashboardGroupId: groups[0].id, updatePriority: 2 },
+      { name: "Other 1", hostname: "o1.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]', dashboardGroupId: groups[1].id, updatePriority: 1 },
+      { name: "Other 2", hostname: "o2.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]', dashboardGroupId: groups[1].id, updatePriority: 2 },
+    ]).returning({ id: systems.id }).all();
+    db.insert(updateCache).values(inserted.map((system) => ({
+      systemId: system.id,
+      pkgManager: "apt",
+      packageName: `package-${system.id}`,
+      newVersion: "2",
+    }))).run();
+
+    const started: number[] = [];
+    vi.spyOn(updateService, "applyUpgradeAll").mockImplementation(async (systemId) => {
+      started.push(systemId);
+      return systemId === inserted[0].id
+        ? { success: false, output: "Post-upgrade script failed", hookFailed: true }
+        : { success: true, output: "" };
+    });
+
+    const { batchId } = createUpgradeBatch(inserted.map((system) => ({ systemId: system.id })), {
+      autoRun: false,
+    });
+    await runUpgradeBatches();
+
+    expect(started.sort()).toEqual([inserted[0].id, inserted[2].id, inserted[3].id].sort());
+    const items = db.select().from(upgradeBatchItems).where(eq(upgradeBatchItems.batchId, batchId)).all();
+    const held = items.find((item) => item.systemId === inserted[1].id);
+    expect(held?.status).toBe("cancelled");
+    expect(held?.error).toContain("did not finish");
+    expect(db.select().from(updateHistory).where(eq(updateHistory.id, held!.historyId!)).get()?.status).toBe("cancelled");
+    expect(items.find((item) => item.systemId === inserted[0].id)?.status).toBe("failed");
+    expect(items.find((item) => item.systemId === inserted[3].id)?.status).toBe("success");
+    expect(db.select().from(upgradeBatches).where(eq(upgradeBatches.id, batchId)).get()?.status).toBe("failed");
+  });
+
+  describe("a restart after a script failure", () => {
+    function seedInterruptedBatch(states: Array<{ priority: number; status: string; hookFailed?: number; group?: number | null }>) {
+      const db = getDb();
+      const batch = db.insert(upgradeBatches).values({ status: "running" }).returning({ id: upgradeBatches.id }).get();
+      return states.map((state, index) => {
+        const system = db.insert(systems).values({
+          name: `Node ${index}`,
+          hostname: `n${index}.local`,
+          username: "root",
+          pkgManager: "apt",
+          detectedPkgManagers: '["apt"]',
+        }).returning({ id: systems.id }).get();
+        const history = db.insert(updateHistory).values({
+          systemId: system.id,
+          action: "upgrade_all",
+          pkgManager: "apt",
+          status: "queued",
+          startedAt: "2026-01-01 00:00:00",
+        }).returning({ id: updateHistory.id }).get();
+        const item = db.insert(upgradeBatchItems).values({
+          batchId: batch.id,
+          systemId: system.id,
+          groupId: state.group ?? null,
+          systemSortOrder: state.priority,
+          status: state.status,
+          hookFailed: state.hookFailed ?? 0,
+          historyId: history.id,
+        }).returning({ id: upgradeBatchItems.id }).get();
+        return { systemId: system.id, itemId: item.id };
+      });
+    }
+
+    function itemStatus(itemId: number) {
+      return getDb().select().from(upgradeBatchItems).where(eq(upgradeBatchItems.id, itemId)).get();
+    }
+
+    test("finishes the node still running, then holds later priorities", async () => {
+      const [failed, running, later] = seedInterruptedBatch([
+        { priority: 1, status: "failed", hookFailed: 1 },
+        { priority: 1, status: "running" },
+        { priority: 2, status: "queued" },
+      ]);
+      const started: number[] = [];
+      vi.spyOn(updateService, "applyUpgradeAll").mockImplementation(async (systemId) => {
+        started.push(systemId);
+        return { success: true, output: "" };
+      });
+
+      await runUpgradeBatches();
+
+      expect(started).toEqual([running.systemId]);
+      expect(itemStatus(failed.itemId)?.status).toBe("failed");
+      expect(itemStatus(running.itemId)?.status).toBe("success");
+      expect(itemStatus(later.itemId)?.status).toBe("cancelled");
+      expect(itemStatus(later.itemId)?.error).toContain("did not finish");
+    });
+
+    test("holds later priorities when nothing at the failed priority is left to run", async () => {
+      const [, later, last] = seedInterruptedBatch([
+        { priority: 1, status: "failed", hookFailed: 1 },
+        { priority: 2, status: "queued" },
+        { priority: 3, status: "queued" },
+      ]);
+      const applyUpgradeAll = vi.spyOn(updateService, "applyUpgradeAll");
+
+      await runUpgradeBatches();
+
+      expect(applyUpgradeAll).not.toHaveBeenCalled();
+      expect(itemStatus(later.itemId)?.status).toBe("cancelled");
+      expect(itemStatus(last.itemId)?.status).toBe("cancelled");
+    });
+
+    test("a failure in another group holds nothing back", async () => {
+      const groups = getDb().insert(dashboardGroups).values([
+        { name: "Cluster", sortOrder: 0, updatePriority: 0 },
+        { name: "Other", sortOrder: 1, updatePriority: 0 },
+      ]).returning({ id: dashboardGroups.id }).all();
+      const [, other] = seedInterruptedBatch([
+        { priority: 1, status: "failed", hookFailed: 1, group: groups[0].id },
+        { priority: 2, status: "queued", group: groups[1].id },
+      ]);
+      const started: number[] = [];
+      vi.spyOn(updateService, "applyUpgradeAll").mockImplementation(async (systemId) => {
+        started.push(systemId);
+        return { success: true, output: "" };
+      });
+
+      await runUpgradeBatches();
+
+      expect(started).toEqual([other.systemId]);
+      expect(itemStatus(other.itemId)?.status).toBe("success");
+    });
+
+    test("an ordinary failure at an earlier priority holds nothing back", async () => {
+      const [, later] = seedInterruptedBatch([
+        { priority: 1, status: "failed" },
+        { priority: 2, status: "queued" },
+      ]);
+      vi.spyOn(updateService, "applyUpgradeAll").mockResolvedValue({ success: true, output: "" });
+
+      await runUpgradeBatches();
+
+      expect(itemStatus(later.itemId)?.status).toBe("success");
+    });
+
+    test("stores the failure with the item that hit it", async () => {
+      const [item, later] = seedInterruptedBatch([
+        { priority: 1, status: "queued" },
+        { priority: 2, status: "queued" },
+      ]);
+      vi.spyOn(updateService, "applyUpgradeAll").mockImplementation(async (systemId) =>
+        systemId === item.systemId
+          ? { success: false, output: "Post-upgrade script failed", hookFailed: true }
+          : { success: true, output: "" });
+
+      await runUpgradeBatches();
+
+      expect(itemStatus(item.itemId)?.hookFailed).toBe(1);
+      expect(itemStatus(later.itemId)?.hookFailed).toBe(0);
+      expect(itemStatus(later.itemId)?.status).toBe("cancelled");
+    });
+  });
+
+  test("an ordinary upgrade failure does not hold back later priorities", async () => {
+    const db = getDb();
+    const inserted = db.insert(systems).values([
+      { name: "Node 1", hostname: "n1.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]', updatePriority: 1 },
+      { name: "Node 2", hostname: "n2.local", username: "root", pkgManager: "apt", detectedPkgManagers: '["apt"]', updatePriority: 2 },
+    ]).returning({ id: systems.id }).all();
+    db.insert(updateCache).values(inserted.map((system) => ({
+      systemId: system.id,
+      pkgManager: "apt",
+      packageName: `package-${system.id}`,
+      newVersion: "2",
+    }))).run();
+
+    const started: number[] = [];
+    vi.spyOn(updateService, "applyUpgradeAll").mockImplementation(async (systemId) => {
+      started.push(systemId);
+      return { success: systemId !== inserted[0].id, output: "" };
+    });
+
+    createUpgradeBatch(inserted.map((system) => ({ systemId: system.id })), { autoRun: false });
+    await runUpgradeBatches();
+
+    expect(started).toEqual([inserted[0].id, inserted[1].id]);
+  });
+
   test("starts another batch for idle systems while a batch is already active", async () => {
     const db = getDb();
     const inserted = db.insert(systems).values([

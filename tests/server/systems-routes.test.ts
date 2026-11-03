@@ -46,7 +46,7 @@ async function createBearerToken(): Promise<string> {
     userId: user.id,
     name: "writer",
     tokenHash: await hashToken(token),
-    readOnly: 0,
+    permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]',
   }).run();
   return token;
 }
@@ -149,6 +149,43 @@ describe("systems reorder route", () => {
       ((await dashboardResponse.json()) as { systems: Array<{ name: string }> })
         .systems.map((system) => system.name),
     ).toEqual(["Bravo", "Charlie", "Alpha"]);
+  });
+
+  test("reports upgrade scripts from defaults, assignments, and opt-outs", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const addSystem = (name: string) => getDb().insert(systems).values({
+      name,
+      hostname: `${name}.local`,
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+    const hook = (operation: "pre_upgrade" | "post_upgrade", isDefault: boolean) => createScript({
+      name: operation,
+      type: "system",
+      operation,
+      pkgManager: null,
+      isDefault,
+      steps: [{ label: "Run", command: "true" }],
+    });
+    const followsDefault = addSystem("follows-default");
+    const optedOut = addSystem("opted-out");
+    const assigned = addSystem("assigned");
+    hook("pre_upgrade", true);
+    const post = hook("post_upgrade", false);
+
+    const optOutRes = await app.request(`/api/systems/${optedOut}/script-overrides`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scriptOverrides: { "system/pre_upgrade": "none" } }),
+    });
+    expect(optOutRes.status).toBe(200);
+    setSystemOverrides(assigned, { "system/post_upgrade": post.id });
+
+    const scripts = async (id: number) =>
+      (await (await app.request(`/api/systems/${id}`)).json()).system.upgradeScripts;
+    expect(await scripts(followsDefault)).toEqual({ pre: true, post: false });
+    expect(await scripts(optedOut)).toEqual({ pre: false, post: false });
+    expect(await scripts(assigned)).toEqual({ pre: true, post: true });
   });
 
   test("does not expose the removed Upgrade All grouping routes", async () => {
@@ -1343,13 +1380,13 @@ describe("systems reorder route", () => {
         path: "/api/systems",
         method: "POST",
         body: JSON.stringify({ scriptOverrides: {} }),
-        error: "API tokens cannot configure SSH connections",
+        error: "This token needs the systems:add permission",
       },
       {
         path: "/api/systems/1",
         method: "PUT",
         body: JSON.stringify({ scriptOverrides: {} }),
-        error: "API tokens cannot configure SSH connections",
+        error: "This token needs the systems:edit permission",
       },
       {
         path: "/api/systems/1/script-overrides",
@@ -1417,7 +1454,9 @@ describe("systems reorder route", () => {
 
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({
-        error: "API tokens cannot configure SSH connections",
+        error: entry.path.endsWith("/systems")
+          ? "This token needs the systems:add permission"
+          : "This token needs the systems:edit permission",
       });
     }
   });
@@ -1472,12 +1511,15 @@ describe("systems reorder route", () => {
       }, { incoming }),
     ]);
 
-    for (const res of responses) {
+    const errors = await Promise.all(responses.map(async (res) => {
       expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({
-        error: "API tokens cannot configure SSH connections",
-      });
-    }
+      return (await res.json()).error;
+    }));
+    expect(errors).toEqual([
+      "This token needs the systems:add permission",
+      "This token needs the systems:edit permission",
+      "This token needs the systems:add or systems:edit permission",
+    ]);
 
     expect(getDb().select().from(systems).all()).toHaveLength(1);
     expect(getDb().select().from(systems).where(eq(systems.id, systemId)).get()?.name).toBe("Existing");

@@ -4,6 +4,11 @@ import { getDb } from "../db";
 import { apiTokens } from "../db/schema";
 import { generateApiToken, hashToken } from "../auth/api-token";
 import type { SessionData } from "../auth/session";
+import {
+  API_TOKEN_PERMISSIONS,
+  isApiTokenPermission,
+  parseApiTokenPermissions,
+} from "../../shared/api-token-permissions";
 
 type AuthEnv = {
   Variables: {
@@ -42,7 +47,7 @@ tokens.get("/", (c) => {
     .select({
       id: apiTokens.id,
       name: apiTokens.name,
-      readOnly: apiTokens.readOnly,
+      permissions: apiTokens.permissions,
       roleSource: apiTokens.roleSource,
       expiresAt: apiTokens.expiresAt,
       lastUsedAt: apiTokens.lastUsedAt,
@@ -52,7 +57,12 @@ tokens.get("/", (c) => {
     .where(ownedBy(user))
     .all();
 
-  return c.json({ tokens: rows });
+  return c.json({
+    tokens: rows.map((row) => ({
+      ...row,
+      permissions: parseApiTokenPermissions(row.permissions),
+    })),
+  });
 });
 
 // Create a new token
@@ -96,7 +106,15 @@ tokens.post("/", async (c) => {
     expiresAt = d.toISOString().replace("T", " ").slice(0, 19);
   }
 
-  const readOnly = body.readOnly !== false ? 1 : 0;
+  // Silently creating a read-only token for an old client would be worse than failing.
+  if (body.readOnly !== undefined) {
+    return c.json({ error: "readOnly was replaced by permissions" }, 400);
+  }
+  const requested = body.permissions ?? [];
+  if (!Array.isArray(requested) || !requested.every(isApiTokenPermission)) {
+    return c.json({ error: `permissions must be a list of: ${API_TOKEN_PERMISSIONS.join(", ")}` }, 400);
+  }
+  const permissions = API_TOKEN_PERMISSIONS.filter((permission) => requested.includes(permission));
 
   const plainToken = generateApiToken();
   const tokenHash = await hashToken(plainToken);
@@ -107,7 +125,7 @@ tokens.post("/", async (c) => {
       userId: user.userId,
       name,
       tokenHash,
-      readOnly,
+      permissions: JSON.stringify(permissions),
       roleSource: user.linkedSso ? "oidc" : "local",
       expiresAt,
     })

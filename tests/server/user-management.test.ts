@@ -180,7 +180,7 @@ describe("user management", () => {
     const token = "ludash_admin_token";
     getDb()
       .insert(apiTokens)
-      .values({ userId: adminId, name: "t", tokenHash: await hashToken(token), readOnly: 0 })
+      .values({ userId: adminId, name: "t", tokenHash: await hashToken(token), permissions: '["updates:check","updates:apply","systems:organize","systems:remove"]' })
       .run();
     expect(
       (await request("/api/users", { headers: { authorization: `Bearer ${token}` } })).status,
@@ -237,7 +237,7 @@ describe("user management", () => {
     const token = "ludash_ops_token";
     getDb()
       .insert(apiTokens)
-      .values({ userId: opsId, name: "t", tokenHash: await hashToken(token), readOnly: 1 })
+      .values({ userId: opsId, name: "t", tokenHash: await hashToken(token) })
       .run();
     const tokenHeaders = { authorization: `Bearer ${token}` };
     expect((await request("/api/systems", { headers: tokenHeaders })).status).toBe(200);
