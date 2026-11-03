@@ -6,6 +6,7 @@ import { join } from "path";
 import updatesRoutes from "../../server/routes/updates";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateCache } from "../../server/db/schema";
+import { clearActiveOperation, setActiveOperation } from "../../server/services/active-operation-store";
 
 function seedSystemWithVisibleUpdate(packageNames: string[] = ["bash"]): number {
   const systemId = getDb()
@@ -127,6 +128,25 @@ describe("updates routes validation", () => {
       const body = await res.json();
       expect(body.status).toBe("started");
       expect(body.jobId).toEqual(expect.any(String));
+    } finally {
+      closeDatabase();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses to run a pending post-upgrade script while an operation is active", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "ludash-updates-routes-test-"));
+    initDatabase(join(tempDir, "dashboard.db"));
+    try {
+      const app = new Hono();
+      app.route("/api", updatesRoutes);
+      const systemId = seedSystemWithVisibleUpdate();
+      setActiveOperation(systemId, { type: "upgrade_all", startedAt: "2026-01-01 00:00:00" });
+
+      const res = await app.request(`/api/systems/${systemId}/post-upgrade-script/run`, { method: "POST" });
+
+      expect(res.status).toBe(409);
+      clearActiveOperation(systemId);
     } finally {
       closeDatabase();
       rmSync(tempDir, { recursive: true, force: true });

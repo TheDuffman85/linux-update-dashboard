@@ -25,7 +25,9 @@ export type PotentialCommandCategory =
   | "upgrade_all"
   | "full_upgrade_all"
   | "upgrade_selected"
-  | "reboot";
+  | "reboot"
+  | "pre_upgrade"
+  | "post_upgrade";
 
 export interface PotentialCommandEntry {
   id: string;
@@ -568,6 +570,24 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
       pkgManager: null,
       command: reboot.command,
     });
+  }
+
+  if (systemId > 0) {
+    for (const [operation, purpose] of [
+      ["pre_upgrade", "Runs before an upgrade"],
+      ["post_upgrade", "Runs after an upgrade"],
+    ] as const) {
+      for (const [index, step] of resolveRuntimeSteps({ systemId, operation }).entries()) {
+        exact.push({
+          id: `${operation}:${index}`,
+          category: operation,
+          label: step.label,
+          purpose,
+          pkgManager: null,
+          command: step.command,
+        });
+      }
+    }
   }
 
   const sudoersResults = exact.map((entry) => normalizeForSudoers(entry));

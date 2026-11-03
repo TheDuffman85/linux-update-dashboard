@@ -1243,21 +1243,43 @@ export function initDatabase(
     // Column already exists
   }
 
+  // Set while a post-upgrade script still has to run, so one that never ran
+  // stays visible across restarts.
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN post_upgrade_pending_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Lets a batch reattach to a pre- or post-upgrade script after a restart.
+  try {
+    _db.run(sql`ALTER TABLE upgrade_batch_items ADD COLUMN hook_progress TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Keeps a failed script holding later priorities across a restart.
+  try {
+    _db.run(sql`ALTER TABLE upgrade_batch_items ADD COLUMN hook_failed INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
   // Cleanup: if the dashboard restarted mid-operation, SSH-safe maintenance is
   // expected to continue remotely and should show a warning instead of failure.
   _db.run(sql`UPDATE update_history
     SET status = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove') THEN 'warning'
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove', 'pre_upgrade', 'post_upgrade') THEN 'warning'
       ELSE 'failed'
     END,
     completed_at = datetime('now'),
     output = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove')
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove', 'pre_upgrade', 'post_upgrade')
         THEN 'Server restarted while operation was in progress'
       ELSE output
     END,
     error = CASE
-      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove')
+      WHEN action IN ('upgrade_all', 'full_upgrade_all', 'upgrade_package', 'autoremove', 'pre_upgrade', 'post_upgrade')
         THEN NULL
       ELSE 'Server restarted while operation was in progress'
     END

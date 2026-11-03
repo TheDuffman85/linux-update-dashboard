@@ -4,7 +4,7 @@ import type { PackageManagerConfigs, PackageManagerSecretRefs } from "./package-
 import type { HostKeyStatus } from "./host-key-status";
 
 export interface ActiveOperation {
-  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair";
+  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair" | "post_upgrade";
   startedAt: string;
   phase?: "queued" | "reconnecting" | "rechecking";
   packageName?: string;
@@ -77,6 +77,7 @@ export interface System {
   hidden: number;
   repositorySourceEditingEnabled: number;
   needsReboot: number;
+  postUpgradePendingAt: string | null;
   isReachable: number;
   lastSeenAt: string | null;
   createdAt: string;
@@ -96,6 +97,8 @@ export interface System {
   };
   packageIssueCount?: number;
   scriptOverrides: Record<string, string>;
+  /** Whether a pre- or post-upgrade script applies, from an assignment or the default. */
+  upgradeScripts?: { pre: boolean; post: boolean };
 }
 
 export interface DashboardGroup {
@@ -208,7 +211,7 @@ export interface HistoryEntry {
 
 export interface PotentialCommandEntry {
   id: string;
-  category: "detection" | "system_info" | "check" | "list_installed_packages" | "repair_issue" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot";
+  category: "detection" | "system_info" | "check" | "list_installed_packages" | "repair_issue" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot" | "pre_upgrade" | "post_upgrade";
   label: string;
   purpose: string;
   pkgManager: string | null;
@@ -666,6 +669,35 @@ export function useDismissNeedsReboot() {
       await qc.invalidateQueries({ queryKey: ["system", id] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
       await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useRunPostUpgradeScript() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const { jobId } = await apiFetch<{ status: string; jobId: string }>(
+        `/systems/${id}/post-upgrade-script/run`,
+        { method: "POST" },
+      );
+      return pollJob<{ status: string; output: string }>(jobId, 3000);
+    },
+    onSettled: async (_data, _error, id) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useDismissPostUpgradePending() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ status: string }>(`/systems/${id}/dismiss-post-upgrade-pending`, { method: "POST" }),
+    onSuccess: async (_data, id) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
     },
   });
 }

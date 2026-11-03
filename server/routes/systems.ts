@@ -699,6 +699,10 @@ systems.get("/:id", (c) => {
       activeOperation: updateService.getActiveOperation(id) ?? upgradeBatchService.getQueuedOrRunningOperation(id),
       supportsFullUpgrade: updateService.supportsFullUpgrade(id),
       autoremoveSupport: updateService.getAutoremoveSupport(id),
+      upgradeScripts: {
+        pre: !!scriptService.resolveScript(id, "pre_upgrade"),
+        post: !!scriptService.resolveScript(id, "post_upgrade"),
+      },
     },
     commandReference: buildCommandReference({
       id,
@@ -1229,6 +1233,14 @@ systems.post("/:id/dismiss-needs-reboot", async (c) => {
   }
 
   await notificationRuntime.syncSystemState(id);
+  return c.json({ status: "ok" });
+});
+
+systems.post("/:id/dismiss-post-upgrade-pending", (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (!systemService.getSystem(id)) return c.json({ error: "System not found" }, 404);
+  systemService.setPostUpgradePending(id, false);
   return c.json({ status: "ok" });
 });
 

@@ -47,7 +47,9 @@ export type ScriptOperation =
   | "full_upgrade_all"
   | "upgrade_selected"
   | "system_info"
-  | "reboot";
+  | "reboot"
+  | "pre_upgrade"
+  | "post_upgrade";
 
 export interface ScriptStep {
   label: string;
@@ -142,7 +144,7 @@ export interface CustomPackageManagerBundle {
     name: string;
     description: string | null;
     type: "package_manager";
-    operation: Exclude<ScriptOperation, "system_info" | "reboot">;
+    operation: Exclude<ScriptOperation, "system_info" | "reboot" | "pre_upgrade" | "post_upgrade">;
     pkgManager: string;
     isDefault: boolean;
     steps: ScriptStep[];
@@ -221,7 +223,14 @@ const OPERATION_PROFILE_ORDER: ScriptOperation[] = [
   "upgrade_selected",
   "system_info",
   "reboot",
+  "pre_upgrade",
+  "post_upgrade",
 ];
+
+/** Hooks have no built-in script, so they only run when assigned or set as the default. */
+const UPGRADE_HOOK_OPERATIONS = new Set<ScriptOperation>(["pre_upgrade", "post_upgrade"]);
+/** Stored as a hook's override to opt a system out of the default. */
+export const NO_UPGRADE_SCRIPT = "none";
 
 export const SCRIPT_OPERATION_PROFILES: Record<ScriptOperation, ScriptOperationProfile> = {
   detect: {
@@ -341,6 +350,30 @@ export const SCRIPT_OPERATION_PROFILES: Record<ScriptOperation, ScriptOperationP
     outputConsumer: "Output is streamed live and stored in activity history; it is not parsed into system fields or update rows.",
     parserBehavior: "No parser configuration is used.",
     exitCodeBehavior: "A non-zero exit code before the reboot command prevents later steps from running.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  pre_upgrade: {
+    operation: "pre_upgrade",
+    label: "Pre-upgrade",
+    allowedTypes: ["system"],
+    purpose: "Runs once before an upgrade on every system that uses it, for example to stop a cluster manager.",
+    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code skips the upgrade and the post-upgrade script, so undo any partial work in this script.",
+    relevantPlaceholders: ["{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  post_upgrade: {
+    operation: "post_upgrade",
+    label: "Post-upgrade",
+    allowedTypes: ["system"],
+    purpose: "Runs once after an upgrade on every system that uses it, even if the upgrade failed or was cancelled.",
+    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, failed, cancelled, or unknown.",
+    outputConsumer: "Output is streamed live and stored in activity history; it is not parsed.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code marks the upgrade as failed and offers to run the script again from the system page.",
     relevantPlaceholders: ["{{sudo:COMMAND}}"],
     defaultStepBadge: "streamed only",
   },
@@ -1407,7 +1440,7 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type !== "package_manager" && input.type !== "system") {
     return "type must be package_manager or system";
   }
-  const operations: ScriptOperation[] = ["detect", "check_updates", "list_installed_packages", "repair_issue", "autoremove", "upgrade_all", "full_upgrade_all", "upgrade_selected", "system_info", "reboot"];
+  const operations: ScriptOperation[] = ["detect", "check_updates", "list_installed_packages", "repair_issue", "autoremove", "upgrade_all", "full_upgrade_all", "upgrade_selected", "system_info", "reboot", "pre_upgrade", "post_upgrade"];
   if (!input.operation || !operations.includes(input.operation)) {
     return "operation is not supported";
   }
@@ -1417,15 +1450,20 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type === "package_manager") {
     const managerError = validatePackageManagerName(input.pkgManager);
     if (managerError) return managerError;
-    if (input.operation === "system_info" || input.operation === "reboot") {
+    if (input.operation === "system_info" || input.operation === "reboot" || UPGRADE_HOOK_OPERATIONS.has(input.operation)) {
       return "package manager scripts cannot use system operations";
     }
   }
   if (input.type === "system" && input.pkgManager) {
     return "system scripts cannot have pkgManager";
   }
-  if (input.type === "system" && input.operation !== "system_info" && input.operation !== "reboot") {
-    return "system scripts must use system_info or reboot";
+  if (
+    input.type === "system" &&
+    input.operation !== "system_info" &&
+    input.operation !== "reboot" &&
+    !UPGRADE_HOOK_OPERATIONS.has(input.operation)
+  ) {
+    return "system scripts must use system_info, reboot, pre_upgrade, or post_upgrade";
   }
   if (input.isDefault !== undefined && typeof input.isDefault !== "boolean") {
     return "isDefault must be a boolean";
@@ -1996,7 +2034,7 @@ function scriptBundleEntry(script: ScriptDefinition): CustomPackageManagerBundle
   if (!script.pkgManager || script.type !== "package_manager") {
     throw new Error("Only package manager scripts can be exported with a package manager");
   }
-  if (script.operation === "system_info" || script.operation === "reboot") {
+  if (script.operation === "system_info" || script.operation === "reboot" || script.operation === "pre_upgrade" || script.operation === "post_upgrade") {
     throw new Error("System scripts cannot be exported with a package manager");
   }
   return {
@@ -2084,7 +2122,7 @@ export function normalizeCustomPackageManagerBundle(value: unknown): CustomPacka
       systemInfoConfig: null,
       sourceScriptId: typeof rawScript.sourceScriptId === "string" ? rawScript.sourceScriptId : null,
     };
-    if (script.operation === "system_info" || script.operation === "reboot") {
+    if (script.operation === "system_info" || script.operation === "reboot" || UPGRADE_HOOK_OPERATIONS.has(script.operation)) {
       throw new Error(`scripts.${index}.operation must be a package manager operation`);
     }
     script.parserConfig = normalizeParserConfigForOperation(script.parserConfig, script.operation);
@@ -2147,6 +2185,12 @@ function validateSystemOverride(operationKey: string, scriptId: string | null | 
     throw new Error(`Invalid operation key: ${operationKey}`);
   }
   if (!scriptId) return;
+  if (scriptId === NO_UPGRADE_SCRIPT) {
+    if (operationKey !== "system/pre_upgrade" && operationKey !== "system/post_upgrade") {
+      throw new Error(`${operationKey} cannot be set to ${NO_UPGRADE_SCRIPT}`);
+    }
+    return;
+  }
   const script = getScriptById(scriptId);
   if (!script) throw new Error(`Script not found: ${scriptId}`);
   const expectedKey = buildOperationKey(script.operation, script.pkgManager);
@@ -2202,6 +2246,7 @@ export function resolveScript(
     .where(and(eq(systemScriptOverrides.systemId, systemId), eq(systemScriptOverrides.operationKey, operationKey)))
     .get();
   if (override) {
+    if (override.scriptId === NO_UPGRADE_SCRIPT && UPGRADE_HOOK_OPERATIONS.has(operation)) return null;
     const script = getScriptById(override.scriptId);
     if (script && buildOperationKey(script.operation, script.pkgManager) === operationKey) return script;
   }
@@ -2214,6 +2259,8 @@ export function resolveScript(
     const script = getScriptById(explicitDefaultId);
     if (script) return script;
   }
+  // The fallback below would run a hook on every system once one script exists.
+  if (UPGRADE_HOOK_OPERATIONS.has(operation)) return null;
   const builtin = getBuiltinScripts().find((script) =>
     script.operation === operation && script.pkgManager === (pkgManager ?? null)
   );

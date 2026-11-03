@@ -1,10 +1,10 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { dashboardGroups, systems, updateHistory, upgradeBatchItems, upgradeBatches } from "../db/schema";
 import { sanitizeCommand, sanitizeOutput } from "../utils/sanitize";
 import * as systemService from "./system-service";
 import * as updateService from "./update-service";
-import type { DefaultUpgradeModeOverride } from "./update-service";
+import type { DefaultUpgradeModeOverride, UpgradeHookProgress } from "./update-service";
 import type { PersistentCommandInfo } from "../ssh/connection";
 import { logger } from "../logger";
 
@@ -205,11 +205,57 @@ async function runSystemsByPriority(
   ).sort((a, b) => a - b);
 
   for (const priority of priorities) {
+    if (hasEarlierHookFailure(items[0], priority)) {
+      // A node may still be out of its cluster, so taking the next one down
+      // could cost the whole service. Later groups are independent.
+      cancelQueuedItems(
+        items.filter((item) => item.systemSortOrder >= priority),
+        "Skipped because a pre- or post-upgrade script did not finish on a system with an earlier priority",
+      );
+      return;
+    }
     await Promise.all(
       items
         .filter((item) => item.systemSortOrder === priority)
         .map((item) => runBatchItem(item.id)),
     );
+  }
+}
+
+/**
+ * Reads the database because a restart only reloads unfinished items, and the
+ * failed item may have finished before it.
+ */
+function hasEarlierHookFailure(
+  item: ReturnType<typeof getNextGroupItems>[number],
+  priority: number,
+): boolean {
+  return !!getDb()
+    .select({ id: upgradeBatchItems.id })
+    .from(upgradeBatchItems)
+    .where(
+      and(
+        eq(upgradeBatchItems.batchId, item.batchId),
+        item.groupId === null ? isNull(upgradeBatchItems.groupId) : eq(upgradeBatchItems.groupId, item.groupId),
+        eq(upgradeBatchItems.groupSortOrder, item.groupSortOrder),
+        eq(upgradeBatchItems.hookFailed, 1),
+        lt(upgradeBatchItems.systemSortOrder, priority),
+      ),
+    )
+    .get();
+}
+
+function cancelQueuedItems(
+  items: ReturnType<typeof getNextGroupItems>,
+  reason: string,
+): void {
+  const db = getDb();
+  for (const item of items) {
+    if (item.historyId) updateService.finishPendingHistoryEntry(item.historyId, "cancelled", reason);
+    db.update(upgradeBatchItems)
+      .set({ status: "cancelled", error: reason, completedAt: now() })
+      .where(eq(upgradeBatchItems.id, item.id))
+      .run();
   }
 }
 
@@ -232,12 +278,19 @@ async function runGroupPriorityWave(
   );
 }
 
-async function runBatchItem(itemId: number): Promise<ItemStatus> {
+async function runBatchItem(itemId: number): Promise<void> {
   const db = getDb();
   const item = db.select().from(upgradeBatchItems).where(eq(upgradeBatchItems.id, itemId)).get();
-  if (!item || isTerminal(item.status)) return (item?.status as ItemStatus) ?? "failed";
+  if (!item || isTerminal(item.status)) return;
 
+  const hookProgress: UpgradeHookProgress | undefined = item.hookProgress
+    ? JSON.parse(item.hookProgress)
+    : undefined;
+  const startedAt = item.startedAt ?? now();
+
+  // A post-upgrade script means the upgrade process recorded here has already ended.
   const resume =
+    hookProgress?.phase !== "post_upgrade" &&
     item.status === "running" &&
     item.historyId &&
     item.currentPkgManager &&
@@ -267,6 +320,8 @@ async function runBatchItem(itemId: number): Promise<ItemStatus> {
           : undefined,
       queuedHistoryId: resume ? undefined : item.historyId ?? undefined,
       resume,
+      // An upgrade that was already running means its pre-upgrade script is done.
+      resumeHook: resume ? undefined : hookProgress,
       onStepStarted: ({ historyId, pkgManager, command, preUpgradeUpdateCount }) => {
         db.update(upgradeBatchItems)
           .set({
@@ -279,7 +334,7 @@ async function runBatchItem(itemId: number): Promise<ItemStatus> {
             remoteLogFile: null,
             remoteExitFile: null,
             remoteScriptFile: null,
-            startedAt: item.startedAt ?? now(),
+            startedAt,
           })
           .where(eq(upgradeBatchItems.id, itemId))
           .run();
@@ -292,6 +347,12 @@ async function runBatchItem(itemId: number): Promise<ItemStatus> {
             remoteExitFile: info.exitFile,
             remoteScriptFile: info.scriptFile ?? null,
           })
+          .where(eq(upgradeBatchItems.id, itemId))
+          .run();
+      },
+      onHookProgress: (progress) => {
+        db.update(upgradeBatchItems)
+          .set({ status: "running", startedAt, hookProgress: JSON.stringify(progress) })
           .where(eq(upgradeBatchItems.id, itemId))
           .run();
       },
@@ -311,11 +372,12 @@ async function runBatchItem(itemId: number): Promise<ItemStatus> {
       .set({
         status,
         error: result.success || result.warning ? null : sanitizeOutput(result.output).slice(0, 2000),
+        hookProgress: null,
+        hookFailed: result.hookFailed ? 1 : 0,
         completedAt: now(),
       })
       .where(eq(upgradeBatchItems.id, itemId))
       .run();
-    return status;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (item.historyId) updateService.finishPendingHistoryEntry(item.historyId, "failed", message);
@@ -323,11 +385,11 @@ async function runBatchItem(itemId: number): Promise<ItemStatus> {
       .set({
         status: "failed",
         error: sanitizeOutput(message).slice(0, 2000),
+        hookProgress: null,
         completedAt: now(),
       })
       .where(eq(upgradeBatchItems.id, itemId))
       .run();
-    return "failed";
   }
 }
 

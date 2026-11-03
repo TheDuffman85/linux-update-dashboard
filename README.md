@@ -37,7 +37,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
-- **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, and assign overrides per system.
+- **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, assign overrides per system, and run pre- and post-upgrade scripts around upgrades on all systems or selected ones.
 - **Scheduling:** cron-based refresh, update, autoremove, reboot (optionally only when required), and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
 - **Home Assistant MQTT:** app and per-system update entities with discovery, retained state/attributes, rich metadata, images, and optional install commands.
@@ -402,6 +402,7 @@ Each group, including **Ungrouped**, has an **Upgrade priority** from `0` to `99
 - Lower priority numbers run first.
 - Groups with the same priority run in parallel.
 - The next priority starts only after all systems at the current priority finish.
+- A [pre- or post-upgrade script](#pre--and-post-upgrade-scripts) that does not finish cancels the later priorities in that group, so a rolling upgrade does not take down another node.
 - Each system also has an **Upgrade priority** from `0` to `99` within its current group (including **Ungrouped**), with a default of `1`.
 - Lower-priority-number systems run first within that group, while systems with the same priority run in parallel.
 - System priority is scoped to its group, so groups sharing a priority progress through their own system priorities independently.
@@ -473,7 +474,7 @@ Webhook delivery defaults to a 10-second timeout, 2 retries, and a 30-second ret
 
 ## Script Customization and Sudoers
 
-The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, and reboots.
+The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, reboots, and pre- and post-upgrade scripts.
 
 Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
 
@@ -482,6 +483,7 @@ Importable custom package-manager bundles live in [`examples/`](examples/), incl
 - Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`.
 - Custom package managers can define display labels, parser regexes, optional config entries, and import/export bundles.
 - Config entries can be marked **secret** for tokens and passwords. See [Secret config entries](#secret-config-entries).
+- Pre- and post-upgrade scripts can run commands around an upgrade. See [Pre- and post-upgrade scripts](#pre--and-post-upgrade-scripts).
 - Used scripts and package managers are protected from accidental deletion.
 
 Command placeholders include `{{package}}`, `{{packages}}`, `{{quotedPackage}}`, `{{quotedPackages}}`, `{{manager}}`, `{{config.someKey}}`, and `{{sudo:COMMAND}}`. Custom parser regexes should use named capture groups such as `packageName`, `newVersion`, `currentVersion`, `architecture`, and `repository`.
@@ -498,6 +500,33 @@ sudo visudo -cf /etc/sudoers.d/updater-updater
 ```
 
 Package maintenance remains privileged because package scripts run as root. The goal is to limit the dashboard account to the required maintenance commands.
+
+### Pre- and post-upgrade scripts
+
+Use these to prepare a system for patching and restore it afterwards, for example to stop a cluster manager and start it again. Create a custom script with the **Pre-upgrade** or **Post-upgrade** operation on the **Scripts** page. A script only runs where you turn it on:
+
+- **On every system:** star it on the **Scripts** page to make it the default. It then runs on all systems that have no choice of their own, including ones you add later.
+- **On one system:** under **Scripts** in the system form, pick the script. **Standard** follows the default, and **None** opts the system out, so it stays out even if the default changes.
+
+Each script runs once per upgrade, however many package managers the system has. They wrap Upgrade All, full upgrades, and selected-package upgrades from every source, including schedules, MQTT, Telegram, and the API. Autoremove, repairs, and reboots do not trigger them.
+
+| Situation | Upgrade | Post-upgrade script |
+|---|---|---|
+| Pre-upgrade script exits non-zero | Skipped | Does not run, so undo any partial work in the pre-upgrade script |
+| Pre-upgrade script is cancelled or interrupted | Skipped | Does not run; the system page offers to run it |
+| Upgrade succeeds, fails, or is cancelled | Ran | Runs |
+| SSH drops or the host reboots during the upgrade | Reconnects | Runs after reconnecting |
+| The host does not come back within 5 minutes | Unknown | Does not run, because the upgrade may still be running; the system page offers to run it |
+| The dashboard restarts during an **Upgrade All Systems** run | Resumes | Runs when the upgrade finishes |
+| The dashboard restarts during a script in an **Upgrade All Systems** run | Not repeated | Attaches to the running step and runs the remaining steps |
+| The dashboard restarts during any other upgrade | Continues on the host | Does not run; the system page offers to run it |
+| You cancel while the dashboard is reconnecting and the host cannot be reached | Unknown | Does not run, because the upgrade may still be running; the system page offers to run it |
+
+- **Failures:** a failed pre- or post-upgrade script fails the operation. In an **Upgrade All Systems** run, it also cancels the later priorities in the same dashboard group. Cancelling a pre-upgrade script does the same once it has started on the host, or when a post-upgrade script is already pending, because the node may still be out of service. Update schedules are different: they upgrade systems one at a time and continue with the next system. A post-upgrade script that did not finish leaves a warning on the system page, with buttons to run it or dismiss the warning. Before you run it, check that no upgrade is still running on the host.
+- **Steps:** each step runs as its own command with its own shell state, and a failed step stops the script.
+- **Sudo:** when the system has a dashboard sudo password, use one `{{sudo:COMMAND}}` per step, because the password is delivered once per step. Scripts that apply to the system, including defaults, are included in the **Sudoers setup** output.
+- **Environment:** `LUDASH_OPERATION` holds `upgrade_all`, `full_upgrade_all`, `upgrade_package`, or `manual`. Post-upgrade scripts also get `LUDASH_UPGRADE_RESULT` with `success`, `failed`, `cancelled`, or `unknown`. `sudo` usually does not pass these on, so read them in the script itself.
+- **Write them to be safe to repeat:** running a pending script from the system page repeats it, and a step that was just starting when the dashboard restarted can run again.
 
 ### Secret config entries
 
@@ -553,6 +582,7 @@ Upgrade operations and autoremove run through detached remote scripts with `nohu
 | Full/dist upgrade | Yes |
 | Upgrade selected packages | Yes |
 | Autoremove unused packages/runtimes | Yes |
+| Pre- and post-upgrade scripts | Yes |
 | Check for updates | No, read-only and retryable |
 | Reboot | No, fire-and-forget |
 

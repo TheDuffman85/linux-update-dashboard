@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "fs";
+import { join } from "path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import i18next from "i18next";
 import {
@@ -91,6 +93,21 @@ describe("i18n language resolution", () => {
       for (const [key, englishValue] of Object.entries(i18nResources.en.translation)) {
         expect(getPlaceholders((resource.translation as Record<string, string>)[key]), `${language}:${key}`)
           .toEqual(getPlaceholders(englishValue));
+      }
+    }
+  });
+
+  test("translates the runtime panel for every script operation in every locale", () => {
+    const fields = ["purpose", "stepBehavior", "outputConsumer", "parserBehavior", "exitCodeBehavior"];
+    for (const file of readdirSync(join(process.cwd(), "client/locales"))) {
+      const locale = JSON.parse(readFileSync(join(process.cwd(), "client/locales", file), "utf8")) as Record<string, string>;
+      for (const operation of ["pre_upgrade", "post_upgrade"]) {
+        for (const field of fields) {
+          const key = `pages.scripts.runtime.${operation}.${field}`;
+          expect(locale[key], `${file}: ${key}`).toBeTruthy();
+          // A single brace starts interpolation here, so placeholders would be mangled.
+          expect(locale[key], `${file}: ${key}`).not.toContain("{");
+        }
       }
     }
   });

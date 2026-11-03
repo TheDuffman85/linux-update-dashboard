@@ -32,7 +32,7 @@ Every token can read. Write access depends on these permissions:
 | Permission         | Allows                                                                                                                                 |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `updates:check`    | Check systems, refresh the cache, cancel running operations.                                                                           |
-| `updates:apply`    | Upgrades, autoremove, package-issue repair actions, reboot.                                                                            |
+| `updates:apply`    | Upgrades, autoremove, package-issue repair actions, reboot, running a post-upgrade script that did not finish.                         |
 | `systems:organize` | Dashboard groups, order, priorities, upgrade options, hiding updates, dismissing notices and issues, revoking a trusted host key.      |
 | `systems:remove`   | `DELETE /api/systems/:id`.                                                                                                             |
 | `systems:add`      | `POST /api/systems` and `POST /api/systems/test-connection` for new systems.                                                           |
@@ -148,10 +148,11 @@ update is available, and release/repository URLs when available.
 | POST   | `/api/systems/test-connection`                     | Test SSH connectivity, host-key trust, and package-manager detection for a proposed config. API tokens need `systems:add` for a new system or `systems:edit` for an existing one. |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system.                                                                                                              |
 | POST   | `/api/systems/:id/dismiss-needs-reboot`            | Dismiss a stale reboot-needed indicator.                                                                                      |
+| POST   | `/api/systems/:id/dismiss-post-upgrade-pending`    | Dismiss the warning about a post-upgrade script that did not finish. API tokens need `systems:organize`.                      |
 | POST   | `/api/systems/:id/dismiss-root-user-banner`        | Dismiss the root-user info banner.                                                                                            |
 | POST   | `/api/systems/:id/dismiss-os-lifecycle-warning`    | Dismiss the current OS lifecycle warning snapshot.                                                                            |
 | POST   | `/api/systems/:id/revoke-host-key`                 | Clear the stored trusted host key.                                                                                            |
-| PUT    | `/api/systems/:id/script-overrides`                | Update per-system script overrides. API tokens cannot use this route.                                                         |
+| PUT    | `/api/systems/:id/script-overrides`                | Update per-system script overrides. Set `system/pre_upgrade` or `system/post_upgrade` to `"none"` to opt out of a default script. API tokens cannot use this route. |
 | DELETE | `/api/systems/:id`                                 | Remove a system. API tokens need `systems:remove`.                                                                            |
 | GET    | `/api/systems/:id/sudoers-preview`                 | Generate least-privilege sudoers setup instructions.                                                                          |
 | GET    | `/api/systems/:id/repository-sources`              | Read the repository source files of the active package managers over SSH (credentials masked). Each file includes `sha256`, `editable`, and `editBlockedReason`; returns `502` when the host cannot be read. |
@@ -202,6 +203,7 @@ Long-running update routes usually return a job ID. Poll `GET /api/jobs/:id` for
 | POST   | `/api/systems/:id/full-upgrade`                  | Full/dist upgrade on a supported system.                            |
 | POST   | `/api/systems/:id/autoremove`                    | Remove unused packages or runtimes on a supported system.           |
 | POST   | `/api/systems/:id/upgrade-packages`              | Upgrade one or more selected visible packages on a system.          |
+| POST   | `/api/systems/:id/post-upgrade-script/run`       | Run a post-upgrade script that did not finish. Returns `409` while an operation is queued or running. |
 | POST   | `/api/systems/:id/upgrade/:packageName`          | Compatibility alias for upgrading one selected package.             |
 | POST   | `/api/cache/refresh`                             | Invalidate cache and re-check all systems.                          |
 

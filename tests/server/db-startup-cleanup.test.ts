@@ -675,6 +675,19 @@ describe("database startup cleanup", () => {
     expect(columns.some((column) => column.name === "resolved_at")).toBe(true);
   });
 
+  test("adds the hook columns to existing upgrade batch items", () => {
+    closeDatabase();
+    const sqlite = new Database(dbPath);
+    sqlite.exec("ALTER TABLE upgrade_batch_items DROP COLUMN hook_progress");
+    sqlite.exec("ALTER TABLE upgrade_batch_items DROP COLUMN hook_failed");
+    sqlite.close();
+
+    initDatabase(dbPath);
+
+    const columns = getDb().all<{ name: string }>(sql`PRAGMA table_info(upgrade_batch_items)`);
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(["hook_progress", "hook_failed"]));
+  });
+
   test("creates dashboard grouping and system priority columns", () => {
     const sqlite = new Database(dbPath, { readonly: true });
     const columns = sqlite

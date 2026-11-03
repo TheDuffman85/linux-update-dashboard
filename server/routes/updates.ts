@@ -174,6 +174,23 @@ updates.post("/systems/:id/upgrade", async (c) => {
   return c.json({ status: "started", jobId });
 });
 
+// Run a post-upgrade script that did not finish (async)
+updates.post("/systems/:id/post-upgrade-script/run", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (updateService.getActiveOperation(id) || upgradeBatchService.getQueuedOrRunningOperation(id)) {
+    return c.json({ error: "An operation is already queued or running on this system" }, 409);
+  }
+  const jobId = startJob(async () => {
+    const result = await updateService.runPendingPostUpgradeScript(id);
+    return {
+      status: result.cancelled ? "cancelled" : result.success ? "success" : "failed",
+      output: result.output,
+    };
+  });
+  return c.json({ status: "started", jobId });
+});
+
 // Remove unused packages on a system (async)
 updates.post("/systems/:id/autoremove", async (c) => {
   const id = parseId(c.req.param("id"));

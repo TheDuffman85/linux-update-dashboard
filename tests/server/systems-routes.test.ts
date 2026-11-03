@@ -151,6 +151,43 @@ describe("systems reorder route", () => {
     ).toEqual(["Bravo", "Charlie", "Alpha"]);
   });
 
+  test("reports upgrade scripts from defaults, assignments, and opt-outs", async () => {
+    const app = new Hono();
+    app.route("/api/systems", systemsRoutes);
+    const addSystem = (name: string) => getDb().insert(systems).values({
+      name,
+      hostname: `${name}.local`,
+      username: "root",
+    }).returning({ id: systems.id }).get().id;
+    const hook = (operation: "pre_upgrade" | "post_upgrade", isDefault: boolean) => createScript({
+      name: operation,
+      type: "system",
+      operation,
+      pkgManager: null,
+      isDefault,
+      steps: [{ label: "Run", command: "true" }],
+    });
+    const followsDefault = addSystem("follows-default");
+    const optedOut = addSystem("opted-out");
+    const assigned = addSystem("assigned");
+    hook("pre_upgrade", true);
+    const post = hook("post_upgrade", false);
+
+    const optOutRes = await app.request(`/api/systems/${optedOut}/script-overrides`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scriptOverrides: { "system/pre_upgrade": "none" } }),
+    });
+    expect(optOutRes.status).toBe(200);
+    setSystemOverrides(assigned, { "system/post_upgrade": post.id });
+
+    const scripts = async (id: number) =>
+      (await (await app.request(`/api/systems/${id}`)).json()).system.upgradeScripts;
+    expect(await scripts(followsDefault)).toEqual({ pre: true, post: false });
+    expect(await scripts(optedOut)).toEqual({ pre: false, post: false });
+    expect(await scripts(assigned)).toEqual({ pre: true, post: true });
+  });
+
   test("does not expose the removed Upgrade All grouping routes", async () => {
     const app = new Hono();
     app.route("/api/systems", systemsRoutes);

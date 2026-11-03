@@ -1,5 +1,5 @@
 export interface ActiveOperation {
-  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair";
+  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair" | "post_upgrade";
   startedAt: string;
   phase?: "queued" | "reconnecting" | "rechecking";
   packageName?: string;
@@ -66,6 +66,18 @@ export function getAllActiveOperations(): ReadonlyMap<number, ActiveOperation> {
 
 export function getActiveOperationSignal(systemId: number): AbortSignal | null {
   return activeOperations.get(systemId)?.abortController.signal ?? null;
+}
+
+/**
+ * Give the operation a fresh cancellation signal. A cancelled upgrade still has
+ * to run its post-upgrade script, which would otherwise stop immediately on the
+ * aborted signal. The script can then be cancelled on its own.
+ */
+export function renewActiveOperationSignal(systemId: number): void {
+  const record = activeOperations.get(systemId);
+  if (!record || !record.abortController.signal.aborted) return;
+  record.abortController = new AbortController();
+  record.operation = { ...record.operation, cancelRequested: false };
 }
 
 export function throwIfActiveOperationCancelled(systemId: number): void {

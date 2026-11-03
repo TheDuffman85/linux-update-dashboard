@@ -871,6 +871,19 @@ export function dismissOsLifecycleWarning(systemId: number): void {
     .run();
 }
 
+/** Tracks that a post-upgrade script still has to run; survives restarts. */
+export function setPostUpgradePending(systemId: number, pending: boolean): void {
+  getDb()
+    .update(systems)
+    .set({
+      postUpgradePendingAt: pending
+        ? new Date().toISOString().replace("T", " ").slice(0, 19)
+        : null,
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
 export function dismissRootUserBanner(systemId: number): void {
   const db = getDb();
   const existing = getSystem(systemId);

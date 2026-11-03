@@ -38,6 +38,7 @@ export const TOKEN_WRITE_RULES: readonly TokenWriteRule[] = [
   allow("POST", "/api/systems/:id/upgrade/:packageName", "updates:apply"),
   allow("POST", "/api/systems/:id/package-issues/:issueId/solve", "updates:apply"),
   allow("POST", "/api/systems/:id/reboot", "updates:apply"),
+  allow("POST", "/api/systems/:id/post-upgrade-script/run", "updates:apply"),
 
   allow("POST", "/api/systems/dashboard-groups", "systems:organize"),
   allow("PUT", "/api/systems/dashboard-groups/reorder", "systems:organize"),
@@ -53,6 +54,7 @@ export const TOKEN_WRITE_RULES: readonly TokenWriteRule[] = [
   allow("DELETE", "/api/systems/:id/hidden-updates/:hiddenUpdateId", "systems:organize"),
   allow("POST", "/api/systems/:id/package-issues/:issueId/dismiss", "systems:organize"),
   allow("POST", "/api/systems/:id/dismiss-needs-reboot", "systems:organize"),
+  allow("POST", "/api/systems/:id/dismiss-post-upgrade-pending", "systems:organize"),
   allow("POST", "/api/systems/:id/dismiss-root-user-banner", "systems:organize"),
   allow("POST", "/api/systems/:id/dismiss-os-lifecycle-warning", "systems:organize"),
   // Clearing a key only stops connections until it is trusted again. Read/write
