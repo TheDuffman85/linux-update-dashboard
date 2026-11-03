@@ -9,6 +9,7 @@
   --color-surface-hover: var(--color-slate-100);
   --color-sidebar: #ffffff;
   --color-sidebar-hover: var(--color-slate-100);
+  --color-sidebar-panel: var(--color-slate-100);
   --color-border: var(--color-slate-200);
 }
 
@@ -18,6 +19,7 @@
   --color-surface-hover: var(--color-slate-700);
   --color-sidebar: var(--color-slate-900);
   --color-sidebar-hover: var(--color-slate-800);
+  --color-sidebar-panel: var(--color-slate-950);
   --color-border: var(--color-slate-700);
 }
 

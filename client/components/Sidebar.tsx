@@ -43,7 +43,7 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
           </div>
         </div>
 
-        <nav className="flex-1 p-2 space-y-1">
+        <nav className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
           {navItems.filter((item) => !isReadOnly || !item.adminOnly).map((item) => (
             <NavLink
               key={item.path}
@@ -65,34 +65,37 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
           ))}
         </nav>
 
-        <div className="p-3 border-t border-border">
-          <div className="flex items-center justify-between">
+        <div className="p-3 space-y-2 border-t border-border">
+          <ThemeToggle />
+          <div className="flex items-center justify-between gap-2 rounded-lg bg-sidebar-panel px-3 py-2.5">
             <span className="flex min-w-0 flex-col">
-              <span className="text-xs text-slate-500 dark:text-slate-400 truncate" title={user?.username}>
+              <span className="text-sm font-semibold text-slate-900 dark:text-white truncate" title={user?.username}>
                 {user?.username}
               </span>
-              {isReadOnly && (
-                <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+              {isReadOnly ? (
+                <span className="text-xs text-amber-600 dark:text-amber-400 truncate">
                   {t("components.sidebar.readOnlyAccess")}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {t("pages.settings.users.roleAdmin")}
                 </span>
               )}
             </span>
-            <div className="flex items-center gap-1">
-              <ThemeToggle />
-              <button
-                onClick={logout}
-                className="p-1.5 rounded hover:bg-sidebar-hover text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
-                title={t("components.sidebar.logout")}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-              </button>
-            </div>
+            <button
+              onClick={logout}
+              className="shrink-0 p-1.5 rounded hover:bg-sidebar-hover text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+              aria-label={t("components.sidebar.logout")}
+              title={t("components.sidebar.logout")}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
           </div>
         </div>
 
-        <div className="px-3 pb-2 text-[10px] font-mono text-slate-400 dark:text-slate-500 text-center">
+        <div className="px-3 pb-3 text-[11px] text-slate-400 dark:text-slate-500 text-center">
           {__APP_VERSION__ ? (
             <>
               {hasRepoUrl ? (
@@ -117,7 +120,7 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
             <>
               <span>{t("components.sidebar.development")}</span>
               {__APP_COMMIT_HASH__ && hasRepoUrl ? (
-                <div>
+                <div className="font-mono text-[10px]">
                   <a
                     href={`${__APP_REPO_URL__}/commit/${__APP_COMMIT_HASH__}`}
                     target="_blank"
@@ -128,7 +131,7 @@ export function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
                   </a>
                 </div>
               ) : __APP_COMMIT_HASH__ ? (
-                <div>{__APP_COMMIT_HASH__}</div>
+                <div className="font-mono text-[10px]">{__APP_COMMIT_HASH__}</div>
               ) : null}
             </>
           )}
