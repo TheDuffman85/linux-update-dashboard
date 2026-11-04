@@ -32,7 +32,10 @@ import {
   resolveScript,
   updateScript,
   updateCustomPackageManager,
+  getSystemPackageManagerConfig,
+  listPackageManagerDefinitions,
 } from "../../server/services/script-service";
+import { serializePackageManagerConfigs } from "../../server/package-manager-configs";
 import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND } from "../../server/ssh/parsers/apt";
 
 describe("script service", () => {
@@ -1225,6 +1228,24 @@ describe("script service", () => {
     expect(() => deleteCustomPackageManager("brewlinux"))
       .toThrow(/enabled or detected on 1 system: system-18/);
     expect(listScripts().packageManagers.some((manager) => manager.name === "brewlinux")).toBe(true);
+  });
+
+  test("passes a declared custom snap entry through to system config", () => {
+    updateCustomPackageManager("snap", {
+      configEntries: [{ key: "channel", defaultValue: "stable" }],
+    });
+    const pkgManagerConfigs = serializePackageManagerConfigs(
+      { snap: { channel: "edge", autoHideKeptBackUpdates: false } } as never,
+      listPackageManagerDefinitions(),
+    );
+
+    expect(getSystemPackageManagerConfig({ pkgManagerConfigs }, "snap")).toMatchObject({
+      channel: "edge",
+      autoHideKeptBackUpdates: false,
+    });
+    expect(getSystemPackageManagerConfig({ pkgManagerConfigs: null }, "snap")).toMatchObject({
+      channel: "stable",
+    });
   });
 
   test("deletes custom package managers that are detected but disabled on systems", () => {

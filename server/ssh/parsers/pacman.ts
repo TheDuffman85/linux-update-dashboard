@@ -3,7 +3,8 @@ import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { PacmanPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: linux 6.7.4.arch1-1 -> 6.7.5.arch1-1
-const PATTERN = /^(\S+)\s+(\S+)\s+->\s+(\S+)/;
+// IgnorePkg and IgnoreGroup entries end in " [ignored]".
+const PATTERN = /^(\S+)\s+(\S+)\s+->\s+(\S+)(\s+\[ignored\])?/;
 
 function buildListUpdatesCommand() {
   return [
@@ -53,7 +54,7 @@ export const pacmanParser: PackageParser = {
           architecture: null,
           repository: null,
           isSecurity: false,
-          isKeptBack: false,
+          isKeptBack: m[4] !== undefined,
           pkgManager: "pacman",
         });
       }

@@ -1,5 +1,5 @@
-import type { CheckCommandResult, PackageParser, ParsedUpdate } from "./types";
-import { sudo, validatePackageName, validatePackageNames } from "./types";
+import type { PackageParser, ParsedUpdate } from "./types";
+import { findCommandResult, sudo, validatePackageName, validatePackageNames } from "./types";
 import type { AptPackageManagerConfig } from "../../package-manager-configs";
 
 // Example: curl/jammy-updates 7.81.0-1ubuntu1.18 amd64 [upgradable from: 7.81.0-1ubuntu1.16]
@@ -39,13 +39,6 @@ function parseSimulationPackages(stdout: string): Set<string> {
     }
   }
   return packages;
-}
-
-function findCommandResult(
-  commandResults: CheckCommandResult[] | undefined,
-  pattern: string,
-): CheckCommandResult | undefined {
-  return commandResults?.find((result) => result.command.includes(pattern));
 }
 
 export const APT_LOCK_WAIT = "-o DPkg::Lock::Timeout=60";

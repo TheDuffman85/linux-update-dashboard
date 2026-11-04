@@ -3,7 +3,61 @@ import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { FlatpakPackageManagerConfig } from "../../package-manager-configs";
 
 const INSTALLED_MARKER = "===INSTALLED===";
+const MASKED_MARKER = "===MASKED===";
 const UPDATES_MARKER = "===UPDATES===";
+
+/**
+ * `flatpak remote-ls --updates` ignores masks, while `flatpak update` skips
+ * masked refs. Masks are read from the system installation, which is the one
+ * the dashboard upgrades through sudo. `flatpak mask --user` is avoided because
+ * it creates a per-user repository as a side effect.
+ */
+export const FLATPAK_CHECK_COMMAND =
+  `echo "${INSTALLED_MARKER}"; flatpak list --columns=application,version 2>/dev/null; echo "${MASKED_MARKER}"; flatpak mask 2>/dev/null; echo "${UPDATES_MARKER}"; flatpak remote-ls --updates --columns=name,application,version,branch,origin,ref 2>/dev/null`;
+
+const REF_SEGMENT_CHARS = "[.\\-_a-zA-Z0-9]*";
+
+/**
+ * Compiles a mask to match full refs the way Flatpak does. A pattern is
+ * [app/|runtime/]ID[/ARCH[/BRANCH]], where * stays within one segment and an
+ * empty or missing segment matches anything.
+ */
+function maskToRefRegExp(pattern: string): RegExp | null {
+  let kind = "(app|runtime)";
+  let rest = pattern;
+  for (const prefix of ["app", "runtime"]) {
+    if (rest.startsWith(`${prefix}/`)) {
+      kind = prefix;
+      rest = rest.slice(prefix.length + 1);
+    }
+  }
+  const segments = rest.split("/");
+  if (segments.length > 3) return null;
+  while (segments.length < 3) segments.push("");
+  const source = segments
+    .map((segment) =>
+      segment
+        ? segment
+            .split("*")
+            .map((part) => part.replace(/[.+?^${}()|[\]\\/-]/g, "\\$&"))
+            .join(REF_SEGMENT_CHARS)
+        : REF_SEGMENT_CHARS,
+    )
+    .join("/");
+  return new RegExp(`^${kind}/${source}$`);
+}
+
+function parseMaskPatterns(section: string): RegExp[] {
+  const masks: RegExp[] = [];
+  for (const raw of section.split("\n")) {
+    const pattern = raw.trim();
+    // Anything with spaces is a message, not a pattern.
+    if (!pattern || /\s/.test(pattern)) continue;
+    const mask = maskToRefRegExp(pattern);
+    if (mask) masks.push(mask);
+  }
+  return masks;
+}
 
 export const flatpakParser: PackageParser = {
   name: "flatpak",
@@ -14,9 +68,7 @@ export const flatpakParser: PackageParser = {
     if (flatpakConfig?.refreshAppstreamOnCheck !== false) {
       commands.push(sudo("flatpak update --appstream") + " 2>/dev/null; true");
     }
-    commands.push(
-      `echo "${INSTALLED_MARKER}"; flatpak list --columns=application,version 2>/dev/null; echo "${UPDATES_MARKER}"; flatpak remote-ls --updates --columns=name,application,version,branch,origin 2>/dev/null`,
-    );
+    commands.push(FLATPAK_CHECK_COMMAND);
     return commands;
   },
 
@@ -30,13 +82,17 @@ export const flatpakParser: PackageParser = {
 
   parseCheckOutput(stdout, _stderr, _exitCode) {
     const installedIdx = stdout.indexOf(INSTALLED_MARKER);
+    const maskedIdx = stdout.indexOf(MASKED_MARKER);
     const updatesIdx = stdout.indexOf(UPDATES_MARKER);
+    const masks = maskedIdx !== -1 && updatesIdx !== -1
+      ? parseMaskPatterns(stdout.slice(maskedIdx + MASKED_MARKER.length, updatesIdx))
+      : [];
 
     // Build a map of installed flatpak app ID → version
     const installedVersions = new Map<string, string>();
     if (installedIdx !== -1 && updatesIdx !== -1) {
       const installedSection = stdout
-        .slice(installedIdx + INSTALLED_MARKER.length, updatesIdx)
+        .slice(installedIdx + INSTALLED_MARKER.length, maskedIdx !== -1 ? maskedIdx : updatesIdx)
         .trim();
       for (const raw of installedSection.split("\n")) {
         const line = raw.trim();
@@ -65,6 +121,7 @@ export const flatpakParser: PackageParser = {
         const name = parts[0].trim();
         const appId = parts[1]?.trim() || name;
         const remoteVersion = parts[2]?.trim() || "";
+        const ref = parts[5]?.trim() || "";
         const origin = parts[4]?.trim() || "";
         const pkgId = appId || name;
         updates.push({
@@ -74,12 +131,18 @@ export const flatpakParser: PackageParser = {
           architecture: null,
           repository: origin,
           isSecurity: false,
-          isKeptBack: false,
+          isKeptBack: !!ref && masks.some((mask) => mask.test(ref)),
           pkgManager: "flatpak",
         });
       }
     }
-    return updates;
+
+    // The update cache holds one row per ID, so a masked branch must not replace
+    // an unmasked branch of the same ID.
+    const upgradableIds = new Set(
+      updates.filter((update) => !update.isKeptBack).map((update) => update.packageName),
+    );
+    return updates.filter((update) => !update.isKeptBack || !upgradableIds.has(update.packageName));
   },
 
   getUpgradeAllCommand() {

@@ -31,6 +31,7 @@ import {
   type PackageManagerConfigs,
 } from "../package-manager-configs";
 import { getActivityHistoryLimit } from "./settings-service";
+import { isPinnedUpdate } from "../../shared/pinned-updates";
 import {
   clearActiveOperation,
   cancelActiveOperation as requestActiveOperationCancellation,
@@ -535,6 +536,15 @@ function resolveSelectedPackageUpgrades(
   if (missingNames.length > 0) {
     throw new Error(
       `Selected package updates are no longer available: ${missingNames.join(", ")}`,
+    );
+  }
+
+  const pinnedNames = Array.from(new Set(
+    selectedUpdates.filter(isPinnedUpdate).map((update) => update.packageName),
+  ));
+  if (pinnedNames.length > 0) {
+    throw new Error(
+      `Selected packages are pinned or held on this system and cannot be upgraded individually: ${pinnedNames.join(", ")}`,
     );
   }
 

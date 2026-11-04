@@ -32,6 +32,7 @@ import {
   type ScriptOperation,
 } from "../../lib/scripts";
 import { useI18n } from "../../lib/i18n";
+import { usesPinnedUpdates } from "../../../shared/pinned-updates";
 
 interface SystemFormData {
   name: string;
@@ -1193,6 +1194,7 @@ export function SystemForm({
                         checked={pkgManagerConfigs.pacman?.refreshDatabasesOnCheck !== false}
                         onChange={(e) =>
                           setManagerConfig("pacman", {
+                            ...pkgManagerConfigs.pacman,
                             refreshDatabasesOnCheck: e.target.checked,
                           })
                         }
@@ -1216,6 +1218,7 @@ export function SystemForm({
                         checked={pkgManagerConfigs.apk?.refreshIndexesOnCheck !== false}
                         onChange={(e) =>
                           setManagerConfig("apk", {
+                            ...pkgManagerConfigs.apk,
                             refreshIndexesOnCheck: e.target.checked,
                           })
                         }
@@ -1239,6 +1242,7 @@ export function SystemForm({
                         checked={pkgManagerConfigs.flatpak?.refreshAppstreamOnCheck !== false}
                         onChange={(e) =>
                           setManagerConfig("flatpak", {
+                            ...pkgManagerConfigs.flatpak,
                             refreshAppstreamOnCheck: e.target.checked,
                           })
                         }
@@ -1250,6 +1254,33 @@ export function SystemForm({
                         </span>
                         <span className="block text-xs text-slate-400 mt-0.5">
                           {t("components.systemForm.refreshAppstreamDataDuringChecksDescription")}
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {usesPinnedUpdates(manager) && (
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(pkgManagerConfigs[manager] as { autoHideKeptBackUpdates?: unknown } | undefined)?.autoHideKeptBackUpdates !== false}
+                        onChange={(e) =>
+                          setPkgManagerConfigs((prev) => ({
+                            ...prev,
+                            [manager]: {
+                              ...(prev[manager] as Record<string, unknown> | undefined),
+                              autoHideKeptBackUpdates: e.target.checked,
+                            } as PackageManagerConfigs[string],
+                          }))
+                        }
+                        className="rounded mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-200">
+                          {t("components.systemForm.autoHidePinnedPackages")}
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          {t("components.systemForm.autoHidePinnedPackagesDescription")}
                         </span>
                       </span>
                     </label>

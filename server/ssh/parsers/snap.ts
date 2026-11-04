@@ -23,6 +23,8 @@ export const snapParser: PackageParser = {
 
     // Build a map of installed snap name → version
     const installedVersions = new Map<string, string>();
+    // `snap refresh --list` still lists held snaps; `snap list` marks them in Notes.
+    const heldSnaps = new Set<string>();
     if (installedIdx !== -1 && updatesIdx !== -1) {
       const installedSection = stdout
         .slice(installedIdx + INSTALLED_MARKER.length, updatesIdx)
@@ -35,6 +37,9 @@ export const snapParser: PackageParser = {
         if (parts[0] === "Name") continue;
         if (parts.length >= 2) {
           installedVersions.set(parts[0], parts[1]);
+          if (parts[parts.length - 1].split(",").includes("held")) {
+            heldSnaps.add(parts[0]);
+          }
         }
       }
     }
@@ -63,7 +68,7 @@ export const snapParser: PackageParser = {
           architecture: null,
           repository: "snap",
           isSecurity: false,
-          isKeptBack: false,
+          isKeptBack: heldSnaps.has(name),
           pkgManager: "snap",
         });
       }

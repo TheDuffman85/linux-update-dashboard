@@ -202,7 +202,7 @@ Long-running update routes usually return a job ID. Poll `GET /api/jobs/:id` for
 | POST   | `/api/systems/:id/upgrade`                       | Upgrade all visible packages on a system.                           |
 | POST   | `/api/systems/:id/full-upgrade`                  | Full/dist upgrade on a supported system.                            |
 | POST   | `/api/systems/:id/autoremove`                    | Remove unused packages or runtimes on a supported system.           |
-| POST   | `/api/systems/:id/upgrade-packages`              | Upgrade one or more selected visible packages on a system.          |
+| POST   | `/api/systems/:id/upgrade-packages`              | Upgrade one or more selected visible packages on a system. Returns 400 for packages pinned or held on an APK, Pacman, Flatpak, Snap, or deb-get host. |
 | POST   | `/api/systems/:id/post-upgrade-script/run`       | Run a post-upgrade script that did not finish. Returns `409` while an operation is queued or running. |
 | POST   | `/api/systems/:id/upgrade/:packageName`          | Compatibility alias for upgrading one selected package.             |
 | POST   | `/api/cache/refresh`                             | Invalidate cache and re-check all systems.                          |

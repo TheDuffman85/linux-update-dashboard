@@ -38,6 +38,14 @@ export interface PackageParser {
   getUpgradePackageCommand(pkg: string, config?: PackageManagerConfigValue): string;
 }
 
+/** Find a check step's result by a distinctive part of its command. */
+export function findCommandResult(
+  commandResults: CheckCommandResult[] | undefined,
+  pattern: string,
+): CheckCommandResult | undefined {
+  return commandResults?.find((result) => result.command.includes(pattern));
+}
+
 /**
  * Validate a package name to prevent shell injection.
  * Allows standard package names plus npm scoped package names like

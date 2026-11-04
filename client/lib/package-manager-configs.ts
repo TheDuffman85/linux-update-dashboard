@@ -17,14 +17,25 @@ export interface YumPackageManagerConfig {
 
 export interface PacmanPackageManagerConfig {
   refreshDatabasesOnCheck?: boolean;
+  autoHideKeptBackUpdates?: boolean;
 }
 
 export interface ApkPackageManagerConfig {
   refreshIndexesOnCheck?: boolean;
+  autoHideKeptBackUpdates?: boolean;
 }
 
 export interface FlatpakPackageManagerConfig {
   refreshAppstreamOnCheck?: boolean;
+  autoHideKeptBackUpdates?: boolean;
+}
+
+export interface SnapPackageManagerConfig {
+  autoHideKeptBackUpdates?: boolean;
+}
+
+export interface DebGetPackageManagerConfig {
+  autoHideKeptBackUpdates?: boolean;
 }
 
 export interface BuiltinPackageManagerConfigs {
@@ -34,6 +45,8 @@ export interface BuiltinPackageManagerConfigs {
   pacman?: PacmanPackageManagerConfig;
   apk?: ApkPackageManagerConfig;
   flatpak?: FlatpakPackageManagerConfig;
+  snap?: SnapPackageManagerConfig;
+  "deb-get"?: DebGetPackageManagerConfig;
 }
 
 export interface CustomPackageManagerConfigEntry {
@@ -74,6 +87,8 @@ export const SUPPORTED_PACKAGE_MANAGER_CONFIGS = [
   "pacman",
   "apk",
   "flatpak",
+  "snap",
+  "deb-get",
 ] as const satisfies Array<keyof BuiltinPackageManagerConfigs>;
 
 export interface CustomPackageManagerConfigDefinition {
@@ -195,11 +210,17 @@ export function normalizePackageManagerConfigs(
   if (value.pacman?.refreshDatabasesOnCheck !== undefined) {
     next.pacman = { refreshDatabasesOnCheck: value.pacman.refreshDatabasesOnCheck };
   }
+  if (value.pacman?.autoHideKeptBackUpdates !== undefined) {
+    next.pacman = { ...(next.pacman ?? {}), autoHideKeptBackUpdates: value.pacman.autoHideKeptBackUpdates };
+  }
   if (value.pacman && typeof value.pacman === "object" && !Array.isArray(value.pacman)) {
     mergeCustomConfig(next, "pacman", value.pacman as Record<string, unknown>, customManagerMap);
   }
   if (value.apk?.refreshIndexesOnCheck !== undefined) {
     next.apk = { refreshIndexesOnCheck: value.apk.refreshIndexesOnCheck };
+  }
+  if (value.apk?.autoHideKeptBackUpdates !== undefined) {
+    next.apk = { ...(next.apk ?? {}), autoHideKeptBackUpdates: value.apk.autoHideKeptBackUpdates };
   }
   if (value.apk && typeof value.apk === "object" && !Array.isArray(value.apk)) {
     mergeCustomConfig(next, "apk", value.apk as Record<string, unknown>, customManagerMap);
@@ -207,8 +228,25 @@ export function normalizePackageManagerConfigs(
   if (value.flatpak?.refreshAppstreamOnCheck !== undefined) {
     next.flatpak = { refreshAppstreamOnCheck: value.flatpak.refreshAppstreamOnCheck };
   }
+  if (value.flatpak?.autoHideKeptBackUpdates !== undefined) {
+    next.flatpak = { ...(next.flatpak ?? {}), autoHideKeptBackUpdates: value.flatpak.autoHideKeptBackUpdates };
+  }
   if (value.flatpak && typeof value.flatpak === "object" && !Array.isArray(value.flatpak)) {
     mergeCustomConfig(next, "flatpak", value.flatpak as Record<string, unknown>, customManagerMap);
+  }
+  if (value.snap?.autoHideKeptBackUpdates !== undefined) {
+    next.snap = { autoHideKeptBackUpdates: value.snap.autoHideKeptBackUpdates };
+  }
+  if (value.snap && typeof value.snap === "object" && !Array.isArray(value.snap)) {
+    mergeCustomConfig(next, "snap", value.snap as Record<string, unknown>, customManagerMap);
+  }
+  const debGet = value["deb-get"];
+  if (debGet && typeof debGet === "object" && !Array.isArray(debGet)) {
+    const { autoHideKeptBackUpdates, ...customValues } = debGet as Record<string, unknown>;
+    if (typeof autoHideKeptBackUpdates === "boolean") {
+      next["deb-get"] = { autoHideKeptBackUpdates };
+    }
+    mergeCustomConfig(next, "deb-get", customValues, customManagerMap, allowUnknownCustomManagers);
   }
 
   for (const [manager, rawConfig] of Object.entries(value)) {

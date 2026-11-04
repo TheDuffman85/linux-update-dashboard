@@ -98,6 +98,19 @@ describe("selection across searches", () => {
     expect(toggleMatchingPackageNames(selected, [])).toEqual(selected);
   });
 
+  test("does not offer pinned packages for selection", () => {
+    const pinned = [
+      { ...updates[0], packageName: "curl", pkgManager: "pacman", isKeptBack: 1 },
+      { ...updates[1], packageName: "bash", pkgManager: "pacman", isKeptBack: 0 },
+      { ...updates[1], id: 9, packageName: "held-on-apt", pkgManager: "apt", isKeptBack: 1 },
+    ];
+    expect(getPackageSelectionState(["curl", "bash"], pinned)).toMatchObject({
+      visiblePackageNames: ["bash", "held-on-apt"],
+      selectedPackageNames: ["bash"],
+    });
+    expect(toggleMatchingPackageNames([], pinned)).toEqual(["bash", "held-on-apt"]);
+  });
+
   test("selects partial matches, deduplicates names, and handles disabled state", () => {
     const duplicates = [
       ...updates,
