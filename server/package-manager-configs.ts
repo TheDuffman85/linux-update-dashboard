@@ -20,14 +20,25 @@ export interface YumPackageManagerConfig {
 
 export interface PacmanPackageManagerConfig {
   refreshDatabasesOnCheck?: boolean;
+  autoHideKeptBackUpdates?: boolean;
 }
 
 export interface ApkPackageManagerConfig {
   refreshIndexesOnCheck?: boolean;
+  autoHideKeptBackUpdates?: boolean;
 }
 
 export interface FlatpakPackageManagerConfig {
   refreshAppstreamOnCheck?: boolean;
+  autoHideKeptBackUpdates?: boolean;
+}
+
+export interface SnapPackageManagerConfig {
+  autoHideKeptBackUpdates?: boolean;
+}
+
+export interface DebGetPackageManagerConfig {
+  autoHideKeptBackUpdates?: boolean;
 }
 
 export interface BuiltinPackageManagerConfigs {
@@ -37,6 +48,8 @@ export interface BuiltinPackageManagerConfigs {
   pacman?: PacmanPackageManagerConfig;
   apk?: ApkPackageManagerConfig;
   flatpak?: FlatpakPackageManagerConfig;
+  snap?: SnapPackageManagerConfig;
+  "deb-get"?: DebGetPackageManagerConfig;
 }
 
 export interface CustomPackageManagerConfigEntry {
@@ -75,9 +88,10 @@ const SUPPORTED_CONFIG_MANAGERS = [
   "pacman",
   "apk",
   "flatpak",
+  "snap",
+  "deb-get",
 ] as const satisfies SupportedPackageManagerConfigName[];
 
-const UNSUPPORTED_CONFIG_MANAGERS = new Set(["snap"]);
 const CUSTOM_CONFIG_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 const SECRET_ENV_VAR_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
 // Variables that change how shells, loaders, interpreters, or sudo behave must
@@ -124,10 +138,11 @@ const BUILTIN_CONFIG_KEYS: Record<string, string[]> = {
     "autoAcceptEulaOnUpgrade",
     "autoAcceptEulaOnUpgradePrefix",
   ],
-  pacman: ["refreshDatabasesOnCheck"],
-  apk: ["refreshIndexesOnCheck"],
-  flatpak: ["refreshAppstreamOnCheck"],
-  "deb-get": ["githubToken"],
+  pacman: ["refreshDatabasesOnCheck", "autoHideKeptBackUpdates"],
+  apk: ["refreshIndexesOnCheck", "autoHideKeptBackUpdates"],
+  flatpak: ["refreshAppstreamOnCheck", "autoHideKeptBackUpdates"],
+  snap: ["autoHideKeptBackUpdates"],
+  "deb-get": ["githubToken", "autoHideKeptBackUpdates"],
 };
 
 /** Config entries that ship with built-in package managers. */
@@ -292,6 +307,9 @@ export function normalizePackageManagerConfigs(
     if (typeof value.pacman.refreshDatabasesOnCheck === "boolean") {
       pacman.refreshDatabasesOnCheck = value.pacman.refreshDatabasesOnCheck;
     }
+    if (typeof value.pacman.autoHideKeptBackUpdates === "boolean") {
+      pacman.autoHideKeptBackUpdates = value.pacman.autoHideKeptBackUpdates;
+    }
     if (Object.keys(pacman).length > 0) next.pacman = pacman;
     mergeCustomConfig(next, "pacman", value.pacman, customManagerMap);
   }
@@ -300,6 +318,9 @@ export function normalizePackageManagerConfigs(
     const apk: ApkPackageManagerConfig = {};
     if (typeof value.apk.refreshIndexesOnCheck === "boolean") {
       apk.refreshIndexesOnCheck = value.apk.refreshIndexesOnCheck;
+    }
+    if (typeof value.apk.autoHideKeptBackUpdates === "boolean") {
+      apk.autoHideKeptBackUpdates = value.apk.autoHideKeptBackUpdates;
     }
     if (Object.keys(apk).length > 0) next.apk = apk;
     mergeCustomConfig(next, "apk", value.apk, customManagerMap);
@@ -310,13 +331,31 @@ export function normalizePackageManagerConfigs(
     if (typeof value.flatpak.refreshAppstreamOnCheck === "boolean") {
       flatpak.refreshAppstreamOnCheck = value.flatpak.refreshAppstreamOnCheck;
     }
+    if (typeof value.flatpak.autoHideKeptBackUpdates === "boolean") {
+      flatpak.autoHideKeptBackUpdates = value.flatpak.autoHideKeptBackUpdates;
+    }
     if (Object.keys(flatpak).length > 0) next.flatpak = flatpak;
     mergeCustomConfig(next, "flatpak", value.flatpak, customManagerMap);
   }
 
+  if (isRecord(value.snap)) {
+    if (typeof value.snap.autoHideKeptBackUpdates === "boolean") {
+      next.snap = { autoHideKeptBackUpdates: value.snap.autoHideKeptBackUpdates };
+    }
+    mergeCustomConfig(next, "snap", value.snap, customManagerMap);
+  }
+
+  if (isRecord(value["deb-get"])) {
+    const { autoHideKeptBackUpdates, ...customValues } = value["deb-get"];
+    if (typeof autoHideKeptBackUpdates === "boolean") {
+      next["deb-get"] = { autoHideKeptBackUpdates };
+    }
+    mergeCustomConfig(next, "deb-get", customValues, customManagerMap, true);
+  }
+
   for (const [manager, rawConfig] of Object.entries(value)) {
     if (SUPPORTED_CONFIG_MANAGERS.includes(manager as SupportedPackageManagerConfigName)) continue;
-    if (UNSUPPORTED_CONFIG_MANAGERS.has(manager) || !isRecord(rawConfig)) continue;
+    if (!isRecord(rawConfig)) continue;
 
     mergeCustomConfig(next, manager, rawConfig, customManagerMap, true);
   }
@@ -425,9 +464,6 @@ export function validatePackageManagerConfigsInput(
   const customManagerMap = new Map(customManagers.map((manager) => [manager.name, manager]));
 
   for (const [manager, rawConfig] of Object.entries(value)) {
-    if (UNSUPPORTED_CONFIG_MANAGERS.has(manager)) {
-      return `pkgManagerConfigs.${manager} is not supported`;
-    }
     const isBuiltinManager = SUPPORTED_CONFIG_MANAGERS.includes(manager as SupportedPackageManagerConfigName);
     const customManager = customManagerMap.get(manager);
     if (!isBuiltinManager && !customManager) {
@@ -567,7 +603,7 @@ export function validatePackageManagerConfigsInput(
 
     if (manager === "pacman") {
       for (const key of keys) {
-        if (key !== "refreshDatabasesOnCheck" && !customConfigKeys.has(key)) {
+        if (key !== "refreshDatabasesOnCheck" && key !== "autoHideKeptBackUpdates" && !customConfigKeys.has(key)) {
           return `pkgManagerConfigs.pacman.${key} is not supported`;
         }
       }
@@ -582,12 +618,18 @@ export function validatePackageManagerConfigsInput(
       ) {
         return "pkgManagerConfigs.pacman.refreshDatabasesOnCheck must be a boolean";
       }
+      if (
+        rawConfig.autoHideKeptBackUpdates !== undefined &&
+        typeof rawConfig.autoHideKeptBackUpdates !== "boolean"
+      ) {
+        return "pkgManagerConfigs.pacman.autoHideKeptBackUpdates must be a boolean";
+      }
       continue;
     }
 
     if (manager === "apk") {
       for (const key of keys) {
-        if (key !== "refreshIndexesOnCheck" && !customConfigKeys.has(key)) {
+        if (key !== "refreshIndexesOnCheck" && key !== "autoHideKeptBackUpdates" && !customConfigKeys.has(key)) {
           return `pkgManagerConfigs.apk.${key} is not supported`;
         }
       }
@@ -602,12 +644,18 @@ export function validatePackageManagerConfigsInput(
       ) {
         return "pkgManagerConfigs.apk.refreshIndexesOnCheck must be a boolean";
       }
+      if (
+        rawConfig.autoHideKeptBackUpdates !== undefined &&
+        typeof rawConfig.autoHideKeptBackUpdates !== "boolean"
+      ) {
+        return "pkgManagerConfigs.apk.autoHideKeptBackUpdates must be a boolean";
+      }
       continue;
     }
 
     if (manager === "flatpak") {
       for (const key of keys) {
-        if (key !== "refreshAppstreamOnCheck" && !customConfigKeys.has(key)) {
+        if (key !== "refreshAppstreamOnCheck" && key !== "autoHideKeptBackUpdates" && !customConfigKeys.has(key)) {
           return `pkgManagerConfigs.flatpak.${key} is not supported`;
         }
       }
@@ -621,6 +669,32 @@ export function validatePackageManagerConfigsInput(
         typeof rawConfig.refreshAppstreamOnCheck !== "boolean"
       ) {
         return "pkgManagerConfigs.flatpak.refreshAppstreamOnCheck must be a boolean";
+      }
+      if (
+        rawConfig.autoHideKeptBackUpdates !== undefined &&
+        typeof rawConfig.autoHideKeptBackUpdates !== "boolean"
+      ) {
+        return "pkgManagerConfigs.flatpak.autoHideKeptBackUpdates must be a boolean";
+      }
+      continue;
+    }
+
+    if (manager === "snap" || manager === "deb-get") {
+      for (const key of keys) {
+        if (key !== "autoHideKeptBackUpdates" && !customConfigKeys.has(key)) {
+          return `pkgManagerConfigs.${manager}.${key} is not supported`;
+        }
+      }
+      for (const key of customConfigKeys) {
+        if (rawConfig[key] !== undefined && typeof rawConfig[key] !== "string") {
+          return `pkgManagerConfigs.${manager}.${key} must be a string`;
+        }
+      }
+      if (
+        rawConfig.autoHideKeptBackUpdates !== undefined &&
+        typeof rawConfig.autoHideKeptBackUpdates !== "boolean"
+      ) {
+        return `pkgManagerConfigs.${manager}.autoHideKeptBackUpdates must be a boolean`;
       }
     }
   }
@@ -640,6 +714,19 @@ export function getAptAutoHideKeptBackUpdates(
   configs: PackageManagerConfigs | null | undefined,
 ): boolean | undefined {
   return configs?.apt?.autoHideKeptBackUpdates;
+}
+
+/**
+ * Per-manager auto-hide setting of a manager that reports pinned updates. On
+ * unless turned off: these packages are frozen on the host, so they should not
+ * count as pending. They stay visible in the hidden-updates list.
+ */
+export function getPinnedAutoHideKeptBackUpdates(
+  configs: PackageManagerConfigs | null | undefined,
+  manager: string,
+): boolean {
+  const config = configs?.[manager] as { autoHideKeptBackUpdates?: unknown } | undefined;
+  return config?.autoHideKeptBackUpdates !== false;
 }
 
 export function mergeLegacyAutoHideKeptBackUpdates(

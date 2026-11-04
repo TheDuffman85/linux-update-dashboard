@@ -31,6 +31,8 @@ export function debGetCheckScript(): string {
     "  exit 0",
     "fi",
     `apps="$(${debGetOwnedAppsCommand()})"`,
+    "# APT refuses to install a newer .deb over a held package, so report holds to the parser.",
+    'held="$(apt-mark showhold 2>/dev/null)"',
     'checked=0; failed=""; failed_count=0',
     "for app in $apps; do",
     "  checked=$((checked + 1))",
@@ -50,7 +52,9 @@ export function debGetCheckScript(): string {
     "    continue",
     "  fi",
     '  if dpkg --compare-versions "$latest" gt "$current"; then',
-    `    printf '${DEB_GET_UPDATE_MARKER}\\t%s\\t%s\\t%s\\n' "$app" "$current" "$latest"`,
+    "    hold_state=\"\"",
+    "    if printf '%s\\n' \"$held\" | grep -Fxq \"$app\"; then hold_state=\"held\"; fi",
+    `    printf '${DEB_GET_UPDATE_MARKER}\\t%s\\t%s\\t%s\\t%s\\n' "$app" "$current" "$latest" "$hold_state"`,
     "  fi",
     "done",
     'if [ -n "$failed" ]; then',
@@ -85,7 +89,7 @@ export const debGetParser: PackageParser = {
   parseCheckOutput(stdout) {
     const updates: ParsedUpdate[] = [];
     for (const raw of stdout.split("\n")) {
-      const [marker, packageName, currentVersion, newVersion] = raw.trim().split("\t");
+      const [marker, packageName, currentVersion, newVersion, holdState] = raw.trim().split("\t");
       if (marker !== DEB_GET_UPDATE_MARKER || !packageName || !newVersion) continue;
       updates.push({
         packageName,
@@ -94,7 +98,7 @@ export const debGetParser: PackageParser = {
         architecture: null,
         repository: "deb-get",
         isSecurity: false,
-        isKeptBack: false,
+        isKeptBack: holdState === "held",
         pkgManager: "deb-get",
       });
     }

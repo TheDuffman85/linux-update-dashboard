@@ -50,7 +50,7 @@ describe("client package-manager configs", () => {
 
   test("does not treat unsupported built-in managers as custom config targets before save", () => {
     expect(normalizePackageManagerConfigs({
-      snap: { channel: "edge" },
+      snap: { channel: "edge" } as never,
     }, [
       {
         name: "snap",
@@ -59,6 +59,32 @@ describe("client package-manager configs", () => {
       },
     ], false)).toBeNull();
   });
+  test("keeps auto-hide settings for every manager that reports pinned updates", () => {
+    const configs = {
+      pacman: { refreshDatabasesOnCheck: false, autoHideKeptBackUpdates: true },
+      apk: { autoHideKeptBackUpdates: true },
+      flatpak: { autoHideKeptBackUpdates: false },
+      snap: { autoHideKeptBackUpdates: true },
+      "deb-get": { autoHideKeptBackUpdates: true },
+    };
+    expect(normalizePackageManagerConfigs(configs, [{ name: "deb-get", builtin: true, configEntries: [] }], false)).toEqual(configs);
+  });
+
+  test("keeps declared custom snap entries next to auto-hide before save", () => {
+    const definitions = [{
+      name: "snap",
+      builtin: true,
+      configEntries: [{ key: "channel", defaultValue: "stable" }],
+    }];
+    const configs = { snap: { channel: "edge", autoHideKeptBackUpdates: false } } as never;
+
+    expect(normalizePackageManagerConfigs(configs, definitions, false)).toEqual(configs);
+    expect(normalizePackageManagerConfigs({ snap: { channel: "edge" } } as never, definitions, false)).toEqual({
+      snap: { channel: "edge" },
+    });
+    expect(normalizePackageManagerConfigs({ snap: { other: "x" } } as never, definitions, false)).toBeNull();
+  });
+
   test("never sends plaintext values for secret entries", () => {
     const managers = [{
       name: "deb-get",
@@ -69,7 +95,7 @@ describe("client package-manager configs", () => {
     }];
 
     expect(normalizePackageManagerConfigs({
-      "deb-get": { githubToken: "ghp_plaintext", channel: "beta" },
+      "deb-get": { githubToken: "ghp_plaintext", channel: "beta" } as never,
     }, managers)).toEqual({ "deb-get": { channel: "beta" } });
     expect(normalizePackageManagerSecretRefs({
       "deb-get": { githubToken: 4, channel: 5 },

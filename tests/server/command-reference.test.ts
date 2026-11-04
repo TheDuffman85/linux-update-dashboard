@@ -165,7 +165,7 @@ describe("buildCommandReference", () => {
         apk: { refreshIndexesOnCheck: false },
       }),
     }));
-    expect(apkReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "apk")).toHaveLength(2);
+    expect(apkReference.exact.filter((entry) => entry.category === "check" && entry.pkgManager === "apk")).toHaveLength(3);
     expect(apkReference.exact.some((entry) => entry.command.includes('if [ "false" != "false" ]; then') && entry.command.includes("apk update"))).toBe(true);
 
     const flatpakReference = buildCommandReference(createSystem({

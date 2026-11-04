@@ -256,12 +256,21 @@ const PACKAGE_MANAGER_CONFIG_KEYS: Record<
   ],
   pacman: [
     { key: "refreshDatabasesOnCheck", descriptionKey: "pages.scripts.configDescription.refreshDatabasesOnCheck", description: "true unless database refresh is disabled" },
+    { key: "autoHideKeptBackUpdates", descriptionKey: "pages.scripts.configDescription.autoHideKeptBackUpdates", description: "true when kept-back updates are auto-hidden" },
   ],
   apk: [
     { key: "refreshIndexesOnCheck", descriptionKey: "pages.scripts.configDescription.refreshIndexesOnCheck", description: "true unless index refresh is disabled" },
+    { key: "autoHideKeptBackUpdates", descriptionKey: "pages.scripts.configDescription.autoHideKeptBackUpdates", description: "true when kept-back updates are auto-hidden" },
   ],
   flatpak: [
     { key: "refreshAppstreamOnCheck", descriptionKey: "pages.scripts.configDescription.refreshAppstreamOnCheck", description: "true unless appstream refresh is disabled" },
+    { key: "autoHideKeptBackUpdates", descriptionKey: "pages.scripts.configDescription.autoHideKeptBackUpdates", description: "true when kept-back updates are auto-hidden" },
+  ],
+  snap: [
+    { key: "autoHideKeptBackUpdates", descriptionKey: "pages.scripts.configDescription.autoHideKeptBackUpdates", description: "true when kept-back updates are auto-hidden" },
+  ],
+  "deb-get": [
+    { key: "autoHideKeptBackUpdates", descriptionKey: "pages.scripts.configDescription.autoHideKeptBackUpdates", description: "true when kept-back updates are auto-hidden" },
   ],
 };
 const BUILTIN_PACKAGE_MANAGER_CONFIG_KEY_NAMES = new Map(

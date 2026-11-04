@@ -367,7 +367,7 @@ describe("update service package manager configs", () => {
       if (command.includes("apk list -u")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
-      if (command.includes("apk update")) {
+      if (command.includes("apk update") || command.includes("apk upgrade --simulate")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
       if (command.includes("flatpak remote-ls --updates")) {

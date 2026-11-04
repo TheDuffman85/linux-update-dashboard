@@ -36,7 +36,7 @@ A self-hosted web app for managing Linux package updates across multiple servers
 - **Repository sources:** view each system's APT, DNF/YUM, Pacman, APK, and Flatpak repository files with credentials masked, and optionally edit them through `sudoedit` with a diff review and activity history.
 - **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
-- **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, APT kept-back auto-hide, script overrides, ProxyJump, and host-key trust approval.
+- **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, kept-back and pinned package auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, assign overrides per system, and run pre- and post-upgrade scripts around upgrades on all systems or selected ones.
 - **Scheduling:** cron-based refresh, update, autoremove, reboot (optionally only when required), and notification schedules with scoped systems, cache rules, priority-based Upgrade All waves, and schedule run history.
 - **Notifications:** Email/SMTP, Gotify, MQTT, ntfy.sh, Telegram, and Webhook channels with event filters, system scope, immediate or scheduled delivery, test sends, and encrypted secrets.
@@ -379,7 +379,7 @@ The theme is chosen at the bottom of the sidebar: light, dark, or following the 
 
 Managers are detected over SSH when testing a connection or running the first check. Detected managers are enabled by default and can be toggled per system. Security updates are identified where the package manager exposes enough information.
 
-Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Snap does not currently expose manager-specific settings.
+Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Packages pinned or held on the host are marked as kept back instead of being reported as normal updates: APK `/etc/apk/world` constraints (including packages those constraints hold back), Pacman `IgnorePkg`/`IgnoreGroup`, Flatpak masks in the system installation, Snap `refresh --hold`, and `apt-mark hold` on deb-get apps. By default these updates move to the system's hidden-updates list, so they do not count as pending; each manager has a setting to keep them in the normal list instead. They return to the normal list once the pin is removed. Pinned packages cannot be selected for individual upgrades, because that would override the pin or do nothing.
 
 ### deb-get
 

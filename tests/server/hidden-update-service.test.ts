@@ -10,6 +10,8 @@ import { initEncryptor } from "../../server/security";
 import {
   HIDDEN_UPDATE_RETENTION_DAYS,
   autoHideCachedKeptBackUpdates,
+  autoHideKeptBackUpdatesForCheck,
+  reconcileCachedKeptBackAutoHide,
   createHiddenUpdate,
   getVisibleCachedUpdates,
   getVisibleUpdateSummary,
@@ -387,5 +389,103 @@ describe("hidden update service", () => {
     const active = listActiveHiddenUpdates(systemId);
     expect(active).toHaveLength(1);
     expect(active[0].isKeptBack).toBe(1);
+  });
+
+  describe("per-manager auto-hide of pinned updates", () => {
+    const parsed = (pkgManager: string, packageName: string, isKeptBack: boolean) => ({
+      pkgManager,
+      packageName,
+      currentVersion: "1.0",
+      newVersion: "2.0",
+      architecture: null,
+      repository: null,
+      isSecurity: false,
+      isKeptBack,
+    });
+
+    function seed(systemId: number, configs: unknown, rows: Array<ReturnType<typeof parsed>>) {
+      const db = getDb();
+      db.update(systems)
+        .set({ pkgManagerConfigs: JSON.stringify(configs) })
+        .where(eq(systems.id, systemId))
+        .run();
+      for (const row of rows) {
+        db.insert(updateCache).values({ ...row, systemId, isSecurity: 0, isKeptBack: row.isKeptBack ? 1 : 0 }).run();
+      }
+    }
+
+    test.each(["apk", "pacman", "flatpak", "snap", "deb-get"])(
+      "hides pinned %s updates by default so they do not count as pending",
+      (pkgManager) => {
+        const systemId = createSystem();
+        const updates = [parsed(pkgManager, "pinned-pkg", true), parsed(pkgManager, "free-pkg", false)];
+        seed(systemId, {}, updates);
+
+        autoHideKeptBackUpdatesForCheck(systemId, updates, [pkgManager]);
+
+        expect(listActiveHiddenUpdates(systemId).map((update) => update.packageName)).toEqual(["pinned-pkg"]);
+        expect(getVisibleUpdateSummary(systemId)).toEqual({ updateCount: 1, securityCount: 0, keptBackCount: 0 });
+      },
+    );
+
+    test("does not hide kept-back APT updates by default", () => {
+      const systemId = createSystem();
+      seed(systemId, {}, [parsed("apt", "bash", true)]);
+
+      autoHideCachedKeptBackUpdates(systemId);
+
+      expect(listActiveHiddenUpdates(systemId)).toEqual([]);
+    });
+
+    test("turning it off applies only to that manager", () => {
+      const systemId = createSystem();
+      seed(systemId, { apk: { autoHideKeptBackUpdates: false } }, [
+        parsed("apk", "kernel", true),
+        parsed("pacman", "linux", true),
+      ]);
+
+      autoHideCachedKeptBackUpdates(systemId);
+
+      expect(listActiveHiddenUpdates(systemId).map((update) => update.packageName)).toEqual(["linux"]);
+    });
+
+    test("turning off the APT setting does not affect pinned updates of other managers", () => {
+      const systemId = createSystem();
+      seed(systemId, { apt: { autoHideKeptBackUpdates: false } }, [
+        parsed("apk", "kernel", true),
+        parsed("apt", "bash", true),
+      ]);
+
+      autoHideCachedKeptBackUpdates(systemId);
+
+      expect(listActiveHiddenUpdates(systemId).map((update) => update.packageName)).toEqual(["kernel"]);
+    });
+
+    test("stays hidden across checks and returns once the pin is gone", () => {
+      const systemId = createSystem();
+      seed(systemId, {}, [parsed("snap", "core22", true)]);
+      autoHideCachedKeptBackUpdates(systemId);
+
+      syncHiddenUpdatesForCheck(systemId, [parsed("snap", "core22", true)], ["snap"]);
+      expect(listActiveHiddenUpdates(systemId).map((update) => update.packageName)).toEqual(["core22"]);
+
+      syncHiddenUpdatesForCheck(systemId, [parsed("snap", "core22", false)], ["snap"]);
+      expect(listActiveHiddenUpdates(systemId)).toEqual([]);
+    });
+
+    test("reconciling after a settings change affects only that manager", () => {
+      const systemId = createSystem();
+      seed(systemId, {}, [parsed("apk", "kernel", true), parsed("flatpak", "org.gnome.Logs", true)]);
+      autoHideCachedKeptBackUpdates(systemId);
+      expect(listActiveHiddenUpdates(systemId)).toHaveLength(2);
+
+      getDb().update(systems)
+        .set({ pkgManagerConfigs: JSON.stringify({ apk: { autoHideKeptBackUpdates: false } }) })
+        .where(eq(systems.id, systemId))
+        .run();
+      reconcileCachedKeptBackAutoHide(systemId);
+
+      expect(listActiveHiddenUpdates(systemId).map((update) => update.packageName)).toEqual(["org.gnome.Logs"]);
+    });
   });
 });

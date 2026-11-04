@@ -61,6 +61,7 @@ import { highlightShell } from "../lib/shell-highlight";
 import { formatScriptCommand } from "../lib/scripts";
 import { useSettings } from "../lib/settings";
 import { useI18n, type TranslationValues } from "../lib/i18n";
+import { isPinnedUpdate } from "../../shared/pinned-updates";
 
 const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 type SystemFormSubmitData = Parameters<ComponentProps<typeof SystemForm>["onSubmit"]>[0];
@@ -228,7 +229,8 @@ function UpdatesTable({
                   type="checkbox"
                   aria-label={t("pages.systemDetail.selectPackage", { packageName: u.packageName })}
                   checked={selectedPackageNames.includes(u.packageName)}
-                  disabled={selectionDisabled}
+                  disabled={selectionDisabled || !packageSelectionState.visiblePackageNames.includes(u.packageName)}
+                  title={isPinnedUpdate(u) ? t("pages.systemDetail.pinnedUpgradeBlocked") : undefined}
                   onChange={() => onTogglePackage(u.packageName)}
                   className="mt-0.5 rounded border-border text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                 />
@@ -305,7 +307,7 @@ export function filterAvailableUpdates(
 
 export function toggleMatchingPackageNames(
   selectedPackageNames: string[],
-  matchingUpdates: Array<Pick<CachedUpdate, "packageName">>,
+  matchingUpdates: SelectableUpdate[],
 ): string[] {
   const matching = getSelectablePackageNames(matchingUpdates);
   const selected = new Set(selectedPackageNames);
@@ -1277,8 +1279,14 @@ function getActiveOperationPackageNames(activeOp: ActiveOperation | null | undef
   return [];
 }
 
-export function getSelectablePackageNames(updates: Array<Pick<CachedUpdate, "packageName">>): string[] {
-  return Array.from(new Set(updates.map((update) => update.packageName)));
+type SelectableUpdate = Pick<CachedUpdate, "packageName"> &
+  Partial<Pick<CachedUpdate, "pkgManager" | "isKeptBack">>;
+
+/** Package names that can be upgraded individually. The server refuses pinned packages. */
+export function getSelectablePackageNames(updates: SelectableUpdate[]): string[] {
+  const pinnedNames = new Set(updates.filter(isPinnedUpdate).map((update) => update.packageName));
+  return Array.from(new Set(updates.map((update) => update.packageName)))
+    .filter((packageName) => !pinnedNames.has(packageName));
 }
 
 export function shouldShowAutoremoveAction(support: {
@@ -1323,7 +1331,7 @@ export function getAutoremoveConfirmMessage(
 
 export function normalizeSelectedPackageNames(
   selectedPackageNames: string[],
-  updates: Array<Pick<CachedUpdate, "packageName">>,
+  updates: SelectableUpdate[],
 ): string[] {
   const visiblePackageNames = new Set(getSelectablePackageNames(updates));
   return Array.from(new Set(selectedPackageNames)).filter((packageName) => visiblePackageNames.has(packageName));
@@ -1341,7 +1349,7 @@ export function toggleSelectedPackageName(selectedPackageNames: string[], packag
 
 export function getPackageSelectionState(
   selectedPackageNames: string[],
-  updates: Array<Pick<CachedUpdate, "packageName">>,
+  updates: SelectableUpdate[],
   disabled = false,
 ) {
   const visiblePackageNames = getSelectablePackageNames(updates);

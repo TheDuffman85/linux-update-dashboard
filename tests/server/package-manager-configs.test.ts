@@ -140,4 +140,62 @@ describe("package-manager configs", () => {
       { key: "autoAcceptEulaOnUpgradePrefix", defaultValue: "unsafe" },
     ], [], "dnf")).toBe("Custom config key autoAcceptEulaOnUpgradePrefix collides with a built-in dnf config key");
   });
+
+  test("accepts and keeps auto-hide settings for managers that report pinned updates", () => {
+    const configs = {
+      pacman: { autoHideKeptBackUpdates: true },
+      apk: { autoHideKeptBackUpdates: true },
+      flatpak: { autoHideKeptBackUpdates: false },
+      snap: { autoHideKeptBackUpdates: true },
+      "deb-get": { autoHideKeptBackUpdates: true },
+    };
+
+    expect(validatePackageManagerConfigsInput(configs)).toBeNull();
+    expect(normalizePackageManagerConfigs(configs)).toEqual(configs);
+    expect(parsePackageManagerConfigs(serializePackageManagerConfigs(configs))).toEqual(configs);
+  });
+
+  test("rejects invalid values and other settings for snap and deb-get", () => {
+    expect(validatePackageManagerConfigsInput({ snap: { autoHideKeptBackUpdates: "yes" } }))
+      .toBe("pkgManagerConfigs.snap.autoHideKeptBackUpdates must be a boolean");
+    expect(validatePackageManagerConfigsInput({ apk: { autoHideKeptBackUpdates: 1 } }))
+      .toBe("pkgManagerConfigs.apk.autoHideKeptBackUpdates must be a boolean");
+    expect(validatePackageManagerConfigsInput({ snap: { channel: "edge" } }))
+      .toBe("pkgManagerConfigs.snap.channel is not supported");
+    expect(validatePackageManagerConfigsInput({ "deb-get": { other: "x" } }))
+      .toBe("pkgManagerConfigs.deb-get.other is not supported");
+  });
+
+  test("still refuses a plaintext value for the deb-get secret entry", () => {
+    expect(validatePackageManagerConfigsInput({ "deb-get": { githubToken: "ghp_x" } }, [{
+      name: "deb-get",
+      configEntries: [{ key: "githubToken", defaultValue: "", secret: true, envVar: "DEBGET_TOKEN" }],
+    }])).toBe("pkgManagerConfigs.deb-get.githubToken is a secret entry; assign a secret credential instead");
+  });
+
+  test("keeps declared custom entries for snap and deb-get next to auto-hide", () => {
+    const definitions = ["snap", "deb-get"].map((name) => ({
+      name,
+      configEntries: [{ key: "channel", defaultValue: "stable" }],
+    }));
+    const configs = {
+      snap: { channel: "edge", autoHideKeptBackUpdates: false },
+      "deb-get": { channel: "beta", autoHideKeptBackUpdates: false },
+    } as never;
+
+    expect(validatePackageManagerConfigsInput(configs, definitions)).toBeNull();
+    expect(normalizePackageManagerConfigs(configs, definitions)).toEqual(configs);
+    expect(normalizePackageManagerConfigs({ snap: { channel: "edge" } }, definitions)).toEqual({
+      snap: { channel: "edge" },
+    });
+    expect(parsePackageManagerConfigs(serializePackageManagerConfigs(configs, definitions), definitions)).toEqual(configs);
+  });
+
+  test("drops undeclared snap settings when normalizing", () => {
+    expect(normalizePackageManagerConfigs({ snap: { channel: "edge" } })).toBeNull();
+    expect(normalizePackageManagerConfigs(
+      { snap: { other: "x", autoHideKeptBackUpdates: true } },
+      [{ name: "snap", configEntries: [{ key: "channel", defaultValue: "stable" }] }],
+    )).toEqual({ snap: { autoHideKeptBackUpdates: true } });
+  });
 });

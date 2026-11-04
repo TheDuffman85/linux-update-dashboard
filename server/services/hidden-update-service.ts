@@ -4,8 +4,10 @@ import { hiddenUpdates, systems, updateCache } from "../db/schema";
 import type { ParsedUpdate } from "../ssh/parsers";
 import {
   getAptAutoHideKeptBackUpdates,
+  getPinnedAutoHideKeptBackUpdates,
   parsePackageManagerConfigs,
 } from "../package-manager-configs";
+import { usesPinnedUpdates } from "../../shared/pinned-updates";
 
 type CachedUpdateRow = typeof updateCache.$inferSelect;
 type HiddenUpdateRow = typeof hiddenUpdates.$inferSelect;
@@ -112,7 +114,11 @@ export function getVisibleCachedUpdates(systemId: number): CachedUpdateRow[] {
   return filterVisibleUpdates(updates, listActiveHiddenUpdates(systemId));
 }
 
-export function shouldAutoHideKeptBackUpdates(systemId: number): boolean {
+/**
+ * Managers that report pinned updates have their own setting, on by default.
+ * APT and custom managers share the opt-in APT setting and its legacy system column.
+ */
+export function getKeptBackAutoHideResolver(systemId: number): (pkgManager: string) => boolean {
   const row = getDb()
     .select({
       autoHideKeptBackUpdates: systems.autoHideKeptBackUpdates,
@@ -121,11 +127,12 @@ export function shouldAutoHideKeptBackUpdates(systemId: number): boolean {
     .from(systems)
     .where(eq(systems.id, systemId))
     .get();
-  const configValue = getAptAutoHideKeptBackUpdates(
-    parsePackageManagerConfigs(row?.pkgManagerConfigs ?? null),
-  );
-  if (configValue !== undefined) return configValue;
-  return row?.autoHideKeptBackUpdates === 1;
+  const configs = parsePackageManagerConfigs(row?.pkgManagerConfigs ?? null);
+  const aptValue = getAptAutoHideKeptBackUpdates(configs) ?? row?.autoHideKeptBackUpdates === 1;
+  return (pkgManager) =>
+    usesPinnedUpdates(pkgManager)
+      ? getPinnedAutoHideKeptBackUpdates(configs, pkgManager)
+      : aptValue;
 }
 
 export function getVisibleUpdateSummary(systemId: number): {
@@ -282,8 +289,7 @@ export function autoHideKeptBackUpdatesForCheck(
   updates: ParsedUpdate[],
   successfulPkgManagers: string[],
 ): void {
-  if (!shouldAutoHideKeptBackUpdates(systemId)) return;
-
+  const shouldAutoHide = getKeptBackAutoHideResolver(systemId);
   const checkedManagers = new Set(
     successfulPkgManagers.filter((manager) => manager.length > 0),
   );
@@ -291,13 +297,13 @@ export function autoHideKeptBackUpdatesForCheck(
 
   for (const update of updates) {
     if (!update.isKeptBack || !checkedManagers.has(update.pkgManager)) continue;
+    if (!shouldAutoHide(update.pkgManager)) continue;
     createHiddenUpdate(systemId, update, "kept_back");
   }
 }
 
 export function autoHideCachedKeptBackUpdates(systemId: number): void {
-  if (!shouldAutoHideKeptBackUpdates(systemId)) return;
-
+  const shouldAutoHide = getKeptBackAutoHideResolver(systemId);
   const keptBackUpdates = getDb()
     .select({
       pkgManager: updateCache.pkgManager,
@@ -314,15 +320,29 @@ export function autoHideCachedKeptBackUpdates(systemId: number): void {
     .all();
 
   for (const update of keptBackUpdates) {
+    if (!shouldAutoHide(update.pkgManager)) continue;
     createHiddenUpdate(systemId, update, "kept_back");
   }
 }
 
 export function reconcileCachedKeptBackAutoHide(systemId: number): void {
-  if (shouldAutoHideKeptBackUpdates(systemId)) {
-    autoHideCachedKeptBackUpdates(systemId);
-    return;
-  }
+  autoHideCachedKeptBackUpdates(systemId);
+
+  const shouldAutoHide = getKeptBackAutoHideResolver(systemId);
+  const staleIds = getDb()
+    .select({ id: hiddenUpdates.id, pkgManager: hiddenUpdates.pkgManager })
+    .from(hiddenUpdates)
+    .where(
+      and(
+        eq(hiddenUpdates.systemId, systemId),
+        eq(hiddenUpdates.hideReason, "kept_back"),
+        eq(hiddenUpdates.active, 1),
+      ),
+    )
+    .all()
+    .filter((row) => !shouldAutoHide(row.pkgManager))
+    .map((row) => row.id);
+  if (staleIds.length === 0) return;
 
   const now = nowSql();
   getDb()
@@ -332,13 +352,7 @@ export function reconcileCachedKeptBackAutoHide(systemId: number): void {
       inactiveSince: now,
       updatedAt: now,
     })
-    .where(
-      and(
-        eq(hiddenUpdates.systemId, systemId),
-        eq(hiddenUpdates.hideReason, "kept_back"),
-        eq(hiddenUpdates.active, 1),
-      ),
-    )
+    .where(inArray(hiddenUpdates.id, staleIds))
     .run();
 }
 
@@ -375,7 +389,7 @@ export function syncHiddenUpdatesForCheck(
 
   const db = getDb();
   const now = nowSql();
-  const autoHideKeptBackUpdates = shouldAutoHideKeptBackUpdates(systemId);
+  const shouldAutoHide = getKeptBackAutoHideResolver(systemId);
   const hiddenRows = db
     .select()
     .from(hiddenUpdates)
@@ -400,9 +414,7 @@ export function syncHiddenUpdatesForCheck(
     if (match) {
       const keepActive =
         row.hideReason === "manual" ||
-        (autoHideKeptBackUpdates &&
-          match.pkgManager === "apt" &&
-          match.isKeptBack);
+        (match.isKeptBack && shouldAutoHide(match.pkgManager));
 
       if (
         !keepActive &&

@@ -9,7 +9,7 @@ import { credentials, systems, updateCache, updateHistory } from "../../server/d
 import { getEncryptor, initEncryptor } from "../../server/security";
 import { initSSHManager } from "../../server/ssh/connection";
 import { SYSTEM_INFO_CMD } from "../../server/ssh/system-info";
-import { applyUpgradePackages } from "../../server/services/update-service";
+import { applyUpgradePackages, validateSelectedPackageUpgradeRequest } from "../../server/services/update-service";
 import { createSystem } from "../../server/services/system-service";
 
 const SYSTEM_INFO_OUTPUT = `===OS===
@@ -251,5 +251,44 @@ describe("selected package upgrades", () => {
       expect(row.packages).toBe(JSON.stringify(["curl", "firefox"]));
       expect(row.status).toBe("success");
     }
+  });
+
+  test.each(["apk", "pacman", "flatpak", "snap", "deb-get"])(
+    "refuses to upgrade a pinned %s package by name",
+    async (pkgManager) => {
+      const systemId = createPasswordSystem({ pkgManager, detectedPkgManagers: [pkgManager] });
+      getDb().insert(updateCache).values([
+        { systemId, pkgManager, packageName: "pinned-pkg", currentVersion: "1", newVersion: "2", isKeptBack: 1 },
+        { systemId, pkgManager, packageName: "free-pkg", currentVersion: "1", newVersion: "2", isKeptBack: 0 },
+      ]).run();
+
+      const result = await applyUpgradePackages(systemId, ["free-pkg", "pinned-pkg"]);
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("pinned or held");
+      expect(result.output).toContain("pinned-pkg");
+      expect(result.output).not.toContain("free-pkg");
+      expect(() => validateSelectedPackageUpgradeRequest(systemId, ["pinned-pkg"])).toThrow("pinned or held");
+      expect(validateSelectedPackageUpgradeRequest(systemId, ["free-pkg"]).packageNames).toEqual(["free-pkg"]);
+    },
+  );
+
+  test("refuses a pinned name even when another manager offers it unpinned", () => {
+    const systemId = createPasswordSystem({ pkgManager: "apt", detectedPkgManagers: ["apt", "pacman"] });
+    getDb().insert(updateCache).values([
+      { systemId, pkgManager: "apt", packageName: "foo", currentVersion: "1", newVersion: "2", isKeptBack: 0 },
+      { systemId, pkgManager: "pacman", packageName: "foo", currentVersion: "1", newVersion: "2", isKeptBack: 1 },
+    ]).run();
+
+    expect(() => validateSelectedPackageUpgradeRequest(systemId, ["foo"])).toThrow("pinned or held");
+  });
+
+  test("still allows upgrading a kept-back APT package by name", () => {
+    const systemId = createPasswordSystem();
+    getDb().insert(updateCache).values({
+      systemId, pkgManager: "apt", packageName: "kept", currentVersion: "1", newVersion: "2", isKeptBack: 1,
+    }).run();
+
+    expect(validateSelectedPackageUpgradeRequest(systemId, ["kept"]).packageNames).toEqual(["kept"]);
   });
 });

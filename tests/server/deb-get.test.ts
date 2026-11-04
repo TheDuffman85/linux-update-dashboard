@@ -72,6 +72,19 @@ describe("deb-get built-in package manager", () => {
     expect(getParser("deb-get")).toBe(debGetParser);
   });
 
+  test("marks apps held with apt-mark as kept back", () => {
+    const stdout = [
+      `${DEB_GET_UPDATE_MARKER}\tobsidian\t1.12.7\t1.13.4\theld`,
+      `${DEB_GET_UPDATE_MARKER}\tdrawio\t24.0\t24.1\t`,
+    ].join("\n");
+
+    expect(debGetParser.parseCheckOutput(stdout, "", 0)).toEqual([
+      expect.objectContaining({ packageName: "obsidian", isKeptBack: true }),
+      expect.objectContaining({ packageName: "drawio", isKeptBack: false }),
+    ]);
+    expect(debGetCheckScript()).toContain("apt-mark showhold");
+  });
+
   test("checks only apps deb-get owns and never runs deb-get update", () => {
     const script = debGetCheckScript();
 

@@ -22,6 +22,8 @@ import {
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND } from "../ssh/parsers/apt";
 import { debGetCheckScript } from "../ssh/parsers/deb-get";
+import { APK_SIMULATE_UPGRADE_COMMAND } from "../ssh/parsers/apk";
+import { FLATPAK_CHECK_COMMAND } from "../ssh/parsers/flatpak";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
 import { getProxmoxBackupGuardCommand, getRebootCommand } from "../ssh/reboot";
@@ -1022,6 +1024,13 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
             "apk list -u 2>/dev/null",
           ),
         },
+        {
+          label: "Detecting kept-back packages",
+          command: commentedCommand(
+            "Simulate an upgrade to find listed packages that pins in /etc/apk/world hold back. Needs no root.",
+            APK_SIMULATE_UPGRADE_COMMAND,
+          ),
+        },
       ];
     case "flatpak":
       return [
@@ -1036,8 +1045,8 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
         {
           label: "Checking for updates",
           command: commentedCommand(
-            "Print installed Flatpak versions, then print available remote updates for parser comparison.",
-            'echo "===INSTALLED==="; flatpak list --columns=application,version 2>/dev/null; echo "===UPDATES==="; flatpak remote-ls --updates --columns=name,application,version,branch,origin 2>/dev/null',
+            "Print installed Flatpak versions and masks, then print available remote updates for parser comparison.",
+            FLATPAK_CHECK_COMMAND,
           ),
         },
       ];

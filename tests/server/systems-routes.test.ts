@@ -709,7 +709,7 @@ describe("systems reorder route", () => {
 
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toBe("pkgManagerConfigs.snap is not supported");
+    expect(body.error).toBe("pkgManagerConfigs.snap.refreshAppstreamOnCheck is not supported");
   });
 
   test("rejects invalid package manager config values", async () => {

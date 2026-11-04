@@ -11,8 +11,8 @@ for pkg in hello-world jq yq micro btop tree httpie certbot lolcat go; do
 done
 
 # Disable the automatic refresh timer so snaps stay at whatever revision we
-# install.  Using "snap refresh --hold" would also hide them from
-# "snap refresh --list", so we stop the timer instead.
+# install.  "snap refresh --hold" would make the dashboard report them as kept
+# back instead of as normal updates, so we stop the timer instead.
 systemctl stop snapd.refresh.timer 2>/dev/null || true
 systemctl disable snapd.refresh.timer 2>/dev/null || true
 

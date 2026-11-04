@@ -308,6 +308,18 @@ describe("YumParser", () => {
 });
 
 describe("PacmanParser", () => {
+  test("marks IgnorePkg entries as kept back", () => {
+    const updates = pacmanParser.parseCheckOutput(
+      "brotli 1.2.0-1 -> 1.2.1-1 [ignored]\ncurl 8.14.0-2 -> 8.23.0-1\n",
+      "",
+      0,
+    );
+    expect(updates).toEqual([
+      expect.objectContaining({ packageName: "brotli", newVersion: "1.2.1-1", isKeptBack: true }),
+      expect.objectContaining({ packageName: "curl", newVersion: "8.23.0-1", isKeptBack: false }),
+    ]);
+  });
+
   test("parse normal output", () => {
     const stdout =
       "linux 6.7.4.arch1-1 -> 6.7.5.arch1-1\n" +
@@ -384,21 +396,210 @@ describe("ApkParser", () => {
 
   test("commands", () => {
     const cmds = apkParser.getCheckCommands();
-    expect(cmds).toHaveLength(2);
+    expect(cmds).toHaveLength(3);
     expect(cmds[0]).toContain("apk update");
     expect(cmds[1]).toContain("apk list -u");
+    expect(cmds[2]).toBe("apk upgrade --simulate 2>&1 || true");
     expect(apkParser.getUpgradeAllCommand()).toContain("apk upgrade");
     expect(apkParser.getUpgradePackageCommand("busybox")).toContain("apk upgrade busybox");
   });
 
   test("can skip index refresh on checks", () => {
     const cmds = apkParser.getCheckCommands({ refreshIndexesOnCheck: false });
-    expect(cmds).toHaveLength(1);
+    expect(cmds).toHaveLength(2);
     expect(cmds[0]).toContain("apk list -u");
+  });
+
+  describe("pinned packages", () => {
+    const list = [
+      "libcrypto3-3.3.7-r0 x86_64 {openssl} (Apache-2.0) [upgradable from: libcrypto3-3.3.6-r0]",
+      "libssl3-3.3.7-r0 x86_64 {openssl} (Apache-2.0) [upgradable from: libssl3-3.3.6-r0]",
+      "zlib-1.3.2-r0 x86_64 {zlib} (Zlib) [upgradable from: zlib-1.3.1-r1]",
+    ].join("\n");
+
+    function parse(simulation: string | null) {
+      const commandResults = [
+        { command: "# List\napk list -u 2>/dev/null", stdout: list, stderr: "", exitCode: 0 },
+        ...(simulation === null
+          ? []
+          : [{ command: "apk upgrade --simulate 2>&1 || true", stdout: simulation, stderr: "", exitCode: 0 }]),
+      ];
+      const last = commandResults[commandResults.length - 1];
+      const updates = apkParser.parseCheckOutput(last.stdout, "", 0, { commandResults });
+      return Object.fromEntries(updates.map((update) => [update.packageName, update.isKeptBack]));
+    }
+
+    test("marks packages missing from an apk 2 simulation as kept back", () => {
+      expect(parse("(1/1) Upgrading zlib (1.3.1-r1 -> 1.3.2-r0)\nOK: 8 MiB in 14 packages\n")).toEqual({
+        libcrypto3: true,
+        libssl3: true,
+        zlib: false,
+      });
+    });
+
+    test("understands the padded apk 3 counter and its preupgrade warning", () => {
+      expect(parse(
+        "WARNING: This simulation might not reliable as a preupgrade is available.\n" +
+        "( 1/65) Upgrading zlib (1.3.1-r1 -> 1.3.2-r0)\n" +
+        "( 2/65) Upgrading libssl3 (3.3.6-r0 -> 3.3.7-r0)\n" +
+        "OK: 11.3 MiB in 136 packages\n",
+      )).toEqual({ libcrypto3: true, libssl3: false, zlib: false });
+    });
+
+    function parseVersions(listLines: string[], simulation: string) {
+      const commandResults = [
+        { command: "apk list -u 2>/dev/null", stdout: listLines.join("\n"), stderr: "", exitCode: 0 },
+        { command: "apk upgrade --simulate 2>&1 || true", stdout: simulation, stderr: "", exitCode: 0 },
+      ];
+      return apkParser
+        .parseCheckOutput(simulation, "", 0, { commandResults })
+        .map((update) => [update.packageName, update.newVersion, update.isKeptBack]);
+    }
+    const musl = (version: string) =>
+      `musl-${version} x86_64 {musl} (MIT) [upgradable from: musl-1.2.5-r1]`;
+
+    test("returns only the version the simulation installs when several are listed", () => {
+      expect(parseVersions(
+        [musl("1.2.5-r4"), musl("1.2.5-r13")],
+        "(2/15) Upgrading musl (1.2.5-r1 -> 1.2.5-r4)\nOK: 8 MiB in 14 packages\n",
+      )).toEqual([["musl", "1.2.5-r4", false]]);
+    });
+
+    test("returns the newest listed version as kept back when the simulation installs none", () => {
+      expect(parseVersions(
+        [musl("1.2.5-r4"), musl("1.2.5-r13")],
+        "OK: 8 MiB in 14 packages\n",
+      )).toEqual([["musl", "1.2.5-r13", true]]);
+    });
+
+    test("reports the permitted version when the listing does not offer it", () => {
+      expect(parseVersions(
+        [musl("1.2.5-r13")],
+        "(1/1) Upgrading musl (1.2.5-r1 -> 1.2.5-r4)\nOK: 8 MiB in 14 packages\n",
+      )).toEqual([["musl", "1.2.5-r4", false]]);
+    });
+
+    test("recognizes packages upgraded through a tagged world entry", () => {
+      expect(parseVersions(
+        [musl("1.2.5-r4")],
+        "(5/6) Upgrading musl@v322 (1.2.5-r1 -> 1.2.5-r13)\nOK: 8 MiB in 14 packages\n",
+      )).toEqual([["musl", "1.2.5-r13", false]]);
+    });
+
+    test("marks everything as kept back when the simulation succeeds with nothing to do", () => {
+      expect(parse("OK: 8 MiB in 14 packages\n")).toEqual({ libcrypto3: true, libssl3: true, zlib: true });
+    });
+
+    test("marks nothing when the simulation fails", () => {
+      expect(parse(
+        "ERROR: unable to select packages:\n" +
+        "  does-not-exist-pkg (no such package):\n" +
+        "    required by: world[does-not-exist-pkg]\n",
+      )).toEqual({ libcrypto3: false, libssl3: false, zlib: false });
+    });
+
+    test("marks nothing when a script override has no simulation step", () => {
+      expect(parse(null)).toEqual({ libcrypto3: false, libssl3: false, zlib: false });
+    });
   });
 
   test("no full upgrade command", () => {
     expect(apkParser.getFullUpgradeAllCommand()).toBeNull();
+  });
+});
+
+describe("FlatpakParser masks", () => {
+  function parse(masks: string, updates: string[]) {
+    const stdout = [
+      "===INSTALLED===",
+      "org.gnome.Calculator\t50.0",
+      "===MASKED===",
+      masks,
+      "===UPDATES===",
+      ...updates,
+    ].join("\n");
+    return Object.fromEntries(
+      flatpakParser.parseCheckOutput(stdout, "", 0).map((update) => [
+        `${update.packageName}//${update.newVersion}`,
+        update.isKeptBack,
+      ]),
+    );
+  }
+  const row = (app: string, branch = "stable", arch = "x86_64", kind = "app") =>
+    `Name\t${app}\t1.0\t${branch}\tflathub\t${kind}/${app}/${arch}/${branch}`;
+  const isMasked = (mask: string, ...ref: [string, string?, string?, string?]) =>
+    parse(`  ${mask}`, [row(...ref)])[`${ref[0]}//1.0`];
+
+  test("marks exact and wildcard masks as kept back", () => {
+    expect(parse("  org.gnome.Calculator\n  org.gnome.Log*", [
+      row("org.gnome.Calculator"),
+      row("org.gnome.Logs"),
+      row("org.gnome.Weather"),
+    ])).toEqual({
+      "org.gnome.Calculator//1.0": true,
+      "org.gnome.Logs//1.0": true,
+      "org.gnome.Weather//1.0": false,
+    });
+  });
+
+  test("honors the branch in a mask", () => {
+    expect(isMasked("org.gnome.Evince//stable", "org.gnome.Evince")).toBe(true);
+    expect(isMasked("org.gnome.Evince//stable", "org.gnome.Evince", "beta")).toBe(false);
+  });
+
+  test("honors the architecture in a mask", () => {
+    expect(isMasked("org.gnome.Evince/x86_64", "org.gnome.Evince")).toBe(true);
+    expect(isMasked("org.gnome.Evince/i386", "org.gnome.Evince")).toBe(false);
+    expect(isMasked("org.gnome.*/i386", "org.gnome.Evince")).toBe(false);
+  });
+
+  test("honors the ref type in a mask", () => {
+    expect(isMasked("app/org.gnome.Evince", "org.gnome.Evince")).toBe(true);
+    expect(isMasked("runtime/org.gnome.Evince", "org.gnome.Evince")).toBe(false);
+    expect(isMasked("org.gnome.Platform", "org.gnome.Platform", "50", "x86_64", "runtime")).toBe(true);
+    expect(isMasked("app/org.gnome.Platform", "org.gnome.Platform", "50", "x86_64", "runtime")).toBe(false);
+    expect(isMasked("app/org.gnome.Evince/x86_64/stable", "org.gnome.Evince")).toBe(true);
+  });
+
+  test("a masked branch does not replace an unmasked branch of the same ID", () => {
+    const app = "org.gnome.Platform";
+    for (const branches of [["50", "51"], ["51", "50"]]) {
+      const stdout = [
+        "===MASKED===",
+        `  ${app}//50`,
+        "===UPDATES===",
+        ...branches.map((branch) => row(app, branch, "x86_64", "runtime")),
+      ].join("\n");
+      const updates = flatpakParser.parseCheckOutput(stdout, "", 0);
+      expect(updates).toHaveLength(1);
+      expect(updates[0].isKeptBack).toBe(false);
+    }
+  });
+
+  test("marks nothing when the output has no ref column", () => {
+    const stdout = "===MASKED===\n  org.gnome.Evince\n===UPDATES===\nName\torg.gnome.Evince\t1.0\tstable\tflathub";
+    expect(flatpakParser.parseCheckOutput(stdout, "", 0)[0].isKeptBack).toBe(false);
+  });
+
+  test("does not treat dots in a mask as wildcards", () => {
+    expect(parse("  org.gnome.Log", [row("orgXgnomeXLog"), row("org.gnome.Logs")])).toEqual({
+      "orgXgnomeXLog//1.0": false,
+      "org.gnome.Logs//1.0": false,
+    });
+  });
+
+  test("keeps reading installed versions and ignores non-pattern mask output", () => {
+    const stdout = "===INSTALLED===\norg.gnome.Calculator\t50.0\n===MASKED===\nNo masked patterns\n===UPDATES===\n" + row("org.gnome.Calculator");
+    expect(flatpakParser.parseCheckOutput(stdout, "", 0)).toEqual([
+      expect.objectContaining({ packageName: "org.gnome.Calculator", currentVersion: "50.0", isKeptBack: false }),
+    ]);
+  });
+
+  test("the check command lists masks between the installed and updates sections", () => {
+    const [command] = flatpakParser.getCheckCommands({ refreshAppstreamOnCheck: false });
+    expect(command.indexOf("===INSTALLED===")).toBeLessThan(command.indexOf("flatpak mask"));
+    expect(command.indexOf("flatpak mask")).toBeLessThan(command.indexOf("===UPDATES==="));
+    expect(command).not.toContain("--user");
   });
 });
 
@@ -443,6 +644,28 @@ describe("FlatpakParser", () => {
 
   test("no full upgrade command", () => {
     expect(flatpakParser.getFullUpgradeAllCommand()).toBeNull();
+  });
+});
+
+describe("SnapParser holds", () => {
+  test("marks snaps held in snap list as kept back", () => {
+    const stdout = [
+      "===INSTALLED===",
+      "Name    Version   Rev   Tracking       Publisher    Notes",
+      "core22  20260824  2955  latest/stable  canonical**  base,held",
+      "jq      1.5       6     latest/stable  mvo          held",
+      "yq      4.0       10    latest/stable  mikefarah    -",
+      "===UPDATES===",
+      "Name    Version   Rev   Size    Publisher    Notes",
+      "core22  20260909  2987  77.6MB  canonical**  base",
+      "jq      1.6       7     1MB     mvo          -",
+      "yq      4.1       11    1MB     mikefarah    -",
+    ].join("\n");
+    expect(snapParser.parseCheckOutput(stdout, "", 0).map((update) => [update.packageName, update.isKeptBack])).toEqual([
+      ["core22", true],
+      ["jq", true],
+      ["yq", false],
+    ]);
   });
 });
 
