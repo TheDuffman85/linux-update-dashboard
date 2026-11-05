@@ -74,8 +74,9 @@ dashboard.get("/stats", (c) => {
   }));
 
   const total = systemsWithMeta.length;
+  // Patch status, not support status: only EOL keeps a patched system out of this count.
   const upToDate = systemsWithMeta.filter(
-    (s) => s.updateCount === 0 && s.isReachable === 1 && !hasCheckIssue(s.lastCheck) && !hasLifecycleWarning(s)
+    (s) => s.updateCount === 0 && s.isReachable === 1 && !hasCheckIssue(s.lastCheck) && s.osLifecycleStatus !== "eol"
   ).length;
   const needsUpdates = systemsWithMeta.filter(
     (s) => s.updateCount > 0 && !hasCheckIssue(s.lastCheck)

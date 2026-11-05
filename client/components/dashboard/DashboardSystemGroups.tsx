@@ -10,6 +10,7 @@ import { useI18n } from "../../lib/i18n";
 import { Badge } from "../Badge";
 import { filterSystems } from "../../lib/system-search";
 import { filterSystemsByStatus, parseDashboardSearch } from "../../lib/dashboard-search";
+import { hasCheckIssue, hasLifecycleWarning, isSystemUpToDate } from "../../lib/system-status";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "ludash.dashboard.collapsed-groups";
 const GROUP_BADGES_STORAGE_KEY = "ludash.dashboard.group-badges";
@@ -90,22 +91,6 @@ export function compareSystemsByName(a: System, b: System): number {
   return systemNameCollator.compare(a.name, b.name) || a.id - b.id;
 }
 
-function hasCheckIssue(system: System): boolean {
-  return (
-    system.lastCheck?.status === "failed" ||
-    system.lastCheck?.status === "warning"
-  );
-}
-
-function hasLifecycleWarning(system: System): boolean {
-  return (
-    system.osLifecycleStatus === "eol" ||
-    system.osLifecycleStatus === "approaching_eol" ||
-    system.osLifecycleStatus === "support_ending" ||
-    system.osLifecycleStatus === "support_ended"
-  );
-}
-
 function getGroupStatusBadges(
   systems: System[],
   t: (key: string) => string,
@@ -115,13 +100,7 @@ function getGroupStatusBadges(
     {
       key: "up-to-date",
       label: t("pages.dashboard.upToDate"),
-      count: systems.filter(
-        (system) =>
-          system.updateCount === 0 &&
-          system.isReachable === 1 &&
-          !hasCheckIssue(system) &&
-          !hasLifecycleWarning(system),
-      ).length,
+      count: systems.filter(isSystemUpToDate).length,
       variant: "success",
     },
     {

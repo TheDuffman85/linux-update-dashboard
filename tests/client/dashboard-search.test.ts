@@ -42,18 +42,20 @@ describe("dashboard status search", () => {
       system(5, { needsReboot: 1 }),
       system(6, { osLifecycleStatus: "eol" }),
       system(7, { isReachable: 0 }),
+      system(8, { osLifecycleStatus: "support_ended" }),
     ];
     const run = (search: string) => ids(filterSystemsByStatus(systems, parseDashboardSearch(search).filters));
 
-    expect(run("is:uptodate")).toEqual([1, 5]);
+    expect(run("is:uptodate")).toEqual([1, 5, 8]);
     expect(run("is:updates")).toEqual([2]);
     expect(run("is:issues")).toEqual([3]);
     expect(run("is:unreachable")).toEqual([4]);
     expect(run("is:reboot")).toEqual([5]);
-    expect(run("is:os-warning")).toEqual([6]);
+    expect(run("is:os-warning")).toEqual([6, 8]);
+    expect(run("is:uptodate is:os-warning")).toEqual([8]);
     expect(run("is:updates is:issues")).toEqual([]);
     expect(run("-is:uptodate -is:unreachable")).toEqual([2, 3, 6, 7]);
-    expect(run("")).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(run("")).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   test("toggles a single card filter while keeping free text", () => {

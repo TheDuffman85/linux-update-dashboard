@@ -204,7 +204,32 @@ describe("dashboard routes", () => {
     });
   });
 
-  test("counts lifecycle warnings separately from up to date", async () => {
+  test("excludes EOL systems from up to date", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2029-01-01T12:00:00Z"));
+
+    getDb().insert(systems).values({
+      name: "Debian EOL",
+      hostname: "debian-eol.local",
+      port: 22,
+      authType: "password",
+      username: "root",
+      isReachable: 1,
+      hidden: 0,
+      osId: "debian",
+      osName: "Debian GNU/Linux 12 (bookworm)",
+      osVersion: "12",
+    }).run();
+
+    const app = new Hono();
+    app.route("/api/dashboard", dashboardRoutes);
+
+    const statsBody = await (await app.request("/api/dashboard/stats")).json();
+    expect(statsBody.stats.upToDate).toBe(0);
+    expect(statsBody.stats.lifecycleWarnings).toBe(1);
+  });
+
+  test("counts patched systems with a lifecycle warning as up to date", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-16T12:00:00Z"));
 
@@ -228,7 +253,7 @@ describe("dashboard routes", () => {
     const statsRes = await app.request("/api/dashboard/stats");
     expect(statsRes.status).toBe(200);
     const statsBody = await statsRes.json();
-    expect(statsBody.stats.upToDate).toBe(0);
+    expect(statsBody.stats.upToDate).toBe(1);
     expect(statsBody.stats.lifecycleWarnings).toBe(1);
 
     const systemsRes = await app.request("/api/dashboard/systems");

@@ -1,3 +1,4 @@
+import { hasCheckIssue, hasLifecycleWarning, isSystemUpToDate } from "./system-status";
 import type { System } from "./systems";
 
 /**
@@ -32,21 +33,8 @@ const FILTER_ALIASES: Record<string, DashboardStatusFilter> = {
 
 const FILTER_TOKEN = /^(-?)is:([a-z-]+)$/i;
 
-function hasCheckIssue(system: FilterableSystem): boolean {
-  return system.lastCheck?.status === "failed" || system.lastCheck?.status === "warning";
-}
-
-function hasLifecycleWarning(system: FilterableSystem): boolean {
-  return (
-    system.osLifecycleStatus === "eol" ||
-    system.osLifecycleStatus === "approaching_eol" ||
-    system.osLifecycleStatus === "support_ending" ||
-    system.osLifecycleStatus === "support_ended"
-  );
-}
-
 const FILTER_PREDICATES: Record<DashboardStatusFilter, (system: FilterableSystem) => boolean> = {
-  uptodate: (s) => s.updateCount === 0 && s.isReachable === 1 && !hasCheckIssue(s) && !hasLifecycleWarning(s),
+  uptodate: isSystemUpToDate,
   updates: (s) => s.updateCount > 0 && !hasCheckIssue(s),
   reboot: (s) => s.needsReboot === 1,
   "os-warning": hasLifecycleWarning,

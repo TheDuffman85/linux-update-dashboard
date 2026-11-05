@@ -2501,7 +2501,7 @@ export default function SystemDetail() {
       : dedupedOperationNoticeState;
   const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
-  const dotColor = getSystemStatusDotClass(updateState, system);
+  const dotColor = getSystemStatusDotClass(updateState);
   const hasSelectedPackages = packageSelectionState.selectedCount > 0;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
     .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));
