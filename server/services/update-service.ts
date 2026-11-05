@@ -15,6 +15,7 @@ import { sudo, validatePackageName } from "../ssh/parsers/types";
 import { getDnfLikeEulaPromptMessage, hasDnfLikeEulaPrompt } from "../ssh/parsers/dnf";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
+import { reconcileKnownPins } from "./known-pin-service";
 import * as installedPackageService from "./installed-package-service";
 import * as packageIssueService from "./package-manager-issue-service";
 import * as systemService from "./system-service";
@@ -1103,6 +1104,16 @@ async function checkUpdatesUnlocked(
             ?? getCustomCheckErrorMessage(customScript?.parserConfig, result.stdout, result.stderr, result.exitCode);
           let checkErrorMessage = parserReportedError;
           const commandFailed = checkErrorMessage !== null;
+          const checkWarningMessage = commandFailed ? null : parser?.getCheckWarningMessage?.({
+            command: commands[i],
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          }, { commandResults }) ?? null;
+          if (checkWarningMessage) {
+            checkErrors.push(`[${pmName}] ${checkWarningMessage}`);
+            pub({ type: "warning", message: checkWarningMessage });
+          }
           const detectedIssue = detectPackageManagerIssue(
             systemId,
             pmName,
@@ -1130,8 +1141,8 @@ async function checkUpdatesUnlocked(
               pkgManager: pmName,
               command: commands[i],
               output: combinedOutput,
-              error: checkErrorMessage,
-              status: commandFailed ? "failed" : "success",
+              error: checkErrorMessage ?? checkWarningMessage,
+              status: commandFailed ? "failed" : checkWarningMessage ? "warning" : "success",
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             })
@@ -1151,6 +1162,14 @@ async function checkUpdatesUnlocked(
               commandResults,
             })
           : parseUpdatesWithScript(pmName, customScript, commandResults);
+        if (parser?.isPinDetectionIncomplete) {
+          updates = reconcileKnownPins(
+            systemId,
+            pmName,
+            updates,
+            parser.isPinDetectionIncomplete(commandResults),
+          );
+        }
         allUpdates.push(...updates);
         successfulChecks++;
         successfulPkgManagers.push(pmName);
@@ -1362,7 +1381,12 @@ async function checkUpdatesUnlocked(
         error: combinedErrors?.slice(0, 2000),
       }
     );
-    pub({ type: "done", success: historyStatus === "success", completedAt: getCurrentTimestamp() });
+    pub({
+      type: "done",
+      success: historyStatus !== "failed",
+      warning: historyStatus === "warning",
+      completedAt: getCurrentTimestamp(),
+    });
   }
 
   if (!silent && successfulChecks === 0 && combinedErrors) {

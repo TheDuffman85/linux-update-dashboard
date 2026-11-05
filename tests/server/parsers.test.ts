@@ -3,7 +3,7 @@ import { aptParser } from "../../server/ssh/parsers/apt";
 import { dnfParser } from "../../server/ssh/parsers/dnf";
 import { yumParser } from "../../server/ssh/parsers/yum";
 import { pacmanParser } from "../../server/ssh/parsers/pacman";
-import { apkParser } from "../../server/ssh/parsers/apk";
+import { apkParser, APK_READ_WORLD_COMMAND, APK_SIMULATE_UPGRADE_COMMAND } from "../../server/ssh/parsers/apk";
 import { flatpakParser } from "../../server/ssh/parsers/flatpak";
 import { snapParser } from "../../server/ssh/parsers/snap";
 import { validatePackageName } from "../../server/ssh/parsers/types";
@@ -396,17 +396,18 @@ describe("ApkParser", () => {
 
   test("commands", () => {
     const cmds = apkParser.getCheckCommands();
-    expect(cmds).toHaveLength(3);
+    expect(cmds).toHaveLength(4);
     expect(cmds[0]).toContain("apk update");
     expect(cmds[1]).toContain("apk list -u");
-    expect(cmds[2]).toBe("apk upgrade --simulate 2>&1 || true");
+    expect(cmds[2]).toBe(APK_READ_WORLD_COMMAND);
+    expect(cmds[3]).toBe(APK_SIMULATE_UPGRADE_COMMAND);
     expect(apkParser.getUpgradeAllCommand()).toContain("apk upgrade");
     expect(apkParser.getUpgradePackageCommand("busybox")).toContain("apk upgrade busybox");
   });
 
   test("can skip index refresh on checks", () => {
     const cmds = apkParser.getCheckCommands({ refreshIndexesOnCheck: false });
-    expect(cmds).toHaveLength(2);
+    expect(cmds).toHaveLength(3);
     expect(cmds[0]).toContain("apk list -u");
   });
 

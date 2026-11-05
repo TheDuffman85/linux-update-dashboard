@@ -1640,9 +1640,11 @@ export function buildActivityDisplayRows({
   const firstStartedMessage = getFirstStartedMessage(messages);
   const lastDoneMessage = getLastDoneMessage(messages);
   const liveStatus = lastDoneMessage
-    ? lastDoneMessage.success
-      ? "success"
-      : "failed"
+    ? lastDoneMessage.warning
+      ? "warning"
+      : lastDoneMessage.success
+        ? "success"
+        : "failed"
     : "started";
   const livePackageNames = getActiveOperationPackageNames(activeOp).length > 0
     ? getActiveOperationPackageNames(activeOp)
@@ -2499,7 +2501,7 @@ export default function SystemDetail() {
       : dedupedOperationNoticeState;
   const showHostKeyVerificationBanner = hasHostKeyVerificationError(system.lastCheck);
   const updateState = deriveSystemUpdateState(system, { upgrading, checking: checking || repairingPackageIssue });
-  const dotColor = getSystemStatusDotClass(updateState, system);
+  const dotColor = getSystemStatusDotClass(updateState);
   const hasSelectedPackages = packageSelectionState.selectedCount > 0;
   const activeManagers = (system.detectedPkgManagers ?? (system.pkgManager ? [system.pkgManager] : []))
     .filter((manager) => !(system.disabledPkgManagers ?? []).includes(manager));

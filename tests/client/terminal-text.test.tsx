@@ -97,4 +97,24 @@ describe("TerminalOutput", () => {
     expect(html).toContain("warning");
     expect(html).not.toContain("[33m");
   });
+
+  test.each([
+    [{ success: true, warning: true }, "Completed with warnings", "Done with warnings.", "text-amber-400"],
+    [{ success: true, warning: false }, "Completed successfully", "Done.", "text-green-400"],
+    [{ success: true }, "Completed successfully", "Done.", "text-green-400"],
+    [{ success: false }, "Command failed", "Failed.", "text-red-400"],
+  ])("renders the final state of %j", (done, header, footer, color) => {
+    const html = renderToStaticMarkup(
+      <TerminalOutput
+        messages={[{ type: "done", completedAt: "2026-11-05 10:00:00", ...done }]}
+        isActive={false}
+        phase={null}
+        connected={true}
+      />
+    );
+
+    expect(html).toContain(header);
+    expect(html).toContain(footer);
+    expect(html).toContain(color);
+  });
 });

@@ -491,6 +491,7 @@ describe("Dashboard", () => {
     );
 
     expect(html).toContain("bg-amber-100");
+    expect(html).toContain("Up to date");
     expect(html).toContain("LTS");
     expect(html).not.toContain("In LTS");
     expect(html).not.toContain("LTS until 2028-06-30");
@@ -543,6 +544,80 @@ describe("Dashboard", () => {
 
     expect(html).toContain("Security support ending soon");
     expect(html).not.toContain("23d");
+  });
+
+  test("keeps the lifecycle badge next to pending updates and shows EOL without up to date", () => {
+    const makeCardSystem = (overrides: Record<string, unknown>) => ({
+      id: 1,
+      name: "Alpha",
+      hostname: "alpha.local",
+      port: 22,
+      osName: "Debian",
+      isReachable: 1,
+      updateCount: 0,
+      securityCount: 0,
+      keptBackCount: 0,
+      osLifecycleEolDate: "2028-06-30",
+      cacheAge: null,
+      cacheTimestamp: null,
+      isStale: false,
+      lastCheck: null,
+      activeOperation: null,
+      excludeFromUpgradeAll: 0,
+      dashboardGroupId: null,
+      dashboardOrder: 1,
+      pkgManager: "apt",
+      detectedPkgManagers: ["apt"],
+      disabledPkgManagers: [],
+      pkgManagerConfigs: null,
+      supportsFullUpgrade: true,
+      ...overrides,
+    });
+    const renderCard = (overrides: Record<string, unknown>) => {
+      mockUseDashboardSystems.mockReturnValue({
+        data: [makeCardSystem(overrides)],
+        dataUpdatedAt: Date.now(),
+      });
+      return renderToStaticMarkup(
+        <MemoryRouter>
+          <Dashboard />
+        </MemoryRouter>,
+      );
+    };
+
+    const withUpdates = renderCard({
+      updateCount: 3,
+      osLifecycleStatus: "support_ended",
+      osLifecycleLabel: "Rocky Linux 8 regular support ended; EOL 2029-05-31",
+    });
+    expect(withUpdates).toContain("3 updates");
+    expect(withUpdates).toContain("Regular support ended");
+
+    const withSecurityUpdates = renderCard({
+      updateCount: 3,
+      securityCount: 2,
+      keptBackCount: 1,
+      osLifecycleStatus: "support_ended",
+      osLifecycleLabel: "Rocky Linux 8 regular support ended; EOL 2029-05-31",
+    });
+    const updatesIndex = withSecurityUpdates.indexOf("3 updates");
+    const securityIndex = withSecurityUpdates.indexOf("2 security");
+    const keptBackIndex = withSecurityUpdates.indexOf("1 kept back");
+    const lifecycleIndex = withSecurityUpdates.indexOf("Regular support ended");
+    expect(updatesIndex).toBeGreaterThan(-1);
+    expect(securityIndex).toBeGreaterThan(updatesIndex);
+    expect(keptBackIndex).toBeGreaterThan(securityIndex);
+    expect(lifecycleIndex).toBeGreaterThan(keptBackIndex);
+
+    const eol = renderCard({
+      osLifecycleStatus: "eol",
+      osLifecycleLabel: "Debian 10 is EOL",
+    });
+    expect(eol).toContain("w-3 h-3 rounded-full shrink-0 bg-red-500");
+    expect(eol).toContain("EOL");
+    expect(eol).not.toContain("bg-green-500");
+    // The success badge variant, used by "Up to date".
+    expect(eol).not.toContain("bg-green-100");
   });
 
   test("keeps the Upgrade All launcher available when the only updated system is busy", () => {

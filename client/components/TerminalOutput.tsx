@@ -25,7 +25,13 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
         case "phase":
           return `--- ${msg.phase === "rechecking" ? t("components.terminalOutput.recheckingForUpdates") : msg.phase} ---\n`;
         case "done":
-          return `${msg.success ? t("components.terminalOutput.done") : t("components.terminalOutput.failed")}\n`;
+          return `${
+            msg.warning
+              ? t("components.terminalOutput.doneWithWarnings")
+              : msg.success
+                ? t("components.terminalOutput.done")
+                : t("components.terminalOutput.failed")
+          }\n`;
         case "error":
           return `${t("components.terminalOutput.error")}: ${msg.message}\n`;
         case "warning":
@@ -71,9 +77,11 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
   } else if (isActive && lastStarted) {
     headerText = t("components.terminalOutput.runningCommand", { command: lastStarted.command });
   } else if (lastDone) {
-    headerText = lastDone.success
-      ? t("components.terminalOutput.completedSuccessfully")
-      : t("components.terminalOutput.commandFailed");
+    headerText = lastDone.warning
+      ? t("components.terminalOutput.completedWithWarnings")
+      : lastDone.success
+        ? t("components.terminalOutput.completedSuccessfully")
+        : t("components.terminalOutput.commandFailed");
   }
 
   return (
@@ -151,10 +159,14 @@ export function TerminalOutput({ messages, isActive, phase, connected }: Termina
                 <div
                   key={i}
                   className={`mt-2 font-semibold ${
-                    msg.success ? "text-green-400" : "text-red-400"
+                    msg.warning ? "text-amber-400" : msg.success ? "text-green-400" : "text-red-400"
                   }`}
                 >
-                  {msg.success ? "Done." : "Failed."}
+                  {msg.warning
+                    ? t("components.terminalOutput.doneWithWarnings")
+                    : msg.success
+                      ? t("components.terminalOutput.done")
+                      : t("components.terminalOutput.failed")}
                 </div>
               );
             case "error":

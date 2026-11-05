@@ -10,7 +10,7 @@ export type SystemUpdateState =
   | "check_failed"
   | "check_warning"
   | "updates_available"
-  | "lifecycle_warning"
+  | "eol"
   | "up_to_date"
   | "unchecked";
 
@@ -35,6 +35,36 @@ export type UpdatesPanelState =
 
 const HOST_KEY_VERIFICATION_ERROR_RE =
   /HostKeyV(?:erification|arification)Error|SSH host key approval required|SSH host key verification failed/i;
+
+export function hasCheckIssue(system: { lastCheck?: LastCheckSummary | null }): boolean {
+  return system.lastCheck?.status === "failed" || system.lastCheck?.status === "warning";
+}
+
+export function hasLifecycleWarning(system: { osLifecycleStatus?: OsLifecycleStatus }): boolean {
+  return (
+    system.osLifecycleStatus === "eol" ||
+    system.osLifecycleStatus === "approaching_eol" ||
+    system.osLifecycleStatus === "support_ending" ||
+    system.osLifecycleStatus === "support_ended"
+  );
+}
+
+/**
+ * Patch status, not support status: a release that still receives updates counts as
+ * up to date even with a lifecycle warning. Only EOL is excluded, because a system
+ * with no updates available may simply have no more patches coming.
+ * Mirrors the `upToDate` count in `/api/dashboard/stats`.
+ */
+export function isSystemUpToDate(
+  system: Pick<SystemStatusInput, "isReachable" | "updateCount" | "osLifecycleStatus" | "lastCheck">,
+): boolean {
+  return (
+    system.updateCount === 0 &&
+    system.isReachable === 1 &&
+    !hasCheckIssue(system) &&
+    system.osLifecycleStatus !== "eol"
+  );
+}
 
 export function isPostUpgradeRecheck(activeOperation: ActiveOperation | null | undefined): boolean {
   return activeOperation?.phase === "rechecking" && activeOperation.type.includes("upgrade");
@@ -83,26 +113,13 @@ export function deriveSystemUpdateState(
   if (system.lastCheck?.status === "failed") return "check_failed";
   if (system.lastCheck?.status === "warning") return "check_warning";
   if (system.updateCount > 0) return "updates_available";
-  if (
-    system.osLifecycleStatus === "eol" ||
-    system.osLifecycleStatus === "approaching_eol" ||
-    system.osLifecycleStatus === "support_ending" ||
-    system.osLifecycleStatus === "support_ended"
-  ) return "lifecycle_warning";
+  if (system.osLifecycleStatus === "eol") return "eol";
   if (system.isReachable === 1) return "up_to_date";
   return "unchecked";
 }
 
-export function getSystemStatusDotClass(
-  state: SystemUpdateState,
-  system?: { osLifecycleStatus?: OsLifecycleStatus },
-): string {
-  if (state === "check_failed" || state === "unreachable") return "bg-red-500";
-  if (state === "lifecycle_warning") {
-    if (system?.osLifecycleStatus === "eol") return "bg-red-500";
-    if (system?.osLifecycleStatus) return "bg-green-500";
-    return "bg-amber-500";
-  }
+export function getSystemStatusDotClass(state: SystemUpdateState): string {
+  if (state === "check_failed" || state === "unreachable" || state === "eol") return "bg-red-500";
   if (state === "check_warning" || state === "updates_available") return "bg-amber-500";
   if (state === "up_to_date") return "bg-green-500";
   if (state === "upgrading" || state === "maintaining" || state === "checking") return "bg-blue-500";

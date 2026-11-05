@@ -305,6 +305,22 @@ export const hiddenUpdates = sqliteTable(
   ],
 );
 
+export const knownPins = sqliteTable(
+  "known_pins",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    systemId: integer("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    pkgManager: text("pkg_manager").notNull(),
+    packageName: text("package_name").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [unique().on(table.systemId, table.pkgManager, table.packageName)],
+);
+
 export const packageManagerIssues = sqliteTable(
   "package_manager_issues",
   {

@@ -1,20 +1,41 @@
 import type { PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName, validatePackageNames } from "./types";
+import { anyCheckProbeFailed, checkProbeFailed, optionalCheckProbe } from "./check-probes";
 
 const INSTALLED_MARKER = "===INSTALLED===";
 const UPDATES_MARKER = "===UPDATES===";
+const LIST_STATUS_MARKER = "LUDASH_SNAP_LIST_STATUS";
+
+// `snap refresh --list` writes "All snaps up to date." to stderr, which would be
+// displayed as an error. Stdout streams through fd 3; stderr is only shown on failure.
+export const SNAP_CHECK_COMMAND = [
+  `echo "${INSTALLED_MARKER}"`,
+  optionalCheckProbe("snap list --color=never", LIST_STATUS_MARKER),
+  `echo "${UPDATES_MARKER}"`,
+  "ludash_refresh_status=0",
+  '{ ludash_refresh_stderr="$(snap refresh --list 2>&1 >&3)" || ludash_refresh_status=$?; } 3>&1',
+  'if [ "$ludash_refresh_status" -ne 0 ]; then printf "%s\\n" "$ludash_refresh_stderr" >&2; exit "$ludash_refresh_status"; fi',
+].join("\n");
 
 export const snapParser: PackageParser = {
   name: "snap",
 
   getCheckCommands() {
-    return [
-      `echo "${INSTALLED_MARKER}"; snap list --color=never 2>/dev/null; echo "${UPDATES_MARKER}"; snap refresh --list 2>/dev/null`,
-    ];
+    return [SNAP_CHECK_COMMAND];
   },
 
   getCheckCommandLabels() {
     return ["Checking for updates"];
+  },
+
+  getCheckWarningMessage({ stdout }) {
+    return checkProbeFailed(stdout, LIST_STATUS_MARKER)
+      ? "Could not list installed snaps. Installed versions and refresh holds could not be determined. Holds found by earlier checks are kept, but newly held snaps may appear as available updates. See the step output for details."
+      : null;
+  },
+
+  isPinDetectionIncomplete(commandResults) {
+    return anyCheckProbeFailed(commandResults, LIST_STATUS_MARKER);
   },
 
   parseCheckOutput(stdout, _stderr, _exitCode) {

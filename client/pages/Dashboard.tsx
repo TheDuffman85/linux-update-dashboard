@@ -28,6 +28,7 @@ import { useUpgrade } from "../context/UpgradeContext";
 import { useI18n } from "../lib/i18n";
 import { isDashboardStatusFilterActive, parseDashboardSearch, toggleDashboardStatusFilter } from "../lib/dashboard-search";
 import type { DashboardStatusFilter } from "../lib/dashboard-search";
+import { getLifecycleBadge } from "../lib/system-search";
 import { deriveSystemUpdateState, getSystemStatusDotClass, isPostAutoremoveRecheck, isPostUpgradeRecheck, shouldClearLocalUpgrade } from "../lib/system-status";
 
 function compareDashboardOrder(a: System, b: System): number {
@@ -359,30 +360,12 @@ function getStatsGridClass(stats: { needsReboot: number; lifecycleWarnings: numb
       : "lg:grid-cols-6";
 }
 
-function hasLtsLifecycleLabel(system: Pick<System, "osLifecycleLabel">): boolean {
-  return /\bLTS\b/.test(system.osLifecycleLabel);
-}
-
-function getLifecycleWarningLabel(
-  system: Pick<System, "osLifecycleStatus" | "osLifecycleLabel">,
-  t: (key: string) => string,
-): string {
-  if (system.osLifecycleStatus === "eol") return t("pages.systemDetail.lifecycle.eol");
-  if (system.osLifecycleStatus === "support_ended") {
-    if (hasLtsLifecycleLabel(system)) return t("pages.systemDetail.lifecycle.lts");
-    return t("pages.systemDetail.lifecycle.regularSupportEnded");
-  }
-  if (system.osLifecycleStatus === "support_ending") {
-    return t("pages.systemDetail.lifecycle.securitySupportEndingSoon");
-  }
-  return t("pages.systemDetail.lifecycle.eolSoon");
-}
-
 function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "osLifecycleStatus" | "osLifecycleEolDate" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd" | "osLifecycleLabel" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
   const { t } = useI18n();
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const maintaining = updateState === "maintaining";
-  const dotColor = getSystemStatusDotClass(updateState, system);
+  const dotColor = getSystemStatusDotClass(updateState);
+  const lifecycleBadge = getLifecycleBadge(system, t, { capitalized: true });
 
   const sectionLinks = [
     { id: SYSTEM_SECTION_IDS.availableUpdates, label: t("pages.systemDetail.availableUpdates"), Icon: AvailableUpdatesIcon },
@@ -427,9 +410,7 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
               <Badge variant="warning" small>{t("pages.dashboard.checkWarning")}</Badge>
             ) : updateState === "updates_available" ? (
               <Badge variant="warning" small>{t("pages.dashboard.countUpdates", { count: system.updateCount })}</Badge>
-            ) : updateState === "lifecycle_warning" ? (
-              <Badge variant={system.osLifecycleStatus === "eol" ? "danger" : "warning"} small>{getLifecycleWarningLabel(system, t)}</Badge>
-            ) : updateState === "up_to_date" ? (
+            ) : updateState === "eol" ? null : updateState === "up_to_date" ? (
               <Badge variant="success" small>{t("pages.dashboard.upToDate")}</Badge>
             ) : (
               <Badge variant="muted" small>{t("pages.dashboard.unchecked")}</Badge>
@@ -442,6 +423,9 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
             )}
             {system.keptBackCount > 0 && (
               <Badge variant="muted" small>{t("pages.dashboard.countKeptBack", { count: system.keptBackCount })}</Badge>
+            )}
+            {lifecycleBadge && (
+              <Badge variant={lifecycleBadge.variant} small>{lifecycleBadge.label}</Badge>
             )}
             {system.needsReboot === 1 && (
               <span className="text-amber-500" title={t("pages.dashboard.rebootRequired")}>

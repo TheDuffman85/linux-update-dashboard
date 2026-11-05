@@ -11,19 +11,24 @@ function hasLtsLifecycleLabel(system: Partial<Pick<System, "osLifecycleLabel">>)
 export function getLifecycleBadge(
   system: Partial<Pick<System, "osLifecycleStatus" | "osLifecycleLabel">>,
   t: (key: string) => string,
+  options: { capitalized?: boolean } = {},
 ): { label: string; variant: "warning" | "danger" } | null {
   if (system.osLifecycleStatus === "eol") return { label: t("pages.systemDetail.lifecycle.eol"), variant: "danger" };
   if (system.osLifecycleStatus === "support_ended") {
     return {
       label: hasLtsLifecycleLabel(system)
         ? t("pages.systemDetail.lifecycle.lts")
-        : t("pages.systemDetail.lifecycle.regularSupportEndedLower"),
+        : options.capitalized
+          ? t("pages.systemDetail.lifecycle.regularSupportEnded")
+          : t("pages.systemDetail.lifecycle.regularSupportEndedLower"),
       variant: "warning",
     };
   }
   if (system.osLifecycleStatus === "support_ending") {
     return {
-      label: t("pages.systemDetail.lifecycle.securitySupportEndingSoonLower"),
+      label: options.capitalized
+        ? t("pages.systemDetail.lifecycle.securitySupportEndingSoon")
+        : t("pages.systemDetail.lifecycle.securitySupportEndingSoonLower"),
       variant: "warning",
     };
   }

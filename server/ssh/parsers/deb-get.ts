@@ -1,8 +1,10 @@
 import type { PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName, validatePackageNames } from "./types";
+import { anyCheckProbeFailed, checkProbeFailed } from "./check-probes";
 
 export const DEB_GET_UPDATE_MARKER = "LUDASH_DEBGET_UPDATE";
 export const DEB_GET_INSTALLED_FILE = "/etc/deb-get/installed";
+const HOLD_STATUS_MARKER = "LUDASH_DEBGET_HOLD_STATUS";
 
 /**
  * Read-only lookup that runs as root. It is the only deb-get command that the
@@ -32,7 +34,10 @@ export function debGetCheckScript(): string {
     "fi",
     `apps="$(${debGetOwnedAppsCommand()})"`,
     "# APT refuses to install a newer .deb over a held package, so report holds to the parser.",
-    'held="$(apt-mark showhold 2>/dev/null)"',
+    "ludash_hold_status=0",
+    'held="$(apt-mark showhold)" || ludash_hold_status=$?',
+    `printf '${HOLD_STATUS_MARKER}:%s\\n' "$ludash_hold_status"`,
+    'if [ "$ludash_hold_status" -ne 0 ]; then held=""; fi',
     'checked=0; failed=""; failed_count=0',
     "for app in $apps; do",
     "  checked=$((checked + 1))",
@@ -84,6 +89,16 @@ export const debGetParser: PackageParser = {
 
   getCheckCommandLabels() {
     return ["Checking for updates"];
+  },
+
+  getCheckWarningMessage({ stdout }) {
+    return checkProbeFailed(stdout, HOLD_STATUS_MARKER)
+      ? "Could not read APT holds for deb-get apps. Holds found by earlier checks are kept, but newly held packages may appear as available updates. See the step output for details."
+      : null;
+  },
+
+  isPinDetectionIncomplete(commandResults) {
+    return anyCheckProbeFailed(commandResults, HOLD_STATUS_MARKER);
   },
 
   parseCheckOutput(stdout) {

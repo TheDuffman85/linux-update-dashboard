@@ -22,8 +22,9 @@ import {
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import { APT_DPKG_AUDIT_SCRIPT, APT_UPDATE_COMMAND } from "../ssh/parsers/apt";
 import { debGetCheckScript } from "../ssh/parsers/deb-get";
-import { APK_SIMULATE_UPGRADE_COMMAND } from "../ssh/parsers/apk";
+import { APK_READ_WORLD_COMMAND, APK_SIMULATE_UPGRADE_COMMAND } from "../ssh/parsers/apk";
 import { FLATPAK_CHECK_COMMAND } from "../ssh/parsers/flatpak";
+import { SNAP_CHECK_COMMAND } from "../ssh/parsers/snap";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
 import { getProxmoxBackupGuardCommand, getRebootCommand } from "../ssh/reboot";
@@ -1025,6 +1026,13 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
           ),
         },
         {
+          label: "Reading pinned versions",
+          command: commentedCommand(
+            "Read exact APK world pins independently of the upgrade simulation. Needs no root.",
+            APK_READ_WORLD_COMMAND,
+          ),
+        },
+        {
           label: "Detecting kept-back packages",
           command: commentedCommand(
             "Simulate an upgrade to find listed packages that pins in /etc/apk/world hold back. Needs no root.",
@@ -1056,7 +1064,7 @@ function builtinCheckSteps(manager: string): ScriptStep[] {
           label: "Checking for updates",
           command: commentedCommand(
             "Print installed Snap versions, then print refresh candidates for parser comparison.",
-            'echo "===INSTALLED==="; snap list --color=never 2>/dev/null; echo "===UPDATES==="; snap refresh --list 2>/dev/null',
+            SNAP_CHECK_COMMAND,
           ),
         },
       ];

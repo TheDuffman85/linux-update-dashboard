@@ -64,13 +64,31 @@ describe("deriveSystemUpdateState", () => {
     ).toBe("up_to_date");
   });
 
-  test("returns lifecycle warning instead of up to date for EOL systems", () => {
+  test("returns EOL instead of up to date for EOL systems", () => {
     expect(
       deriveSystemUpdateState(makeSystem({
         lastCheck: makeLastCheck("success"),
         osLifecycleStatus: "eol",
       })),
-    ).toBe("lifecycle_warning");
+    ).toBe("eol");
+  });
+
+  test.each(["support_ending", "support_ended", "approaching_eol"] as const)(
+    "returns up to date for a patched system in %s",
+    (osLifecycleStatus) => {
+      expect(
+        deriveSystemUpdateState(makeSystem({
+          lastCheck: makeLastCheck("success"),
+          osLifecycleStatus,
+        })),
+      ).toBe("up_to_date");
+    },
+  );
+
+  test("does not report a supported-but-warned system as up to date before it is reachable", () => {
+    expect(
+      deriveSystemUpdateState(makeSystem({ isReachable: 0, osLifecycleStatus: "support_ended" })),
+    ).toBe("unchecked");
   });
 
   test("returns unreachable before check issues", () => {
@@ -128,18 +146,12 @@ describe("deriveSystemUpdateState", () => {
 });
 
 describe("getSystemStatusDotClass", () => {
-  test("keeps non-EOL lifecycle warnings green", () => {
-    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "support_ending" })).toBe("bg-green-500");
-    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "support_ended" })).toBe("bg-green-500");
-    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "approaching_eol" })).toBe("bg-green-500");
+  test("marks up to date systems green", () => {
+    expect(getSystemStatusDotClass("up_to_date")).toBe("bg-green-500");
   });
 
-  test("marks final EOL lifecycle warnings red", () => {
-    expect(getSystemStatusDotClass("lifecycle_warning", { osLifecycleStatus: "eol" })).toBe("bg-red-500");
-  });
-
-  test("keeps lifecycle warnings amber without lifecycle context", () => {
-    expect(getSystemStatusDotClass("lifecycle_warning")).toBe("bg-amber-500");
+  test("marks EOL systems red", () => {
+    expect(getSystemStatusDotClass("eol")).toBe("bg-red-500");
   });
 
   test("keeps operational failures red", () => {
