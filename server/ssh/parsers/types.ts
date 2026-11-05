@@ -29,6 +29,16 @@ export interface PackageParser {
     }
   ): ParsedUpdate[];
   getCheckErrorMessage?(stdout: string, stderr: string, exitCode: number): string | null;
+  /**
+   * A partial check can still provide updates while recording a warning.
+   * `context.commandResults` holds the steps that ran before this one.
+   */
+  getCheckWarningMessage?(
+    result: CheckCommandResult,
+    context?: { commandResults?: CheckCommandResult[] },
+  ): string | null;
+  /** True when a failed lookup means this check cannot tell which packages are pinned. */
+  isPinDetectionIncomplete?(commandResults: CheckCommandResult[]): boolean;
   getCheckCommands(config?: PackageManagerConfigValue): string[];
   /** Human-readable label for each check command step, shown in live output. */
   getCheckCommandLabels?(config?: PackageManagerConfigValue): string[];

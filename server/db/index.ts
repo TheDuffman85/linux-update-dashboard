@@ -161,6 +161,7 @@ const NOTIFICATION_SCHEDULE_MIGRATION_KEY =
 const HIDDEN_UPDATE_HIDE_REASON_MIGRATION_KEY =
   "hidden_update_hide_reason_migrated";
 const BUILTIN_DEB_GET_MIGRATION_KEY = "builtin_deb_get_name_migrated";
+const KNOWN_PINS_MIGRATION_KEY = "known_pins_migrated";
 const OIDC_END_SESSION_DEFAULT_MIGRATION_KEY =
   "oidc_end_session_default_migrated";
 const MAX_SCHEDULE_NAME_LENGTH = 100;
@@ -384,6 +385,15 @@ export function initDatabase(
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(system_id, pkg_manager, package_name, new_version)
+  )`);
+
+  _db.run(sql`CREATE TABLE IF NOT EXISTS known_pins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    pkg_manager TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(system_id, pkg_manager, package_name)
   )`);
 
   _db.run(sql`CREATE TABLE IF NOT EXISTS package_manager_issues (
@@ -1313,6 +1323,7 @@ export function initDatabase(
   migrateLegacyAptAutoHideIntoPackageManagerConfigs();
   migrateHiddenUpdateHideReasons();
   migrateCustomDebGetPackageManagerName();
+  migrateKnownPins();
 
   // Migration: migrate old settings-based notifications to notifications table
   migrateNotificationSettings(_db);
@@ -1739,6 +1750,7 @@ function migrateCustomDebGetPackageManagerName(): void {
       "update_cache",
       "installed_package_cache",
       "hidden_updates",
+      "known_pins",
       "package_manager_issues",
       "notification_delivered_updates",
     ]) {
@@ -1769,6 +1781,32 @@ function migrateCustomDebGetPackageManagerName(): void {
       );
     }
     markMigrated.run(BUILTIN_DEB_GET_MIGRATION_KEY, `Renamed custom deb-get package manager to ${to}`);
+  })();
+}
+
+// Seeds known pins from existing rows, so a pin lookup that fails on the first check
+// after upgrading does not release them. Limited to managers that report failed lookups.
+function migrateKnownPins(): void {
+  if (!_sqlite) return;
+  const sqlite = _sqlite;
+  const alreadyMigrated = sqlite
+    .prepare("SELECT 1 FROM settings WHERE key = ?")
+    .get(KNOWN_PINS_MIGRATION_KEY);
+  if (alreadyMigrated) return;
+
+  sqlite.transaction(() => {
+    sqlite.exec(`
+      INSERT OR IGNORE INTO known_pins (system_id, pkg_manager, package_name)
+      SELECT system_id, pkg_manager, package_name FROM update_cache
+      WHERE is_kept_back = 1 AND pkg_manager IN ('apk', 'flatpak', 'snap', 'deb-get')
+      UNION
+      SELECT system_id, pkg_manager, package_name FROM hidden_updates
+      WHERE active = 1 AND (is_kept_back = 1 OR hide_reason = 'kept_back')
+        AND pkg_manager IN ('apk', 'flatpak', 'snap', 'deb-get')
+    `);
+    sqlite
+      .prepare("INSERT OR IGNORE INTO settings (key, value, description) VALUES (?, '1', ?)")
+      .run(KNOWN_PINS_MIGRATION_KEY, "Known pins were seeded from cached and hidden updates");
   })();
 }
 

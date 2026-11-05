@@ -1,10 +1,13 @@
 import type { PackageParser, ParsedUpdate } from "./types";
 import { sudo, validatePackageName, validatePackageNames } from "./types";
 import type { FlatpakPackageManagerConfig } from "../../package-manager-configs";
+import { anyCheckProbeFailed, checkProbeFailed, optionalCheckProbe } from "./check-probes";
 
 const INSTALLED_MARKER = "===INSTALLED===";
 const MASKED_MARKER = "===MASKED===";
 const UPDATES_MARKER = "===UPDATES===";
+const LIST_STATUS_MARKER = "LUDASH_FLATPAK_LIST_STATUS";
+const MASK_STATUS_MARKER = "LUDASH_FLATPAK_MASK_STATUS";
 
 /**
  * `flatpak remote-ls --updates` ignores masks, while `flatpak update` skips
@@ -12,8 +15,14 @@ const UPDATES_MARKER = "===UPDATES===";
  * the dashboard upgrades through sudo. `flatpak mask --user` is avoided because
  * it creates a per-user repository as a side effect.
  */
-export const FLATPAK_CHECK_COMMAND =
-  `echo "${INSTALLED_MARKER}"; flatpak list --columns=application,version 2>/dev/null; echo "${MASKED_MARKER}"; flatpak mask 2>/dev/null; echo "${UPDATES_MARKER}"; flatpak remote-ls --updates --columns=name,application,version,branch,origin,ref 2>/dev/null`;
+export const FLATPAK_CHECK_COMMAND = [
+  `echo "${INSTALLED_MARKER}"`,
+  optionalCheckProbe("flatpak list --columns=application,version", LIST_STATUS_MARKER),
+  `echo "${MASKED_MARKER}"`,
+  optionalCheckProbe("flatpak mask", MASK_STATUS_MARKER),
+  `echo "${UPDATES_MARKER}"`,
+  "flatpak remote-ls --updates --columns=name,application,version,branch,origin,ref",
+].join("\n");
 
 const REF_SEGMENT_CHARS = "[.\\-_a-zA-Z0-9]*";
 
@@ -52,7 +61,7 @@ function parseMaskPatterns(section: string): RegExp[] {
   for (const raw of section.split("\n")) {
     const pattern = raw.trim();
     // Anything with spaces is a message, not a pattern.
-    if (!pattern || /\s/.test(pattern)) continue;
+    if (!pattern || pattern.startsWith(`${MASK_STATUS_MARKER}:`) || /\s/.test(pattern)) continue;
     const mask = maskToRefRegExp(pattern);
     if (mask) masks.push(mask);
   }
@@ -78,6 +87,21 @@ export const flatpakParser: PackageParser = {
       return ["Checking for updates"];
     }
     return ["Refreshing appstream data", "Checking for updates"];
+  },
+
+  getCheckWarningMessage({ stdout }) {
+    const warnings: string[] = [];
+    if (checkProbeFailed(stdout, LIST_STATUS_MARKER)) {
+      warnings.push("Could not list installed Flatpaks. Installed versions could not be determined.");
+    }
+    if (checkProbeFailed(stdout, MASK_STATUS_MARKER)) {
+      warnings.push("Could not read Flatpak masks. Masks found by earlier checks are kept, but newly masked packages may appear as available updates.");
+    }
+    return warnings.length ? `${warnings.join(" ")} See the step output for details.` : null;
+  },
+
+  isPinDetectionIncomplete(commandResults) {
+    return anyCheckProbeFailed(commandResults, MASK_STATUS_MARKER);
   },
 
   parseCheckOutput(stdout, _stderr, _exitCode) {

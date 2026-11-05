@@ -381,6 +381,12 @@ Managers are detected over SSH when testing a connection or running the first ch
 
 Per-system manager settings include APT `upgrade` vs `full-upgrade` and kept-back auto-hide, DNF `upgrade` vs `distro-sync`, optional metadata refresh skips for DNF/Pacman/APK/Flatpak, and opt-in DNF/YUM automation for GPG-key and EULA prompts. Packages pinned or held on the host are marked as kept back instead of being reported as normal updates: APK `/etc/apk/world` constraints (including packages those constraints hold back), Pacman `IgnorePkg`/`IgnoreGroup`, Flatpak masks in the system installation, Snap `refresh --hold`, and `apt-mark hold` on deb-get apps. By default these updates move to the system's hidden-updates list, so they do not count as pending; each manager has a setting to keep them in the normal list instead. They return to the normal list once the pin is removed. Pinned packages cannot be selected for individual upgrades, because that would override the pin or do nothing.
 
+APK checks read `/etc/apk/world` independently of `apk upgrade --simulate`. Exact `name=version` pins matching the installed version remain detectable if simulation fails. Other constraints and dependency-based holds require a successful simulation. Failed simulation or world-file reads appear as warnings in live output and check history while available results are retained. Custom APK check scripts need the built-in **Reading pinned versions** step to use the exact-pin fallback.
+
+Flatpak, Snap, and deb-get checks also warn if mask or hold lookups fail. Available updates are still reported, but pin detection is incomplete until the lookup succeeds; partial output from a failed lookup is discarded. The underlying error is retained in the check output. Existing custom script copies need the updated built-in lookup commands to report these warnings.
+
+While a simulation or lookup is failing, packages that the last successful check found pinned stay marked as kept back, even after a cache refresh. They stay hidden if auto-hide is on, and they cannot be upgraded individually. Pins added or removed in the meantime are picked up once detection succeeds again.
+
 ### deb-get
 
 deb-get installs apps that publish `.deb` files on GitHub, GitLab, or a website but have no APT repository, such as Obsidian or draw.io. The dashboard manages the apps that deb-get installed itself (methods `direct`, `github`, `gitlab`, and `website` in `/etc/deb-get/installed`). Apps that deb-get set up from an APT repository or PPA stay with APT.

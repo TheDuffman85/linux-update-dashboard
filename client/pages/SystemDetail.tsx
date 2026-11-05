@@ -1640,9 +1640,11 @@ export function buildActivityDisplayRows({
   const firstStartedMessage = getFirstStartedMessage(messages);
   const lastDoneMessage = getLastDoneMessage(messages);
   const liveStatus = lastDoneMessage
-    ? lastDoneMessage.success
-      ? "success"
-      : "failed"
+    ? lastDoneMessage.warning
+      ? "warning"
+      : lastDoneMessage.success
+        ? "success"
+        : "failed"
     : "started";
   const livePackageNames = getActiveOperationPackageNames(activeOp).length > 0
     ? getActiveOperationPackageNames(activeOp)

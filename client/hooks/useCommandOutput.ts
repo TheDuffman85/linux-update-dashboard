@@ -5,7 +5,7 @@ export type WsMessage =
   | { type: "started"; command: string; pkgManager: string; startedAt: string }
   | { type: "output"; data: string; stream: "stdout" | "stderr" }
   | { type: "phase"; phase: string }
-  | { type: "done"; success: boolean; completedAt: string }
+  | { type: "done"; success: boolean; warning?: boolean; completedAt: string }
   | { type: "error"; message: string }
   | { type: "warning"; message: string };
 

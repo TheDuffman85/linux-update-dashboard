@@ -367,8 +367,14 @@ describe("update service package manager configs", () => {
       if (command.includes("apk list -u")) {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
-      if (command.includes("apk update") || command.includes("apk upgrade --simulate")) {
+      if (command.includes("apk update")) {
         return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("cat /etc/apk/world")) {
+        return { stdout: "===LUDASH_APK_WORLD_STATUS:0===\n", stderr: "", exitCode: 0 };
+      }
+      if (command.includes("apk upgrade --simulate")) {
+        return { stdout: "OK: 8 MiB in 14 packages\n===LUDASH_APK_SIMULATION_STATUS:0===\n", stderr: "", exitCode: 0 };
       }
       if (command.includes("flatpak remote-ls --updates")) {
         return { stdout: "===INSTALLED===\n===UPDATES===\n", stderr: "", exitCode: 0 };

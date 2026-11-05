@@ -51,18 +51,24 @@ export function deriveLiveActivitySteps(messages: WsMessage[]): ActivityStep[] {
       case "error":
         if (!current) break;
         current.error = appendText(current.error, message.message);
-        if (current.status === "started") {
+        if (current.status === "started" || current.status === "warning") {
           current.status = "failed";
         }
         break;
-      case "warning":
+      case "warning": {
         if (!current) break;
         current.error = appendText(current.error, message.message);
-        if (current.status === "started" && /cancelled/i.test(message.message)) {
-          current.status = "cancelled";
+        const cancelled = /cancelled/i.test(message.message);
+        if (current.status === "started" || (cancelled && current.status === "warning")) {
+          current.status = cancelled ? "cancelled" : "warning";
         }
         break;
+      }
       case "done":
+        // An earlier warning on the last step must not mask the operation's failure.
+        if (!message.success && current?.status === "warning") {
+          current.status = "failed";
+        }
         finalizePendingStep(
           current,
           current?.status === "cancelled" ? "cancelled" : message.success ? "success" : "failed",
