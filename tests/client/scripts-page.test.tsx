@@ -442,6 +442,50 @@ describe("Scripts page", () => {
     expect(html).toContain("parser input");
   });
 
+  test("shows that an edited copy of a built-in installed-package script keeps the built-in parser", () => {
+    const html = renderEditor({
+      id: "custom:31",
+      readonly: false,
+      name: "Copy of List installed APT packages",
+      description: null,
+      type: "package_manager",
+      operation: "list_installed_packages",
+      pkgManager: "apt",
+      steps: [
+        { label: "Prepare", command: "true" },
+        { label: "Inventory", command: "dpkg-query -W" },
+      ],
+      parserConfig: null,
+      systemInfoConfig: null,
+      sourceScriptId: "builtin:apt:list_installed_packages",
+    });
+
+    expect(html).toContain("APT installed-package output is read by the built-in parser from the last step.");
+    expect(html).toContain("If you edit the commands, they must print the same output format.");
+    expect(html).toContain("not used");
+    expect(html).toContain("inventory parser input");
+    expect(html).not.toContain("Installed Package Line Regex");
+  });
+
+  test("tells editors of copied built-in checks to keep the output format", () => {
+    const html = renderEditor({
+      id: "custom:32",
+      readonly: false,
+      name: "Copy of Check APT updates",
+      description: null,
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [{ label: "List updates", command: "apt list --upgradable" }],
+      parserConfig: null,
+      systemInfoConfig: null,
+      sourceScriptId: "builtin:apt:check_updates",
+    });
+
+    expect(html).toContain("APT update output is parsed by the built-in parser.");
+    expect(html).toContain("If you edit the commands, they must print the same output format.");
+  });
+
   test("keeps detection scripts to one clear step", () => {
     const html = renderEditor({
       id: "custom:10",
@@ -513,6 +557,82 @@ describe("Scripts page", () => {
     expect(html).toContain("Issue Regex");
     expect(html).toContain("database needs repair");
     expect(html).not.toContain("Advanced parser rules");
+  });
+
+  test("shows output rules with their step on step-by-step operations", () => {
+    const html = renderEditor({
+      id: "custom:21",
+      readonly: false,
+      name: "Copy of Check APK updates",
+      description: null,
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "apt",
+      steps: [
+        { label: "Listing available updates", command: "apk list -u" },
+        { label: "Detecting kept-back packages", command: "apk upgrade --simulate" },
+      ],
+      parserConfig: null,
+      systemInfoConfig: null,
+      outputRules: [{
+        step: "Detecting kept-back packages",
+        match: "^\\d+ errors?;",
+        notMatch: "^ERROR:",
+        outcome: "success",
+      }],
+      sourceScriptId: "builtin:apt:check_updates",
+    });
+
+    expect(html).toContain("Output rules");
+    expect(html).toContain("Rule 1");
+    expect(html).toContain("Any step");
+    expect(html).toMatch(/<option value="step:[^"]+" selected="">Step 2: Detecting kept-back packages<\/option>/);
+    // Every rule field has a label that names it.
+    for (const id of html.matchAll(/<label for="([^"]+)"/g)) {
+      expect(html).toContain(`id="${id[1]}"`);
+    }
+    expect([...html.matchAll(/<label for="/g)].length).toBeGreaterThanOrEqual(9);
+    expect(html).toContain("^\\d+ errors?;");
+    expect(html).toContain("The parser still reads the output as usual.");
+    expect(html).toContain("Try the rules");
+  });
+
+  test("offers output rules without a step choice where steps run as one command", () => {
+    const html = renderEditor({
+      id: "custom:22",
+      readonly: false,
+      name: "Upgrade",
+      description: null,
+      type: "package_manager",
+      operation: "upgrade_all",
+      pkgManager: "apt",
+      steps: [{ label: "Upgrade", command: "apk upgrade" }],
+      parserConfig: null,
+      systemInfoConfig: null,
+      outputRules: [{ match: "^\\d+ errors?;", outcome: "warning" }],
+      sourceScriptId: null,
+    });
+
+    expect(html).toContain("the rules see the combined output");
+    expect(html).not.toContain("Any step");
+  });
+
+  test("does not offer output rules for detection scripts", () => {
+    const html = renderEditor({
+      id: "custom:23",
+      readonly: false,
+      name: "Detect",
+      description: null,
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "apt",
+      steps: [{ label: "Detect", command: "echo found" }],
+      parserConfig: null,
+      systemInfoConfig: null,
+      sourceScriptId: null,
+    });
+
+    expect(html).not.toContain("Output rules");
   });
 
   test("warns when a saved parser output step no longer exists", () => {

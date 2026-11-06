@@ -836,6 +836,80 @@ describe("pre- and post-upgrade scripts", () => {
       expect(getDb().select().from(upgradeBatches).where(eq(upgradeBatches.id, batchId)).get()?.status).toBe(itemStatus);
     });
 
+    /** Two steps whose first step only warns when it exits with 3. */
+    const warningScript = (operation: "pre_upgrade" | "post_upgrade", mark: string) => {
+      scriptCounter += 1;
+      return createScript({
+        name: `${operation} warning steps ${scriptCounter}`,
+        type: "system",
+        operation,
+        pkgManager: null,
+        steps: [
+          { label: "First", command: `${mark} first` },
+          { label: "Second", command: `${mark} second` },
+        ],
+        outputRules: [{ step: "First", exitCodes: [3], outcome: "warning", message: "first step warned" }],
+      }).id;
+    };
+
+    test.each(["pre_upgrade", "post_upgrade"] as const)(
+      "a %s script resumed after a restart keeps the warning of a step that finished before it",
+      async (operation) => {
+        const harness = installSsh();
+        const mark = operation === "pre_upgrade" ? PRE_MARK : POST_MARK;
+        const kind = operation === "pre_upgrade" ? "pre" : "post";
+        const systemId = seedSystem({ [operation === "pre_upgrade" ? "pre" : "post"]: false });
+        setSystemOverrides(systemId, { [`system/${operation}`]: warningScript(operation, mark) });
+        const { batchId } = createUpgradeBatch([{ systemId }], { autoRun: false });
+        let state: RestartState | undefined;
+        harness.respond[kind] = () => {
+          const second = harness.commands[kind].at(-1)!.includes(`${mark} second`);
+          if (second) state ??= captureState(batchId, systemId);
+          return { stdout: "", stderr: "", exitCode: second ? 0 : 3 };
+        };
+        await runUpgradeBatches();
+        expect(JSON.parse(state!.item.hookProgress!)).toMatchObject({
+          stepIndex: 1,
+          warnings: [`${operation === "pre_upgrade" ? "Pre" : "Post"}-upgrade script step "First": first step warned`],
+        });
+
+        restartAt(state!, harness);
+        await resumeBatch();
+
+        expect(harness.commands[kind]).toEqual([]);
+        expect(batchItems(batchId)[0].status).toBe("warning");
+        if (operation === "pre_upgrade") {
+          expect(harness.commands.post[0]).toContain("LUDASH_UPGRADE_RESULT=warning;");
+        }
+      },
+    );
+
+    test("an upgrade resumed after a restart keeps the warning of its pre-upgrade script", async () => {
+      const harness = installSsh();
+      const systemId = seedSystem({ pre: false });
+      setSystemOverrides(systemId, { "system/pre_upgrade": warningScript("pre_upgrade", PRE_MARK) });
+      const { batchId } = createUpgradeBatch([{ systemId }], { autoRun: false });
+      let state: RestartState | undefined;
+      harness.respond.pre = () => ({
+        stdout: "",
+        stderr: "",
+        exitCode: harness.commands.pre.at(-1)!.includes(`${PRE_MARK} first`) ? 3 : 0,
+      });
+      harness.respond.upgrade = () => {
+        state ??= captureState(batchId, systemId);
+        return { stdout: "", stderr: "", exitCode: 0 };
+      };
+      await runUpgradeBatches();
+
+      restartAt(state!, harness);
+      await resumeBatch();
+
+      expect(harness.commands.pre).toEqual([]);
+      expect(harness.commands.upgrade).toEqual([]);
+      expect(harness.commands.post[0]).toContain("LUDASH_UPGRADE_RESULT=warning;");
+      expect(batchItems(batchId)[0].status).toBe("warning");
+    });
+
     test("keeps later priorities waiting until the attached post script has finished", async () => {
       const harness = installSsh();
       const first = seedSystem();

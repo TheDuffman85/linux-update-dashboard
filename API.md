@@ -267,6 +267,8 @@ pending reboot are rebooted.
 | POST   | `/api/scripts/validate-parser`               | Test custom parser settings against sample command output.                                      |
 | POST   | `/api/scripts/format`                        | Format a shell command for display/editing.                                                     |
 
+Scripts accept an optional `outputRules` array. Each rule has `outcome` (`success`, `warning`, or `failed`) and at least one of `exitCodes` (numbers from 0 to 255), `match`, or `notMatch` (regular expressions). `message` is optional. `step` limits a rule to one step, by label or zero-based position, and is only accepted for `check_updates`, `list_installed_packages`, `repair_issue`, `pre_upgrade`, and `post_upgrade`. `detect`, `system_info`, and `reboot` scripts do not accept rules. A script holds at most 20 rules, and responses always include `outputRules`. See [Output rules](README.md#output-rules).
+
 ## Credentials
 
 | Method | Endpoint                   | Description                            |

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -7,6 +7,7 @@ import updatesRoutes from "../../server/routes/updates";
 import { closeDatabase, getDb, initDatabase } from "../../server/db";
 import { systems, updateCache } from "../../server/db/schema";
 import { clearActiveOperation, setActiveOperation } from "../../server/services/active-operation-store";
+import * as updateService from "../../server/services/update-service";
 
 function seedSystemWithVisibleUpdate(packageNames: string[] = ["bash"]): number {
   const systemId = getDb()
@@ -147,6 +148,30 @@ describe("updates routes validation", () => {
 
       expect(res.status).toBe(409);
       clearActiveOperation(systemId);
+    } finally {
+      closeDatabase();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    ["repair", "/package-issues/1/solve", "solvePackageManagerIssue"],
+    ["pending post-upgrade script", "/post-upgrade-script/run", "runPendingPostUpgradeScript"],
+  ] as const)("reports a %s that finished with warnings as a warning", async (_name, path, method) => {
+    const tempDir = mkdtempSync(join(tmpdir(), "ludash-updates-routes-test-"));
+    initDatabase(join(tempDir, "dashboard.db"));
+    try {
+      const app = new Hono();
+      app.route("/api", updatesRoutes);
+      const systemId = seedSystemWithVisibleUpdate();
+      vi.spyOn(updateService, method).mockResolvedValue({ success: true, warning: true, output: "done with warnings" });
+
+      const started = await app.request(`/api/systems/${systemId}${path}`, { method: "POST" });
+      const { jobId } = await started.json();
+      await vi.waitFor(async () => {
+        const job = await (await app.request(`/api/jobs/${jobId}`)).json();
+        expect(job).toEqual({ status: "done", result: { status: "warning", output: "done with warnings" } });
+      });
     } finally {
       closeDatabase();
       rmSync(tempDir, { recursive: true, force: true });

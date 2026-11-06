@@ -39,6 +39,16 @@ import {
 } from "../lib/package-manager-configs";
 import { useI18n } from "../lib/i18n";
 import { filterBySearch } from "../lib/list-search";
+import { OutputRulesSection } from "../components/scripts/OutputRulesSection";
+import {
+  buildOutputRules,
+  createStepKey,
+  detachOutputRulesFromStep,
+  toEditorSteps,
+  toOutputRuleDrafts,
+  type EditorStep,
+} from "../lib/output-rules";
+import { getOutputRuleScope } from "../../shared/output-rules";
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -206,7 +216,7 @@ const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
     label: OPERATION_LABELS.post_upgrade,
     allowedTypes: ["system"],
     purpose: "Runs once after an upgrade on every system that uses it, even if the upgrade failed or was cancelled.",
-    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, failed, cancelled, or unknown.",
+    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, warning, failed, cancelled, or unknown.",
     outputConsumer: "Output is streamed live and stored in activity history; it is not parsed.",
     parserBehavior: "No parser configuration is used.",
     exitCodeBehavior: "A non-zero exit code marks the upgrade as failed and offers to run the script again from the system page.",
@@ -358,6 +368,7 @@ function emptyScript(t?: Translate): ScriptDefinition {
     steps: [{ label: t?.("pages.scripts.defaultStepLabel") ?? "Run command", command: "" }],
     parserConfig: null,
     systemInfoConfig: null,
+    outputRules: [],
     sourceScriptId: null,
   };
 }
@@ -442,6 +453,10 @@ function copyScriptDraft(script: ScriptDefinition, t: Translate): ScriptDefiniti
     name: t("pages.scripts.nameCopy", { name: script.name }),
     steps: script.steps.map((step) => ({ ...step })),
     parserConfig: script.parserConfig ? { ...script.parserConfig } : null,
+    outputRules: (script.outputRules ?? []).map((rule) => ({
+      ...rule,
+      ...(rule.exitCodes ? { exitCodes: [...rule.exitCodes] } : {}),
+    })),
     systemInfoConfig: script.systemInfoConfig
       ? {
           ...script.systemInfoConfig,
@@ -812,7 +827,9 @@ function RuntimeBehaviorPanel({
     ? t("pages.scripts.runtime.customParserOutput", { step: parseStepLabel })
     : usesBuiltinParser && profile.operation === "check_updates"
       ? t("pages.scripts.runtime.builtinParserOutput")
-      : t(`pages.scripts.runtime.${profile.operation}.outputConsumer`);
+      : usesBuiltinParser && profile.operation === "list_installed_packages"
+        ? t("pages.scripts.runtime.builtinInstalledParserOutput")
+        : t(`pages.scripts.runtime.${profile.operation}.outputConsumer`);
 
   return (
     <section className="rounded-lg border border-blue-200 bg-blue-50/70 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
@@ -1025,11 +1042,11 @@ export function ScriptEditor({
   const { t } = useI18n();
   const { addToast } = useToast();
   const [draft, setDraft] = useState(script);
-  const [steps, setSteps] = useState<ScriptStep[]>(
+  const [steps, setSteps] = useState<EditorStep[]>(() => toEditorSteps(
     script.steps.length
       ? script.steps
       : [{ label: t("pages.scripts.defaultStepLabel"), command: "" }],
-  );
+  ));
   const [parserConfig, setParserConfig] = useState({
     parseStep: script.parserConfig?.parseStep?.toString() ?? "",
     updateRegex: script.parserConfig?.updateRegex ?? "",
@@ -1054,8 +1071,9 @@ export function ScriptEditor({
     script.systemInfoConfig?.mode ?? "sectioned"
   );
   const [rebootRequiredRegex, setRebootRequiredRegex] = useState(script.systemInfoConfig?.rebootRequiredRegex ?? "");
+  const [outputRules, setOutputRules] = useState(() => toOutputRuleDrafts(script.outputRules, steps));
   const [beautifyingStep, setBeautifyingStep] = useState<number | null>(null);
-  const stepsRef = useRef<ScriptStep[]>(steps);
+  const stepsRef = useRef<EditorStep[]>(steps);
   const stepsListRef = useRef<HTMLDivElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
   const operationOptions = draft.type === "system" ? SYSTEM_OPERATIONS : PACKAGE_MANAGER_OPERATIONS;
@@ -1107,6 +1125,13 @@ export function ScriptEditor({
     draft.operation === "repair_issue" &&
     !usesBuiltinParser;
   const showSystemInfoConfig = draft.type === "system" && draft.operation === "system_info";
+  // An installed-package regex can only be set through the API; it replaces the built-in parser.
+  const usesBuiltinInventoryParser =
+    draft.type === "package_manager" &&
+    draft.operation === "list_installed_packages" &&
+    usesBuiltinParser &&
+    !script.parserConfig?.installedPackageRegex;
+  const outputRuleScope = getOutputRuleScope(draft.operation);
   const singleStepOperation = draft.operation === "detect";
   const explicitParseStep = parserConfig.parseStep.trim();
   const parsedStepNumber = explicitParseStep
@@ -1133,6 +1158,12 @@ export function ScriptEditor({
       if (showParserConfig) {
         if (parseStepOutOfRange) return t("pages.scripts.stepBadge.streamedOnly");
         return index === parsedStepIndex ? t("pages.scripts.stepBadge.parsedOutput") : t("pages.scripts.stepBadge.streamedOnly");
+      }
+      if (usesBuiltinInventoryParser) {
+        // The built-in inventory parser reads only the last step's output.
+        return index === steps.length - 1
+          ? t("pages.scripts.stepBadge.inventoryParserInput")
+          : t("pages.scripts.stepBadge.notUsed");
       }
       return usesBuiltinParser
         ? t("pages.scripts.stepBadge.parserInput")
@@ -1183,6 +1214,7 @@ export function ScriptEditor({
     };
   }, [steps.length]);
 
+  // Output rules point at a step's key, so editing its label keeps them attached.
   const updateStep = (index: number, patch: Partial<ScriptStep>) => {
     setSteps((current) =>
       current.map((step, stepIndex) =>
@@ -1195,11 +1227,13 @@ export function ScriptEditor({
     if (singleStepOperation) return;
     setSteps((current) => [
       ...current,
-      { label: t("pages.scripts.stepNumber", { step: current.length + 1 }), command: "" },
+      { label: t("pages.scripts.stepNumber", { step: current.length + 1 }), command: "", key: createStepKey() },
     ]);
   };
 
   const removeStep = (index: number) => {
+    const removed = steps[index];
+    if (removed) setOutputRules((current) => detachOutputRulesFromStep(current, removed));
     setSteps((current) => current.filter((_step, stepIndex) => stepIndex !== index));
   };
 
@@ -1255,6 +1289,7 @@ export function ScriptEditor({
         systemInfoConfig: showSystemInfoConfig
           ? buildSystemInfoConfig(systemInfoMode, systemInfoSections, rebootRequiredRegex)
           : null,
+        outputRules: buildOutputRules(outputRules, outputRuleScope, steps, t),
       });
     } catch (error) {
       addToast(error instanceof Error ? error.message : t("pages.scripts.invalidScript"), "danger");
@@ -1437,6 +1472,14 @@ export function ScriptEditor({
       {draft.type === "package_manager" && draft.operation === "check_updates" && usesBuiltinParser && (
         <div className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3 text-sm text-slate-500 dark:text-slate-400">
           {t("pages.scripts.builtinParserNotice", { manager: selectedPackageManager.toUpperCase() })}
+          {!draft.readonly && ` ${t("pages.scripts.builtinParserFormatHint")}`}
+        </div>
+      )}
+
+      {usesBuiltinInventoryParser && (
+        <div className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3 text-sm text-slate-500 dark:text-slate-400">
+          {t("pages.scripts.builtinInstalledParserNotice", { manager: selectedPackageManager.toUpperCase() })}
+          {!draft.readonly && ` ${t("pages.scripts.builtinParserFormatHint")}`}
         </div>
       )}
 
@@ -1649,6 +1692,16 @@ export function ScriptEditor({
             </div>
           </div>
         </details>
+      )}
+
+      {outputRuleScope && (
+        <OutputRulesSection
+          scope={outputRuleScope}
+          steps={steps}
+          rules={outputRules}
+          onChange={setOutputRules}
+          parserNote={draft.type === "package_manager" && draft.operation === "check_updates"}
+        />
       )}
 
       <div className="flex justify-end gap-3">
@@ -2592,6 +2645,9 @@ export default function Scripts() {
                       {script.isDefault ? <Badge variant="success" small>{t("pages.scripts.default")}</Badge> : null}
                       {script.pkgManager ? <Badge variant="muted" small>{script.pkgManager}</Badge> : null}
                       {scriptUsesSudo(script) ? <Badge variant="warning" small>sudo</Badge> : null}
+                      {script.outputRules?.length
+                        ? <Badge variant="muted" small>{t("pages.scripts.outputRules.count", { rules: script.outputRules.length })}</Badge>
+                        : null}
                       <UsageBadge
                         usages={script.usages ?? []}
                         onOpen={() => setUsageTarget(script)}

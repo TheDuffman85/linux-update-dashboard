@@ -57,8 +57,10 @@ import {
   parseInstalledPackagesWithScript,
   resolveRuntimeSteps,
   resolveScript,
-  type ScriptStep,
+  type RuntimeScriptStep,
 } from "./script-service";
+import type { OutputRuleMatch } from "../../shared/output-rules";
+import { OUTPUT_RULE_REGEX_TIMEOUT_MS, evaluateOutputRulesBounded } from "./output-rule-regex";
 
 type VisibleCachedUpdate = ReturnType<typeof hiddenUpdateService.getVisibleCachedUpdates>[number];
 export type DefaultUpgradeModeOverride = "standard" | "aggressive";
@@ -106,6 +108,11 @@ interface UpgradeAllExecutionOptions {
   }) => void;
   /** Continues a pre- or post-upgrade script that a dashboard restart interrupted. */
   resumeHook?: UpgradeHookProgress;
+  /**
+   * Warnings of a pre-upgrade script that finished before a restart interrupted the
+   * upgrade itself, so the resumed upgrade still reports them.
+   */
+  preUpgradeWarnings?: string[];
   onHookProgress?: (progress: UpgradeHookProgress) => void;
 }
 
@@ -114,11 +121,13 @@ interface UpgradeAllExecutionOptions {
  * snapshot, so editing the script in between cannot shift the step position.
  */
 interface UpgradeHookProgressBase {
-  steps: ScriptStep[];
+  steps: RuntimeScriptStep[];
   /** The step in progress, or `steps.length` once every step has finished. */
   stepIndex: number;
   /** Set once the step has started on the host. It keeps running under nohup. */
   persistentInfo: PersistentCommandInfo | null;
+  /** Warnings of the steps that already finished, so a resumed script still reports them. */
+  warnings?: string[];
 }
 
 export type UpgradeHookProgress =
@@ -395,6 +404,148 @@ function createActivityStep(step: ActivityStep): ActivityStep {
 
 function createSingleStepHistory(step: ActivityStep): ActivityStep[] {
   return [createActivityStep(step)];
+}
+
+type PublishMessage = (message: outputStream.WsMessage) => void;
+
+/** Reports a rule whose pattern ran out of time, live and in the server log. */
+function slowRuleReporter(systemId: number, publish: PublishMessage): (ruleNumber: number) => void {
+  return (ruleNumber) => {
+    const message = `Output rule ${ruleNumber} took longer than ${OUTPUT_RULE_REGEX_TIMEOUT_MS} ms to match and was skipped. Simplify its patterns.`;
+    logger.warn("Output rule timed out", { systemId, ruleNumber });
+    publish({ type: "warning", message });
+  };
+}
+
+/**
+ * Applies the output rules of a step that ran as its own command. Results that are
+ * not a real exit status, such as an unknown result after a reboot, are never matched.
+ */
+function matchStepOutputRules(
+  step: RuntimeScriptStep | undefined,
+  index: number,
+  exitCode: number,
+  output: string,
+  onSlowRule: (ruleNumber: number) => void,
+): OutputRuleMatch | null {
+  if (!step?.outputRules?.length || exitCode < 0) return null;
+  return evaluateOutputRulesBounded(step.outputRules, {
+    exitCode,
+    output,
+    step: { index, label: step.label },
+  }, onSlowRule);
+}
+
+function outputRuleFailureMessage(match: OutputRuleMatch, exitCode: number, fallback: string): string {
+  if (match.message) return match.message;
+  return exitCode === 0 ? `Output rule ${match.ruleNumber} marked the result as failed.` : fallback;
+}
+
+function outputRuleWarningMessage(match: OutputRuleMatch, exitCode: number, fallback?: string | null): string {
+  if (match.message) return match.message;
+  if (fallback) return fallback;
+  return exitCode === 0
+    ? `Output rule ${match.ruleNumber} marked the result as a warning.`
+    : `Command exited with code ${exitCode}. Output rule ${match.ruleNumber} marked the result as a warning.`;
+}
+
+interface CommandOutcome {
+  status: "success" | "warning" | "failed";
+  /** The error for failures and the warning text for warnings. */
+  message: string | null;
+}
+
+/**
+ * Classifies a maintenance command whose steps ran as one command. Its rules apply
+ * to the combined output and the final exit code. Without a matching rule, exit code
+ * 0 succeeds and anything else fails with the default error.
+ */
+function resolveCommandOutcome(
+  steps: RuntimeScriptStep[],
+  result: { exitCode: number; inferred: boolean; output: string },
+  defaultError: () => string,
+  onSlowRule: (ruleNumber: number) => void,
+): CommandOutcome {
+  const match = result.inferred || result.exitCode < 0
+    ? null
+    : evaluateOutputRulesBounded(
+        steps[0]?.outputRules,
+        { exitCode: result.exitCode, output: result.output },
+        onSlowRule,
+      );
+  if (!match) {
+    return result.exitCode === 0
+      ? { status: "success", message: null }
+      : { status: "failed", message: defaultError() };
+  }
+  if (match.outcome === "failed") {
+    return { status: "failed", message: outputRuleFailureMessage(match, result.exitCode, defaultError()) };
+  }
+  if (match.outcome === "warning") {
+    return { status: "warning", message: outputRuleWarningMessage(match, result.exitCode) };
+  }
+  return { status: "success", message: null };
+}
+
+function appendLine(text: string, line: string | null): string {
+  if (!line) return text;
+  if (!text) return line;
+  return `${text}${text.endsWith("\n") ? "" : "\n"}${line}`;
+}
+
+interface UpgradeCommandOutcome {
+  success: boolean;
+  /** Status of the command's activity row. */
+  status: "success" | "warning" | "failed";
+  /** The error, or the warning text, shown on the activity step. */
+  stepError: string | null;
+  /** This manager's part of the operation output. */
+  output: string;
+}
+
+/** Classifies an upgrade or autoremove command and records a package-manager issue when it failed. */
+function classifyMaintenanceCommand(args: {
+  systemId: number;
+  pmName: string;
+  steps: RuntimeScriptStep[];
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  combinedOutput: string;
+  /** The result was guessed from the update count after a reboot, so there is no real exit status. */
+  inferred: boolean;
+  reconnectionUsed: boolean;
+}): UpgradeCommandOutcome {
+  const { systemId, pmName, stdout, stderr, combinedOutput } = args;
+  const outcome = resolveCommandOutcome(
+    args.steps,
+    { exitCode: args.exitCode, inferred: args.inferred, output: combinedOutput },
+    () => formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput),
+    slowRuleReporter(systemId, (message) => outputStream.publish(systemId, message)),
+  );
+  if (outcome.status === "failed") {
+    recordPackageManagerIssueFromFailure(
+      systemId,
+      pmName,
+      `${stdout}\n${stderr}\n${combinedOutput}\n${outcome.message ?? ""}`,
+    );
+    return { success: false, status: "failed", stepError: outcome.message, output: `[${pmName}] ${outcome.message}` };
+  }
+  const warning = outcome.status === "warning" ? outcome.message : null;
+  if (warning) outputStream.publish(systemId, { type: "warning", message: warning });
+  return {
+    success: true,
+    status: warning || args.reconnectionUsed ? "warning" : "success",
+    stepError: warning,
+    output: `[${pmName}] ${appendLine(stdout, warning)}`,
+  };
+}
+
+/** The value of LUDASH_UPGRADE_RESULT for a finished upgrade. */
+function upgradeResultEnv(result: OperationResult): string {
+  if (result.cancelled) return "cancelled";
+  if (!result.success) return "failed";
+  return result.warning ? "warning" : "success";
 }
 
 function formatUpgradeFailureOutput(
@@ -1102,14 +1253,34 @@ async function checkUpdatesUnlocked(
           const parserReportedError =
             parser?.getCheckErrorMessage?.(result.stdout, result.stderr, result.exitCode)
             ?? getCustomCheckErrorMessage(customScript?.parserConfig, result.stdout, result.stderr, result.exitCode);
-          let checkErrorMessage = parserReportedError;
-          const commandFailed = checkErrorMessage !== null;
-          const checkWarningMessage = commandFailed ? null : parser?.getCheckWarningMessage?.({
+          const getParserWarning = () => parser?.getCheckWarningMessage?.({
             command: commands[i],
             stdout: result.stdout,
             stderr: result.stderr,
             exitCode: result.exitCode,
           }, { commandResults }) ?? null;
+          // A matching output rule replaces the exit-code and parser judgement of this
+          // step. The parser still reads the output as usual.
+          const ruleMatch = matchStepOutputRules(steps[i], i, result.exitCode, combinedOutput, slowRuleReporter(systemId, pub));
+          let checkErrorMessage: string | null;
+          let checkWarningMessage: string | null;
+          if (ruleMatch?.outcome === "failed") {
+            checkErrorMessage = outputRuleFailureMessage(
+              ruleMatch,
+              result.exitCode,
+              parserReportedError ?? `Command exited with code ${result.exitCode}`,
+            );
+            checkWarningMessage = null;
+          } else if (ruleMatch) {
+            checkErrorMessage = null;
+            checkWarningMessage = ruleMatch.outcome === "warning"
+              ? outputRuleWarningMessage(ruleMatch, result.exitCode, getParserWarning())
+              : null;
+          } else {
+            checkErrorMessage = parserReportedError;
+            checkWarningMessage = checkErrorMessage === null ? getParserWarning() : null;
+          }
+          const commandFailed = checkErrorMessage !== null;
           if (checkWarningMessage) {
             checkErrors.push(`[${pmName}] ${checkWarningMessage}`);
             pub({ type: "warning", message: checkWarningMessage });
@@ -1122,7 +1293,7 @@ async function checkUpdatesUnlocked(
           if (detectedIssue) {
             detectedIssues.set(detectedIssue.issueKey, detectedIssue);
             packageIssueService.upsertPackageManagerIssue(systemId, detectedIssue);
-            if (commandFailed) {
+            if (commandFailed && !ruleMatch?.message) {
               checkErrorMessage = detectedIssue.message;
             }
           }
@@ -1209,7 +1380,7 @@ async function checkUpdatesUnlocked(
         const secretInput = resolveSecretInput(system, pmName);
         const commandResults: CheckCommandResult[] = [];
         const activityStepIndexes: number[] = [];
-        for (const step of installedPackageSteps) {
+        for (const [stepIndex, step] of installedPackageSteps.entries()) {
           throwIfActiveOperationCancelled(systemId);
           const command = withSecretEnvNote(step.command, secretInput);
           const label = step.label || `Listing installed ${pmName} packages`;
@@ -1240,7 +1411,7 @@ async function checkUpdatesUnlocked(
             }));
             throw createCancelledError();
           }
-          const errorMessage = result.exitCode === 0
+          const defaultErrorMessage = result.exitCode === 0
             ? null
             : getCustomCheckErrorMessage(
                 installedPackageScript.parserConfig,
@@ -1248,6 +1419,25 @@ async function checkUpdatesUnlocked(
                 result.stderr,
                 result.exitCode,
               );
+          const ruleMatch = matchStepOutputRules(
+            step,
+            stepIndex,
+            result.exitCode,
+            `${result.stdout}${result.stderr}`,
+            slowRuleReporter(systemId, pub),
+          );
+          const errorMessage = ruleMatch
+            ? ruleMatch.outcome === "failed"
+              ? outputRuleFailureMessage(ruleMatch, result.exitCode, defaultErrorMessage ?? `Command exited with code ${result.exitCode}`)
+              : null
+            : defaultErrorMessage;
+          const warningMessage = ruleMatch?.outcome === "warning"
+            ? outputRuleWarningMessage(ruleMatch, result.exitCode)
+            : null;
+          if (warningMessage) {
+            checkErrors.push(`[${pmName} installed packages] ${warningMessage}`);
+            pub({ type: "warning", message: `Installed package inventory: ${warningMessage}` });
+          }
           commandResults.push({
             command,
             stdout: result.stdout,
@@ -1261,8 +1451,8 @@ async function checkUpdatesUnlocked(
             pkgManager: pmName,
             command,
             output: null,
-            error: errorMessage,
-            status: errorMessage ? "failed" : "success",
+            error: errorMessage ?? warningMessage,
+            status: errorMessage ? "failed" : warningMessage ? "warning" : "success",
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }));
@@ -1443,6 +1633,7 @@ export async function solvePackageManagerIssue(
       const signal = getCancellationSignal(systemId);
       const activitySteps: ActivityStep[] = [];
       const allCommands: string[] = [];
+      const repairWarnings: string[] = [];
       let repairOutput = "";
       let conn;
       try {
@@ -1455,7 +1646,7 @@ export async function solvePackageManagerIssue(
         throwIfActiveOperationCancelled(systemId);
 
         const secretInput = resolveSecretInput(system, issue.pkgManager);
-        for (const step of steps) {
+        for (const [stepIndex, step] of steps.entries()) {
           const cmd = withSecretEnvNote(step.command, secretInput);
           allCommands.push(cmd);
           const label = step.label || "Repairing package manager";
@@ -1507,9 +1698,20 @@ export async function solvePackageManagerIssue(
             return { success: false, output: message, cancelled: true };
           }
 
-          if (result.exitCode !== 0) {
-            const errorText =
+          const ruleMatch = matchStepOutputRules(
+            step,
+            stepIndex,
+            result.exitCode,
+            combinedOutput,
+            slowRuleReporter(systemId, (message) => outputStream.publish(systemId, message)),
+          );
+          const failed = ruleMatch ? ruleMatch.outcome === "failed" : result.exitCode !== 0;
+          if (failed) {
+            const defaultErrorText =
               result.stderr || result.stdout || combinedOutput || `Repair command exited with code ${result.exitCode}`;
+            const errorText = ruleMatch
+              ? outputRuleFailureMessage(ruleMatch, result.exitCode, defaultErrorText)
+              : defaultErrorText;
             recordPackageManagerIssueFromFailure(systemId, issue.pkgManager, `${combinedOutput}\n${errorText}`);
             activitySteps.push(createActivityStep({
               label,
@@ -1532,22 +1734,30 @@ export async function solvePackageManagerIssue(
             return { success: false, output: errorText };
           }
 
+          const warningText = ruleMatch?.outcome === "warning"
+            ? outputRuleWarningMessage(ruleMatch, result.exitCode)
+            : null;
+          if (warningText) {
+            repairWarnings.push(warningText);
+            outputStream.publish(systemId, { type: "warning", message: warningText });
+          }
           activitySteps.push(createActivityStep({
             label,
             pkgManager: issue.pkgManager,
             command: cmd,
             output: combinedOutput,
-            error: null,
-            status: "success",
+            error: warningText,
+            status: warningText ? "warning" : "success",
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }));
         }
 
-        logHistory(systemId, "package_manager_repair", issue.pkgManager, "success", {
+        logHistory(systemId, "package_manager_repair", issue.pkgManager, repairWarnings.length ? "warning" : "success", {
           command: allCommands.join(" && "),
           steps: activitySteps,
           output: repairOutput.slice(0, STEP_OUTPUT_LIMIT),
+          ...(repairWarnings.length ? { error: repairWarnings.join("\n\n").slice(0, STEP_ERROR_LIMIT) } : {}),
         });
       } finally {
         if (conn) sshManager.disconnect(conn);
@@ -1558,12 +1768,20 @@ export async function solvePackageManagerIssue(
       await checkUpdatesUnlocked(systemId, true);
       const refreshedIssue = packageIssueService.getPackageManagerIssue(systemId, issueId);
       const repaired = !refreshedIssue || refreshedIssue.active !== 1;
-      outputStream.publish(systemId, { type: "done", success: repaired, completedAt: getCurrentTimestamp() });
+      // Warnings from output rules stay visible when the repair itself worked.
+      const warning = repaired && repairWarnings.length > 0;
+      outputStream.publish(systemId, {
+        type: "done",
+        success: repaired,
+        ...(warning ? { warning: true } : {}),
+        completedAt: getCurrentTimestamp(),
+      });
       return {
         success: repaired,
         output: repaired
-          ? "Package manager issue repaired"
+          ? ["Package manager issue repaired", ...repairWarnings].join("\n\n")
           : "Repair command ran, but the package manager issue is still detected.",
+        ...(warning ? { warning: true } : {}),
       };
     } catch (error) {
       if (isOperationCancelledError(error)) {
@@ -1590,7 +1808,8 @@ const UPGRADE_STATE_UNKNOWN_REASON =
   "the host did not come back, so the upgrade may still be running. Run it from the system page once the upgrade has finished.";
 
 type UpgradeHookKind = keyof typeof UPGRADE_HOOK_LABELS;
-type UpgradeHookStatus = "success" | "failed" | "cancelled";
+/** A warning means every step ran and an output rule flagged at least one of them. */
+type UpgradeHookStatus = "success" | "warning" | "failed" | "cancelled";
 
 interface UpgradeHookRunResult {
   status: UpgradeHookStatus;
@@ -1608,8 +1827,8 @@ interface PostUpgradeOutcome {
 interface UpgradeHookSession {
   systemId: number;
   operation: ActiveOperation["type"];
-  preSteps: ScriptStep[];
-  postSteps: ScriptStep[];
+  preSteps: RuntimeScriptStep[];
+  postSteps: RuntimeScriptStep[];
   setupError: string | null;
   wasPostPending: boolean;
   /** Post only undoes what pre did, so it waits until pre has passed. */
@@ -1617,6 +1836,8 @@ interface UpgradeHookSession {
   /** Set once post has been dealt with, so every exit path can finalize safely. */
   postOutcome: PostUpgradeOutcome | null | undefined;
   postBlockedReason: string | null;
+  /** Set when the pre-upgrade script passed with warnings, so the upgrade result reports them. */
+  preWarning: string | null;
   resumeHook?: UpgradeHookProgress;
   onHookProgress?: (progress: UpgradeHookProgress) => void;
 }
@@ -1630,7 +1851,7 @@ function buildUpgradeHookCommand(command: string, env: Record<string, string>): 
 function createUpgradeHookSession(
   systemId: number,
   operation: ActiveOperation["type"],
-  options?: Pick<UpgradeAllExecutionOptions, "resumeHook" | "onHookProgress">,
+  options?: Pick<UpgradeAllExecutionOptions, "resumeHook" | "onHookProgress" | "preUpgradeWarnings">,
 ): UpgradeHookSession {
   const session: UpgradeHookSession = {
     systemId,
@@ -1642,6 +1863,7 @@ function createUpgradeHookSession(
     preStagePassed: false,
     postOutcome: undefined,
     postBlockedReason: null,
+    preWarning: options?.preUpgradeWarnings?.length ? options.preUpgradeWarnings.join("\n") : null,
     resumeHook: options?.resumeHook,
     onHookProgress: options?.onHookProgress,
   };
@@ -1673,19 +1895,23 @@ function waitForRetry(ms: number, signal: AbortSignal | null): Promise<void> {
 async function runUpgradeHookSteps(
   systemId: number,
   kind: UpgradeHookKind,
-  steps: ScriptStep[],
+  steps: RuntimeScriptStep[],
   env: Record<string, string>,
   options: {
     connectAttempts?: number;
-    resume?: { stepIndex: number; persistentInfo: PersistentCommandInfo | null };
-    onProgress?: (stepIndex: number, persistentInfo: PersistentCommandInfo | null) => void;
+    resume?: { stepIndex: number; persistentInfo: PersistentCommandInfo | null; warnings?: string[] };
+    onProgress?: (stepIndex: number, persistentInfo: PersistentCommandInfo | null, warnings: string[]) => void;
   } = {},
 ): Promise<UpgradeHookRunResult> {
   const { connectAttempts = 1, resume, onProgress } = options;
   const label = UPGRADE_HOOK_LABELS[kind];
   const startIndex = resume?.stepIndex ?? 0;
+  // Steps that finished before a dashboard restart keep their warnings.
+  const warnings: string[] = [...(resume?.warnings ?? [])];
   if (startIndex >= steps.length && !resume?.persistentInfo) {
-    return { status: "success", message: `${label} finished`, remoteStarted: true, exitCode: 0 };
+    return warnings.length
+      ? { status: "warning", message: warnings.join("\n"), remoteStarted: true, exitCode: 0 }
+      : { status: "success", message: `${label} finished`, remoteStarted: true, exitCode: 0 };
   }
   const sshManager = getSSHManager();
   const signal = getCancellationSignal(systemId);
@@ -1777,7 +2003,7 @@ async function runUpgradeHookSteps(
           onPersistentInfo: (info) => {
             remoteStarted = true;
             setActiveOperationPersistentInfo(systemId, info);
-            onProgress?.(index, info);
+            onProgress?.(index, info, [...warnings]);
           },
         });
       }
@@ -1798,21 +2024,41 @@ async function runUpgradeHookSteps(
 
       if (isCancelledResult(exitCode)) return finish("cancelled", `${label} cancelled`, null);
 
-      if (exitCode !== 0) {
+      const stepLabel = step.label.slice(label.length + 2);
+      const ruleMatch = matchStepOutputRules(
+        steps[index],
+        index,
+        exitCode,
+        current?.output || `${stdout}${stderr}`,
+        slowRuleReporter(systemId, (message) => outputStream.publish(systemId, message)),
+      );
+      const failed = ruleMatch ? ruleMatch.outcome === "failed" : exitCode !== 0;
+      if (failed) {
         if (current && !current.output) current.output = stdout;
         const detail = sanitizeOutput(stderr || "").trim();
-        return finish(
-          "failed",
-          `${label} failed at "${step.label.slice(label.length + 2)}" with exit code ${exitCode}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
-          exitCode,
-        );
+        const exitMessage = `${label} failed at "${stepLabel}" with exit code ${exitCode}${detail ? `: ${detail.slice(0, 500)}` : ""}`;
+        const message = ruleMatch?.message
+          ? `${label} failed at "${stepLabel}": ${ruleMatch.message}`
+          : ruleMatch && exitCode === 0
+            ? `${label} failed at "${stepLabel}": output rule ${ruleMatch.ruleNumber} marked the step as failed.`
+            : exitMessage;
+        return finish("failed", message, exitCode);
       }
 
       if (current && !current.output) current.output = stdout;
-      recordCurrentStep("success", null);
-      onProgress?.(index + 1, null);
+      const warning = ruleMatch?.outcome === "warning"
+        ? `${label} step "${stepLabel}": ${outputRuleWarningMessage(ruleMatch, exitCode)}`
+        : null;
+      if (warning) {
+        warnings.push(warning);
+        outputStream.publish(systemId, { type: "warning", message: warning });
+      }
+      recordCurrentStep(warning ? "warning" : "success", warning);
+      onProgress?.(index + 1, null, [...warnings]);
     }
-    return finish("success", `${label} finished`, 0);
+    return warnings.length
+      ? finish("warning", warnings.join("\n"), 0)
+      : finish("success", `${label} finished`, 0);
   } catch (error) {
     if (isOperationCancelledError(error)) return finish("cancelled", `${label} cancelled`, null);
     return finish("failed", `${label} failed: ${String(error)}`, null);
@@ -1851,13 +2097,14 @@ async function runPreUpgradeHook(
   }
 
   const steps = interrupted?.steps ?? session.preSteps;
-  const reportProgress = (stepIndex: number, persistentInfo: PersistentCommandInfo | null) => {
+  const reportProgress = (stepIndex: number, persistentInfo: PersistentCommandInfo | null, warnings: string[] = []) => {
     session.onHookProgress?.({
       phase: "pre_upgrade",
       steps,
       stepIndex,
       persistentInfo,
       wasPostPending: session.wasPostPending,
+      ...(warnings.length ? { warnings } : {}),
     });
   };
   if (!interrupted) reportProgress(0, null);
@@ -1868,15 +2115,17 @@ async function runPreUpgradeHook(
     { LUDASH_OPERATION: session.operation },
     { resume: interrupted, onProgress: reportProgress },
   );
-  if (result.status === "success") {
+  if (result.status === "success" || result.status === "warning") {
     session.preStagePassed = true;
+    if (result.status === "warning") session.preWarning = result.message;
     return null;
   }
 
   session.postOutcome = null;
-  // Exiting non-zero is a deliberate veto and the script undoes its own work, so
-  // only a run with an unknown end state still needs the post-upgrade script.
-  const endStateKnown = !result.remoteStarted || (result.exitCode !== null && result.exitCode > 0);
+  // Exiting non-zero, or an output rule failing a finished step, is a deliberate veto
+  // and the script undoes its own work, so only a run with an unknown end state still
+  // needs the post-upgrade script.
+  const endStateKnown = !result.remoteStarted || (result.exitCode !== null && result.exitCode >= 0);
   if (session.postSteps.length > 0 && !session.wasPostPending && endStateKnown) {
     systemService.setPostUpgradePending(systemId, false);
   }
@@ -1922,7 +2171,7 @@ async function runPostUpgradeHook(
   session.postOutcome = { status: "failed", message: `${UPGRADE_HOOK_LABELS.post_upgrade} did not finish` };
   renewActiveOperationSignal(systemId);
   const interrupted = session.resumeHook?.phase === "post_upgrade" ? session.resumeHook : undefined;
-  const reportProgress = (stepIndex: number, persistentInfo: PersistentCommandInfo | null) => {
+  const reportProgress = (stepIndex: number, persistentInfo: PersistentCommandInfo | null, warnings: string[] = []) => {
     session.onHookProgress?.({
       phase: "post_upgrade",
       steps: session.postSteps,
@@ -1930,6 +2179,7 @@ async function runPostUpgradeHook(
       persistentInfo,
       upgradeResult: { ...result, output: sanitizeOutput(result.output).slice(0, STEP_ERROR_LIMIT) },
       completion,
+      ...(warnings.length ? { warnings } : {}),
     });
   };
   if (!interrupted) reportProgress(0, null);
@@ -1939,11 +2189,13 @@ async function runPostUpgradeHook(
     session.postSteps,
     {
       LUDASH_OPERATION: session.operation,
-      LUDASH_UPGRADE_RESULT: result.cancelled ? "cancelled" : result.success ? "success" : "failed",
+      LUDASH_UPGRADE_RESULT: upgradeResultEnv(result),
     },
     { connectAttempts: POST_UPGRADE_CONNECT_ATTEMPTS, resume: interrupted, onProgress: reportProgress },
   );
-  if (hookResult.status === "success") systemService.setPostUpgradePending(systemId, false);
+  if (hookResult.status === "success" || hookResult.status === "warning") {
+    systemService.setPostUpgradePending(systemId, false);
+  }
   session.postOutcome = { status: hookResult.status, message: hookResult.message };
   return session.postOutcome;
 }
@@ -1959,7 +2211,17 @@ async function finalizeUpgrade(
   completion?: { recheck: boolean },
 ): Promise<OperationResult> {
   const { systemId } = session;
-  const post = await runPostUpgradeHook(session, result, completion);
+  // Warnings from the pre-upgrade script belong to the upgrade, including the
+  // result the post-upgrade script receives.
+  // The message is kept even when the upgrade has its own warning or failed.
+  const upgradeResult: OperationResult = session.preWarning
+    ? {
+        ...result,
+        ...(result.success ? { warning: true } : {}),
+        output: [result.output, session.preWarning].filter(Boolean).join("\n\n"),
+      }
+    : result;
+  const post = await runPostUpgradeHook(session, upgradeResult, completion);
 
   if (completion) {
     if (completion.recheck) {
@@ -1974,16 +2236,27 @@ async function finalizeUpgrade(
   }
 
   const merged: OperationResult = !post || post.status === "success"
-    ? result
-    : {
-        ...result,
-        success: false,
-        warning: false,
-        hookFailed: true,
-        cancelled: result.cancelled || post.status === "cancelled",
-        output: [result.output, post.message].filter(Boolean).join("\n\n"),
-      };
-  outputStream.publish(systemId, { type: "done", success: merged.success, completedAt: getCurrentTimestamp() });
+    ? upgradeResult
+    : post.status === "warning"
+      ? {
+          ...upgradeResult,
+          warning: upgradeResult.success || upgradeResult.warning,
+          output: [upgradeResult.output, post.message].filter(Boolean).join("\n\n"),
+        }
+      : {
+          ...upgradeResult,
+          success: false,
+          warning: false,
+          hookFailed: true,
+          cancelled: upgradeResult.cancelled || post.status === "cancelled",
+          output: [upgradeResult.output, post.message].filter(Boolean).join("\n\n"),
+        };
+  outputStream.publish(systemId, {
+    type: "done",
+    success: merged.success,
+    ...(merged.warning ? { warning: true } : {}),
+    completedAt: getCurrentTimestamp(),
+  });
   return merged;
 }
 
@@ -2007,14 +2280,21 @@ export async function runPendingPostUpgradeScript(systemId: number): Promise<Ope
         LUDASH_OPERATION: "manual",
         LUDASH_UPGRADE_RESULT: "unknown",
       });
-      if (result.status === "success") systemService.setPostUpgradePending(systemId, false);
-      const success = result.status === "success";
-      outputStream.publish(systemId, { type: "done", success, completedAt: getCurrentTimestamp() });
+      const success = result.status === "success" || result.status === "warning";
+      if (success) systemService.setPostUpgradePending(systemId, false);
+      const warning = result.status === "warning";
+      outputStream.publish(systemId, {
+        type: "done",
+        success,
+        ...(warning ? { warning: true } : {}),
+        completedAt: getCurrentTimestamp(),
+      });
       return {
         success,
         output: result.message,
         cancelled: result.status === "cancelled",
         hookFailed: !success,
+        ...(warning ? { warning: true } : {}),
       };
     } finally {
       clearActiveOperation(systemId);
@@ -2066,6 +2346,7 @@ export async function applyUpgradeAll(
     const allOutputs: string[] = [];
     let overallSuccess = true;
     let reconnectionUsed = false;
+    let ruleWarning = false;
 
     const sshManager = getSSHManager();
     const signal = getCancellationSignal(systemId);
@@ -2187,6 +2468,7 @@ export async function applyUpgradeAll(
             );
 
         let { stdout, stderr, exitCode } = result;
+        let inferred = "serverRebooted" in result && result.serverRebooted === true;
         if ("timedOut" in result && result.timedOut) {
           hooks.postBlockedReason = UPGRADE_STATE_UNKNOWN_REASON;
         }
@@ -2208,6 +2490,7 @@ export async function applyUpgradeAll(
           stdout = reconResult.stdout || stdout;
           stderr = reconResult.stderr;
           exitCode = reconResult.exitCode;
+          inferred = reconResult.serverRebooted;
           reconnectionUsed = true;
         }
 
@@ -2236,36 +2519,36 @@ export async function applyUpgradeAll(
           return await finalizeUpgrade(hooks, { success: false, output: "Operation cancelled", cancelled: true });
         }
 
-        const success = exitCode === 0;
-        if (!success) overallSuccess = false;
         const stepCompletedAt = getCurrentTimestamp();
         const combinedOutput = streamedOutput || stdout || stderr;
-        const formattedError = success
-          ? null
-          : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
-        if (!success) {
-          recordPackageManagerIssueFromFailure(
-            systemId,
-            pmName,
-            `${stdout}\n${stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
-          );
-        }
-        allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
+        const outcome = classifyMaintenanceCommand({
+          systemId,
+          pmName,
+          steps,
+          stdout,
+          stderr,
+          exitCode,
+          combinedOutput,
+          inferred,
+          reconnectionUsed,
+        });
+        if (!outcome.success) overallSuccess = false;
+        if (outcome.status === "warning" && !reconnectionUsed) ruleWarning = true;
+        allOutputs.push(outcome.output);
 
-        const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
-        finishEntry(histId, histStatus, {
+        finishEntry(histId, outcome.status, {
           steps: createSingleStepHistory({
             label: null,
             pkgManager: pmName,
             command: cmd,
             output: combinedOutput,
-            error: formattedError,
-            status: histStatus,
+            error: outcome.stepError,
+            status: outcome.status,
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }),
           output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-          error: success ? undefined : formattedError?.slice(0, 2000),
+          error: outcome.stepError?.slice(0, 2000),
         });
         unfinishedHistoryId = undefined;
 
@@ -2291,7 +2574,7 @@ export async function applyUpgradeAll(
       }
       return await finalizeUpgrade(
         hooks,
-        { success: overallSuccess, output: allOutputs.join("\n\n"), warning: reconnectionUsed && overallSuccess },
+        { success: overallSuccess, output: allOutputs.join("\n\n"), warning: (reconnectionUsed || ruleWarning) && overallSuccess },
         { recheck: !reconnectionUsed },
       );
     } catch (e) {
@@ -2398,6 +2681,7 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
       const allOutputs: string[] = [];
       let overallSuccess = true;
       let monitoringLost = false;
+      let ruleWarning = false;
       const sshManager = getSSHManager();
       const signal = getCancellationSignal(systemId);
       const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
@@ -2414,12 +2698,13 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
 
         for (const pmName of supportedManagers) {
           throwIfActiveOperationCancelled(systemId);
-          const maintenanceCommand = buildMaintenanceCommand(resolveRuntimeSteps({
+          const steps = resolveRuntimeSteps({
             systemId,
             operation: "autoremove",
             pkgManager: pmName,
             pkgManagerConfig: getManagerConfig(pkgManagerConfigs, pmName),
-          }));
+          });
+          const maintenanceCommand = buildMaintenanceCommand(steps);
           if (!maintenanceCommand) continue;
           const secretInput = resolveSecretInput(system, pmName);
           const cmd = withSecretEnvNote(maintenanceCommand, secretInput);
@@ -2496,32 +2781,33 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
             break;
           }
 
-          const success = result.exitCode === 0;
-          if (!success) overallSuccess = false;
-          const formattedError = success
-            ? null
-            : formatUpgradeFailureOutput(pmName, result.stdout, result.stderr, combinedOutput);
-          if (!success) {
-            recordPackageManagerIssueFromFailure(
-              systemId,
-              pmName,
-              `${result.stdout}\n${result.stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
-            );
-          }
-          allOutputs.push(`[${pmName}] ${success ? result.stdout : formattedError}`);
-          finishEntry(histId, success ? "success" : "failed", {
+          const outcome = classifyMaintenanceCommand({
+            systemId,
+            pmName,
+            steps,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+            combinedOutput,
+            inferred: false,
+            reconnectionUsed: false,
+          });
+          if (!outcome.success) overallSuccess = false;
+          if (outcome.status === "warning") ruleWarning = true;
+          allOutputs.push(outcome.output);
+          finishEntry(histId, outcome.status, {
             steps: createSingleStepHistory({
               label: null,
               pkgManager: pmName,
               command: cmd,
               output: combinedOutput,
-              error: formattedError,
-              status: success ? "success" : "failed",
+              error: outcome.stepError,
+              status: outcome.status,
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             }),
             output: result.stdout.slice(0, STEP_OUTPUT_LIMIT),
-            error: success ? undefined : formattedError?.slice(0, STEP_ERROR_LIMIT),
+            error: outcome.stepError?.slice(0, STEP_ERROR_LIMIT),
           });
         }
 
@@ -2538,8 +2824,14 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
         }
 
         const combinedOutput = allOutputs.join("\n\n");
-        outputStream.publish(systemId, { type: "done", success: overallSuccess, completedAt: getCurrentTimestamp() });
-        return { success: overallSuccess, output: combinedOutput, warning: monitoringLost };
+        const warning = monitoringLost || (ruleWarning && overallSuccess);
+        outputStream.publish(systemId, {
+          type: "done",
+          success: overallSuccess,
+          ...(warning && overallSuccess ? { warning: true } : {}),
+          completedAt: getCurrentTimestamp(),
+        });
+        return { success: overallSuccess, output: combinedOutput, warning };
       } catch (error) {
         if (isOperationCancelledError(error)) {
           outputStream.publish(systemId, { type: "warning", message: error.message });
@@ -2601,6 +2893,7 @@ export async function applyFullUpgradeAll(
     const allOutputs: string[] = [];
     let overallSuccess = true;
     let reconnectionUsed = false;
+    let ruleWarning = false;
 
     const sshManager = getSSHManager();
     const signal = getCancellationSignal(systemId);
@@ -2667,6 +2960,7 @@ export async function applyFullUpgradeAll(
         );
 
         let { stdout, stderr, exitCode } = result;
+        let inferred = false;
 
         if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
           try { sshManager.disconnect(conn!); } catch {}
@@ -2690,6 +2984,7 @@ export async function applyFullUpgradeAll(
           stdout = reconResult.stdout || stdout;
           stderr = reconResult.stderr;
           exitCode = reconResult.exitCode;
+          inferred = reconResult.serverRebooted;
           reconnectionUsed = true;
         }
 
@@ -2718,36 +3013,36 @@ export async function applyFullUpgradeAll(
           return await finalizeUpgrade(hooks, { success: false, output: "Operation cancelled", cancelled: true });
         }
 
-        const success = exitCode === 0;
-        if (!success) overallSuccess = false;
         const stepCompletedAt = getCurrentTimestamp();
         const combinedOutput = streamedOutput || stdout || stderr;
-        const formattedError = success
-          ? null
-          : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
-        if (!success) {
-          recordPackageManagerIssueFromFailure(
-            systemId,
-            pmName,
-            `${stdout}\n${stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
-          );
-        }
-        allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
+        const outcome = classifyMaintenanceCommand({
+          systemId,
+          pmName,
+          steps,
+          stdout,
+          stderr,
+          exitCode,
+          combinedOutput,
+          inferred,
+          reconnectionUsed,
+        });
+        if (!outcome.success) overallSuccess = false;
+        if (outcome.status === "warning" && !reconnectionUsed) ruleWarning = true;
+        allOutputs.push(outcome.output);
 
-        const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
-        finishEntry(histId, histStatus, {
+        finishEntry(histId, outcome.status, {
           steps: createSingleStepHistory({
             label: null,
             pkgManager: pmName,
             command: cmd,
             output: combinedOutput,
-            error: formattedError,
-            status: histStatus,
+            error: outcome.stepError,
+            status: outcome.status,
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }),
           output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-          error: success ? undefined : formattedError?.slice(0, 2000),
+          error: outcome.stepError?.slice(0, 2000),
         });
 
         // If connection was lost, can't continue with remaining package managers
@@ -2760,7 +3055,7 @@ export async function applyFullUpgradeAll(
       }
       return await finalizeUpgrade(
         hooks,
-        { success: overallSuccess, output: allOutputs.join("\n\n"), warning: reconnectionUsed && overallSuccess },
+        { success: overallSuccess, output: allOutputs.join("\n\n"), warning: (reconnectionUsed || ruleWarning) && overallSuccess },
         { recheck: !reconnectionUsed },
       );
     } catch (e) {
@@ -2855,6 +3150,7 @@ export async function applyUpgradePackages(
       const allOutputs: string[] = [];
       let overallSuccess = true;
       let reconnectionUsed = false;
+      let ruleWarning = false;
       let conn;
       const hooks = createUpgradeHookSession(systemId, "upgrade_package");
 
@@ -2920,6 +3216,7 @@ export async function applyUpgradePackages(
           );
 
           let { stdout, stderr, exitCode } = result;
+          let inferred = false;
 
           if (exitCode === EXIT_MONITORING_LOST && result.persistentInfo) {
             try { sshManager.disconnect(conn!); } catch {}
@@ -2937,6 +3234,7 @@ export async function applyUpgradePackages(
             stdout = reconResult.stdout || stdout;
             stderr = reconResult.stderr;
             exitCode = reconResult.exitCode;
+            inferred = reconResult.serverRebooted;
             reconnectionUsed = true;
           }
 
@@ -2967,22 +3265,22 @@ export async function applyUpgradePackages(
             return await finalizeUpgrade(hooks, { success: false, output: "Operation cancelled", cancelled: true });
           }
 
-          const success = exitCode === 0;
-          if (!success) overallSuccess = false;
-          const histStatus = reconnectionUsed && success ? "warning" : success ? "success" : "failed";
           const stepCompletedAt = getCurrentTimestamp();
           const combinedOutput = streamedOutput || stdout || stderr;
-          const formattedError = success
-            ? null
-            : formatUpgradeFailureOutput(pmName, stdout, stderr, combinedOutput);
-          if (!success) {
-            recordPackageManagerIssueFromFailure(
-              systemId,
-              pmName,
-              `${stdout}\n${stderr}\n${combinedOutput}\n${formattedError ?? ""}`,
-            );
-          }
-          finishEntry(histId, histStatus, {
+          const outcome = classifyMaintenanceCommand({
+            systemId,
+            pmName,
+            steps,
+            stdout,
+            stderr,
+            exitCode,
+            combinedOutput,
+            inferred,
+            reconnectionUsed,
+          });
+          if (!outcome.success) overallSuccess = false;
+          if (outcome.status === "warning" && !reconnectionUsed) ruleWarning = true;
+          finishEntry(histId, outcome.status, {
             packageCount: selected.packageNames.length,
             packages: selectedPackagesJson,
             steps: createSingleStepHistory({
@@ -2990,15 +3288,15 @@ export async function applyUpgradePackages(
               pkgManager: pmName,
               command: cmd,
               output: combinedOutput,
-              error: formattedError,
-              status: histStatus,
+              error: outcome.stepError,
+              status: outcome.status,
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             }),
             output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-            error: success ? undefined : formattedError?.slice(0, 2000),
+            error: outcome.stepError?.slice(0, 2000),
           });
-          allOutputs.push(`[${pmName}] ${success ? stdout : formattedError}`);
+          allOutputs.push(outcome.output);
 
           if (reconnectionUsed) break;
         }
@@ -3013,7 +3311,7 @@ export async function applyUpgradePackages(
           {
             success: overallSuccess,
             output: allOutputs.join("\n\n"),
-            warning: reconnectionUsed && overallSuccess,
+            warning: (reconnectionUsed || ruleWarning) && overallSuccess,
           },
           { recheck: !reconnectionUsed },
         );

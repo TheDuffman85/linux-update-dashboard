@@ -38,6 +38,16 @@ import {
 } from "../ssh/system-info";
 import type { SSHConnectionManager } from "../ssh/connection";
 import type { Client } from "ssh2";
+import {
+  MAX_OUTPUT_RULE_MESSAGE_LENGTH,
+  MAX_OUTPUT_RULES,
+  OUTPUT_RULE_OUTCOMES,
+  getOutputRuleScope,
+  hasUnsafeRegexConstruct,
+  type OutputRule,
+} from "../../shared/output-rules";
+
+export type { OutputRule } from "../../shared/output-rules";
 
 export type ScriptType = "package_manager" | "system";
 export type ScriptOperation =
@@ -57,6 +67,11 @@ export type ScriptOperation =
 export interface ScriptStep {
   label: string;
   command: string;
+}
+
+/** A step ready to run. It carries the script's output rules, so a snapshot of the steps keeps them. */
+export interface RuntimeScriptStep extends ScriptStep {
+  outputRules?: OutputRule[];
 }
 
 export interface CustomParserConfig {
@@ -90,6 +105,8 @@ export interface ScriptDefinition {
   steps: ScriptStep[];
   parserConfig: CustomParserConfig | null;
   systemInfoConfig: CustomSystemInfoConfig | null;
+  /** Rules that classify command results before the default exit-code handling. */
+  outputRules: OutputRule[];
   sourceScriptId: string | null;
   usageCount?: number;
   usages?: ScriptUsage[];
@@ -153,6 +170,8 @@ export interface CustomPackageManagerBundle {
     steps: ScriptStep[];
     parserConfig: CustomParserConfig | null;
     systemInfoConfig: null;
+    /** Only present when the script has rules, so bundles without rules stay unchanged. */
+    outputRules?: OutputRule[];
     sourceScriptId: string | null;
   }>;
 }
@@ -193,6 +212,8 @@ const MAX_ISSUE_TITLE_LENGTH = 160;
 const MAX_ISSUE_MESSAGE_LENGTH = 1000;
 const MAX_EXIT_CODE_COUNT = 16;
 const MAX_PARSE_STEP = 20;
+const MAX_OUTPUT_RULES_JSON_LENGTH = 20_000;
+const OUTPUT_RULE_KEYS = new Set(["step", "exitCodes", "match", "notMatch", "outcome", "message"]);
 const PACKAGE_MANAGER_NAME_PATTERN = /^[a-z][a-z0-9_-]{1,31}$/;
 const SYSTEM_INFO_FIELDS = new Set<keyof SystemInfo>([
   "osId",
@@ -373,7 +394,7 @@ export const SCRIPT_OPERATION_PROFILES: Record<ScriptOperation, ScriptOperationP
     label: "Post-upgrade",
     allowedTypes: ["system"],
     purpose: "Runs once after an upgrade on every system that uses it, even if the upgrade failed or was cancelled.",
-    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, failed, cancelled, or unknown.",
+    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, warning, failed, cancelled, or unknown.",
     outputConsumer: "Output is streamed live and stored in activity history; it is not parsed.",
     parserBehavior: "No parser configuration is used.",
     exitCodeBehavior: "A non-zero exit code marks the upgrade as failed and offers to run the script again from the system page.",
@@ -425,11 +446,6 @@ function validateJsonSize(value: unknown, field: string, maxLength = MAX_SCRIPT_
   return null;
 }
 
-function hasDangerousRegexConstruct(source: string): boolean {
-  const nestedQuantifier = /\((?:[^()\\]|\\.)*(?:[+*]|\{\d*,?\d*\})(?:[^()\\]|\\.)*\)(?:[+*]|\{\d*,?\d*\})/;
-  return nestedQuantifier.test(source) || /\\[1-9]/.test(source);
-}
-
 function validateRegexSource(
   value: unknown,
   field: string,
@@ -448,7 +464,7 @@ function validateRegexSource(
   if (source.length > MAX_REGEX_LENGTH) {
     return `${field} must be ${MAX_REGEX_LENGTH} characters or less`;
   }
-  if (hasDangerousRegexConstruct(source)) {
+  if (hasUnsafeRegexConstruct(source)) {
     return `${field} contains an unsafe regular expression pattern`;
   }
   if (options.requireUpdateGroups) {
@@ -566,6 +582,99 @@ function normalizeParserConfigForOperation(
   }
 
   return Object.keys(next).length > 0 ? next : null;
+}
+
+/**
+ * Trims text fields and drops empty optional fields, so equivalent rules are stored
+ * the same way. Anything that is not a rule object is kept for validation to reject.
+ */
+function normalizeOutputRules(value: unknown): unknown {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return value;
+  return value.map((rule) => {
+    if (!isRecord(rule)) return rule;
+    const next: Record<string, unknown> = { ...rule };
+    for (const key of ["match", "notMatch", "message"]) {
+      if (typeof next[key] === "string") {
+        const trimmed = (next[key] as string).trim();
+        if (trimmed) next[key] = trimmed;
+        else delete next[key];
+      } else if (next[key] === null) {
+        delete next[key];
+      }
+    }
+    if (typeof next.step === "string") {
+      const trimmed = next.step.trim();
+      if (trimmed) next.step = trimmed;
+      else delete next.step;
+    } else if (next.step === null) {
+      delete next.step;
+    }
+    if (next.exitCodes === null || (Array.isArray(next.exitCodes) && next.exitCodes.length === 0)) {
+      delete next.exitCodes;
+    }
+    return next;
+  });
+}
+
+function validateOutputRules(
+  value: unknown,
+  operation: ScriptOperation,
+  steps: ScriptStep[],
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) return "outputRules must be an array";
+  if (value.length === 0) return null;
+  const scope = getOutputRuleScope(operation);
+  if (!scope) return `outputRules are not supported for ${operation} scripts`;
+  if (value.length > MAX_OUTPUT_RULES) return `outputRules must include at most ${MAX_OUTPUT_RULES} rules`;
+  const sizeError = validateJsonSize(value, "outputRules", MAX_OUTPUT_RULES_JSON_LENGTH);
+  if (sizeError) return sizeError;
+  for (const [index, rule] of value.entries()) {
+    const field = `outputRules.${index}`;
+    if (!isRecord(rule)) return `${field} must be an object`;
+    const unknownKey = Object.keys(rule).find((key) => !OUTPUT_RULE_KEYS.has(key));
+    if (unknownKey) return `${field}.${unknownKey} is not supported`;
+    if (!OUTPUT_RULE_OUTCOMES.includes(rule.outcome as OutputRule["outcome"])) {
+      return `${field}.outcome must be success, warning, or failed`;
+    }
+    const error =
+      validateExitCodes(rule.exitCodes, `${field}.exitCodes`) ||
+      validateRegexSource(rule.match, `${field}.match`) ||
+      validateRegexSource(rule.notMatch, `${field}.notMatch`) ||
+      validateOptionalStringLength(rule.message, `${field}.message`, MAX_OUTPUT_RULE_MESSAGE_LENGTH);
+    if (error) return error;
+    const hasExitCodes = Array.isArray(rule.exitCodes) && rule.exitCodes.length > 0;
+    if (!hasExitCodes && !rule.match && !rule.notMatch) {
+      return `${field} needs exit codes, a match pattern, or a not-match pattern`;
+    }
+    if (rule.step === undefined) continue;
+    if (scope !== "step") {
+      return `${field}.step is not supported because ${operation} steps run as one command`;
+    }
+    if (typeof rule.step === "number") {
+      if (!Number.isInteger(rule.step) || rule.step < 0 || rule.step >= steps.length) {
+        return `${field}.step must reference an existing step`;
+      }
+    } else if (typeof rule.step === "string") {
+      const label = rule.step.trim();
+      const matches = steps.filter((step) => typeof step?.label === "string" && step.label.trim() === label).length;
+      if (matches === 0) return `${field}.step must match a step label`;
+      if (matches > 1) return `${field}.step matches more than one step; give the steps distinct labels`;
+    } else {
+      return `${field}.step must be a step label or a step position`;
+    }
+  }
+  return null;
+}
+
+function parseStoredOutputRules(value: string | null | undefined): OutputRule[] {
+  const parsed = parseJson<unknown>(value, []);
+  return Array.isArray(parsed) ? parsed.filter(isRecord) as unknown as OutputRule[] : [];
+}
+
+function serializeOutputRules(rules: OutputRule[] | undefined): string | null {
+  return rules?.length ? JSON.stringify(rules) : null;
 }
 
 function validateSystemInfoConfig(config: unknown): string | null {
@@ -859,6 +968,7 @@ function builtinScript(
     steps,
     parserConfig: null,
     systemInfoConfig: null,
+    outputRules: [],
     sourceScriptId: null,
     ...extra,
   };
@@ -1341,6 +1451,7 @@ function serializeCustomScript(row: typeof customScripts.$inferSelect): ScriptDe
       operation,
     ),
     systemInfoConfig: parseJson<CustomSystemInfoConfig | null>(row.systemInfoConfig, null),
+    outputRules: parseStoredOutputRules(row.outputRules),
     sourceScriptId: row.sourceScriptId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -1530,6 +1641,8 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   ) {
     return "sourceScriptId must be a valid script ID";
   }
+  const outputRulesError = validateOutputRules(input.outputRules, input.operation, input.steps as ScriptStep[]);
+  if (outputRulesError) return outputRulesError;
   return validateSystemInfoConfig(input.systemInfoConfig);
 }
 
@@ -1555,7 +1668,10 @@ function clearOtherDefaults(input: Pick<ScriptDefinition, "type" | "operation" |
 }
 
 export function createScript(input: Partial<ScriptDefinition>): ScriptDefinition {
-  const normalizedInput = normalizeScriptConfigPlaceholders(input);
+  const normalizedInput = normalizeScriptConfigPlaceholders({
+    ...input,
+    outputRules: normalizeOutputRules(input.outputRules) as OutputRule[],
+  });
   const error = validateScriptInput(normalizedInput);
   if (error) throw new Error(error);
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
@@ -1573,6 +1689,7 @@ export function createScript(input: Partial<ScriptDefinition>): ScriptDefinition
       steps: JSON.stringify(normalizedInput.steps),
       parserConfig: parserConfig ? JSON.stringify(parserConfig) : null,
       systemInfoConfig: normalizedInput.systemInfoConfig ? JSON.stringify(normalizedInput.systemInfoConfig) : null,
+      outputRules: serializeOutputRules(normalizedInput.outputRules),
       sourceScriptId: normalizedInput.sourceScriptId ?? null,
       createdAt: now,
       updatedAt: now,
@@ -1587,7 +1704,11 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
   if (!parsed || parsed.kind !== "custom") throw new Error("Built-in scripts are read-only");
   const existing = getScriptById(scriptId);
   if (!existing) throw new Error("Script not found");
-  const next = normalizeScriptConfigPlaceholders({ ...existing, ...input, readonly: false, id: scriptId }) as ScriptDefinition;
+  const merged = { ...existing, ...input, readonly: false, id: scriptId };
+  const next = normalizeScriptConfigPlaceholders({
+    ...merged,
+    outputRules: normalizeOutputRules(merged.outputRules) as OutputRule[],
+  }) as ScriptDefinition;
   const error = validateScriptInput(next);
   if (error) throw new Error(error);
   const scopeChanged =
@@ -1612,6 +1733,7 @@ export function updateScript(scriptId: string, input: Partial<ScriptDefinition>)
       steps: JSON.stringify(next.steps),
       parserConfig: parserConfig ? JSON.stringify(parserConfig) : null,
       systemInfoConfig: next.systemInfoConfig ? JSON.stringify(next.systemInfoConfig) : null,
+      outputRules: serializeOutputRules(next.outputRules),
       sourceScriptId: next.sourceScriptId ?? null,
       updatedAt: now,
     })
@@ -2064,6 +2186,9 @@ function scriptBundleEntry(script: ScriptDefinition): CustomPackageManagerBundle
     steps: script.steps.map((step) => ({ ...step })),
     parserConfig: script.parserConfig ? { ...script.parserConfig } : null,
     systemInfoConfig: null,
+    ...(script.outputRules.length
+      ? { outputRules: script.outputRules.map((rule) => ({ ...rule })) }
+      : {}),
     sourceScriptId: script.sourceScriptId,
   };
 }
@@ -2137,6 +2262,8 @@ export function normalizeCustomPackageManagerBundle(value: unknown): CustomPacka
       steps: Array.isArray(rawScript.steps) ? rawScript.steps as ScriptStep[] : [],
       parserConfig: isRecord(rawScript.parserConfig) ? rawScript.parserConfig as CustomParserConfig : null,
       systemInfoConfig: null,
+      // A bundle replaces the scripts it imports, so a bundle without rules clears them.
+      outputRules: (rawScript.outputRules ?? []) as OutputRule[],
       sourceScriptId: typeof rawScript.sourceScriptId === "string" ? rawScript.sourceScriptId : null,
     };
     if (script.operation === "system_info" || script.operation === "reboot" || UPGRADE_HOOK_OPERATIONS.has(script.operation)) {
@@ -2391,9 +2518,10 @@ export function resolveRuntimeSteps(args: {
   pkgManager?: string | null;
   pkgManagerConfig?: PackageManagerConfigValue;
   packages?: string[];
-}): ScriptStep[] {
+}): RuntimeScriptStep[] {
   const script = resolveScript(args.systemId, args.operation, args.pkgManager);
   if (!script) return [];
+  const outputRules = getOutputRuleScope(script.operation) ? script.outputRules : [];
   return script.steps.map((step) => ({
     label: step.label,
     command: renderCommandTemplate(step.command, {
@@ -2401,6 +2529,7 @@ export function resolveRuntimeSteps(args: {
       packages: args.packages,
       config: args.pkgManagerConfig,
     }),
+    ...(outputRules.length ? { outputRules: outputRules.map((rule) => ({ ...rule })) } : {}),
   }));
 }
 
@@ -2538,8 +2667,12 @@ export function parseInstalledPackagesWithScript(
     exitCode: 0,
   };
   const runtimeBuiltin = script ? getRuntimeBuiltinScript(script) : null;
-  const builtinPackages = runtimeBuiltin?.pkgManager
-    ? parseBuiltinInstalledPackages(runtimeBuiltin.pkgManager, last.stdout)
+  // Like update checks, built-in package managers keep their built-in parser when
+  // their script is edited, unless the script brings its own installed-package regex.
+  const builtinParserManager = runtimeBuiltin?.pkgManager
+    ?? (BUILTIN_MANAGER_ORDER.includes(pkgManager) && !script?.parserConfig?.installedPackageRegex ? pkgManager : null);
+  const builtinPackages = builtinParserManager
+    ? parseBuiltinInstalledPackages(builtinParserManager, last.stdout)
     : null;
   if (builtinPackages) return builtinPackages;
   return parseCustomInstalledPackages(pkgManager, script?.parserConfig, commandResults);

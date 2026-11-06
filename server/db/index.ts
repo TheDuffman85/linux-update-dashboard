@@ -553,6 +553,7 @@ export function initDatabase(
     steps TEXT NOT NULL,
     parser_config TEXT,
     system_info_config TEXT,
+    output_rules TEXT,
     source_script_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -660,6 +661,11 @@ export function initDatabase(
     _db.run(
       sql`ALTER TABLE custom_scripts ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0`,
     );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE custom_scripts ADD COLUMN output_rules TEXT`);
   } catch {
     // Column already exists
   }

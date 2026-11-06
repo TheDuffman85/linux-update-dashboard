@@ -477,6 +477,7 @@ export const customScripts = sqliteTable("custom_scripts", {
   steps: text("steps").notNull(),
   parserConfig: text("parser_config"),
   systemInfoConfig: text("system_info_config"),
+  outputRules: text("output_rules"),
   sourceScriptId: text("source_script_id"),
   createdAt: text("created_at")
     .notNull()

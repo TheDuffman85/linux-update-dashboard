@@ -2562,7 +2562,7 @@ export default function SystemDetail() {
       onSuccess: (d: any) =>
         addToast(
           d.status === "success" ? t("pages.systemDetail.toast.upgradeComplete")
-            : d.status === "warning" ? t("pages.systemDetail.toast.upgradeLikelyComplete")
+            : d.status === "warning" ? t("pages.systemDetail.toast.upgradeWarning")
               : d.status === "cancelled" ? t("pages.systemDetail.toast.upgradeCancelled")
                 : t("pages.systemDetail.toast.upgradeFailed"),
           d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
@@ -2592,7 +2592,7 @@ export default function SystemDetail() {
       onSuccess: (d: any) =>
         addToast(
           d.status === "success" ? t("pages.systemDetail.toast.fullUpgradeComplete")
-            : d.status === "warning" ? t("pages.systemDetail.toast.fullUpgradeLikelyComplete")
+            : d.status === "warning" ? t("pages.systemDetail.toast.fullUpgradeWarning")
               : d.status === "cancelled" ? t("pages.systemDetail.toast.fullUpgradeCancelled")
                 : t("pages.systemDetail.toast.fullUpgradeFailed"),
           d.status === "failed" ? "danger" : d.status === "warning" || d.status === "cancelled" ? "info" : "success"
@@ -2613,7 +2613,7 @@ export default function SystemDetail() {
           d.status === "success"
             ? t("pages.systemDetail.toast.selectedUpdatesComplete", { count: selectedNames.length })
             : d.status === "warning"
-              ? t("pages.systemDetail.toast.selectedUpdatesLikelyComplete", { count: selectedNames.length })
+              ? t("pages.systemDetail.toast.selectedUpdatesWarning", { count: selectedNames.length })
               : d.status === "cancelled"
                 ? t("pages.systemDetail.toast.selectedUpdatesCancelled", { count: selectedNames.length })
                 : t("pages.systemDetail.toast.selectedUpdatesFailed", { count: selectedNames.length }),
@@ -2648,8 +2648,10 @@ export default function SystemDetail() {
       onSuccess: (result) => addToast(
         result.status === "success"
           ? t("pages.systemDetail.toast.postUpgradeScriptFinished")
-          : t("pages.systemDetail.toast.postUpgradeScriptFailed"),
-        result.status === "success" ? "success" : "danger",
+          : result.status === "warning"
+            ? t("pages.systemDetail.toast.postUpgradeScriptWarning")
+            : t("pages.systemDetail.toast.postUpgradeScriptFailed"),
+        result.status === "success" ? "success" : result.status === "warning" ? "info" : "danger",
       ),
       onError: (err) => addToast(err.message, "danger"),
     });
@@ -2686,9 +2688,10 @@ export default function SystemDetail() {
         onSuccess: (d) =>
           addToast(
             d.status === "success" ? t("pages.systemDetail.toast.packageManagerIssueSolved")
-              : d.status === "cancelled" ? t("pages.systemDetail.toast.packageManagerRepairCancelled")
-                : d.output || t("pages.systemDetail.toast.packageManagerRepairFailed"),
-            d.status === "success" ? "success" : d.status === "cancelled" ? "info" : "danger",
+              : d.status === "warning" ? t("pages.systemDetail.toast.packageManagerIssueSolvedWithWarnings")
+                : d.status === "cancelled" ? t("pages.systemDetail.toast.packageManagerRepairCancelled")
+                  : d.output || t("pages.systemDetail.toast.packageManagerRepairFailed"),
+            d.status === "success" ? "success" : d.status === "cancelled" || d.status === "warning" ? "info" : "danger",
           ),
         onError: (err) => addToast(err.message, "danger"),
       },

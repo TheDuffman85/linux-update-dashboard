@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type { CustomPackageManagerConfigEntry } from "./package-manager-configs";
+import type { OutputRule } from "../../shared/output-rules";
+
+export type { OutputRule, OutputRuleOutcome } from "../../shared/output-rules";
 
 export type ScriptType = "package_manager" | "system";
 export type ScriptOperation =
@@ -56,6 +59,8 @@ export interface ScriptDefinition {
   steps: ScriptStep[];
   parserConfig: CustomParserConfig | null;
   systemInfoConfig: CustomSystemInfoConfig | null;
+  /** Rules that classify command results. Older servers do not send them. */
+  outputRules?: OutputRule[];
   sourceScriptId: string | null;
   usageCount?: number;
   usages?: ScriptUsage[];
@@ -125,6 +130,7 @@ export interface CustomPackageManagerBundle {
     steps: ScriptStep[];
     parserConfig: CustomParserConfig | null;
     systemInfoConfig: null;
+    outputRules?: OutputRule[];
     sourceScriptId: string | null;
   }>;
 }

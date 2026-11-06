@@ -14,3 +14,23 @@ export const APK_PINNED_LIST = [
 export const APK_FAILED_SIMULATION =
   "ERROR: Not continuing due to stale/unavailable repositories. Use --force-missing-repositories to continue.\n" +
   "===LUDASH_APK_SIMULATION_STATUS:99===\n";
+
+// Output from issue #314 on a self-compiled OpenWrt image. apk counts an installed
+// package that is already marked broken as an error on every run, so the summary
+// line reports "1 error" and the exit status is 1 although every upgrade worked.
+export const APK_BROKEN_STATE_SIMULATION = [
+  "(1/1) Upgrading zlib (1.3.1-r1 -> 1.3.2-r0)",
+  "1 error; 293.6 MiB in 329 packages",
+  "===LUDASH_APK_SIMULATION_STATUS:1===",
+  "",
+].join("\n");
+
+export const APK_BROKEN_STATE_UPGRADE = [
+  "(1/4) Upgrading openssh-client (10.6_p1-r2 -> 10.6_p2-r1)",
+  "  Executing openssh-client-10.6_p2-r1.post-upgrade",
+  "(2/4) Upgrading openssh-keygen (10.6_p1-r2 -> 10.6_p2-r1)",
+  "(3/4) Upgrading openssh-server (10.6_p1-r2 -> 10.6_p2-r1)",
+  "(4/4) Upgrading openssh-sftp-server (10.6_p1-r2 -> 10.6_p2-r1)",
+  "1 error; 293.6 MiB in 329 packages",
+  "",
+].join("\n");

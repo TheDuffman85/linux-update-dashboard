@@ -322,6 +322,7 @@ async function runBatchItem(itemId: number): Promise<void> {
       resume,
       // An upgrade that was already running means its pre-upgrade script is done.
       resumeHook: resume ? undefined : hookProgress,
+      preUpgradeWarnings: resume && hookProgress?.phase === "pre_upgrade" ? hookProgress.warnings : undefined,
       onStepStarted: ({ historyId, pkgManager, command, preUpgradeUpdateCount }) => {
         db.update(upgradeBatchItems)
           .set({
