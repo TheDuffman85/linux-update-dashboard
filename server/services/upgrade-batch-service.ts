@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { dashboardGroups, systems, updateHistory, upgradeBatchItems, upgradeBatches } from "../db/schema";
 import { sanitizeCommand, sanitizeOutput } from "../utils/sanitize";
+import { clipOutput } from "../utils/clip-output";
 import * as systemService from "./system-service";
 import * as updateService from "./update-service";
 import type { DefaultUpgradeModeOverride, UpgradeHookProgress } from "./update-service";
@@ -372,7 +373,7 @@ async function runBatchItem(itemId: number): Promise<void> {
     db.update(upgradeBatchItems)
       .set({
         status,
-        error: result.success || result.warning ? null : sanitizeOutput(result.output).slice(0, 2000),
+        error: result.success || result.warning ? null : clipOutput(sanitizeOutput(result.output), 2000),
         hookProgress: null,
         hookFailed: result.hookFailed ? 1 : 0,
         completedAt: now(),
@@ -385,7 +386,7 @@ async function runBatchItem(itemId: number): Promise<void> {
     db.update(upgradeBatchItems)
       .set({
         status: "failed",
-        error: sanitizeOutput(message).slice(0, 2000),
+        error: clipOutput(sanitizeOutput(message), 2000),
         hookProgress: null,
         completedAt: now(),
       })

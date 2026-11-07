@@ -22,6 +22,7 @@ import * as systemService from "./system-service";
 import * as outputStream from "./output-stream";
 import { logger } from "../logger";
 import { sanitizeOutput, sanitizeCommand } from "../utils/sanitize";
+import { clipOutput } from "../utils/clip-output";
 import { resolveSecretInput, withSecretEnvNote } from "./package-manager-secret-service";
 import { applyPackageOwnershipClaims } from "./package-ownership";
 import type { SecretInput } from "../ssh/secret-input";
@@ -367,9 +368,14 @@ function setActiveOperationPersistentInfo(
   });
 }
 
+/** Shortens an error to the stored length, keeping its end. */
+function clipError(value: string | null | undefined): string | undefined {
+  return value == null ? undefined : clipOutput(value, STEP_ERROR_LIMIT);
+}
+
 function trimSanitizedOutput(value: string | null | undefined, limit: number): string | null {
   if (!value) return null;
-  const sanitized = sanitizeOutput(value).slice(0, limit);
+  const sanitized = clipOutput(sanitizeOutput(value), limit);
   return sanitized || null;
 }
 
@@ -1499,7 +1505,7 @@ async function checkUpdatesUnlocked(
         logHistory(systemId, "check", pkgManagers.join(",") || system.pkgManager || "unknown", "cancelled", {
           command: allCommands.join(" && "),
           steps: allSteps,
-          output: checkOutput.slice(0, 5000) || undefined,
+          output: clipOutput(checkOutput, STEP_OUTPUT_LIMIT) || undefined,
           error: message,
         });
       }
@@ -1567,8 +1573,8 @@ async function checkUpdatesUnlocked(
         packageCount: visibleSummary.updateCount,
         command: allCommands.join(" && "),
         steps: allSteps,
-        output: checkOutput.slice(0, 5000) || undefined,
-        error: combinedErrors?.slice(0, 2000),
+        output: clipOutput(checkOutput, STEP_OUTPUT_LIMIT) || undefined,
+        error: clipError(combinedErrors),
       }
     );
     pub({
@@ -1690,7 +1696,7 @@ export async function solvePackageManagerIssue(
             logHistory(systemId, "package_manager_repair", issue.pkgManager, "cancelled", {
               command: allCommands.join(" && "),
               steps: activitySteps,
-              output: repairOutput.slice(0, STEP_OUTPUT_LIMIT),
+              output: clipOutput(repairOutput, STEP_OUTPUT_LIMIT),
               error: message,
             });
             outputStream.publish(systemId, { type: "warning", message });
@@ -1726,7 +1732,7 @@ export async function solvePackageManagerIssue(
             logHistory(systemId, "package_manager_repair", issue.pkgManager, "failed", {
               command: allCommands.join(" && "),
               steps: activitySteps,
-              output: repairOutput.slice(0, STEP_OUTPUT_LIMIT),
+              output: clipOutput(repairOutput, STEP_OUTPUT_LIMIT),
               error: errorText,
             });
             outputStream.publish(systemId, { type: "error", message: errorText });
@@ -1756,8 +1762,8 @@ export async function solvePackageManagerIssue(
         logHistory(systemId, "package_manager_repair", issue.pkgManager, repairWarnings.length ? "warning" : "success", {
           command: allCommands.join(" && "),
           steps: activitySteps,
-          output: repairOutput.slice(0, STEP_OUTPUT_LIMIT),
-          ...(repairWarnings.length ? { error: repairWarnings.join("\n\n").slice(0, STEP_ERROR_LIMIT) } : {}),
+          output: clipOutput(repairOutput, STEP_OUTPUT_LIMIT),
+          ...(repairWarnings.length ? { error: clipOutput(repairWarnings.join("\n\n"), STEP_ERROR_LIMIT) } : {}),
         });
       } finally {
         if (conn) sshManager.disconnect(conn);
@@ -1957,7 +1963,7 @@ async function runUpgradeHookSteps(
     recordCurrentStep(status, error);
     finishEntry(histId, status, {
       steps: activitySteps,
-      output: activitySteps.map((step) => step.output ?? "").join("").slice(0, STEP_OUTPUT_LIMIT),
+      output: clipOutput(activitySteps.map((step) => step.output ?? "").join(""), STEP_OUTPUT_LIMIT),
       error: error ?? undefined,
     });
     if (status === "cancelled") outputStream.publish(systemId, { type: "warning", message });
@@ -2177,7 +2183,7 @@ async function runPostUpgradeHook(
       steps: session.postSteps,
       stepIndex,
       persistentInfo,
-      upgradeResult: { ...result, output: sanitizeOutput(result.output).slice(0, STEP_ERROR_LIMIT) },
+      upgradeResult: { ...result, output: clipOutput(sanitizeOutput(result.output), STEP_ERROR_LIMIT) },
       completion,
       ...(warnings.length ? { warnings } : {}),
     });
@@ -2508,7 +2514,7 @@ export async function applyUpgradeAll(
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             }),
-            output: stdout.slice(0, STEP_OUTPUT_LIMIT),
+            output: clipOutput(stdout, STEP_OUTPUT_LIMIT),
             error: "Operation cancelled",
           });
           outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
@@ -2547,8 +2553,8 @@ export async function applyUpgradeAll(
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }),
-          output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-          error: outcome.stepError?.slice(0, 2000),
+          output: clipOutput(stdout, STEP_OUTPUT_LIMIT),
+          error: clipError(outcome.stepError),
         });
         unfinishedHistoryId = undefined;
 
@@ -2750,7 +2756,7 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
                 startedAt: stepStartedAt,
                 completedAt: stepCompletedAt,
               }),
-              output: result.stdout.slice(0, STEP_OUTPUT_LIMIT),
+              output: clipOutput(result.stdout, STEP_OUTPUT_LIMIT),
               error: "Operation cancelled",
             });
             outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
@@ -2774,7 +2780,7 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
                 startedAt: stepStartedAt,
                 completedAt: stepCompletedAt,
               }),
-              output: result.stdout.slice(0, STEP_OUTPUT_LIMIT),
+              output: clipOutput(result.stdout, STEP_OUTPUT_LIMIT),
               error: warning,
             });
             outputStream.publish(systemId, { type: "warning", message: warning });
@@ -2806,8 +2812,8 @@ export async function applyAutoremove(systemId: number): Promise<OperationResult
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             }),
-            output: result.stdout.slice(0, STEP_OUTPUT_LIMIT),
-            error: outcome.stepError?.slice(0, STEP_ERROR_LIMIT),
+            output: clipOutput(result.stdout, STEP_OUTPUT_LIMIT),
+            error: clipError(outcome.stepError),
           });
         }
 
@@ -3002,7 +3008,7 @@ export async function applyFullUpgradeAll(
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             }),
-            output: stdout.slice(0, STEP_OUTPUT_LIMIT),
+            output: clipOutput(stdout, STEP_OUTPUT_LIMIT),
             error: "Operation cancelled",
           });
           outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
@@ -3041,8 +3047,8 @@ export async function applyFullUpgradeAll(
             startedAt: stepStartedAt,
             completedAt: stepCompletedAt,
           }),
-          output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-          error: outcome.stepError?.slice(0, 2000),
+          output: clipOutput(stdout, STEP_OUTPUT_LIMIT),
+          error: clipError(outcome.stepError),
         });
 
         // If connection was lost, can't continue with remaining package managers
@@ -3254,7 +3260,7 @@ export async function applyUpgradePackages(
                 startedAt: stepStartedAt,
                 completedAt: stepCompletedAt,
               }),
-              output: stdout.slice(0, STEP_OUTPUT_LIMIT),
+              output: clipOutput(stdout, STEP_OUTPUT_LIMIT),
               error: "Operation cancelled",
             });
             outputStream.publish(systemId, { type: "warning", message: "Operation cancelled" });
@@ -3293,8 +3299,8 @@ export async function applyUpgradePackages(
               startedAt: stepStartedAt,
               completedAt: stepCompletedAt,
             }),
-            output: stdout.slice(0, STEP_OUTPUT_LIMIT),
-            error: outcome.stepError?.slice(0, 2000),
+            output: clipOutput(stdout, STEP_OUTPUT_LIMIT),
+            error: clipError(outcome.stepError),
           });
           allOutputs.push(outcome.output);
 
