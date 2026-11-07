@@ -39,7 +39,7 @@
       "steps": [
         {
           "label": "Check Hermes Agent updates",
-          "command": "branch=\"{{config.branch}}\"\ninstall_path=\"{{config.installPath}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\ncase \"$install_path\" in\n  ~/*) install_path=\"$HOME/${install_path#~/}\" ;;\nesac\ncurrent=\"$(hermes version 2>/dev/null || hermes --version 2>/dev/null || printf unknown)\"\ncurrent=\"$(printf '%s\\n' \"$current\" | awk 'NF { print $NF; exit }' | sed 's/^[(]//; s/[)]$//')\"\n[ -n \"$current\" ] || current=unknown\nahead_count=\"\"\nif [ -d \"$install_path/.git\" ] && command -v git >/dev/null 2>&1; then\n  if git -C \"$install_path\" fetch origin \"$branch\" --quiet; then\n    ahead_count=\"$(git -C \"$install_path\" rev-list --count HEAD..\"origin/$branch\" 2>/dev/null || true)\"\n  fi\nfi\noutput=\"$(hermes update --check --branch \"$branch\" 2>&1)\"\nstatus=$?\nprintf '%s\\n' \"$output\"\noutput_count=\"$(printf '%s\\n' \"$output\" | sed -nE 's/.*[^0-9]([0-9]+)[[:space:]]+commits?[[:space:]]+behind.*/\\1/p; s/.*[^0-9]([0-9]+)[[:space:]]+commits?[[:space:]]+ahead.*/\\1/p' | head -1)\"\nif [ \"$status\" -eq 0 ]; then\n  if printf '%s\\n' \"$output\" | grep -Eiq 'available|behind|newer|update.*(available|found)|would update|can update'; then\n    next=\"$(printf '%s\\n' \"$output\" | sed -nE 's/.*(v?[0-9]{4}\\.[0-9]{1,2}\\.[0-9]{1,2}[^[:space:]]*|v?[0-9]+(\\.[0-9]+){1,3}[^[:space:]]*).*/\\1/p' | tail -1 | sed 's/^[(]//; s/[)]$//')\"\n    commit_count=\"$output_count\"\n    [ -n \"$commit_count\" ] || commit_count=\"$ahead_count\"\n    if [ -n \"$commit_count\" ] && [ \"$commit_count\" -gt 0 ] 2>/dev/null; then\n      if [ \"$commit_count\" = \"1\" ]; then\n        next=\"1-commit-ahead\"\n      else\n        next=\"${commit_count}-commits-ahead\"\n      fi\n    fi\n    [ -n \"$next\" ] || next=unknown\n    printf 'LUDASH_UPDATE hermes-agent %s %s\\n' \"$current\" \"$next\"\n  fi\n  exit 0\nfi\necho \"hermes update --check failed; falling back to git comparison when available.\"\nif [ -d \"$install_path/.git\" ] && command -v git >/dev/null 2>&1; then\n  local_sha=\"$(git -C \"$install_path\" rev-parse --short HEAD 2>/dev/null || true)\"\n  remote_sha=\"$(git -C \"$install_path\" rev-parse --short \"origin/$branch\" 2>/dev/null || true)\"\n  if [ -n \"$local_sha\" ] && [ -n \"$remote_sha\" ] && [ \"$local_sha\" != \"$remote_sha\" ]; then\n    next=\"$remote_sha\"\n    commit_count=\"$output_count\"\n    [ -n \"$commit_count\" ] || commit_count=\"$ahead_count\"\n    if [ -n \"$commit_count\" ] && [ \"$commit_count\" -gt 0 ] 2>/dev/null; then\n      if [ \"$commit_count\" = \"1\" ]; then\n        next=\"1-commit-ahead\"\n      else\n        next=\"${commit_count}-commits-ahead\"\n      fi\n    fi\n    printf 'LUDASH_UPDATE hermes-agent %s %s\\n' \"$local_sha\" \"$next\"\n  fi\n  exit 0\nfi\nexit \"$status\""
+          "command": "branch=\"{{config.branch}}\"\ninstall_path=\"{{config.installPath}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\ncase \"$install_path\" in\n  ~/*) install_path=\"$HOME/${install_path#~/}\" ;;\nesac\ncurrent=\"$(hermes --version 2>/dev/null || hermes version 2>/dev/null || printf unknown)\"\ncurrent=\"$(printf '%s\\n' \"$current\" | awk 'NF { print $NF; exit }' | sed 's/^[(]//; s/[)]$//')\"\n[ -n \"$current\" ] || current=unknown\n# main follows the update channel Hermes is set to, such as stable releases, so\n# --branch is only passed for another branch. Git is only compared when the\n# checkout follows a branch; a release checkout has a detached HEAD.\nset -- update --check\nuse_git=false\nif [ -d \"$install_path/.git\" ] && command -v git >/dev/null 2>&1; then\n  if [ \"$branch\" != \"main\" ] || git -C \"$install_path\" symbolic-ref -q HEAD >/dev/null 2>&1; then\n    use_git=true\n  fi\nfi\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\nahead_count=\"\"\nif [ \"$use_git\" = \"true\" ]; then\n  if git -C \"$install_path\" fetch origin \"$branch\" --quiet; then\n    ahead_count=\"$(git -C \"$install_path\" rev-list --count HEAD..\"origin/$branch\" 2>/dev/null || true)\"\n  fi\nfi\noutput=\"$(hermes \"$@\" 2>&1)\"\nstatus=$?\nprintf '%s\\n' \"$output\"\noutput_count=\"$(printf '%s\\n' \"$output\" | sed -nE 's/.*[^0-9]([0-9]+)[[:space:]]+commits?[[:space:]]+behind.*/\\1/p; s/.*[^0-9]([0-9]+)[[:space:]]+commits?[[:space:]]+ahead.*/\\1/p' | head -1)\"\nif [ \"$status\" -eq 0 ]; then\n  if printf '%s\\n' \"$output\" | grep -Eiq 'available|behind|newer|update.*(available|found)|would update|can update'; then\n    next=\"$(printf '%s\\n' \"$output\" | sed -nE 's/.*(v?[0-9]{4}\\.[0-9]{1,2}\\.[0-9]{1,2}[^[:space:]]*|v?[0-9]+(\\.[0-9]+){1,3}[^[:space:]]*).*/\\1/p' | tail -1 | sed 's/^[(]//; s/[)]$//')\"\n    commit_count=\"$output_count\"\n    [ -n \"$commit_count\" ] || commit_count=\"$ahead_count\"\n    if [ -n \"$commit_count\" ] && [ \"$commit_count\" -gt 0 ] 2>/dev/null; then\n      if [ \"$commit_count\" = \"1\" ]; then\n        next=\"1-commit-ahead\"\n      else\n        next=\"${commit_count}-commits-ahead\"\n      fi\n    fi\n    [ -n \"$next\" ] || next=unknown\n    printf 'LUDASH_UPDATE hermes-agent %s %s\\n' \"$current\" \"$next\"\n  fi\n  exit 0\nfi\necho \"hermes update --check failed; falling back to git comparison when available.\"\nif [ \"$use_git\" = \"true\" ]; then\n  local_sha=\"$(git -C \"$install_path\" rev-parse --short HEAD 2>/dev/null || true)\"\n  remote_sha=\"$(git -C \"$install_path\" rev-parse --short \"origin/$branch\" 2>/dev/null || true)\"\n  if [ -n \"$local_sha\" ] && [ -n \"$remote_sha\" ] && [ \"$local_sha\" != \"$remote_sha\" ]; then\n    next=\"$remote_sha\"\n    commit_count=\"$output_count\"\n    [ -n \"$commit_count\" ] || commit_count=\"$ahead_count\"\n    if [ -n \"$commit_count\" ] && [ \"$commit_count\" -gt 0 ] 2>/dev/null; then\n      if [ \"$commit_count\" = \"1\" ]; then\n        next=\"1-commit-ahead\"\n      else\n        next=\"${commit_count}-commits-ahead\"\n      fi\n    fi\n    printf 'LUDASH_UPDATE hermes-agent %s %s\\n' \"$local_sha\" \"$next\"\n  fi\n  exit 0\nfi\nexit \"$status\""
         }
       ],
       "parserConfig": {
@@ -79,11 +79,29 @@
       "steps": [
         {
           "label": "Backup update Hermes Agent",
-          "command": "branch=\"{{config.branch}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update --backup\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\nerrexit_was_on=false\ncase \"$-\" in\n  *e*) errexit_was_on=true; set +e ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nif [ \"$errexit_was_on\" = \"true\" ]; then\n  set -e\nfi\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Eiq 'Local changes were restored on top of the updated codebase|Updated Hermes Agent'; then\n    echo \"Hermes update returned exit code $update_status after a completed update; continuing validation.\"\n  else\n    exit \"$update_status\"\n  fi\nfi\ndoctor_status=0\nhermes doctor 2>&1 || doctor_status=$?\nif [ \"$doctor_status\" -ne 0 ]; then\n  echo \"Hermes doctor reported issues after update; update completed. Run the Hermes repair action for details.\" >&2\nfi\nversion_status=0\nhermes version 2>&1 || version_status=$?\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi\nif [ \"$version_status\" -ne 0 ]; then\n  exit \"$version_status\"\nfi\ntrue"
+          "command": "branch=\"{{config.branch}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update --backup\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\nerrexit_was_on=false\ncase \"$-\" in\n  *e*) errexit_was_on=true; set +e ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nif [ \"$errexit_was_on\" = \"true\" ]; then\n  set -e\nfi\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Eiq 'Local changes were restored on top of the updated codebase|Updated Hermes Agent|Already up to date'; then\n    echo \"Hermes update returned exit code $update_status after a completed update; continuing validation.\"\n  else\n    echo \"hermes update failed with exit code $update_status.\" >&2\n    exit \"$update_status\"\n  fi\nfi\ndoctor_status=0\nhermes doctor 2>&1 || doctor_status=$?\nif [ \"$doctor_status\" -ne 0 ]; then\n  echo \"Hermes doctor reported issues after update; update completed. Run the Hermes repair action for details.\" >&2\nfi\nversion_status=0\nhermes --version 2>&1 || version_status=$?\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi\nif [ \"$version_status\" -ne 0 ]; then\n  echo \"hermes --version failed with exit code $version_status after the update.\" >&2\n  exit \"$version_status\"\nfi\ntrue"
         }
       ],
       "parserConfig": null,
       "systemInfoConfig": null,
+      "outputRules": [
+        {
+          "exitCodes": [
+            0
+          ],
+          "match": "^Hermes doctor reported issues after update",
+          "outcome": "warning",
+          "message": "Hermes Agent was updated, but hermes doctor reported issues. Run hermes doctor on the host for details."
+        },
+        {
+          "exitCodes": [
+            0
+          ],
+          "match": "^Hermes update returned exit code (?<code>\\d+) after a completed update",
+          "outcome": "warning",
+          "message": "Hermes Agent was updated, but hermes update exited with code $<code>."
+        }
+      ],
       "sourceScriptId": null
     },
     {
@@ -96,7 +114,7 @@
       "steps": [
         {
           "label": "List installed Hermes Agent",
-          "command": "version=\"$(hermes version 2>/dev/null || hermes --version 2>/dev/null || true)\"\nversion=\"$(printf '%s\\n' \"$version\" | awk 'NF { print $NF; exit }' | sed 's/^[(]//; s/[)]$//')\"\n[ -n \"$version\" ] || version=unknown\nprintf 'hermes-agent %s\\n' \"$version\""
+          "command": "version=\"$(hermes --version 2>/dev/null || hermes version 2>/dev/null || true)\"\nversion=\"$(printf '%s\\n' \"$version\" | awk 'NF { print $NF; exit }' | sed 's/^[(]//; s/[)]$//')\"\n[ -n \"$version\" ] || version=unknown\nprintf 'hermes-agent %s\\n' \"$version\""
         }
       ],
       "parserConfig": {
@@ -111,7 +129,7 @@
     },
     {
       "name": "Run Hermes Doctor",
-      "description": "Runs post-update validation with hermes doctor, hermes version, and optional gateway status.",
+      "description": "Runs post-update validation with hermes doctor, hermes --version, and optional gateway status.",
       "type": "package_manager",
       "operation": "repair_issue",
       "pkgManager": "hermes-agent",
@@ -119,7 +137,7 @@
       "steps": [
         {
           "label": "Run Hermes doctor",
-          "command": "hermes doctor 2>&1\nhermes version 2>&1\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi"
+          "command": "hermes doctor 2>&1\nhermes --version 2>&1\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi"
         }
       ],
       "parserConfig": {
@@ -140,11 +158,29 @@
       "steps": [
         {
           "label": "Update Hermes Agent",
-          "command": "branch=\"{{config.branch}}\"\nbackup=\"{{config.backup}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\ncase \"$backup\" in\n  true|TRUE|yes|YES|1) set -- \"$@\" --backup ;;\nesac\nerrexit_was_on=false\ncase \"$-\" in\n  *e*) errexit_was_on=true; set +e ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nif [ \"$errexit_was_on\" = \"true\" ]; then\n  set -e\nfi\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Eiq 'Local changes were restored on top of the updated codebase|Updated Hermes Agent'; then\n    echo \"Hermes update returned exit code $update_status after a completed update; continuing validation.\"\n  else\n    exit \"$update_status\"\n  fi\nfi\ndoctor_status=0\nhermes doctor 2>&1 || doctor_status=$?\nif [ \"$doctor_status\" -ne 0 ]; then\n  echo \"Hermes doctor reported issues after update; update completed. Run the Hermes repair action for details.\" >&2\nfi\nversion_status=0\nhermes version 2>&1 || version_status=$?\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi\nif [ \"$version_status\" -ne 0 ]; then\n  exit \"$version_status\"\nfi\ntrue"
+          "command": "branch=\"{{config.branch}}\"\nbackup=\"{{config.backup}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\ncase \"$backup\" in\n  true|TRUE|yes|YES|1) set -- \"$@\" --backup ;;\nesac\nerrexit_was_on=false\ncase \"$-\" in\n  *e*) errexit_was_on=true; set +e ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nif [ \"$errexit_was_on\" = \"true\" ]; then\n  set -e\nfi\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Eiq 'Local changes were restored on top of the updated codebase|Updated Hermes Agent|Already up to date'; then\n    echo \"Hermes update returned exit code $update_status after a completed update; continuing validation.\"\n  else\n    echo \"hermes update failed with exit code $update_status.\" >&2\n    exit \"$update_status\"\n  fi\nfi\ndoctor_status=0\nhermes doctor 2>&1 || doctor_status=$?\nif [ \"$doctor_status\" -ne 0 ]; then\n  echo \"Hermes doctor reported issues after update; update completed. Run the Hermes repair action for details.\" >&2\nfi\nversion_status=0\nhermes --version 2>&1 || version_status=$?\nif [ \"{{config.includeGatewayStatus}}\" = \"true\" ]; then\n  hermes gateway status 2>&1 || true\nfi\nif [ \"$version_status\" -ne 0 ]; then\n  echo \"hermes --version failed with exit code $version_status after the update.\" >&2\n  exit \"$version_status\"\nfi\ntrue"
         }
       ],
       "parserConfig": null,
       "systemInfoConfig": null,
+      "outputRules": [
+        {
+          "exitCodes": [
+            0
+          ],
+          "match": "^Hermes doctor reported issues after update",
+          "outcome": "warning",
+          "message": "Hermes Agent was updated, but hermes doctor reported issues. Run hermes doctor on the host for details."
+        },
+        {
+          "exitCodes": [
+            0
+          ],
+          "match": "^Hermes update returned exit code (?<code>\\d+) after a completed update",
+          "outcome": "warning",
+          "message": "Hermes Agent was updated, but hermes update exited with code $<code>."
+        }
+      ],
       "sourceScriptId": null
     },
     {
@@ -157,11 +193,29 @@
       "steps": [
         {
           "label": "Update selected Hermes Agent package",
-          "command": "case \"{{package}}\" in\n  hermes-agent) ;;\n  *)\n    echo \"Unsupported Hermes package selection: {{package}}\" >&2\n    exit 2\n    ;;\nesac\nbranch=\"{{config.branch}}\"\nbackup=\"{{config.backup}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\ncase \"$backup\" in\n  true|TRUE|yes|YES|1) set -- \"$@\" --backup ;;\nesac\nerrexit_was_on=false\ncase \"$-\" in\n  *e*) errexit_was_on=true; set +e ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nif [ \"$errexit_was_on\" = \"true\" ]; then\n  set -e\nfi\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Eiq 'Local changes were restored on top of the updated codebase|Updated Hermes Agent'; then\n    echo \"Hermes update returned exit code $update_status after a completed update; continuing validation.\"\n  else\n    exit \"$update_status\"\n  fi\nfi\ndoctor_status=0\nhermes doctor 2>&1 || doctor_status=$?\nif [ \"$doctor_status\" -ne 0 ]; then\n  echo \"Hermes doctor reported issues after update; update completed. Run the Hermes repair action for details.\" >&2\nfi\nversion_status=0\nhermes version 2>&1 || version_status=$?\nif [ \"$version_status\" -ne 0 ]; then\n  exit \"$version_status\"\nfi\ntrue"
+          "command": "case \"{{package}}\" in\n  hermes-agent) ;;\n  *)\n    echo \"Unsupported Hermes package selection: {{package}}\" >&2\n    exit 2\n    ;;\nesac\nbranch=\"{{config.branch}}\"\nbackup=\"{{config.backup}}\"\n[ -n \"$branch\" ] || branch=main\ncase \"$branch\" in\n  *[!A-Za-z0-9._/-]*)\n    echo \"Invalid Hermes branch: $branch\" >&2\n    exit 2\n    ;;\nesac\nset -- update\nif [ \"$branch\" != \"main\" ]; then\n  set -- \"$@\" --branch \"$branch\"\nfi\ncase \"$backup\" in\n  true|TRUE|yes|YES|1) set -- \"$@\" --backup ;;\nesac\nerrexit_was_on=false\ncase \"$-\" in\n  *e*) errexit_was_on=true; set +e ;;\nesac\nupdate_output=\"$(hermes \"$@\" 2>&1)\"\nupdate_status=$?\nif [ \"$errexit_was_on\" = \"true\" ]; then\n  set -e\nfi\nprintf '%s\\n' \"$update_output\"\nif [ \"$update_status\" -ne 0 ]; then\n  if printf '%s\\n' \"$update_output\" | grep -Eiq 'Local changes were restored on top of the updated codebase|Updated Hermes Agent|Already up to date'; then\n    echo \"Hermes update returned exit code $update_status after a completed update; continuing validation.\"\n  else\n    echo \"hermes update failed with exit code $update_status.\" >&2\n    exit \"$update_status\"\n  fi\nfi\ndoctor_status=0\nhermes doctor 2>&1 || doctor_status=$?\nif [ \"$doctor_status\" -ne 0 ]; then\n  echo \"Hermes doctor reported issues after update; update completed. Run the Hermes repair action for details.\" >&2\nfi\nversion_status=0\nhermes --version 2>&1 || version_status=$?\nif [ \"$version_status\" -ne 0 ]; then\n  echo \"hermes --version failed with exit code $version_status after the update.\" >&2\n  exit \"$version_status\"\nfi\ntrue"
         }
       ],
       "parserConfig": null,
       "systemInfoConfig": null,
+      "outputRules": [
+        {
+          "exitCodes": [
+            0
+          ],
+          "match": "^Hermes doctor reported issues after update",
+          "outcome": "warning",
+          "message": "Hermes Agent was updated, but hermes doctor reported issues. Run hermes doctor on the host for details."
+        },
+        {
+          "exitCodes": [
+            0
+          ],
+          "match": "^Hermes update returned exit code (?<code>\\d+) after a completed update",
+          "outcome": "warning",
+          "message": "Hermes Agent was updated, but hermes update exited with code $<code>."
+        }
+      ],
       "sourceScriptId": null
     }
   ]

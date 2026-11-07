@@ -95,7 +95,7 @@ updates.post("/systems/:id/package-issues/:issueId/solve", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.solvePackageManagerIssue(id, issueId);
     return {
-      status: result.cancelled ? "cancelled" : result.success ? "success" : "failed",
+      status: result.cancelled ? "cancelled" : result.warning ? "warning" : result.success ? "success" : "failed",
       output: result.output,
     };
   });
@@ -184,7 +184,7 @@ updates.post("/systems/:id/post-upgrade-script/run", async (c) => {
   const jobId = startJob(async () => {
     const result = await updateService.runPendingPostUpgradeScript(id);
     return {
-      status: result.cancelled ? "cancelled" : result.success ? "success" : "failed",
+      status: result.cancelled ? "cancelled" : result.warning ? "warning" : result.success ? "success" : "failed",
       output: result.output,
     };
   });

@@ -484,12 +484,13 @@ The **Scripts** page exposes the SSH command templates for package-manager detec
 
 Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
 
-- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, system-info, and reboot are read-only and can be copied.
+- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, system-info, and reboot are read-only and can be copied. Update checks and installed-package lists for built-in package managers keep the built-in parser, even after you edit the commands of a copy, so the edited commands must print the same format.
 - Custom scripts can define shell steps, operation type, parser settings, installed-package inventory parsing, and system-info section mapping.
 - Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`.
 - Custom package managers can define display labels, parser regexes, optional config entries, and import/export bundles.
 - Config entries can be marked **secret** for tokens and passwords. See [Secret config entries](#secret-config-entries).
 - Pre- and post-upgrade scripts can run commands around an upgrade. See [Pre- and post-upgrade scripts](#pre--and-post-upgrade-scripts).
+- Output rules decide from the exit code and output whether a step succeeded, needs attention, or failed. See [Output rules](#output-rules).
 - Used scripts and package managers are protected from accidental deletion.
 
 Command placeholders include `{{package}}`, `{{packages}}`, `{{quotedPackage}}`, `{{quotedPackages}}`, `{{manager}}`, `{{config.someKey}}`, and `{{sudo:COMMAND}}`. Custom parser regexes should use named capture groups such as `packageName`, `newVersion`, `currentVersion`, `architecture`, and `repository`.
@@ -518,7 +519,7 @@ Each script runs once per upgrade, however many package managers the system has.
 
 | Situation | Upgrade | Post-upgrade script |
 |---|---|---|
-| Pre-upgrade script exits non-zero | Skipped | Does not run, so undo any partial work in the pre-upgrade script |
+| Pre-upgrade script fails, for example by exiting non-zero | Skipped | Does not run, so undo any partial work in the pre-upgrade script |
 | Pre-upgrade script is cancelled or interrupted | Skipped | Does not run; the system page offers to run it |
 | Upgrade succeeds, fails, or is cancelled | Ran | Runs |
 | SSH drops or the host reboots during the upgrade | Reconnects | Runs after reconnecting |
@@ -531,8 +532,55 @@ Each script runs once per upgrade, however many package managers the system has.
 - **Failures:** a failed pre- or post-upgrade script fails the operation. In an **Upgrade All Systems** run, it also cancels the later priorities in the same dashboard group. Cancelling a pre-upgrade script does the same once it has started on the host, or when a post-upgrade script is already pending, because the node may still be out of service. Update schedules are different: they upgrade systems one at a time and continue with the next system. A post-upgrade script that did not finish leaves a warning on the system page, with buttons to run it or dismiss the warning. Before you run it, check that no upgrade is still running on the host.
 - **Steps:** each step runs as its own command with its own shell state, and a failed step stops the script.
 - **Sudo:** when the system has a dashboard sudo password, use one `{{sudo:COMMAND}}` per step, because the password is delivered once per step. Scripts that apply to the system, including defaults, are included in the **Sudoers setup** output.
-- **Environment:** `LUDASH_OPERATION` holds `upgrade_all`, `full_upgrade_all`, `upgrade_package`, or `manual`. Post-upgrade scripts also get `LUDASH_UPGRADE_RESULT` with `success`, `failed`, `cancelled`, or `unknown`. `sudo` usually does not pass these on, so read them in the script itself.
+- **Warnings:** a step that an [output rule](#output-rules) marks as a warning does not stop the script. The upgrade still runs, and its result becomes a warning.
+- **Environment:** `LUDASH_OPERATION` holds `upgrade_all`, `full_upgrade_all`, `upgrade_package`, or `manual`. Post-upgrade scripts also get `LUDASH_UPGRADE_RESULT` with `success`, `warning`, `failed`, `cancelled`, or `unknown`. `warning` means the upgrade finished but needs attention, for example because an output rule matched, a pre-upgrade script reported a warning, or SSH dropped and the dashboard reconnected. Scripts that check for `success` should also accept `warning`. `sudo` usually does not pass these variables on, so read them in the script itself.
 - **Write them to be safe to repeat:** running a pending script from the system page repeats it, and a step that was just starting when the dashboard restarted can run again.
+
+### Output rules
+
+By default, exit code 0 means success and anything else means failure. Some package managers do not follow that. A self-compiled OpenWrt image can make `apk` report `1 error` and exit with 1 on every run although each upgrade worked, and other tools print errors while exiting with 0. Output rules let a custom script decide instead.
+
+Open a custom script on the **Scripts** page, or copy a built-in one, and add rules under **Output rules**. Each rule has:
+
+| Field | Meaning |
+|---|---|
+| **Step** | Limits the rule to one step. Only for operations whose steps run as separate commands. |
+| **Exit codes** | Comma-separated exit codes. Empty matches any exit code. |
+| **Output matches** | A regular expression that must match the output. `^` and `$` match at line starts and ends. |
+| **Output does not match** | A regular expression that must not match the output. |
+| **Result** | **Success**, **Warning**, or **Failed**. |
+| **Message** | Optional text for warnings and failures. `$<name>` inserts a named group from **Output matches**. |
+
+- A rule needs exit codes, an output pattern, or both. All of its conditions must hold.
+- Rules are checked in order and the first match decides. Without a match, the usual exit-code handling applies, so a script without rules behaves exactly as before.
+- Rules read the step's combined stdout and stderr as shown in the activity log. Very long output is read from its last 256 KiB.
+- Patterns that can take very long to match, such as nested repeats like `(a+)+` or backreferences, are rejected. As a safeguard, each pattern may run for at most 100 ms. A pattern that takes longer is skipped, the live output shows a warning, and the next rule is checked. **Try the rules** applies the same limit and says which rules it skipped.
+- **Try the rules** below the list tests them against pasted output without saving.
+
+Where rules apply:
+
+| Operation | Rules see |
+|---|---|
+| Check updates, installed packages, issue repair, pre- and post-upgrade scripts | Each step on its own. Rules can be limited to a step by its label. |
+| Upgrade all, full upgrade, selected-package upgrades, autoremove | The steps run as one command that stops at the first failed step, so rules see the combined output and the final exit code. |
+| Detection, system info, reboot | No rules. |
+
+What each result does:
+
+- **Success** treats the result as successful, even with a non-zero exit code. In update checks it also hides the parser's warning for that step.
+- **Warning** keeps going but flags the result: the step and the operation show a warning, schedules and **Upgrade All Systems** count it as a warning, and post-upgrade scripts get `LUDASH_UPGRADE_RESULT=warning`.
+- **Failed** fails the result even with exit code 0. Where steps run separately, a failed step stops the script, as a non-zero exit code would.
+- Rules only change how a result is reported. Parsers still read update lists, pins, and installed packages from the output as usual. Results the dashboard has to guess after a reboot, without a real exit code, are never matched.
+
+Example for the `apk` case above. On a copy of **Upgrade all** for APK:
+
+| Output matches | Output does not match | Result | Message |
+|---|---|---|---|
+| `^(?<count>\d+) errors?;` | `^ERROR:` | Warning | `apk counted $<count> pre-existing error(s)` |
+
+A copy of the APK update check can do the same for its **Detecting kept-back packages** step with the result **Success**. Real problems, such as `ERROR: unable to select packages`, still fail.
+
+Rules are part of the script, so they are included when you export and import custom package-manager bundles.
 
 ### Secret config entries
 

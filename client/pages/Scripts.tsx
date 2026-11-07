@@ -39,6 +39,16 @@ import {
 } from "../lib/package-manager-configs";
 import { useI18n } from "../lib/i18n";
 import { filterBySearch } from "../lib/list-search";
+import { OutputRulesSection } from "../components/scripts/OutputRulesSection";
+import {
+  buildOutputRules,
+  createStepKey,
+  detachOutputRulesFromStep,
+  toEditorSteps,
+  toOutputRuleDrafts,
+  type EditorStep,
+} from "../lib/output-rules";
+import { getOutputRuleScope } from "../../shared/output-rules";
 
 const OPERATION_LABELS: Record<ScriptOperation, string> = {
   detect: "Detection",
@@ -206,7 +216,7 @@ const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
     label: OPERATION_LABELS.post_upgrade,
     allowedTypes: ["system"],
     purpose: "Runs once after an upgrade on every system that uses it, even if the upgrade failed or was cancelled.",
-    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, failed, cancelled, or unknown.",
+    stepBehavior: "Steps run in order as separate commands and stop at the first failed step. With a sudo password, use one sudo placeholder per step. LUDASH_OPERATION holds the upgrade type and LUDASH_UPGRADE_RESULT holds success, warning, failed, cancelled, or unknown.",
     outputConsumer: "Output is streamed live and stored in activity history; it is not parsed.",
     parserBehavior: "No parser configuration is used.",
     exitCodeBehavior: "A non-zero exit code marks the upgrade as failed and offers to run the script again from the system page.",
@@ -358,6 +368,7 @@ function emptyScript(t?: Translate): ScriptDefinition {
     steps: [{ label: t?.("pages.scripts.defaultStepLabel") ?? "Run command", command: "" }],
     parserConfig: null,
     systemInfoConfig: null,
+    outputRules: [],
     sourceScriptId: null,
   };
 }
@@ -442,6 +453,10 @@ function copyScriptDraft(script: ScriptDefinition, t: Translate): ScriptDefiniti
     name: t("pages.scripts.nameCopy", { name: script.name }),
     steps: script.steps.map((step) => ({ ...step })),
     parserConfig: script.parserConfig ? { ...script.parserConfig } : null,
+    outputRules: (script.outputRules ?? []).map((rule) => ({
+      ...rule,
+      ...(rule.exitCodes ? { exitCodes: [...rule.exitCodes] } : {}),
+    })),
     systemInfoConfig: script.systemInfoConfig
       ? {
           ...script.systemInfoConfig,
@@ -812,7 +827,9 @@ function RuntimeBehaviorPanel({
     ? t("pages.scripts.runtime.customParserOutput", { step: parseStepLabel })
     : usesBuiltinParser && profile.operation === "check_updates"
       ? t("pages.scripts.runtime.builtinParserOutput")
-      : t(`pages.scripts.runtime.${profile.operation}.outputConsumer`);
+      : usesBuiltinParser && profile.operation === "list_installed_packages"
+        ? t("pages.scripts.runtime.builtinInstalledParserOutput")
+        : t(`pages.scripts.runtime.${profile.operation}.outputConsumer`);
 
   return (
     <section className="rounded-lg border border-blue-200 bg-blue-50/70 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
@@ -1025,11 +1042,11 @@ export function ScriptEditor({
   const { t } = useI18n();
   const { addToast } = useToast();
   const [draft, setDraft] = useState(script);
-  const [steps, setSteps] = useState<ScriptStep[]>(
+  const [steps, setSteps] = useState<EditorStep[]>(() => toEditorSteps(
     script.steps.length
       ? script.steps
       : [{ label: t("pages.scripts.defaultStepLabel"), command: "" }],
-  );
+  ));
   const [parserConfig, setParserConfig] = useState({
     parseStep: script.parserConfig?.parseStep?.toString() ?? "",
     updateRegex: script.parserConfig?.updateRegex ?? "",
@@ -1054,8 +1071,9 @@ export function ScriptEditor({
     script.systemInfoConfig?.mode ?? "sectioned"
   );
   const [rebootRequiredRegex, setRebootRequiredRegex] = useState(script.systemInfoConfig?.rebootRequiredRegex ?? "");
+  const [outputRules, setOutputRules] = useState(() => toOutputRuleDrafts(script.outputRules, steps));
   const [beautifyingStep, setBeautifyingStep] = useState<number | null>(null);
-  const stepsRef = useRef<ScriptStep[]>(steps);
+  const stepsRef = useRef<EditorStep[]>(steps);
   const stepsListRef = useRef<HTMLDivElement | null>(null);
   const sortableRef = useRef<Sortable | null>(null);
   const operationOptions = draft.type === "system" ? SYSTEM_OPERATIONS : PACKAGE_MANAGER_OPERATIONS;
@@ -1107,6 +1125,13 @@ export function ScriptEditor({
     draft.operation === "repair_issue" &&
     !usesBuiltinParser;
   const showSystemInfoConfig = draft.type === "system" && draft.operation === "system_info";
+  // An installed-package regex can only be set through the API; it replaces the built-in parser.
+  const usesBuiltinInventoryParser =
+    draft.type === "package_manager" &&
+    draft.operation === "list_installed_packages" &&
+    usesBuiltinParser &&
+    !script.parserConfig?.installedPackageRegex;
+  const outputRuleScope = getOutputRuleScope(draft.operation);
   const singleStepOperation = draft.operation === "detect";
   const explicitParseStep = parserConfig.parseStep.trim();
   const parsedStepNumber = explicitParseStep
@@ -1133,6 +1158,12 @@ export function ScriptEditor({
       if (showParserConfig) {
         if (parseStepOutOfRange) return t("pages.scripts.stepBadge.streamedOnly");
         return index === parsedStepIndex ? t("pages.scripts.stepBadge.parsedOutput") : t("pages.scripts.stepBadge.streamedOnly");
+      }
+      if (usesBuiltinInventoryParser) {
+        // The built-in inventory parser reads only the last step's output.
+        return index === steps.length - 1
+          ? t("pages.scripts.stepBadge.inventoryParserInput")
+          : t("pages.scripts.stepBadge.notUsed");
       }
       return usesBuiltinParser
         ? t("pages.scripts.stepBadge.parserInput")
@@ -1183,6 +1214,7 @@ export function ScriptEditor({
     };
   }, [steps.length]);
 
+  // Output rules point at a step's key, so editing its label keeps them attached.
   const updateStep = (index: number, patch: Partial<ScriptStep>) => {
     setSteps((current) =>
       current.map((step, stepIndex) =>
@@ -1195,11 +1227,13 @@ export function ScriptEditor({
     if (singleStepOperation) return;
     setSteps((current) => [
       ...current,
-      { label: t("pages.scripts.stepNumber", { step: current.length + 1 }), command: "" },
+      { label: t("pages.scripts.stepNumber", { step: current.length + 1 }), command: "", key: createStepKey() },
     ]);
   };
 
   const removeStep = (index: number) => {
+    const removed = steps[index];
+    if (removed) setOutputRules((current) => detachOutputRulesFromStep(current, removed));
     setSteps((current) => current.filter((_step, stepIndex) => stepIndex !== index));
   };
 
@@ -1255,6 +1289,7 @@ export function ScriptEditor({
         systemInfoConfig: showSystemInfoConfig
           ? buildSystemInfoConfig(systemInfoMode, systemInfoSections, rebootRequiredRegex)
           : null,
+        outputRules: buildOutputRules(outputRules, outputRuleScope, steps, t),
       });
     } catch (error) {
       addToast(error instanceof Error ? error.message : t("pages.scripts.invalidScript"), "danger");
@@ -1437,6 +1472,14 @@ export function ScriptEditor({
       {draft.type === "package_manager" && draft.operation === "check_updates" && usesBuiltinParser && (
         <div className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3 text-sm text-slate-500 dark:text-slate-400">
           {t("pages.scripts.builtinParserNotice", { manager: selectedPackageManager.toUpperCase() })}
+          {!draft.readonly && ` ${t("pages.scripts.builtinParserFormatHint")}`}
+        </div>
+      )}
+
+      {usesBuiltinInventoryParser && (
+        <div className="rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/30 p-3 text-sm text-slate-500 dark:text-slate-400">
+          {t("pages.scripts.builtinInstalledParserNotice", { manager: selectedPackageManager.toUpperCase() })}
+          {!draft.readonly && ` ${t("pages.scripts.builtinParserFormatHint")}`}
         </div>
       )}
 
@@ -1651,6 +1694,16 @@ export function ScriptEditor({
         </details>
       )}
 
+      {outputRuleScope && (
+        <OutputRulesSection
+          scope={outputRuleScope}
+          steps={steps}
+          rules={outputRules}
+          onChange={setOutputRules}
+          parserNote={draft.type === "package_manager" && draft.operation === "check_updates"}
+        />
+      )}
+
       <div className="flex justify-end gap-3">
         <button type="button" onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700">
           {t("common.cancel")}
@@ -1676,7 +1729,7 @@ export function PackageManagerEditor({
   busy,
   importing,
   editing,
-  importKeyExists,
+  importKeyConflict,
 }: {
   draft: PackageManagerDraft;
   setDraft: (draft: PackageManagerDraft) => void;
@@ -1690,7 +1743,8 @@ export function PackageManagerEditor({
   busy?: boolean;
   importing?: boolean;
   editing?: boolean;
-  importKeyExists?: boolean;
+  /** A built-in key blocks the import; a custom key is replaced after confirmation. */
+  importKeyConflict?: "builtin" | "custom" | null;
 }) {
   const { t } = useI18n();
   const effectiveSaveLabel = saveLabel ?? t("common.save");
@@ -1747,9 +1801,14 @@ export function PackageManagerEditor({
               {t("pages.scripts.managerKeysRenameGuidance")}
             </p>
           )}
-          {importKeyExists && (
+          {importKeyConflict === "builtin" && (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400">
               {t("pages.scripts.managerKeyAlreadyExists")}
+            </p>
+          )}
+          {importKeyConflict === "custom" && (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              {t("pages.scripts.managerKeyWillBeReplaced")}
             </p>
           )}
         </div>
@@ -1976,7 +2035,7 @@ export function PackageManagerEditor({
         <button type="button" onClick={onCancel} className="w-full px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto">
           {t("common.cancel")}
         </button>
-        <button type="button" disabled={busy || importKeyExists} onClick={onSave} className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 sm:w-auto">
+        <button type="button" disabled={busy || importKeyConflict === "builtin"} onClick={onSave} className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 sm:w-auto">
           {busy ? <span className="spinner spinner-sm" /> : effectiveSaveLabel}
         </button>
       </div>
@@ -2272,14 +2331,36 @@ export default function Scripts() {
       .map(([name, details]) => ({ name, label: details.label, configEntries: details.configEntries }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [managedPackageManagers]);
-  const packageManagerImportKeyExists = Boolean(
-    packageManagerImportBundle &&
-      !editingPackageManager &&
-      packageManagerDraft.name.trim() &&
-      managedPackageManagers.some(
+  const packageManagerImportTarget = packageManagerImportBundle && !editingPackageManager
+    ? managedPackageManagers.find(
         (manager) => manager.name === packageManagerDraft.name.trim().toLowerCase(),
-      ),
-  );
+      ) ?? null
+    : null;
+  const packageManagerImportKeyConflict = packageManagerImportTarget
+    ? (packageManagerImportTarget.builtin ? "builtin" : "custom")
+    : null;
+  // Mirrors the server's import matching (same name and operation) so the
+  // confirmation states what a replace will overwrite, add and keep.
+  const packageManagerReplaceSummary = useMemo(() => {
+    if (!packageManagerImportBundle || packageManagerImportKeyConflict !== "custom" || !packageManagerImportTarget) {
+      return null;
+    }
+    const existing = (data?.scripts ?? []).filter((script) =>
+      !script.readonly &&
+      script.type === "package_manager" &&
+      script.pkgManager === packageManagerImportTarget.name
+    );
+    const scriptKey = (script: { operation: string; name: string }) => `${script.operation}\u0000${script.name.trim()}`;
+    const existingKeys = new Set(existing.map(scriptKey));
+    const importedKeys = new Set(packageManagerImportBundle.scripts.map(scriptKey));
+    const updated = packageManagerImportBundle.scripts.filter((script) => existingKeys.has(scriptKey(script))).length;
+    return {
+      updated,
+      created: packageManagerImportBundle.scripts.length - updated,
+      kept: existing.filter((script) => !importedKeys.has(scriptKey(script))).length,
+    };
+  }, [data, packageManagerImportBundle, packageManagerImportKeyConflict, packageManagerImportTarget]);
+  const [confirmPackageManagerReplace, setConfirmPackageManagerReplace] = useState(false);
 
   const saveScript = (script: ScriptDefinition) => {
     const callbacks = {
@@ -2310,14 +2391,9 @@ export default function Scripts() {
     );
   };
 
-  const handleSavePackageManager = () => {
+  const handleSavePackageManager = (replaceConfirmed = false) => {
     const managerName = packageManagerDraft.name.trim().toLowerCase();
-    if (
-      packageManagerImportBundle &&
-      !editingPackageManager &&
-      managerName &&
-      managedPackageManagers.some((manager) => manager.name === managerName)
-    ) {
+    if (packageManagerImportKeyConflict === "builtin") {
       addToast(
         t("pages.scripts.packageManagerKeyKeyAlreadyExistsChooseA", {
           key: managerName,
@@ -2345,6 +2421,11 @@ export default function Scripts() {
       configEntries,
     };
     if (packageManagerImportBundle && !editingPackageManager) {
+      const replace = packageManagerImportKeyConflict === "custom";
+      if (replace && !replaceConfirmed) {
+        setConfirmPackageManagerReplace(true);
+        return;
+      }
       const bundle: CustomPackageManagerBundle = {
         ...packageManagerImportBundle,
         packageManager: {
@@ -2358,8 +2439,9 @@ export default function Scripts() {
           pkgManager: payload.name,
         })),
       };
-      importPackageManagerBundle.mutate(bundle, {
+      importPackageManagerBundle.mutate({ bundle, replace }, {
         onSuccess: (result) => {
+          setConfirmPackageManagerReplace(false);
           setShowPackageManager(false);
           setEditingPackageManager(null);
           setPackageManagerDraft(emptyPackageManager());
@@ -2368,7 +2450,9 @@ export default function Scripts() {
           setPackageManagersOpen(true);
           setManagerFilter(result.manager.name);
           addToast(
-            t("pages.scripts.packageManagerImportedCreatedScriptsCreatedUpdatedUpdated", {
+            t(replace
+              ? "pages.scripts.packageManagerReplacedCreatedScriptsCreatedUpdatedUpdated"
+              : "pages.scripts.packageManagerImportedCreatedScriptsCreatedUpdatedUpdated", {
               created: result.createdScripts,
               updated: result.updatedScripts,
             }),
@@ -2592,6 +2676,9 @@ export default function Scripts() {
                       {script.isDefault ? <Badge variant="success" small>{t("pages.scripts.default")}</Badge> : null}
                       {script.pkgManager ? <Badge variant="muted" small>{script.pkgManager}</Badge> : null}
                       {scriptUsesSudo(script) ? <Badge variant="warning" small>sudo</Badge> : null}
+                      {script.outputRules?.length
+                        ? <Badge variant="muted" small>{t("pages.scripts.outputRules.count", { rules: script.outputRules.length })}</Badge>
+                        : null}
                       <UsageBadge
                         usages={script.usages ?? []}
                         onOpen={() => setUsageTarget(script)}
@@ -2727,12 +2814,17 @@ export default function Scripts() {
           setPackageManagerImportFileName(null);
         }}
         title={editingPackageManager ? t("pages.scripts.editPackageManager") : t("pages.scripts.newPackageManager")}
-        dismissible={!createPackageManager.isPending && !updatePackageManager.isPending && !importPackageManagerBundle.isPending}
+        dismissible={
+          !confirmPackageManagerReplace &&
+          !createPackageManager.isPending &&
+          !updatePackageManager.isPending &&
+          !importPackageManagerBundle.isPending
+        }
       >
         <PackageManagerEditor
           draft={packageManagerDraft}
           setDraft={setPackageManagerDraft}
-          onSave={handleSavePackageManager}
+          onSave={() => handleSavePackageManager()}
           onImport={() => importInputRef.current?.click()}
           onClearImport={() => {
             setPackageManagerImportBundle(null);
@@ -2750,11 +2842,37 @@ export default function Scripts() {
           }}
           busy={createPackageManager.isPending || updatePackageManager.isPending || importPackageManagerBundle.isPending}
           importing={importPackageManagerBundle.isPending}
-          saveLabel={packageManagerImportBundle ? t("pages.scripts.import") : t("pages.scripts.save")}
+          saveLabel={
+            packageManagerImportKeyConflict === "custom"
+              ? t("pages.scripts.replace")
+              : packageManagerImportBundle ? t("pages.scripts.import") : t("pages.scripts.save")
+          }
           editing={editingPackageManager !== null}
-          importKeyExists={packageManagerImportKeyExists}
+          importKeyConflict={packageManagerImportKeyConflict}
         />
       </Modal>
+
+      <ConfirmDialog
+        open={confirmPackageManagerReplace}
+        onClose={() => {
+          if (!importPackageManagerBundle.isPending) setConfirmPackageManagerReplace(false);
+        }}
+        onConfirm={() => handleSavePackageManager(true)}
+        title={t("pages.scripts.replacePackageManager")}
+        message={t("pages.scripts.replacePackageManagerMessage", {
+          label: packageManagerImportTarget?.label ?? "",
+          key: packageManagerImportTarget?.name ?? "",
+        })}
+        confirmLabel={t("pages.scripts.replace")}
+        loading={importPackageManagerBundle.isPending}
+        danger
+      >
+        {packageManagerReplaceSummary ? (
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {t("pages.scripts.replacePackageManagerScriptsSummary", packageManagerReplaceSummary)}
+          </p>
+        ) : null}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={deleteTarget !== null}

@@ -57,7 +57,15 @@ scripts.post("/package-managers/import", async (c) => {
   try {
     const bundle = scriptService.normalizeCustomPackageManagerBundle(body);
     const managerName = bundle.packageManager.name;
-    if (scriptService.listPackageManagerDefinitions().some((manager) => manager.name === managerName)) {
+    // Replacing is opt-in so an import never overwrites a manager by accident.
+    const replace = c.req.query("replace") === "true";
+    const existing = scriptService.listPackageManagerDefinitions().find((manager) => manager.name === managerName);
+    if (existing?.builtin) {
+      return c.json({
+        error: `Package manager key "${managerName}" belongs to a built-in package manager. Choose a different key.`,
+      }, 409);
+    }
+    if (existing && !replace) {
       return c.json({
         error: `Package manager key "${managerName}" already exists. Choose a different key.`,
       }, 409);
