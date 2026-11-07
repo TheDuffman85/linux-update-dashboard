@@ -244,11 +244,14 @@ export function useDeletePackageManager() {
 export function useImportPackageManagerBundle() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (bundle: CustomPackageManagerBundle | unknown) =>
-      apiFetch<CustomPackageManagerImportResult>("/scripts/package-managers/import", {
-        method: "POST",
-        body: JSON.stringify(bundle),
-      }),
+    mutationFn: ({ bundle, replace = false }: { bundle: CustomPackageManagerBundle | unknown; replace?: boolean }) =>
+      apiFetch<CustomPackageManagerImportResult>(
+        `/scripts/package-managers/import${replace ? "?replace=true" : ""}`,
+        {
+          method: "POST",
+          body: JSON.stringify(bundle),
+        },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scripts"] }),
   });
 }

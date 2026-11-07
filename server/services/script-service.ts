@@ -2291,28 +2291,37 @@ function findImportScriptMatch(script: Pick<ScriptDefinition, "name" | "operatio
   return row ? serializeCustomScript(row) : null;
 }
 
+/**
+ * Imports a bundle. An existing manager with the same key is replaced: its
+ * definition is overwritten, scripts with the same name and operation are
+ * updated in place (keeping system assignments), and other scripts are kept.
+ * Runs in one transaction so a script that fails validation leaves the
+ * existing manager untouched.
+ */
 export function importCustomPackageManagerBundle(input: unknown): CustomPackageManagerImportResult {
   const bundle = normalizeCustomPackageManagerBundle(input);
-  const existingManager = findCustomPackageManager(bundle.packageManager.name);
-  const manager = existingManager
-    ? updateCustomPackageManager(bundle.packageManager.name, bundle.packageManager)
-    : createCustomPackageManager(bundle.packageManager);
+  return getDb().transaction(() => {
+    const existingManager = findCustomPackageManager(bundle.packageManager.name);
+    const manager = existingManager
+      ? updateCustomPackageManager(bundle.packageManager.name, bundle.packageManager)
+      : createCustomPackageManager(bundle.packageManager);
 
-  const scripts: ScriptDefinition[] = [];
-  let createdScripts = 0;
-  let updatedScripts = 0;
-  for (const script of bundle.scripts) {
-    const match = findImportScriptMatch(script);
-    if (match) {
-      scripts.push(updateScript(match.id, script));
-      updatedScripts += 1;
-    } else {
-      scripts.push(createScript(script));
-      createdScripts += 1;
+    const scripts: ScriptDefinition[] = [];
+    let createdScripts = 0;
+    let updatedScripts = 0;
+    for (const script of bundle.scripts) {
+      const match = findImportScriptMatch(script);
+      if (match) {
+        scripts.push(updateScript(match.id, script));
+        updatedScripts += 1;
+      } else {
+        scripts.push(createScript(script));
+        createdScripts += 1;
+      }
     }
-  }
 
-  return { manager, scripts, createdScripts, updatedScripts };
+    return { manager, scripts, createdScripts, updatedScripts };
+  });
 }
 
 export function getSystemOverrides(systemId: number): Record<string, string> {

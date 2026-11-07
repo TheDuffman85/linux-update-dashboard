@@ -1729,7 +1729,7 @@ export function PackageManagerEditor({
   busy,
   importing,
   editing,
-  importKeyExists,
+  importKeyConflict,
 }: {
   draft: PackageManagerDraft;
   setDraft: (draft: PackageManagerDraft) => void;
@@ -1743,7 +1743,8 @@ export function PackageManagerEditor({
   busy?: boolean;
   importing?: boolean;
   editing?: boolean;
-  importKeyExists?: boolean;
+  /** A built-in key blocks the import; a custom key is replaced after confirmation. */
+  importKeyConflict?: "builtin" | "custom" | null;
 }) {
   const { t } = useI18n();
   const effectiveSaveLabel = saveLabel ?? t("common.save");
@@ -1800,9 +1801,14 @@ export function PackageManagerEditor({
               {t("pages.scripts.managerKeysRenameGuidance")}
             </p>
           )}
-          {importKeyExists && (
+          {importKeyConflict === "builtin" && (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400">
               {t("pages.scripts.managerKeyAlreadyExists")}
+            </p>
+          )}
+          {importKeyConflict === "custom" && (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              {t("pages.scripts.managerKeyWillBeReplaced")}
             </p>
           )}
         </div>
@@ -2029,7 +2035,7 @@ export function PackageManagerEditor({
         <button type="button" onClick={onCancel} className="w-full px-4 py-2 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 sm:w-auto">
           {t("common.cancel")}
         </button>
-        <button type="button" disabled={busy || importKeyExists} onClick={onSave} className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 sm:w-auto">
+        <button type="button" disabled={busy || importKeyConflict === "builtin"} onClick={onSave} className="w-full px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 sm:w-auto">
           {busy ? <span className="spinner spinner-sm" /> : effectiveSaveLabel}
         </button>
       </div>
@@ -2325,14 +2331,36 @@ export default function Scripts() {
       .map(([name, details]) => ({ name, label: details.label, configEntries: details.configEntries }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [managedPackageManagers]);
-  const packageManagerImportKeyExists = Boolean(
-    packageManagerImportBundle &&
-      !editingPackageManager &&
-      packageManagerDraft.name.trim() &&
-      managedPackageManagers.some(
+  const packageManagerImportTarget = packageManagerImportBundle && !editingPackageManager
+    ? managedPackageManagers.find(
         (manager) => manager.name === packageManagerDraft.name.trim().toLowerCase(),
-      ),
-  );
+      ) ?? null
+    : null;
+  const packageManagerImportKeyConflict = packageManagerImportTarget
+    ? (packageManagerImportTarget.builtin ? "builtin" : "custom")
+    : null;
+  // Mirrors the server's import matching (same name and operation) so the
+  // confirmation states what a replace will overwrite, add and keep.
+  const packageManagerReplaceSummary = useMemo(() => {
+    if (!packageManagerImportBundle || packageManagerImportKeyConflict !== "custom" || !packageManagerImportTarget) {
+      return null;
+    }
+    const existing = (data?.scripts ?? []).filter((script) =>
+      !script.readonly &&
+      script.type === "package_manager" &&
+      script.pkgManager === packageManagerImportTarget.name
+    );
+    const scriptKey = (script: { operation: string; name: string }) => `${script.operation}\u0000${script.name.trim()}`;
+    const existingKeys = new Set(existing.map(scriptKey));
+    const importedKeys = new Set(packageManagerImportBundle.scripts.map(scriptKey));
+    const updated = packageManagerImportBundle.scripts.filter((script) => existingKeys.has(scriptKey(script))).length;
+    return {
+      updated,
+      created: packageManagerImportBundle.scripts.length - updated,
+      kept: existing.filter((script) => !importedKeys.has(scriptKey(script))).length,
+    };
+  }, [data, packageManagerImportBundle, packageManagerImportKeyConflict, packageManagerImportTarget]);
+  const [confirmPackageManagerReplace, setConfirmPackageManagerReplace] = useState(false);
 
   const saveScript = (script: ScriptDefinition) => {
     const callbacks = {
@@ -2363,14 +2391,9 @@ export default function Scripts() {
     );
   };
 
-  const handleSavePackageManager = () => {
+  const handleSavePackageManager = (replaceConfirmed = false) => {
     const managerName = packageManagerDraft.name.trim().toLowerCase();
-    if (
-      packageManagerImportBundle &&
-      !editingPackageManager &&
-      managerName &&
-      managedPackageManagers.some((manager) => manager.name === managerName)
-    ) {
+    if (packageManagerImportKeyConflict === "builtin") {
       addToast(
         t("pages.scripts.packageManagerKeyKeyAlreadyExistsChooseA", {
           key: managerName,
@@ -2398,6 +2421,11 @@ export default function Scripts() {
       configEntries,
     };
     if (packageManagerImportBundle && !editingPackageManager) {
+      const replace = packageManagerImportKeyConflict === "custom";
+      if (replace && !replaceConfirmed) {
+        setConfirmPackageManagerReplace(true);
+        return;
+      }
       const bundle: CustomPackageManagerBundle = {
         ...packageManagerImportBundle,
         packageManager: {
@@ -2411,8 +2439,9 @@ export default function Scripts() {
           pkgManager: payload.name,
         })),
       };
-      importPackageManagerBundle.mutate(bundle, {
+      importPackageManagerBundle.mutate({ bundle, replace }, {
         onSuccess: (result) => {
+          setConfirmPackageManagerReplace(false);
           setShowPackageManager(false);
           setEditingPackageManager(null);
           setPackageManagerDraft(emptyPackageManager());
@@ -2421,7 +2450,9 @@ export default function Scripts() {
           setPackageManagersOpen(true);
           setManagerFilter(result.manager.name);
           addToast(
-            t("pages.scripts.packageManagerImportedCreatedScriptsCreatedUpdatedUpdated", {
+            t(replace
+              ? "pages.scripts.packageManagerReplacedCreatedScriptsCreatedUpdatedUpdated"
+              : "pages.scripts.packageManagerImportedCreatedScriptsCreatedUpdatedUpdated", {
               created: result.createdScripts,
               updated: result.updatedScripts,
             }),
@@ -2783,12 +2814,17 @@ export default function Scripts() {
           setPackageManagerImportFileName(null);
         }}
         title={editingPackageManager ? t("pages.scripts.editPackageManager") : t("pages.scripts.newPackageManager")}
-        dismissible={!createPackageManager.isPending && !updatePackageManager.isPending && !importPackageManagerBundle.isPending}
+        dismissible={
+          !confirmPackageManagerReplace &&
+          !createPackageManager.isPending &&
+          !updatePackageManager.isPending &&
+          !importPackageManagerBundle.isPending
+        }
       >
         <PackageManagerEditor
           draft={packageManagerDraft}
           setDraft={setPackageManagerDraft}
-          onSave={handleSavePackageManager}
+          onSave={() => handleSavePackageManager()}
           onImport={() => importInputRef.current?.click()}
           onClearImport={() => {
             setPackageManagerImportBundle(null);
@@ -2806,11 +2842,37 @@ export default function Scripts() {
           }}
           busy={createPackageManager.isPending || updatePackageManager.isPending || importPackageManagerBundle.isPending}
           importing={importPackageManagerBundle.isPending}
-          saveLabel={packageManagerImportBundle ? t("pages.scripts.import") : t("pages.scripts.save")}
+          saveLabel={
+            packageManagerImportKeyConflict === "custom"
+              ? t("pages.scripts.replace")
+              : packageManagerImportBundle ? t("pages.scripts.import") : t("pages.scripts.save")
+          }
           editing={editingPackageManager !== null}
-          importKeyExists={packageManagerImportKeyExists}
+          importKeyConflict={packageManagerImportKeyConflict}
         />
       </Modal>
+
+      <ConfirmDialog
+        open={confirmPackageManagerReplace}
+        onClose={() => {
+          if (!importPackageManagerBundle.isPending) setConfirmPackageManagerReplace(false);
+        }}
+        onConfirm={() => handleSavePackageManager(true)}
+        title={t("pages.scripts.replacePackageManager")}
+        message={t("pages.scripts.replacePackageManagerMessage", {
+          label: packageManagerImportTarget?.label ?? "",
+          key: packageManagerImportTarget?.name ?? "",
+        })}
+        confirmLabel={t("pages.scripts.replace")}
+        loading={importPackageManagerBundle.isPending}
+        danger
+      >
+        {packageManagerReplaceSummary ? (
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {t("pages.scripts.replacePackageManagerScriptsSummary", packageManagerReplaceSummary)}
+          </p>
+        ) : null}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={deleteTarget !== null}

@@ -143,6 +143,123 @@ describe("scripts routes security", () => {
     });
   });
 
+  test("package manager import route replaces existing custom managers when asked", async () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    const kept = createScript({
+      name: "Local tweak",
+      type: "package_manager",
+      operation: "check_updates",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Check", command: "brew outdated" }],
+    });
+    const overwritten = createScript({
+      name: "Detect Linuxbrew",
+      type: "package_manager",
+      operation: "detect",
+      pkgManager: "brewlinux",
+      steps: [{ label: "Detect", command: "old detect" }],
+    });
+    const app = new Hono();
+    app.route("/api/scripts", scriptsRoutes);
+    const bundle = (name: string) => ({
+      format: "ludash.custom-package-manager.v1",
+      exportedAt: "2026-06-07T00:00:00.000Z",
+      packageManager: { name, label: "Linuxbrew import", parserConfig: null, configEntries: [] },
+      scripts: [
+        {
+          name: "Detect Linuxbrew",
+          description: null,
+          type: "package_manager",
+          operation: "detect",
+          pkgManager: name,
+          isDefault: true,
+          steps: [{ label: "Detect", command: "command -v brew && echo found" }],
+          parserConfig: null,
+          systemInfoConfig: null,
+          sourceScriptId: null,
+        },
+        {
+          name: "Upgrade Linuxbrew",
+          description: null,
+          type: "package_manager",
+          operation: "upgrade_all",
+          pkgManager: name,
+          isDefault: false,
+          steps: [{ label: "Upgrade", command: "brew upgrade" }],
+          parserConfig: null,
+          systemInfoConfig: null,
+          sourceScriptId: null,
+        },
+      ],
+    });
+
+    const res = await app.request("/api/scripts/package-managers/import?replace=true", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bundle("brewlinux")),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      manager: { name: "brewlinux", label: "Linuxbrew import" },
+      createdScripts: 1,
+      updatedScripts: 1,
+    });
+    expect(body.scripts[0]).toMatchObject({
+      id: overwritten.id,
+      steps: [{ label: "Detect", command: "command -v brew && echo found" }],
+    });
+    const listed = await (await app.request("/api/scripts")).json();
+    expect(listed.scripts.some((script: { id: string }) => script.id === kept.id)).toBe(true);
+
+    const builtinRes = await app.request("/api/scripts/package-managers/import?replace=true", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bundle("apt")),
+    });
+    expect(builtinRes.status).toBe(409);
+    expect(await builtinRes.json()).toEqual({
+      error: 'Package manager key "apt" belongs to a built-in package manager. Choose a different key.',
+    });
+  });
+
+  test("package manager replace leaves the existing manager untouched when a script is invalid", async () => {
+    createCustomPackageManager({ name: "brewlinux", label: "Linuxbrew" });
+    const app = new Hono();
+    app.route("/api/scripts", scriptsRoutes);
+
+    const res = await app.request("/api/scripts/package-managers/import?replace=true", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        format: "ludash.custom-package-manager.v1",
+        exportedAt: "2026-06-07T00:00:00.000Z",
+        packageManager: { name: "brewlinux", label: "Linuxbrew import", parserConfig: null, configEntries: [] },
+        scripts: [
+          {
+            name: "Broken",
+            description: null,
+            type: "package_manager",
+            operation: "detect",
+            pkgManager: "brewlinux",
+            isDefault: false,
+            steps: [],
+            parserConfig: null,
+            systemInfoConfig: null,
+            sourceScriptId: null,
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "steps must include at least one command" });
+    const listed = await (await app.request("/api/scripts")).json();
+    expect(listed.packageManagers.find((manager: { name: string }) => manager.name === "brewlinux"))
+      .toMatchObject({ label: "Linuxbrew" });
+  });
+
   test("full app stack blocks unauthenticated script access", async () => {
     getDb().insert(users).values({
       username: "browser-user",

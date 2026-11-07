@@ -84,7 +84,8 @@ function renderEditor(script: ScriptDefinition): string {
 
 function renderPackageManagerEditor(options: {
   importBundle?: CustomPackageManagerBundle | null;
-  importKeyExists?: boolean;
+  importKeyConflict?: "builtin" | "custom" | null;
+  saveLabel?: string;
 } = {}): string {
   return renderToStaticMarkup(
     <PackageManagerEditor
@@ -102,8 +103,8 @@ function renderPackageManagerEditor(options: {
       onClearImport={vi.fn()}
       importBundle={options.importBundle}
       importFileName={options.importBundle ? "npm-project-package-manager.json" : null}
-      saveLabel={options.importBundle ? "Import" : "Save"}
-      importKeyExists={options.importKeyExists}
+      saveLabel={options.saveLabel ?? (options.importBundle ? "Import" : "Save")}
+      importKeyConflict={options.importKeyConflict}
     />,
   );
 }
@@ -191,7 +192,7 @@ describe("Scripts page", () => {
     expect(html).not.toContain("Reload Import File");
   });
 
-  test("warns and blocks package-manager imports for existing manager keys", () => {
+  test("warns and blocks package-manager imports for built-in manager keys", () => {
     const importBundle: CustomPackageManagerBundle = {
       format: "ludash.custom-package-manager.v1",
       exportedAt: "2026-06-07T00:00:00.000Z",
@@ -217,12 +218,23 @@ describe("Scripts page", () => {
       ],
     };
 
-    const html = renderPackageManagerEditor({ importBundle, importKeyExists: true });
+    const html = renderPackageManagerEditor({ importBundle, importKeyConflict: "builtin" });
 
     expect(html).toContain("This manager key already exists.");
     expect(html).toContain("Choose a different key.");
     expect(html).not.toContain("Choose a different key or unload the import file.");
     expect(html).toContain("disabled=\"\"");
+
+    const replaceHtml = renderPackageManagerEditor({
+      importBundle,
+      importKeyConflict: "custom",
+      saveLabel: "Replace",
+    });
+
+    expect(replaceHtml).toContain("A custom package manager with this key already exists. Importing replaces it.");
+    expect(replaceHtml).not.toContain("This manager key already exists.");
+    expect(replaceHtml).toContain(">Replace</button>");
+    expect(replaceHtml).not.toMatch(/disabled=""[^>]*>Replace<\/button>/);
   });
 
   test("omits package-manager examples link when repository URL is unavailable", () => {
