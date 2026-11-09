@@ -134,7 +134,9 @@ describe("linking local and SSO sign-in", () => {
     return b;
   }
 
+  /** Returns from the provider; starts a sign-in first unless a link already started one. */
   async function ssoSignIn(b: Browser, result: Record<string, unknown>) {
+    if (!b.cookies.has("oidc_state")) await b.request("/api/auth/oidc/login");
     handleCallback.mockResolvedValue(result);
     return b.request("/api/auth/oidc/callback?code=x&state=y");
   }
@@ -202,6 +204,52 @@ describe("linking local and SSO sign-in", () => {
     closeDatabase();
     resetAuthConfig();
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe("returning from the provider", () => {
+    const TRANSACTION = ["oidc_state", "oidc_nonce", "oidc_redirect_uri"];
+
+    test("a callback without a login transaction starts the sign-in again from the login page", async () => {
+      vi.spyOn(console, "info").mockImplementation(() => {});
+      const b = browser();
+      const res = await b.request("/api/auth/oidc/callback?code=used&state=used");
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toMatch(/\/login\?error=oidc_expired$/);
+      expect(handleCallback).not.toHaveBeenCalled();
+      expect(await me(b)).toBeNull();
+    });
+
+    test("a signed-in browser that returns to a used callback goes to the dashboard", async () => {
+      const b = await signedIn(adminId);
+      const res = await b.request("/api/auth/oidc/callback?code=used&state=used");
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toMatch(/\/dashboard$/);
+      expect(handleCallback).not.toHaveBeenCalled();
+    });
+
+    test("a rejected code returns to the login page and ends the transaction", async () => {
+      const b = browser();
+      const res = await ssoSignIn(b, null as unknown as Record<string, unknown>);
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toMatch(/\/login\?error=oidc_failed$/);
+      expect(TRANSACTION.filter((name) => b.cookies.has(name))).toEqual([]);
+      expect(await me(b)).toBeNull();
+    });
+
+    test("an error during the sign-in returns to the login page", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const b = browser();
+      await b.request("/api/auth/oidc/login");
+      handleCallback.mockRejectedValue(new Error("provider unreachable"));
+      const res = await b.request("/api/auth/oidc/callback?code=x&state=y");
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toMatch(/\/login\?error=oidc_failed$/);
+      expect(await me(b)).toBeNull();
+    });
   });
 
   describe("linking", () => {

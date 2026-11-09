@@ -85,10 +85,17 @@ describe("Login page", () => {
       vi.unstubAllGlobals();
     });
 
-    function renderWith(search: string, options: { suppressed?: boolean; oidcAutoLogin?: boolean } = {}) {
+    function renderWith(
+      search: string,
+      options: { suppressed?: boolean; retried?: boolean; oidcAutoLogin?: boolean } = {},
+    ) {
       vi.stubGlobal("window", { location: { search } });
       vi.stubGlobal("sessionStorage", {
-        getItem: () => (options.suppressed ? "true" : null),
+        getItem: (key: string) => {
+          if (key.endsWith("suppressed")) return options.suppressed ? "true" : null;
+          if (key.endsWith("retried")) return options.retried ? "true" : null;
+          return null;
+        },
         setItem: vi.fn(),
         removeItem: vi.fn(),
       });
@@ -124,6 +131,45 @@ describe("Login page", () => {
       const html = renderWith("?error=oidc_unauthorized");
       expect(html).not.toContain("pages.login.redirectingToSso");
       expect(html).toContain("pages.login.oidcUnauthorized");
+    });
+
+    test("starts an expired SSO sign-in again once on its own", () => {
+      const html = renderWith("?error=oidc_expired");
+      expect(html).toContain("pages.login.redirectingToSso");
+      expect(html).not.toContain("pages.login.oidcError.expired");
+    });
+
+    test("shows an expired SSO sign-in as a notice once the retry is used", () => {
+      const html = renderWith("?error=oidc_expired", { retried: true });
+      expect(html).not.toContain("pages.login.redirectingToSso");
+      expect(html).toContain('role="status"');
+      expect(html).toContain("pages.login.oidcError.expired");
+      expect(html).not.toContain('role="alert"');
+    });
+
+    test("an expired SSO sign-in does not start again after a logout", () => {
+      const html = renderWith("?error=oidc_expired", { suppressed: true });
+      expect(html).not.toContain("pages.login.redirectingToSso");
+      expect(html).toContain("pages.login.oidcError.expired");
+    });
+
+    test("shows a failed SSO sign-in as an error without retrying", () => {
+      const html = renderWith("?error=oidc_failed");
+      expect(html).not.toContain("pages.login.redirectingToSso");
+      expect(html).toContain('role="alert"');
+      expect(html).toContain("pages.login.oidcError.failed");
+    });
+
+    test("an unknown error stays on the login page without a message", () => {
+      const html = renderWith("?error=toString");
+      expect(html).not.toContain("pages.login.redirectingToSso");
+      expect(html).not.toContain('role="alert"');
+    });
+
+    test("shows SSO errors even when auto-login is off", () => {
+      expect(renderWith("?error=oidc_unavailable", { oidcAutoLogin: false })).toContain(
+        "pages.login.oidcError.unavailable",
+      );
     });
   });
 });
