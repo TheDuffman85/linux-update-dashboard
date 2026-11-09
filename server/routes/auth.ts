@@ -1375,6 +1375,14 @@ function getOidcReturnOrigin(c: Context): string {
     : getKnownPublicOrigin();
 }
 
+/** A failed SSO sign-in returns to the login page with a fixed reason; details stay in the server log. */
+function oidcLoginErrorUrl(
+  c: Context,
+  reason: "oidc_expired" | "oidc_failed" | "oidc_unauthorized" | "oidc_unavailable",
+): string {
+  return `${getOidcReturnOrigin(c)}/login?error=${reason}`;
+}
+
 function oidcLinkOutcomeUrl(c: Context, outcome: string): string {
   return `${getOidcReturnOrigin(c)}/settings?tab=account&oidcLink=${outcome}`;
 }
@@ -1422,16 +1430,35 @@ async function holdOidcLinkForConfirmation(
 }
 
 auth.get("/oidc/callback", async (c) => {
+  // The callback is always a browser navigation, so every outcome redirects to a page.
   if (!oidc.isConfigured()) {
-    return c.json({ error: "OIDC not configured" }, 400);
+    return c.redirect(oidcLoginErrorUrl(c, "oidc_unavailable"));
   }
 
   const nonce = getCookie(c, "oidc_nonce");
   const state = getCookie(c, "oidc_state");
   const storedRedirectUri = getCookie(c, "oidc_redirect_uri");
   const linkIntent = readOidcLinkIntent(c, state);
-  if (getCookie(c, OIDC_LINK_INTENT_COOKIE)) {
-    deleteCookie(c, OIDC_LINK_INTENT_COOKIE, { path: "/" });
+  // Redirect targets are read from the request, so the transaction can end here
+  // whatever the outcome; a new attempt starts a new one.
+  const targetOrigin = getOidcReturnOrigin(c);
+  for (const name of [
+    "oidc_state",
+    "oidc_nonce",
+    "oidc_redirect_uri",
+    "oidc_return_origin",
+    OIDC_LINK_INTENT_COOKIE,
+  ]) {
+    if (getCookie(c, name)) deleteCookie(c, name, { path: "/" });
+  }
+
+  // Only the browser that started the sign-in may finish it. A reload, the back
+  // button or a slow provider also arrives here: a signed-in browser goes to the
+  // dashboard, any other starts again from the login page.
+  if (!nonce || !state) {
+    if (await getSession(c)) return c.redirect(`${targetOrigin}/dashboard`);
+    console.info("OIDC callback without a login transaction; the sign-in has to start again");
+    return c.redirect(oidcLoginErrorUrl(c, "oidc_expired"));
   }
 
   try {
@@ -1469,16 +1496,8 @@ auth.get("/oidc/callback", async (c) => {
     );
     if (!result) {
       if (linkIntent) return c.redirect(oidcLinkOutcomeUrl(c, "failed"));
-      return c.json({ error: "OIDC authentication failed" }, 400);
+      return c.redirect(oidcLoginErrorUrl(c, "oidc_failed"));
     }
-
-    deleteCookie(c, "oidc_state", { path: "/" });
-    deleteCookie(c, "oidc_nonce", { path: "/" });
-    deleteCookie(c, "oidc_redirect_uri", { path: "/" });
-
-    // Redirect to the SPA (use stored origin for dev where SPA is on a different port)
-    const targetOrigin = getOidcReturnOrigin(c);
-    deleteCookie(c, "oidc_return_origin", { path: "/" });
 
     // A link in progress must not sign in, create an account or end sessions.
     if (linkIntent) {
@@ -1492,13 +1511,13 @@ auth.get("/oidc/callback", async (c) => {
       // End any SSO sessions the identity still holds from before it lost access.
       endOidcIdentitySessions(getDb(), result.issuer, result.subject);
       await closeEndedSessionSockets();
-      return c.redirect(`${targetOrigin}/login?error=oidc_unauthorized`);
+      return c.redirect(oidcLoginErrorUrl(c, "oidc_unauthorized"));
     }
 
     const user = upsertOidcUser({ ...result, role: result.role });
     if (user.disabled === 1) {
       console.warn(`OIDC user "${user.username}" is disabled and was denied`);
-      return c.redirect(`${targetOrigin}/login?error=oidc_unauthorized`);
+      return c.redirect(oidcLoginErrorUrl(c, "oidc_unauthorized"));
     }
 
     // Signing in again ends the identity's earlier sessions (see upsertOidcUser).
@@ -1525,7 +1544,7 @@ auth.get("/oidc/callback", async (c) => {
   } catch (e) {
     console.error("OIDC callback error:", e);
     if (linkIntent) return c.redirect(oidcLinkOutcomeUrl(c, "failed"));
-    return c.json({ error: "OIDC authentication failed" }, 400);
+    return c.redirect(oidcLoginErrorUrl(c, "oidc_failed"));
   }
 });
 

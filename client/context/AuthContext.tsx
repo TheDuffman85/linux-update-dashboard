@@ -9,7 +9,10 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiFetch } from "../lib/client";
-import { setOidcAutoLoginSuppressed } from "../lib/oidc-auto-login";
+import {
+  setOidcAutoLoginRetried,
+  setOidcAutoLoginSuppressed,
+} from "../lib/oidc-auto-login";
 
 export type UserRole = "admin" | "read-only";
 
@@ -134,7 +137,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signedIn = !!state.user;
   useEffect(() => {
-    if (signedIn) setOidcAutoLoginSuppressed(false);
+    if (signedIn) {
+      setOidcAutoLoginSuppressed(false);
+      setOidcAutoLoginRetried(false);
+    }
   }, [signedIn]);
 
   // Cached responses hold per-user data such as preferences and passkeys, so

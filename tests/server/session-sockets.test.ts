@@ -33,6 +33,8 @@ const { default: authRoutes } = await import("../../server/routes/auth");
 const SESSION_SECRET = "session-sockets-test-secret";
 const PASSWORD = "Password1";
 const ISSUER = "https://idp.example.com";
+/** The cookies a sign-in started at /oidc/login leaves for the callback. */
+const LOGIN_TRANSACTION = "oidc_state=y; oidc_nonce=n";
 const incoming = {
   socket: { remoteAddress: "127.0.0.1", remotePort: 12345, remoteFamily: "IPv4" },
 };
@@ -125,7 +127,7 @@ describe("live output streams end with their session", () => {
     async function refresh(token: string): Promise<string> {
       const res = await app.request(
         "/api/ping",
-        { headers: { cookie: `ludash_session=${token}` } },
+        { headers: { cookie: `ludash_session=${token}; ${LOGIN_TRANSACTION}` } },
         { incoming },
       );
       expect(res.status).toBe(200);
@@ -218,7 +220,11 @@ describe("live output streams end with their session", () => {
       subject: "sso-sub",
     });
 
-    const res = await app.request("/api/auth/oidc/callback?code=x&state=y", {}, { incoming });
+    const res = await app.request(
+      "/api/auth/oidc/callback?code=x&state=y",
+      { headers: { cookie: LOGIN_TRANSACTION } },
+      { incoming },
+    );
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("error=oidc_unauthorized");
 
@@ -238,7 +244,7 @@ describe("live output streams end with their session", () => {
 
     const res = await app.request(
       "/api/auth/oidc/callback?code=x&state=y",
-      { headers: { cookie: `ludash_session=${token}` } },
+      { headers: { cookie: `ludash_session=${token}; ${LOGIN_TRANSACTION}` } },
       { incoming },
     );
     expect(res.status).toBe(302);

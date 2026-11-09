@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { AppLogo } from "../components/AppLogo";
 import { ApiError, apiFetch } from "../lib/client";
 import { useI18n } from "../lib/i18n";
 import { useBranding } from "../lib/branding";
-import { isOidcAutoLoginSuppressed } from "../lib/oidc-auto-login";
+import {
+  claimOidcAutoLoginRetry,
+  hasOidcAutoLoginRetried,
+  isOidcAutoLoginSuppressed,
+} from "../lib/oidc-auto-login";
 
 function base64urlToBuffer(base64url: string): ArrayBuffer {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
@@ -24,6 +28,23 @@ function bufferToBase64url(buffer: ArrayBuffer): string {
     .replace(/=+$/, "");
 }
 
+// Why an SSO sign-in sent the browser back to the login page; set by the OIDC callback.
+const OIDC_LOGIN_ERRORS = {
+  oidc_expired: "pages.login.oidcError.expired",
+  oidc_failed: "pages.login.oidcError.failed",
+  oidc_unauthorized: "pages.login.oidcUnauthorized",
+  oidc_unavailable: "pages.login.oidcError.unavailable",
+} as const;
+type OidcLoginError = keyof typeof OIDC_LOGIN_ERRORS;
+
+function readOidcLoginError(): OidcLoginError | null {
+  if (typeof window === "undefined") return null;
+  const value = new URLSearchParams(window.location.search).get("error");
+  return value && Object.hasOwn(OIDC_LOGIN_ERRORS, value)
+    ? (value as OidcLoginError)
+    : null;
+}
+
 export default function Login() {
   const {
     login,
@@ -40,32 +61,60 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState("");
   const [requiresTotp, setRequiresTotp] = useState(false);
 
-  const [error, setError] = useState(() =>
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("error") ===
-      "oidc_unauthorized"
-      ? t("pages.login.oidcUnauthorized")
-      : "",
-  );
+  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const [oidcError] = useState(readOidcLoginError);
   // ?local=1 keeps the login page reachable, for example to sign in with a
-  // passkey. A failed SSO sign-in stays on the page to show the error.
-  const [redirectingToSso] = useState(() => {
+  // passkey. After a failed SSO sign-in only an expired one starts again on its
+  // own, and only once; any other failure would send the user straight back.
+  const [redirectingToSso, setRedirectingToSso] = useState(() => {
     if (!oidcAutoLogin || isOidcAutoLoginSuppressed()) return false;
     if (typeof window === "undefined") return false;
     const params = new URLSearchParams(window.location.search);
-    return params.get("local") !== "1" && !params.has("error");
+    if (params.get("local") === "1") return false;
+    if (!params.has("error")) return true;
+    return oidcError === "oidc_expired" && !hasOidcAutoLoginRetried();
   });
+  // Kept as a reason, not text, so it follows a language that loads after the first render.
+  const [oidcMessage, setOidcMessage] = useState(() =>
+    redirectingToSso ? null : oidcError,
+  );
+  // Claimed once per page, so running the effect again cannot claim a second time.
+  const retryClaim = useRef<boolean | null>(null);
 
   useEffect(() => {
-    if (redirectingToSso) window.location.replace("/api/auth/oidc/login");
-  }, [redirectingToSso]);
+    if (!redirectingToSso) return;
+    if (oidcError) {
+      retryClaim.current ??= claimOidcAutoLoginRetry();
+      if (!retryClaim.current) {
+        setRedirectingToSso(false);
+        setOidcMessage(oidcError);
+        return;
+      }
+    }
+    window.location.replace("/api/auth/oidc/login");
+  }, [oidcError, redirectingToSso]);
+
+  // The reason is shown once; a reload must not show it again.
+  useEffect(() => {
+    if (!oidcError || redirectingToSso) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("error");
+    window.history.replaceState(window.history.state, "", url);
+  }, [oidcError, redirectingToSso]);
+
+  const oidcText = oidcMessage ? t(OIDC_LOGIN_ERRORS[oidcMessage]) : "";
+  const shownError =
+    error || (oidcMessage && oidcMessage !== "oidc_expired" ? oidcText : "");
+  const shownNotice =
+    notice || (oidcMessage === "oidc_expired" ? oidcText : "");
 
   const handlePasswordLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
     setNotice("");
+    setOidcMessage(null);
 
     if (!e.currentTarget.checkValidity()) {
       const invalidInput =
@@ -104,11 +153,13 @@ export default function Login() {
     setTotpCode("");
     setError("");
     setNotice("");
+    setOidcMessage(null);
   };
 
   const handlePasskeyLogin = async () => {
     setError("");
     setNotice("");
+    setOidcMessage(null);
     setLoading(true);
     try {
       if (!window.isSecureContext || !navigator.credentials) {
@@ -203,12 +254,12 @@ export default function Login() {
           </p>
         </div>
 
-        {error && (
+        {shownError && (
           <div
             role="alert"
             className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm"
           >
-            {error}
+            {shownError}
           </div>
         )}
         {redirectingToSso && (
@@ -219,12 +270,12 @@ export default function Login() {
             {t("pages.login.redirectingToSso")}
           </p>
         )}
-        {notice && !error && (
+        {shownNotice && !shownError && (
           <div
             role="status"
             className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-sm"
           >
-            {notice}
+            {shownNotice}
           </div>
         )}
 
