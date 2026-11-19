@@ -6,7 +6,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  NODE_VERSION: 24.22.2
+  NODE_VERSION: 24.22.3
 
 jobs:
   release:

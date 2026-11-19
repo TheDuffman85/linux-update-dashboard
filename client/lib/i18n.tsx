@@ -148,7 +148,7 @@ export function getLanguageLabel(language: SupportedLanguage): string {
 export function translateForLanguage(
   language: SupportedLanguage,
   key: string,
-  values?: TranslationValues,
+  values: TranslationValues = {},
 ): string {
   return i18next.getFixedT(language)(key, values);
 }
@@ -164,7 +164,7 @@ const fallbackI18n: I18nContextValue = {
   language: "en",
   preference: BROWSER_LANGUAGE_SETTING,
   browserLanguage: "en",
-  t: (key, values) => i18next.t(key, values),
+  t: (key, values = {}) => i18next.t(key, values),
 };
 
 const I18nContext = createContext<I18nContextValue>(fallbackI18n);
@@ -191,7 +191,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [i18n, language]);
 
   const t = useCallback(
-    (key: string, values?: TranslationValues) => translate(key, values),
+    (key: string, values: TranslationValues = {}) => translate(key, values),
     [translate],
   );
 

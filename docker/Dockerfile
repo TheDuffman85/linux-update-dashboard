@@ -1,11 +1,11 @@
-ARG NODE_VERSION=24.22.2
+ARG NODE_VERSION=24.22.3
 FROM node:${NODE_VERSION}-trixie-slim AS base
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade libc6 libc-bin \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN npm install --global pnpm@12.16.1
+RUN npm install --global pnpm@12.21.0
 
 # Production dependencies, installed per target platform because they include
 # native addons.
@@ -23,7 +23,7 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
-RUN npm install --global pnpm@12.16.1
+RUN npm install --global pnpm@12.21.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
