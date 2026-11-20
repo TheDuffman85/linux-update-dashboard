@@ -12,6 +12,7 @@ import {
 import { getParser, type ParsedUpdate } from "../ssh/parsers";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName } from "../ssh/parsers/types";
+import { MAX_SERVICES_PER_RESTART, isValidServiceName } from "../../shared/service-restart";
 import { getDnfLikeEulaPromptMessage, hasDnfLikeEulaPrompt } from "../ssh/parsers/dnf";
 import * as cacheService from "./cache-service";
 import * as hiddenUpdateService from "./hidden-update-service";
@@ -1167,7 +1168,8 @@ async function checkUpdatesUnlocked(
     const rebootRequired = await systemService.updateSystemInfo(
       systemId,
       sshManager,
-      conn
+      conn,
+      system,
     );
     if (rebootRequired) {
       await processRebootRequiredResult(rebootRequired).catch((error) =>
@@ -3665,6 +3667,256 @@ export async function rebootSystem(systemId: number): Promise<RebootResult> {
       await requestNotificationRuntimeSystemSync(systemId);
     }
   });
+}
+
+const RESTART_SERVICE_TIMEOUT_SECONDS = 180;
+
+export class RestartServicesRequestError extends Error {}
+
+export interface RestartServicesResult {
+  success: boolean;
+  status: "success" | "warning" | "failed" | "cancelled";
+  message: string;
+  restarted: string[];
+  failed: string[];
+}
+
+function isCommandTimeout(stderr: string): boolean {
+  return /^Command timed out after \d+s$/.test(stderr.trim());
+}
+
+/** Checks a restart request against the latest scan; only flagged services can be restarted. */
+function validateRestartRequest(
+  systemId: number,
+  units: unknown,
+): { requested: string[]; system: NonNullable<ReturnType<typeof systemService.getSystem>> } {
+  if (!Array.isArray(units) || units.length === 0) {
+    throw new RestartServicesRequestError("Select at least one service to restart");
+  }
+  const requested = [...new Set(units)];
+  if (requested.length > MAX_SERVICES_PER_RESTART) {
+    throw new RestartServicesRequestError(`At most ${MAX_SERVICES_PER_RESTART} services can be restarted at once`);
+  }
+  const system = systemService.getSystem(systemId);
+  if (!system) throw new RestartServicesRequestError("System not found");
+  const info = systemService.parseServiceRestartInfo(system.serviceRestartInfo);
+  if (info?.stale) {
+    throw new RestartServicesRequestError(
+      "The service list is out of date after an earlier restart. Refresh the system first.",
+    );
+  }
+  const flagged = new Set(info?.services.map((service) => service.unit) ?? []);
+  const invalid = requested.filter((unit) => !isValidServiceName(unit) || !flagged.has(unit));
+  if (invalid.length > 0) {
+    throw new RestartServicesRequestError(
+      `Not flagged for restart: ${invalid.map((unit) => String(unit).slice(0, 64)).join(", ")}. Refresh the system and try again.`,
+    );
+  }
+  return { requested: requested as string[], system };
+}
+
+/**
+ * Restarts services that still run replaced files. The restart script runs
+ * once per service; a failed service does not stop the others. System info is
+ * collected again afterwards so the list reflects what is still outdated.
+ */
+export async function restartServices(systemId: number, units: unknown): Promise<RestartServicesResult> {
+  validateRestartRequest(systemId, units);
+  return withLock(systemId, async () => {
+    setActiveOperation(systemId, { type: "restart_services", startedAt: getCurrentTimestamp() });
+    try {
+      await requestNotificationRuntimeSystemSync(systemId);
+      // Validate after the last await and connect with the very record that was
+      // validated: an edit made while waiting cannot redirect the restart.
+      const { requested, system } = validateRestartRequest(systemId, units);
+      return await runServiceRestarts(systemId, requested, system);
+    } finally {
+      clearActiveOperation(systemId);
+      await requestNotificationRuntimeSystemSync(systemId);
+    }
+  });
+}
+
+/** Must reach `sshManager.connect` without awaiting anything, so `system` is still current. */
+async function runServiceRestarts(
+  systemId: number,
+  requested: string[],
+  system: NonNullable<ReturnType<typeof systemService.getSystem>>,
+): Promise<RestartServicesResult> {
+  outputStream.resetStream(systemId);
+  const publish = (message: outputStream.WsMessage) => outputStream.publish(systemId, message);
+  const restarted: string[] = [];
+  const failed: string[] = [];
+  const activitySteps: ActivityStep[] = [];
+  const historyStartedAt = getCurrentTimestamp();
+  let histId: number | null = null;
+
+  const finish = (
+    status: RestartServicesResult["status"],
+    message: string,
+  ): RestartServicesResult => {
+    // Services that were never attempted, for example after a connection failure, did not restart.
+    failed.push(...requested.filter((unit) => !restarted.includes(unit) && !failed.includes(unit)));
+    if (histId !== null) {
+      finishEntry(histId, status, {
+        steps: activitySteps,
+        packageCount: requested.length,
+        packages: JSON.stringify(requested),
+        ...(status === "success" ? { output: message } : { error: message }),
+      });
+    }
+    if (status === "failed") publish({ type: "error", message });
+    else if (status !== "success") publish({ type: "warning", message });
+    publish({ type: "done", success: status === "success", completedAt: getCurrentTimestamp() });
+    return { success: status === "success", status, message, restarted, failed };
+  };
+
+  const sshManager = getSSHManager();
+  let conn: Awaited<ReturnType<typeof sshManager.connect>> | null = null;
+  const targetKey = systemService.connectionTargetKey(system);
+  const targetUnchanged = () => {
+    const current = systemService.getSystem(systemId);
+    return !!current && systemService.connectionTargetKey(current) === targetKey;
+  };
+  try {
+    const stepsByUnit = requested.map((unit) => ({
+      unit,
+      steps: resolveRuntimeSteps({ systemId, operation: "restart_services", service: unit }),
+    }));
+    if (stepsByUnit.some((entry) => entry.steps.length === 0)) {
+      return finish("failed", "No restart-services script configured");
+    }
+    histId = insertStartedEntry(
+      systemId,
+      "restart_services",
+      "system",
+      stepsByUnit[0].steps.map((step) => step.command).join(" && "),
+      historyStartedAt,
+    );
+
+    const sudoPassword = systemService.getSudoPassword(system as Record<string, unknown>);
+    const signal = getCancellationSignal(systemId);
+    throwIfActiveOperationCancelled(systemId);
+    publishSshConnectionStep(publish, historyStartedAt);
+    try {
+      conn = await sshManager.connect(system as Record<string, unknown>, { systemId });
+    } catch (error) {
+      const message = `Restart failed: ${sanitizeOutput(String(error))}`;
+      activitySteps.push(createActivityStep({
+        label: SSH_CONNECT_STEP_LABEL,
+        pkgManager: "system",
+        command: "",
+        output: null,
+        error: message,
+        status: "failed",
+        startedAt: historyStartedAt,
+        completedAt: getCurrentTimestamp(),
+      }));
+      return finish("failed", message);
+    }
+    activitySteps.push(createActivityStep({
+      label: SSH_CONNECT_STEP_LABEL,
+      pkgManager: "system",
+      command: "",
+      output: null,
+      error: null,
+      status: "success",
+      startedAt: historyStartedAt,
+      completedAt: getCurrentTimestamp(),
+    }));
+
+    // From here on the stored scan no longer reflects the host. A successful
+    // rescan at the end replaces it; otherwise it stays marked out of date.
+    systemService.markServiceRestartScanStale(systemId, [], system);
+    let connectionLost = false;
+    let targetChanged = false;
+    for (const { unit, steps } of stepsByUnit) {
+      // Stop if the entry was pointed at another machine during the batch.
+      if (!connectionLost && !targetChanged && !targetUnchanged()) targetChanged = true;
+      if (connectionLost || targetChanged) {
+        failed.push(unit);
+        continue;
+      }
+      let unitFailed = false;
+      for (const step of steps) {
+        throwIfActiveOperationCancelled(systemId);
+        const label = `${step.label || "Restart service"}: ${unit}`;
+        const stepStartedAt = getCurrentTimestamp();
+        publish({ type: "started", command: step.command, pkgManager: "system", startedAt: stepStartedAt });
+        publish({ type: "phase", phase: label });
+        let streamedOutput = "";
+        const result = await sshManager.runCommand(conn, step.command, RESTART_SERVICE_TIMEOUT_SECONDS, sudoPassword, (chunk, stream) => {
+          streamedOutput += chunk;
+          publish({ type: "output", data: chunk, stream });
+        }, signal);
+        const output = streamedOutput || result.stdout || result.stderr;
+        if (isCancelledResult(result.exitCode)) {
+          activitySteps.push(createActivityStep({
+            label,
+            pkgManager: "system",
+            command: step.command,
+            output,
+            error: "Operation cancelled",
+            status: "cancelled",
+            startedAt: stepStartedAt,
+            completedAt: getCurrentTimestamp(),
+          }));
+          throw new OperationCancelledError();
+        }
+        const ok = result.exitCode === 0;
+        activitySteps.push(createActivityStep({
+          label,
+          pkgManager: "system",
+          command: step.command,
+          output,
+          error: ok ? null : (result.stderr || result.stdout || `exited with code ${result.exitCode}`),
+          status: ok ? "success" : "failed",
+          startedAt: stepStartedAt,
+          completedAt: getCurrentTimestamp(),
+        }));
+        if (!ok) {
+          unitFailed = true;
+          // -1 is also returned for a timeout, which only fails this service;
+          // any other -1 means the SSH connection itself failed.
+          connectionLost = result.exitCode === -1 && !isCommandTimeout(result.stderr);
+          break;
+        }
+      }
+      (unitFailed ? failed : restarted).push(unit);
+      if (!unitFailed) systemService.markServiceRestartScanStale(systemId, [unit], system);
+    }
+
+    if (!connectionLost && !targetChanged) {
+      try {
+        await systemService.updateSystemInfo(systemId, sshManager, conn, system);
+      } catch (error) {
+        logger.warn("Could not refresh system info after restarting services", {
+          systemId,
+          error: String(error),
+        });
+      }
+    }
+
+    if (failed.length === 0) {
+      return finish("success", `Restarted ${restarted.length} service${restarted.length === 1 ? "" : "s"}`);
+    }
+    const message = connectionLost
+      ? `Lost the SSH connection while restarting services. Not restarted: ${failed.join(", ")}`
+      : targetChanged
+        ? `The system's connection settings changed during the restart. Not restarted: ${failed.join(", ")}`
+        : `Could not restart: ${failed.join(", ")}`;
+    return finish(restarted.length > 0 ? "warning" : "failed", message);
+  } catch (error) {
+    if (isOperationCancelledError(error)) {
+      return finish("cancelled", error.message);
+    }
+    const message = `Restart failed: ${sanitizeOutput(String(error))}`;
+    return finish("failed", message);
+  } finally {
+    if (conn) {
+      try { sshManager.disconnect(conn); } catch {}
+    }
+  }
 }
 
 export async function checkAllSystems(): Promise<void> {

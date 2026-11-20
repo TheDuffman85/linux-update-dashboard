@@ -139,6 +139,7 @@ function isMutatingOperation(type: string | undefined): boolean {
     type === "upgrade_package" ||
     type === "autoremove" ||
     type === "package_manager_repair" ||
+    type === "restart_services" ||
     type === "post_upgrade"
   );
 }
@@ -223,6 +224,7 @@ function buildSafeSystemAttributes(
     security_update_count: updates.filter((entry) => entry.isSecurity === 1).length,
     kept_back_update_count: updates.filter((entry) => entry.isKeptBack === 1).length,
     needs_reboot: system.needsReboot === 1,
+    services_needing_restart: system.serviceRestartCount ?? 0,
     reachable: system.isReachable === 1,
     active_operation: activeOperation
       ? {

@@ -17,6 +17,7 @@ export type ScriptOperation =
   | "upgrade_selected"
   | "system_info"
   | "reboot"
+  | "restart_services"
   | "pre_upgrade"
   | "post_upgrade";
 
@@ -124,7 +125,7 @@ export interface CustomPackageManagerBundle {
     name: string;
     description: string | null;
     type: "package_manager";
-    operation: Exclude<ScriptOperation, "system_info" | "reboot">;
+    operation: Exclude<ScriptOperation, "system_info" | "reboot" | "restart_services" | "pre_upgrade" | "post_upgrade">;
     pkgManager: string;
     isDefault: boolean;
     steps: ScriptStep[];

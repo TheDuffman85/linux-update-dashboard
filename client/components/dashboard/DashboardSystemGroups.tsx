@@ -118,6 +118,12 @@ function getGroupStatusBadges(
       variant: "warning",
     },
     {
+      key: "service-restart",
+      label: t("pages.dashboard.needServiceRestart"),
+      count: systems.filter((system) => (system.serviceRestartCount ?? 0) > 0).length,
+      variant: "warning",
+    },
+    {
       key: "lifecycle",
       label: t("pages.dashboard.osWarnings"),
       count: systems.filter(hasLifecycleWarning).length,

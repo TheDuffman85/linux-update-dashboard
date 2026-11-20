@@ -2,7 +2,7 @@ import type { System } from "./systems";
 import { getHostKeyStatusBadgeLabel } from "./host-key-status";
 
 type SearchableSystem = Pick<System, "name" | "hostname" | "port" | "osName" | "isReachable"> &
-  Partial<Pick<System, "hidden" | "osLifecycleStatus" | "osLifecycleLabel" | "hostKeyStatus" | "proxyJumpChain" | "needsReboot" | "packageIssueCount">>;
+  Partial<Pick<System, "hidden" | "osLifecycleStatus" | "osLifecycleLabel" | "hostKeyStatus" | "proxyJumpChain" | "needsReboot" | "serviceRestartCount" | "packageIssueCount">>;
 
 function hasLtsLifecycleLabel(system: Partial<Pick<System, "osLifecycleLabel">>): boolean {
   return /\bLTS\b/.test(system.osLifecycleLabel ?? "");
@@ -87,6 +87,7 @@ export function filterSystems<T extends SearchableSystem>(
           })
         : null,
       system.needsReboot === 1 ? t("pages.systemsList.rebootRequired") : null,
+      (system.serviceRestartCount ?? 0) > 0 ? t("pages.systemsList.servicesNeedRestart") : null,
       (system.packageIssueCount ?? 0) > 0
         ? t("pages.systemsList.pkgIssue")
         : null,

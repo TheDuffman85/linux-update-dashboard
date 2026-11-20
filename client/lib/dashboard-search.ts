@@ -11,11 +11,13 @@ export type DashboardStatusFilter =
   | "uptodate"
   | "updates"
   | "reboot"
+  | "restart"
   | "os-warning"
   | "issues"
   | "unreachable";
 
-type FilterableSystem = Pick<System, "updateCount" | "isReachable" | "needsReboot" | "osLifecycleStatus" | "lastCheck">;
+type FilterableSystem = Pick<System, "updateCount" | "isReachable" | "needsReboot" | "osLifecycleStatus" | "lastCheck"> &
+  Partial<Pick<System, "serviceRestartCount">>;
 
 const FILTER_ALIASES: Record<string, DashboardStatusFilter> = {
   uptodate: "uptodate",
@@ -23,6 +25,8 @@ const FILTER_ALIASES: Record<string, DashboardStatusFilter> = {
   updates: "updates",
   outdated: "updates",
   reboot: "reboot",
+  restart: "restart",
+  "service-restart": "restart",
   "os-warning": "os-warning",
   lifecycle: "os-warning",
   issues: "issues",
@@ -37,6 +41,7 @@ const FILTER_PREDICATES: Record<DashboardStatusFilter, (system: FilterableSystem
   uptodate: isSystemUpToDate,
   updates: (s) => s.updateCount > 0 && !hasCheckIssue(s),
   reboot: (s) => s.needsReboot === 1,
+  restart: (s) => (s.serviceRestartCount ?? 0) > 0,
   "os-warning": hasLifecycleWarning,
   issues: hasCheckIssue,
   unreachable: (s) => s.isReachable === -1,

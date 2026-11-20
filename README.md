@@ -32,9 +32,9 @@ A self-hosted web app for managing Linux package updates across multiple servers
 
 - **Multi-distribution updates:** APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, and custom package managers.
 - **SSH credential vault:** reusable password, key, and OpenSSH certificate credentials encrypted at rest with AES-256-GCM.
-- **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, and distribution lifecycle status.
+- **Automatic discovery:** package managers, OS metadata, installed package inventory, system info, reboot state, [services that need a restart](#service-restarts), and distribution lifecycle status.
 - **Repository sources:** view each system's APT, DNF/YUM, Pacman, APK, and Flatpak repository files with credentials masked, and optionally edit them through `sudoedit` with a diff review and activity history.
-- **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, and remote reboot.
+- **Granular maintenance:** refresh, upgrade all, priority-based Upgrade All batches, selected-package upgrades, full upgrades, autoremove, cancellation, service restarts, and remote reboot.
 - **Dashboard organization:** create collapsible groups, arrange systems for a clear fleet overview, display per-group health badges, and set explicit Upgrade All priorities.
 - **Per-system controls:** hidden systems, system duplication, default Upgrade All preselection, package-manager toggles/config, kept-back and pinned package auto-hide, script overrides, ProxyJump, and host-key trust approval.
 - **Script customization:** inspect built-in SSH command scripts, copy them into editable custom scripts, define parser settings, import/export custom package managers, assign overrides per system, and run pre- and post-upgrade scripts around upgrades on all systems or selected ones.
@@ -419,7 +419,7 @@ Each system has an **Upgrade All** switch in dashboard Edit mode. Turning it off
 
 The **Group badges** toggle adds per-group summaries for up-to-date systems, available updates, reboot requirements, lifecycle warnings, check issues, and unreachable systems. The **Group upgrade** toggle adds an **Upgrade** button to each group that has systems with updates. Both preferences are stored in the browser and are disabled by default. Groups can be collapsed individually or all at once outside Edit mode without changing their display or upgrade priority.
 
-The dashboard search also accepts status filters: `is:uptodate`, `is:updates`, `is:reboot`, `is:os-warning`, `is:issues`, and `is:unreachable`. Prefix a filter with `-` to exclude those systems. Clicking a status card at the top of the dashboard applies its filter.
+The dashboard search also accepts status filters: `is:uptodate`, `is:updates`, `is:reboot`, `is:restart`, `is:os-warning`, `is:issues`, and `is:unreachable`. Prefix a filter with `-` to exclude those systems. Clicking a status card at the top of the dashboard applies its filter.
 
 ## Scheduling and Upgrade All priorities
 
@@ -455,7 +455,7 @@ For email channels, set **Email subject prefix** to a label such as `[LINUX-UPDA
 
 `LUDASH_BASE_URL` should be explicitly set for Home Assistant. The MQTT integration can publish one app update entity and one per-system package update entity. Discovery config uses retained payloads; update state and JSON attributes are published on separate retained topics; install commands map to the normal per-system upgrade action when enabled. Notification schedules only affect the generic MQTT event topic, not Home Assistant state.
 
-Per-system attributes include update counts, security counts, reboot state, reachability, active operation, detected host metadata, and pending package details. Package entity versions are synthetic fingerprints for the pending update set, not real package-version pairs.
+Per-system attributes include update counts, security counts, reboot state, the number of services that need a restart (`services_needing_restart`), reachability, active operation, detected host metadata, and pending package details. Package entity versions are synthetic fingerprints for the pending update set, not real package-version pairs.
 
 ### Telegram
 
@@ -480,20 +480,20 @@ Webhook delivery defaults to a 10-second timeout, 2 retries, and a 30-second ret
 
 ## Script Customization and Sudoers
 
-The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, reboots, and pre- and post-upgrade scripts.
+The **Scripts** page exposes the SSH command templates for package-manager detection, update checks, installed-package inventory, issue repair, autoremove, upgrades, selected-package upgrades, system info, reboots, service restarts, and pre- and post-upgrade scripts.
 
 Importable custom package-manager bundles live in [`examples/`](examples/), including a [Docker Compose example](examples/docker-compose-package-manager.json). The Docker Compose example treats services as packages: checks pull images into the local Docker cache and compare them with running containers, while upgrade operations recreate all or selected services. Configure its project path after importing it; the SSH user must be allowed to run Docker. Import the bundle under additional package-manager keys to manage multiple Compose projects on the same system.
 
-- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, system-info, and reboot are read-only and can be copied. Update checks and installed-package lists for built-in package managers keep the built-in parser, even after you edit the commands of a copy, so the edited commands must print the same format.
+- Built-in scripts for APT, DNF, YUM, Pacman, APK, Flatpak, Snap, deb-get, system-info, reboot, and restart services are read-only and can be copied. Update checks and installed-package lists for built-in package managers keep the built-in parser, even after you edit the commands of a copy, so the edited commands must print the same format.
 - Custom scripts can define shell steps, operation type, parser settings, installed-package inventory parsing, and system-info section mapping.
-- Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, or `system/reboot`.
+- Per-system overrides can replace individual operations such as `apt/check_updates`, `apt/repair_issue`, `apt/autoremove`, `apt/upgrade_all`, `system/reboot`, or `system/restart_services`.
 - Custom package managers can define display labels, parser regexes, optional config entries, and import/export bundles.
 - Config entries can be marked **secret** for tokens and passwords. See [Secret config entries](#secret-config-entries).
 - Pre- and post-upgrade scripts can run commands around an upgrade. See [Pre- and post-upgrade scripts](#pre--and-post-upgrade-scripts).
 - Output rules decide from the exit code and output whether a step succeeded, needs attention, or failed. See [Output rules](#output-rules).
 - Used scripts and package managers are protected from accidental deletion.
 
-Command placeholders include `{{package}}`, `{{packages}}`, `{{quotedPackage}}`, `{{quotedPackages}}`, `{{manager}}`, `{{config.someKey}}`, and `{{sudo:COMMAND}}`. Custom parser regexes should use named capture groups such as `packageName`, `newVersion`, `currentVersion`, `architecture`, and `repository`.
+Command placeholders include `{{package}}`, `{{packages}}`, `{{quotedPackage}}`, `{{quotedPackages}}`, `{{service}}`, `{{manager}}`, `{{config.someKey}}`, and `{{sudo:COMMAND}}`. Custom parser regexes should use named capture groups such as `packageName`, `newVersion`, `currentVersion`, `architecture`, and `repository`.
 
 For restricted automation accounts, use a dedicated SSH user and leave the dashboard sudo password unset. The Systems page has a **Sudoers setup** action that generates a least-privilege `/etc/sudoers.d` allowlist for the selected system. Review generated files before installing them, keep commands exact, prefer absolute executable paths, leave selected-package wildcard rules commented unless needed, and avoid broad rules such as `NOPASSWD: ALL` or `sudo sh <writable-script>`.
 
@@ -593,6 +593,37 @@ Mark a config entry as secret when a script needs a token or password, for examp
 - Enable **Keep through sudo** on the entry when a root command needs the variable. sudo's default `env_reset` drops it otherwise, so the generated sudoers file adds `Defaults:<user> env_keep += "DEBGET_TOKEN"`. Command rules stay exact, and the value never appears in sudo's command line or auth log. Accounts with full sudo access need this line too. Names that change shell, loader, interpreter, or sudo behavior, such as `PATH`, `LD_*`, `BASH_ENV`, `PYTHONPATH`, or `SUDO_*`, are rejected.
 
 The tool that receives the secret decides what happens next. A tool that passes it to `curl` on the command line makes it visible in the host's process list while that command runs.
+
+## Service Restarts
+
+After an upgrade, running services can keep using the old version of a binary or library until they restart. Each refresh checks for this on every distribution, independent of the package manager and without tools such as `needrestart`:
+
+1. It lists the files each process has mapped that were deleted or replaced, from `/proc/<pid>/maps`. Only files under `/usr`, `/lib*`, `/bin`, `/sbin`, and `/opt` count.
+2. It maps each process to its systemd unit or OpenRC service through `/proc/<pid>/cgroup`. Processes in containers, LXC guests, and user sessions are left out.
+
+The system page lists the flagged services with their processes and replaced files, and **Restart selected** restarts up to 50 of them with `systemctl try-restart` or `rc-service --ifstarted <name> restart`. Both restart only services that are still running, so a service stopped since the last scan stays stopped. Each service restarts in its own command, so one failure or timeout does not stop the others. System info is collected again afterwards. If that check does not finish, the list is marked out of date and restarts are blocked until the next refresh. Changing a system's host, port, user, ProxyJump, or trusted host key discards its list, because the entry may now reach a different machine. Dashboard cards and the systems list show the count, and `is:restart` filters for these systems.
+
+Some services are listed but not preselected or counted, because a restart can drop sessions, networking, containers, guests, or cluster membership: D-Bus, `systemd-logind`, gettys, `user@` units, display managers, network services, Docker, containerd, Podman, libvirt, LXC, Proxmox cluster and HA services, Corosync, and `unattended-upgrades`. Edit the **Skip list** on the system page to change this per system. Patterns accept `*` and `?`, and the `.service` suffix is optional. When systemd itself (PID 1) or a process outside a service uses replaced files, the page says so; reboot, or run `systemctl daemon-reexec` for systemd.
+
+Limits:
+
+- Only memory-mapped files are detected. Daemons written in interpreted languages such as Python or Perl are not flagged when only their scripts change.
+- Updated container images are not detected. Restarting a container is outside this check.
+
+Listing other users' processes needs root. When the SSH user is not root, the scan runs this exact command through sudo:
+
+```sudoers
+updater ALL=(root) NOPASSWD: /usr/bin/find /proc -mindepth 2 -maxdepth 2 -name maps -exec /bin/grep -HsF deleted {} + -o -path /proc/1/root -print
+```
+
+`grep` has an absolute path because `find` starts it as root. The command always prints `/proc/1/root`, which tells the dashboard that the scan actually ran. **Sudoers setup** includes this rule as an active rule. Without it, sudo refuses the scan and the system page reports that the check was skipped. Hosts without `/bin/grep` report the check as not available. Restart rules are commented out: the generated file lists one exact rule per service the last scan flagged, plus a wildcard rule. Every restart rule stays commented, including fixed commands from custom restart scripts. Uncomment the exact rules for the services you want to restart from the dashboard:
+
+```sudoers
+# updater ALL=(root) NOPASSWD: /usr/bin/systemctl try-restart -- nginx.service
+# updater ALL=(root) NOPASSWD: /usr/bin/systemctl try-restart -- *
+```
+
+Avoid the wildcard: it lets the account restart any running unit, such as `sshd` or networking, and so interrupt the host.
 
 ## Repository Sources
 

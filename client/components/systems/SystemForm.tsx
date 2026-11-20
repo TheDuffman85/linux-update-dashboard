@@ -77,6 +77,7 @@ const SCRIPT_OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
   upgrade_selected: "pages.scripts.operation.upgradeSelected",
   system_info: "pages.scripts.operation.systemInfo",
   reboot: "pages.scripts.operation.reboot",
+  restart_services: "pages.scripts.operation.restartServices",
   pre_upgrade: "pages.scripts.operation.preUpgrade",
   post_upgrade: "pages.scripts.operation.postUpgrade",
 };
@@ -452,7 +453,7 @@ export function SystemForm({
     "full_upgrade_all",
     "upgrade_selected",
   ];
-  const systemScriptOperations: ScriptOperation[] = ["system_info", "reboot", "pre_upgrade", "post_upgrade"];
+  const systemScriptOperations: ScriptOperation[] = ["system_info", "reboot", "restart_services", "pre_upgrade", "post_upgrade"];
   const operationLabels = Object.fromEntries(
     Object.entries(SCRIPT_OPERATION_LABEL_KEYS).map(([operation, labelKey]) => [
       operation,

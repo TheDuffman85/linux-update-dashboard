@@ -38,6 +38,7 @@ export const TOKEN_WRITE_RULES: readonly TokenWriteRule[] = [
   allow("POST", "/api/systems/:id/upgrade/:packageName", "updates:apply"),
   allow("POST", "/api/systems/:id/package-issues/:issueId/solve", "updates:apply"),
   allow("POST", "/api/systems/:id/reboot", "updates:apply"),
+  allow("POST", "/api/systems/:id/restart-services", "updates:apply"),
   allow("POST", "/api/systems/:id/post-upgrade-script/run", "updates:apply"),
 
   allow("POST", "/api/systems/dashboard-groups", "systems:organize"),
@@ -63,6 +64,7 @@ export const TOKEN_WRITE_RULES: readonly TokenWriteRule[] = [
 
   allow("POST", "/api/systems", "systems:add"),
   allow("POST", "/api/systems/test-connection", "systems:add", "systems:edit"),
+  allow("PUT", "/api/systems/:id/service-restart-skip-patterns", "systems:edit"),
   allow("PUT", "/api/systems/:id", "systems:edit"),
   allow("DELETE", "/api/systems/:id", "systems:remove"),
 

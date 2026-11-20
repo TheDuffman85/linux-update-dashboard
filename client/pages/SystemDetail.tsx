@@ -10,6 +10,7 @@ import { Modal } from "../components/Modal";
 import { TerminalText } from "../components/TerminalText";
 import { SystemForm } from "../components/systems/SystemForm";
 import { SudoersSetupPanel } from "../components/systems/SudoersSetupPanel";
+import { ServiceRestartPanel } from "../components/systems/ServiceRestartPanel";
 import { ActivityIcon, AvailableUpdatesIcon, InstalledPackagesIcon, SYSTEM_SECTION_IDS } from "../components/SystemSectionIcons";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -751,6 +752,16 @@ function getOperationNoticeCopy(
         message: translateOrFallback(t, "pages.systemDetail.notice.rebootWarningMessage", "The reboot operation completed with warnings."),
       },
     },
+    restart_services: {
+      failed: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.restartServicesFailedTitle", "Service restart failed"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.restartServicesFailedMessage", "The selected services could not be restarted."),
+      },
+      warning: {
+        title: translateOrFallback(t, "pages.systemDetail.notice.restartServicesWarningTitle", "Some services were not restarted"),
+        message: translateOrFallback(t, "pages.systemDetail.notice.restartServicesWarningMessage", "Some of the selected services could not be restarted."),
+      },
+    },
     pre_upgrade: {
       failed: {
         title: translateOrFallback(t, "pages.systemDetail.notice.preUpgradeFailedTitle", "Pre-upgrade script failed"),
@@ -1261,6 +1272,10 @@ export function getActivityTitle(
   if (action === "upgrade_all") return translateOrFallback(t, "pages.systemDetail.activity.upgradedAllPackages", "Upgraded all packages");
   if (action === "full_upgrade_all") return translateOrFallback(t, "pages.systemDetail.activity.fullUpgradedAllPackages", "Full upgraded all packages");
   if (action === "reboot") return translateOrFallback(t, "pages.systemDetail.activity.rebootedSystem", "Rebooted system");
+  if (action === "restart_services") {
+    const services = packagesList.join(", ") || "services";
+    return translateOrFallback(t, "pages.systemDetail.activity.restartedServices", `Restarted ${services}`, { services });
+  }
   if (action === "package_manager_repair") return translateOrFallback(t, "pages.systemDetail.activity.repairedPackageManager", "Repaired package manager");
   if (action === "pre_upgrade") return translateOrFallback(t, "pages.systemDetail.activity.ranPreUpgradeScript", "Ran pre-upgrade script");
   if (action === "post_upgrade") return translateOrFallback(t, "pages.systemDetail.activity.ranPostUpgradeScript", "Ran post-upgrade script");
@@ -1369,7 +1384,7 @@ export function getPackageSelectionState(
 }
 
 function isSshSafeActivity(action: string): boolean {
-  return action !== "check" && action !== "reboot" && action !== "repository_source_edit";
+  return action !== "check" && action !== "reboot" && action !== "restart_services" && action !== "repository_source_edit";
 }
 
 type ActivityDisplayRow = {
@@ -2445,6 +2460,7 @@ export default function SystemDetail() {
   );
   const autoremoving = !postOperationRechecking && (autoremove.isPending || activeOp?.type === "autoremove");
   const rebooting = rebootSystem.isPending || activeOp?.type === "reboot";
+  const restartingServices = activeOp?.type === "restart_services";
   const repairingPackageIssue = solvePackageIssue.isPending || activeOp?.type === "package_manager_repair";
   const runningPostUpgradeScript = runPostUpgradeScript.isPending || activeOp?.type === "post_upgrade";
   const dismissingNeedsReboot = dismissNeedsReboot.isPending;
@@ -2518,7 +2534,7 @@ export default function SystemDetail() {
   const showUpgradeAllButton = system.updateCount > 0 || upgrading;
   const showUpgradeActions = showUpgradeAllButton || hasAutoremoveAction || hasRebootAction || autoremoving;
   const showUpgradeDropdownActions = system.supportsFullUpgrade || hasAutoremoveAction || hasRebootAction;
-  const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || repairingPackageIssue || runningPostUpgradeScript;
+  const upgradeActionsBusy = upgrading || autoremoving || checking || rebooting || restartingServices || repairingPackageIssue || runningPostUpgradeScript;
   const showPostUpgradePendingBanner = !!system.postUpgradePendingAt && !activeOp;
   const autoremoveConfirmMessage = getAutoremoveConfirmMessage(system.name, autoremoveSupport, t);
   const rootUserCheckEnabled = settings?.enable_root_user_check !== "false";
@@ -2828,7 +2844,7 @@ export default function SystemDetail() {
           ) : (
             <button
               onClick={handleCheck}
-              disabled={checking || upgrading || autoremoving || rebooting || repairingPackageIssue}
+              disabled={checking || upgrading || autoremoving || rebooting || restartingServices || repairingPackageIssue}
               className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 min-w-24"
             >
               {checking ? (
@@ -3086,7 +3102,7 @@ export default function SystemDetail() {
           <>
           <button
             onClick={() => setShowRebootConfirm(true)}
-            disabled={rebooting || upgrading || autoremoving || checking || repairingPackageIssue || dismissingNeedsReboot}
+            disabled={rebooting || restartingServices || upgrading || autoremoving || checking || repairingPackageIssue || dismissingNeedsReboot}
             className="px-3 py-1 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {rebooting ? (
@@ -3098,7 +3114,7 @@ export default function SystemDetail() {
           </button>
           <button
             onClick={() => setShowDismissNeedsRebootConfirm(true)}
-            disabled={dismissingNeedsReboot || rebooting || upgrading || autoremoving || checking || repairingPackageIssue}
+            disabled={dismissingNeedsReboot || rebooting || restartingServices || upgrading || autoremoving || checking || repairingPackageIssue}
             className="px-3 py-1 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-900/30 text-amber-700 dark:text-amber-400 hover:bg-white dark:hover:bg-slate-900/50 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {dismissingNeedsReboot ? (
@@ -3112,6 +3128,12 @@ export default function SystemDetail() {
           )}
         </div>
       )}
+
+      <ServiceRestartPanel
+        system={system}
+        readOnly={isReadOnly}
+        busy={rebooting || upgrading || autoremoving || checking || repairingPackageIssue || runningPostUpgradeScript}
+      />
 
       {/* Available updates */}
       <AvailableUpdatesSection

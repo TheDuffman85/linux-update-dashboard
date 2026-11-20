@@ -1,7 +1,115 @@
+import type {
+  ServiceRestartInfo,
+  ServiceRestartProcess,
+  ServiceRestartService,
+} from "../../shared/service-restart";
+import { isValidServiceName } from "../../shared/service-restart";
+
+/**
+ * Always listed by the scan, so its absence means the scan did not run, for
+ * example because sudo refused it. Exit codes cannot tell this apart: find and
+ * grep also fail when a process exits during the scan.
+ */
+export const SERVICE_RESTART_SCAN_SENTINEL = "/proc/1/root";
+
+/**
+ * Exact command run with root rights to find processes that still map deleted
+ * (replaced) files. It is fixed so it fits one exact sudoers rule. grep has an
+ * absolute path because find runs it as root, and a PATH lookup could pick a
+ * user's binary; /bin/grep exists on merged-/usr, older Debian, and BusyBox
+ * systems. `{} +` keeps it free of the `;` that ends a sudoers-relevant command.
+ */
+export const SERVICE_RESTART_SCAN_COMMAND =
+  `find /proc -mindepth 2 -maxdepth 2 -name maps -exec /bin/grep -HsF deleted {} + -o -path ${SERVICE_RESTART_SCAN_SENTINEL} -print`;
+
+/**
+ * Turns scan output into one line per process: KIND, unit, PID, name, files.
+ * Reads each process's cgroup and name below the awk variable `proc`, so tests
+ * can point it at a fixture tree. It is single-quoted in the shell script, so
+ * it must not contain a single quote, not even in a comment.
+ */
+export const SERVICE_RESTART_CLASSIFIER_AWK = `
+  # Input: /proc/PID/maps:ADDRESS PERMS OFFSET DEVICE INODE PATH (deleted)
+  / \\(deleted\\)$/ && index($0, "/proc/") == 1 {
+    split($1, head, "/"); pid = head[3]
+    if (pid == self) next
+    path = $6; for (i = 7; i < NF; i++) path = path " " $i
+    if (path !~ /^\\/(usr|lib|lib32|lib64|libx32|bin|sbin|opt)\\//) next
+    if (path ~ /locale-archive$|\\.cache$|^\\/usr\\/share\\//) next
+    if (!(pid in files)) order[++n] = pid
+    if (index(files[pid], "\\t" path) == 0 && count[pid]++ < 5) files[pid] = files[pid] "\\t" path
+  }
+  END {
+    for (k = 1; k <= n; k++) {
+      pid = order[k]; cgroup = ""; openrc = ""
+      file = proc "/" pid "/cgroup"
+      while ((getline line < file) > 0) {
+        if (line ~ /^0::/ || line ~ /:name=systemd:/) { sub(/^[^:]*:[^:]*:/, "", line); cgroup = line }
+        # OpenRC on cgroup v1 keeps its own hierarchy: N:name=openrc:/SERVICE
+        else if (line ~ /:name=openrc:/) { sub(/^[^:]*:[^:]*:/, "", line); openrc = line }
+      }
+      close(file)
+      comm = ""; file = proc "/" pid "/comm"; getline comm < file; close(file)
+      gsub(/[\\t\\r\\n]/, " ", comm)
+      parts = split(cgroup, segment, "/"); leaf = segment[parts]
+      # Guests come first: their processes, including their own init in
+      # machine.slice/*/init.scope or /lxc/101/ns/init.scope, belong to the guest.
+      if (cgroup ~ /^\\/(lxc|lxc\\.payload|machine\\.slice|docker|kubepods)/ || cgroup ~ /\\/(docker|libpod)-[^\\/]*\\.scope/) continue
+      # Only PID 1 of this host is the service manager.
+      else if (pid == 1) { kind = "MANAGER"; unit = "-" }
+      else if (cgroup ~ /^\\/user\\.slice\\//) { kind = "SESSION"; unit = "-" }
+      # Host units sit directly under slices.
+      else if (cgroup ~ /^\\/([^\\/]+\\.slice\\/)*[^\\/]+\\.service$/) { kind = "SERVICE"; unit = leaf }
+      else if (cgroup ~ /^\\/openrc\\.[^\\/]+$/) { kind = "SERVICE"; unit = substr(leaf, 8) }
+      else if (openrc ~ /^\\/[^\\/]+$/) { kind = "SERVICE"; unit = substr(openrc, 2) }
+      else { kind = "PROCESS"; unit = "-" }
+      print kind "\\t" unit "\\t" pid "\\t" comm files[pid]
+    }
+  }`;
+
+// Runs first so no other section can read the sudo password from stdin.
+// Only the find command is elevated; filtering and the PID-to-service mapping
+// (from the world-readable /proc/PID/cgroup) run as the SSH user.
+const SERVICE_RESTART_SECTION = `echo "===RESTART_SERVICES==="
+if [ -d /run/systemd/system ]; then
+  echo "INIT=systemd"
+elif command -v rc-service >/dev/null 2>&1; then
+  echo "INIT=openrc"
+else
+  echo "INIT=other"
+fi
+ludash_restart_status=ok
+ludash_restart_scan=
+if [ ! -x /bin/grep ] || ! command -v find >/dev/null 2>&1; then
+  ludash_restart_status=unsupported
+elif [ "$(id -u)" = "0" ]; then
+  ludash_restart_scan=$(${SERVICE_RESTART_SCAN_COMMAND} 2>/dev/null)
+elif command -v sudo >/dev/null 2>&1; then
+  ludash_restart_scan=$(
+    # Sudoers-relevant command: ${SERVICE_RESTART_SCAN_COMMAND}
+    sudo -S -p '' ${SERVICE_RESTART_SCAN_COMMAND} 2>/dev/null
+  )
+  # sudo prints refusals in several forms; the missing sentinel covers them all.
+  if ! printf '%s\\n' "$ludash_restart_scan" | grep -qxF '${SERVICE_RESTART_SCAN_SENTINEL}'; then
+    ludash_restart_status=denied
+  fi
+else
+  ludash_restart_status=partial
+  ludash_restart_scan=$(${SERVICE_RESTART_SCAN_COMMAND} 2>/dev/null)
+fi
+if [ "$ludash_restart_status" != denied ] && ! printf '%s\\n' "$ludash_restart_scan" | grep -qxF '${SERVICE_RESTART_SCAN_SENTINEL}'; then
+  ludash_restart_status=unsupported
+fi
+case $ludash_restart_status in denied|unsupported) ludash_restart_scan= ;; esac
+echo "STATUS=$ludash_restart_status"
+printf '%s\\n' "$ludash_restart_scan" | awk -v self="$$" -v proc=/proc '${SERVICE_RESTART_CLASSIFIER_AWK}' | head -n 1000`;
+
 // Each section is intentionally independent so a missing tool (e.g. hostname
 // on minimal containers) does not break the rest of the collection script.
-export const SYSTEM_INFO_CMD = `# Collect OS, hardware, uptime, boot, and reboot-required details for the dashboard.
+export const SYSTEM_INFO_CMD = `# Collect OS, hardware, uptime, boot, reboot-required, and service-restart details for the dashboard.
 # Section markers are parsed by the built-in system-info parser.
+${SERVICE_RESTART_SECTION}
+
 echo "===OS==="
 cat /etc/os-release 2>/dev/null
 
@@ -90,6 +198,8 @@ export interface SystemInfo {
   needsRestartingStatus: NeedsRestartingStatus;
   installedKernels: string[];
   needsReboot: boolean;
+  /** Null when the script printed no service-restart section. */
+  serviceRestart: ServiceRestartInfo | null;
 }
 
 export interface PreviousRebootState {
@@ -347,6 +457,7 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     needsRestartingStatus: "unsupported",
     installedKernels: [],
     needsReboot: false,
+    serviceRestart: null,
   };
 
   const sections: Record<string, string> = {};
@@ -443,5 +554,82 @@ export function parseSystemInfo(stdout: string): SystemInfo {
     .map((line) => line.trim())
     .filter(Boolean);
 
+  if ("RESTART_SERVICES" in sections) {
+    info.serviceRestart = parseServiceRestartSection(sections["RESTART_SERVICES"]);
+  }
+
   return info;
+}
+
+const MAX_RESTART_SERVICES = 200;
+const MAX_PROCESSES_PER_SERVICE = 20;
+const MAX_FILES_PER_SERVICE = 5;
+const MAX_OTHER_PROCESSES = 50;
+const MAX_FILE_PATH_LENGTH = 512;
+
+function sanitizeComm(value: string): string {
+  return value.replace(/[^\x20-\x7e]/g, "").trim().slice(0, 64);
+}
+
+function sanitizeFilePath(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/") || trimmed.length > MAX_FILE_PATH_LENGTH) return null;
+  return /[\x00-\x1f\x7f]/.test(trimmed) ? null : trimmed;
+}
+
+/** Parses the `===RESTART_SERVICES===` section into bounded, validated data. */
+export function parseServiceRestartSection(section: string): ServiceRestartInfo {
+  const result: ServiceRestartInfo = {
+    status: "ok",
+    init: "other",
+    services: [],
+    managerNeedsReexec: false,
+    sessionProcessCount: 0,
+    otherProcesses: [],
+  };
+  const services = new Map<string, ServiceRestartService>();
+
+  for (const rawLine of section.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.startsWith("INIT=")) {
+      const init = line.slice("INIT=".length).trim();
+      if (init === "systemd" || init === "openrc") result.init = init;
+      continue;
+    }
+    if (line.startsWith("STATUS=")) {
+      const status = line.slice("STATUS=".length).trim();
+      if (status === "partial" || status === "denied" || status === "unsupported") result.status = status;
+      continue;
+    }
+
+    const [kind, unit, pidText, comm = "", ...files] = line.split("\t");
+    const pid = Number.parseInt(pidText ?? "", 10);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const process: ServiceRestartProcess = { pid, comm: sanitizeComm(comm) };
+
+    if (kind === "MANAGER") {
+      result.managerNeedsReexec = true;
+    } else if (kind === "SESSION") {
+      result.sessionProcessCount += 1;
+    } else if (kind === "PROCESS") {
+      if (result.otherProcesses.length < MAX_OTHER_PROCESSES) result.otherProcesses.push(process);
+    } else if (kind === "SERVICE" && isValidServiceName(unit)) {
+      let service = services.get(unit);
+      if (!service) {
+        if (services.size >= MAX_RESTART_SERVICES) continue;
+        service = { unit, processes: [], files: [] };
+        services.set(unit, service);
+      }
+      if (service.processes.length < MAX_PROCESSES_PER_SERVICE) service.processes.push(process);
+      for (const file of files) {
+        const path = sanitizeFilePath(file);
+        if (path && service.files.length < MAX_FILES_PER_SERVICE && !service.files.includes(path)) {
+          service.files.push(path);
+        }
+      }
+    }
+  }
+
+  result.services = [...services.values()].sort((a, b) => a.unit.localeCompare(b.unit));
+  return result;
 }

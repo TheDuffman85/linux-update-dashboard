@@ -1281,6 +1281,23 @@ export function initDatabase(
     // Column already exists
   }
 
+  // Services that still run replaced binaries or libraries, and the per-system skip list.
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN service_restart_info TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN service_restart_count INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.run(sql`ALTER TABLE systems ADD COLUMN service_restart_skip_patterns TEXT`);
+  } catch {
+    // Column already exists
+  }
+
   // Cleanup: if the dashboard restarted mid-operation, SSH-safe maintenance is
   // expected to continue remotely and should show a warning instead of failure.
   _db.run(sql`UPDATE update_history

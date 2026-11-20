@@ -26,6 +26,7 @@ export type PotentialCommandCategory =
   | "full_upgrade_all"
   | "upgrade_selected"
   | "reboot"
+  | "restart_services"
   | "pre_upgrade"
   | "post_upgrade";
 
@@ -71,6 +72,7 @@ interface CommandReferenceSystem {
 const SINGLE_PACKAGE_PLACEHOLDER = "codex-package-placeholder";
 const MULTI_PACKAGE_PLACEHOLDER_ONE = "codex-package-placeholder-one";
 const MULTI_PACKAGE_PLACEHOLDER_TWO = "codex-package-placeholder-two";
+const SERVICE_PLACEHOLDER = "codex-service-placeholder";
 
 const CHECK_LABEL_PURPOSES: Record<string, string> = {
   "Auditing dpkg state": "Checks for interrupted dpkg package configuration before refreshing APT metadata",
@@ -91,7 +93,8 @@ function normalizeCommandTemplate(command: string): string {
   return command
     .replaceAll(MULTI_PACKAGE_PLACEHOLDER_ONE, "<package1>")
     .replaceAll(MULTI_PACKAGE_PLACEHOLDER_TWO, "<package2>")
-    .replaceAll(SINGLE_PACKAGE_PLACEHOLDER, "<package>");
+    .replaceAll(SINGLE_PACKAGE_PLACEHOLDER, "<package>")
+    .replaceAll(SERVICE_PLACEHOLDER, "<service>");
 }
 
 function getCheckPurpose(label: string, manager: string): string {
@@ -104,6 +107,7 @@ function getBuiltinSteps(
   options: {
     config?: PackageManagerConfigValue;
     packages?: string[];
+    service?: string;
   } = {},
 ): ScriptStep[] {
   const script = getBuiltinScripts().find((candidate) =>
@@ -115,6 +119,7 @@ function getBuiltinSteps(
       pkgManager,
       config: options.config,
       packages: options.packages,
+      service: options.service,
     }),
   })) ?? [];
 }
@@ -223,7 +228,8 @@ function normalizeForSudoers(entry: PotentialCommandEntry): {
       continue;
     }
 
-    const requiresWildcard = /<package\d?>/.test(command);
+    const requiresServiceWildcard = /<service>/.test(command);
+    const requiresWildcard = requiresServiceWildcard || /<package\d?>/.test(command);
     entries.push({
       ...entry,
       id: warningId,
@@ -232,9 +238,11 @@ function normalizeForSudoers(entry: PotentialCommandEntry): {
       sudoersSafety: requiresWildcard ? "package_placeholder" : "exact",
       requiresWildcard,
       requiresPasswordLauncher: false,
-      warnings: requiresWildcard
-        ? ["Selected-package sudoers rules need package-specific entries or a carefully reviewed argument wildcard."]
-        : undefined,
+      warnings: requiresServiceWildcard
+        ? ["Service restart sudoers rules need service-specific entries or a carefully reviewed argument wildcard."]
+        : requiresWildcard
+          ? ["Selected-package sudoers rules need package-specific entries or a carefully reviewed argument wildcard."]
+          : undefined,
     });
   }
   return {
@@ -569,6 +577,20 @@ export function buildCommandReference(system: CommandReferenceSystem): CommandRe
         : "Runs a pre-reboot safety check",
       pkgManager: null,
       command: reboot.command,
+    });
+  }
+
+  const restartSteps = systemId > 0
+    ? resolveRuntimeSteps({ systemId, operation: "restart_services", service: SERVICE_PLACEHOLDER })
+    : getBuiltinSteps("restart_services", null, { service: SERVICE_PLACEHOLDER });
+  for (const [index, step] of restartSteps.entries()) {
+    exact.push({
+      id: index === 0 ? "restart-services" : `restart-services:${index}`,
+      category: "restart_services",
+      label: step.label,
+      purpose: "Restarts one service that still runs replaced binaries or libraries",
+      pkgManager: null,
+      command: normalizeCommandTemplate(step.command),
     });
   }
 

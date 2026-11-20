@@ -326,6 +326,9 @@ export default function SystemsList() {
                           {t("pages.systemsList.viaName", { name: s.proxyJumpChain[0].name })}
                         </Badge>
                       )}
+                      {(s.serviceRestartCount ?? 0) > 0 && (
+                        <Badge variant="warning" small>{t("pages.systemsList.countServicesToRestart", { count: s.serviceRestartCount })}</Badge>
+                      )}
                       {s.needsReboot === 1 && (
                         <span className="text-amber-500" title={t("pages.systemsList.rebootRequired")}>
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

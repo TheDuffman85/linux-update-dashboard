@@ -46,6 +46,7 @@ describe("sudoers preview route", () => {
     (sshManager as any).runCommand = vi.fn(async () => ({
       stdout: [
         "dpkg\t/usr/bin/dpkg",
+        "find\t/usr/bin/find",
         "apt-get\t/usr/bin/apt-get",
         "reboot\t/usr/sbin/reboot",
       ].join("\n"),
@@ -74,7 +75,7 @@ describe("sudoers preview route", () => {
     (sshManager as any).runCommand = vi.fn(async (_conn: unknown, command: string) => ({
       stdout: command.includes("repository source")
         ? `F\t2\t${Buffer.from("/etc/apt/sources.list.d/debian.sources").toString("base64")}\tok\t`
-        : ["dpkg\t/usr/bin/dpkg", "apt-get\t/usr/bin/apt-get", "reboot\t/usr/sbin/reboot"].join("\n"),
+        : ["dpkg\t/usr/bin/dpkg", "find\t/usr/bin/find", "apt-get\t/usr/bin/apt-get", "reboot\t/usr/sbin/reboot"].join("\n"),
       stderr: "",
       exitCode: 0,
     }));
@@ -99,6 +100,7 @@ describe("sudoers preview route", () => {
     (sshManager as any).runCommand = vi.fn(async () => ({
       stdout: [
         "dpkg\t/usr/bin/dpkg",
+        "find\t/usr/bin/find",
         "apt-get\t/usr/bin/apt-get",
         "reboot\t",
       ].join("\n"),
@@ -143,6 +145,7 @@ describe("sudoers preview route", () => {
     (sshManager as any).runCommand = vi.fn(async () => ({
       stdout: [
         "dpkg\t/usr/bin/dpkg",
+        "find\t/usr/bin/find",
         "apt-get\t/usr/bin/apt-get",
         "reboot\t/usr/sbin/reboot",
       ].join("\n"),

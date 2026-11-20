@@ -1,5 +1,5 @@
 export interface ActiveOperation {
-  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair" | "post_upgrade";
+  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "restart_services" | "package_manager_repair" | "post_upgrade";
   startedAt: string;
   phase?: "queued" | "reconnecting" | "rechecking";
   packageName?: string;

@@ -28,6 +28,8 @@ import { SNAP_CHECK_COMMAND } from "../ssh/parsers/snap";
 import type { CheckCommandResult } from "../ssh/parsers/types";
 import { sudo, validatePackageName, validatePackageNames } from "../ssh/parsers/types";
 import { getProxmoxBackupGuardCommand, getRebootCommand } from "../ssh/reboot";
+import { getRestartServiceCommand } from "../ssh/service-restart";
+import { isValidServiceName } from "../../shared/service-restart";
 import {
   SYSTEM_INFO_CMD,
   parseSystemInfo,
@@ -61,6 +63,7 @@ export type ScriptOperation =
   | "upgrade_selected"
   | "system_info"
   | "reboot"
+  | "restart_services"
   | "pre_upgrade"
   | "post_upgrade";
 
@@ -164,7 +167,7 @@ export interface CustomPackageManagerBundle {
     name: string;
     description: string | null;
     type: "package_manager";
-    operation: Exclude<ScriptOperation, "system_info" | "reboot" | "pre_upgrade" | "post_upgrade">;
+    operation: Exclude<ScriptOperation, SystemScriptOperation>;
     pkgManager: string;
     isDefault: boolean;
     steps: ScriptStep[];
@@ -247,12 +250,26 @@ const OPERATION_PROFILE_ORDER: ScriptOperation[] = [
   "upgrade_selected",
   "system_info",
   "reboot",
+  "restart_services",
   "pre_upgrade",
   "post_upgrade",
 ];
 
 /** Hooks have no built-in script, so they only run when assigned or set as the default. */
 const UPGRADE_HOOK_OPERATIONS = new Set<ScriptOperation>(["pre_upgrade", "post_upgrade"]);
+/** Operations that apply to the whole system rather than one package manager. */
+const SYSTEM_SCRIPT_OPERATIONS = new Set<ScriptOperation>([
+  "system_info",
+  "reboot",
+  "restart_services",
+  ...UPGRADE_HOOK_OPERATIONS,
+]);
+
+type SystemScriptOperation = "system_info" | "reboot" | "restart_services" | "pre_upgrade" | "post_upgrade";
+
+export function isSystemScriptOperation(operation: ScriptOperation): operation is SystemScriptOperation {
+  return SYSTEM_SCRIPT_OPERATIONS.has(operation);
+}
 /** Stored as a hook's override to opt a system out of the default. */
 export const NO_UPGRADE_SCRIPT = "none";
 
@@ -377,6 +394,18 @@ export const SCRIPT_OPERATION_PROFILES: Record<ScriptOperation, ScriptOperationP
     relevantPlaceholders: ["{{sudo:COMMAND}}"],
     defaultStepBadge: "streamed only",
   },
+  restart_services: {
+    operation: "restart_services",
+    label: "Restart services",
+    allowedTypes: ["system"],
+    purpose: "Restarts services that still run replaced binaries or libraries after an upgrade.",
+    stepBehavior: "The steps run once per selected service, with {{service}} set to that service, and stop at the first failed step.",
+    outputConsumer: "Output is streamed live and stored in activity history, then system info is collected again to refresh the list.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code marks that service's restart as failed; the other selected services still restart.",
+    relevantPlaceholders: ["{{service}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
   pre_upgrade: {
     operation: "pre_upgrade",
     label: "Pre-upgrade",
@@ -412,6 +441,7 @@ export const PLACEHOLDER_HELP: PlaceholderHelpEntry[] = [
   { name: "{{packages}}", description: "All selected package names joined by spaces after validation.", example: "dnf upgrade -y {{packages}}" },
   { name: "{{quotedPackage}}", description: "The first selected package shell-quoted with single quotes.", example: "tool upgrade {{quotedPackage}}" },
   { name: "{{quotedPackages}}", description: "All selected packages shell-quoted and joined by spaces.", example: "tool upgrade {{quotedPackages}}" },
+  { name: "{{service}}", description: "The service to restart, validated before execution: a systemd unit such as nginx.service, or an OpenRC service name.", example: "systemctl restart -- {{service}}" },
   { name: "{{manager}}", description: "The package manager key for the current operation.", example: "echo Checking {{manager}}" },
   { name: "{{sudo:COMMAND}}", description: "Wraps COMMAND with the dashboard sudo fallback helper.", example: "{{sudo:apk update}} 2>&1" },
 ];
@@ -776,10 +806,14 @@ export function renderCommandTemplate(
   context: {
     pkgManager?: string | null;
     packages?: string[];
+    service?: string;
     config?: PackageManagerConfigValue;
   } = {},
 ): string {
   const packages = context.packages ? validatePackageNames(context.packages) : [];
+  if (context.service !== undefined && !isValidServiceName(context.service)) {
+    throw new Error(`Invalid service name: ${String(context.service).slice(0, 64)}`);
+  }
   const firstPackage = packages[0] ? validatePackageName(packages[0]) : "";
   const secretKey = findSecretConfigPlaceholder(command, context.pkgManager);
   if (secretKey) {
@@ -790,6 +824,7 @@ export function renderCommandTemplate(
   const config = withConfigDefaults(context.pkgManager, context.config);
   let rendered = command
     .replaceAll("{{manager}}", context.pkgManager ?? "")
+    .replaceAll("{{service}}", context.service ?? "")
     .replaceAll("{{package}}", firstPackage)
     .replaceAll("{{packages}}", packages.join(" "))
     .replaceAll("{{quotedPackage}}", firstPackage ? shellQuote(firstPackage) : "")
@@ -1428,6 +1463,13 @@ export function getBuiltinScripts(): ScriptDefinition[] {
         { label: "Reboot system", command: getRebootCommand() },
       ],
     ),
+    builtinScript(
+      "restart_services",
+      null,
+      "Restart services",
+      "Restarts a service that still runs replaced binaries or libraries, with systemd or OpenRC.",
+      [{ label: "Restart service", command: getRestartServiceCommand() }],
+    ),
   ];
 }
 
@@ -1568,8 +1610,7 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type !== "package_manager" && input.type !== "system") {
     return "type must be package_manager or system";
   }
-  const operations: ScriptOperation[] = ["detect", "check_updates", "list_installed_packages", "repair_issue", "autoremove", "upgrade_all", "full_upgrade_all", "upgrade_selected", "system_info", "reboot", "pre_upgrade", "post_upgrade"];
-  if (!input.operation || !operations.includes(input.operation)) {
+  if (!input.operation || !OPERATION_PROFILE_ORDER.includes(input.operation)) {
     return "operation is not supported";
   }
   if (input.type === "package_manager" && !input.pkgManager) {
@@ -1578,20 +1619,15 @@ function validateScriptInput(input: Partial<ScriptDefinition>): string | null {
   if (input.type === "package_manager") {
     const managerError = validatePackageManagerName(input.pkgManager);
     if (managerError) return managerError;
-    if (input.operation === "system_info" || input.operation === "reboot" || UPGRADE_HOOK_OPERATIONS.has(input.operation)) {
+    if (SYSTEM_SCRIPT_OPERATIONS.has(input.operation)) {
       return "package manager scripts cannot use system operations";
     }
   }
   if (input.type === "system" && input.pkgManager) {
     return "system scripts cannot have pkgManager";
   }
-  if (
-    input.type === "system" &&
-    input.operation !== "system_info" &&
-    input.operation !== "reboot" &&
-    !UPGRADE_HOOK_OPERATIONS.has(input.operation)
-  ) {
-    return "system scripts must use system_info, reboot, pre_upgrade, or post_upgrade";
+  if (input.type === "system" && !SYSTEM_SCRIPT_OPERATIONS.has(input.operation)) {
+    return "system scripts must use system_info, reboot, restart_services, pre_upgrade, or post_upgrade";
   }
   if (input.isDefault !== undefined && typeof input.isDefault !== "boolean") {
     return "isDefault must be a boolean";
@@ -2173,7 +2209,7 @@ function scriptBundleEntry(script: ScriptDefinition): CustomPackageManagerBundle
   if (!script.pkgManager || script.type !== "package_manager") {
     throw new Error("Only package manager scripts can be exported with a package manager");
   }
-  if (script.operation === "system_info" || script.operation === "reboot" || script.operation === "pre_upgrade" || script.operation === "post_upgrade") {
+  if (isSystemScriptOperation(script.operation)) {
     throw new Error("System scripts cannot be exported with a package manager");
   }
   return {
@@ -2266,7 +2302,7 @@ export function normalizeCustomPackageManagerBundle(value: unknown): CustomPacka
       outputRules: (rawScript.outputRules ?? []) as OutputRule[],
       sourceScriptId: typeof rawScript.sourceScriptId === "string" ? rawScript.sourceScriptId : null,
     };
-    if (script.operation === "system_info" || script.operation === "reboot" || UPGRADE_HOOK_OPERATIONS.has(script.operation)) {
+    if (SYSTEM_SCRIPT_OPERATIONS.has(script.operation)) {
       throw new Error(`scripts.${index}.operation must be a package manager operation`);
     }
     script.parserConfig = normalizeParserConfigForOperation(script.parserConfig, script.operation);
@@ -2527,6 +2563,7 @@ export function resolveRuntimeSteps(args: {
   pkgManager?: string | null;
   pkgManagerConfig?: PackageManagerConfigValue;
   packages?: string[];
+  service?: string;
 }): RuntimeScriptStep[] {
   const script = resolveScript(args.systemId, args.operation, args.pkgManager);
   if (!script) return [];
@@ -2536,6 +2573,7 @@ export function resolveRuntimeSteps(args: {
     command: renderCommandTemplate(step.command, {
       pkgManager: args.pkgManager,
       packages: args.packages,
+      service: args.service,
       config: args.pkgManagerConfig,
     }),
     ...(outputRules.length ? { outputRules: outputRules.map((rule) => ({ ...rule })) } : {}),

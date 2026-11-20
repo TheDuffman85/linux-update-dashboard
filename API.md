@@ -32,11 +32,11 @@ Every token can read. Write access depends on these permissions:
 | Permission         | Allows                                                                                                                                 |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `updates:check`    | Check systems, refresh the cache, cancel running operations.                                                                           |
-| `updates:apply`    | Upgrades, autoremove, package-issue repair actions, reboot, running a post-upgrade script that did not finish.                         |
+| `updates:apply`    | Upgrades, autoremove, package-issue repair actions, service restarts, reboot, running a post-upgrade script that did not finish.       |
 | `systems:organize` | Dashboard groups, order, priorities, upgrade options, hiding updates, dismissing notices and issues, revoking a trusted host key.      |
 | `systems:remove`   | `DELETE /api/systems/:id`.                                                                                                             |
 | `systems:add`      | `POST /api/systems` and `POST /api/systems/test-connection` for new systems.                                                           |
-| `systems:edit`     | `PUT /api/systems/:id`, `POST /api/systems/test-connection` including existing systems and their host keys, revoking a trusted host key. |
+| `systems:edit`     | `PUT /api/systems/:id`, the service-restart skip list, `POST /api/systems/test-connection` including existing systems and their host keys, revoking a trusted host key. |
 
 A missing permission returns `403`. A token never exceeds its owner's role, so a token of a read-only user or SSO role can only read, whatever its permissions.
 
@@ -148,6 +148,8 @@ update is available, and release/repository URLs when available.
 | POST   | `/api/systems/test-connection`                     | Test SSH connectivity, host-key trust, and package-manager detection for a proposed config. API tokens need `systems:add` for a new system or `systems:edit` for an existing one. |
 | POST   | `/api/systems/:id/reboot`                          | Reboot a system.                                                                                                              |
 | POST   | `/api/systems/:id/dismiss-needs-reboot`            | Dismiss a stale reboot-needed indicator.                                                                                      |
+| POST   | `/api/systems/:id/restart-services`                | Restart services with `{ services: string[] }` (at most 50). Only services in the system's latest `serviceRestartInfo` scan are accepted; others return `400`. Returns `{ status, message, restarted, failed }`; `status` is `warning` when only some restarted. |
+| PUT    | `/api/systems/:id/service-restart-skip-patterns`   | Set the services that are listed but not preselected or counted, with `{ patterns: string[] }` (`*` and `?` wildcards, at most 100), or `{ patterns: null }` for the defaults. API tokens need `systems:edit`. |
 | POST   | `/api/systems/:id/dismiss-post-upgrade-pending`    | Dismiss the warning about a post-upgrade script that did not finish. API tokens need `systems:organize`.                      |
 | POST   | `/api/systems/:id/dismiss-root-user-banner`        | Dismiss the root-user info banner.                                                                                            |
 | POST   | `/api/systems/:id/dismiss-os-lifecycle-warning`    | Dismiss the current OS lifecycle warning snapshot.                                                                            |
@@ -267,7 +269,7 @@ pending reboot are rebooted.
 | POST   | `/api/scripts/validate-parser`               | Test custom parser settings against sample command output.                                      |
 | POST   | `/api/scripts/format`                        | Format a shell command for display/editing.                                                     |
 
-Scripts accept an optional `outputRules` array. Each rule has `outcome` (`success`, `warning`, or `failed`) and at least one of `exitCodes` (numbers from 0 to 255), `match`, or `notMatch` (regular expressions). `message` is optional. `step` limits a rule to one step, by label or zero-based position, and is only accepted for `check_updates`, `list_installed_packages`, `repair_issue`, `pre_upgrade`, and `post_upgrade`. `detect`, `system_info`, and `reboot` scripts do not accept rules. A script holds at most 20 rules, and responses always include `outputRules`. See [Output rules](README.md#output-rules).
+Scripts accept an optional `outputRules` array. Each rule has `outcome` (`success`, `warning`, or `failed`) and at least one of `exitCodes` (numbers from 0 to 255), `match`, or `notMatch` (regular expressions). `message` is optional. `step` limits a rule to one step, by label or zero-based position, and is only accepted for `check_updates`, `list_installed_packages`, `repair_issue`, `pre_upgrade`, and `post_upgrade`. `detect`, `system_info`, `reboot`, and `restart_services` scripts do not accept rules. A script holds at most 20 rules, and responses always include `outputRules`. See [Output rules](README.md#output-rules).
 
 ## Credentials
 

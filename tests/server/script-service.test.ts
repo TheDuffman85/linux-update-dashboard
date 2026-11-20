@@ -313,7 +313,7 @@ describe("script service", () => {
       type: "system",
       operation: "detect",
       steps: [{ label: "Detect", command: "true" }],
-    })).toThrow(/system_info, reboot, pre_upgrade, or post_upgrade/);
+    })).toThrow(/system_info, reboot, restart_services, pre_upgrade, or post_upgrade/);
 
     expect(() => createScript({
       name: "Too many steps",

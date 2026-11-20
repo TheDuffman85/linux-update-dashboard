@@ -2,9 +2,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, pollJob } from "./client";
 import type { PackageManagerConfigs, PackageManagerSecretRefs } from "./package-manager-configs";
 import type { HostKeyStatus } from "./host-key-status";
+import type { ServiceRestartInfo } from "../../shared/service-restart";
 
 export interface ActiveOperation {
-  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "package_manager_repair" | "post_upgrade";
+  type: "check" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_package" | "reboot" | "restart_services" | "package_manager_repair" | "post_upgrade";
   startedAt: string;
   phase?: "queued" | "reconnecting" | "rechecking";
   packageName?: string;
@@ -77,6 +78,12 @@ export interface System {
   hidden: number;
   repositorySourceEditingEnabled: number;
   needsReboot: number;
+  /** Latest scan for services running replaced files; null when not collected. */
+  serviceRestartInfo: ServiceRestartInfo | null;
+  /** Flagged services that are not on the skip list. */
+  serviceRestartCount: number;
+  /** The system's own skip list; null uses the defaults. */
+  serviceRestartSkipPatterns: string[] | null;
   postUpgradePendingAt: string | null;
   isReachable: number;
   lastSeenAt: string | null;
@@ -211,7 +218,7 @@ export interface HistoryEntry {
 
 export interface PotentialCommandEntry {
   id: string;
-  category: "detection" | "system_info" | "check" | "list_installed_packages" | "repair_issue" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot" | "pre_upgrade" | "post_upgrade";
+  category: "detection" | "system_info" | "check" | "list_installed_packages" | "repair_issue" | "autoremove" | "upgrade_all" | "full_upgrade_all" | "upgrade_selected" | "reboot" | "restart_services" | "pre_upgrade" | "post_upgrade";
   label: string;
   purpose: string;
   pkgManager: string | null;
@@ -656,6 +663,46 @@ export function useRebootSystem() {
     onSuccess: async (_data, id) => {
       await qc.invalidateQueries({ queryKey: ["system", id] });
       await qc.invalidateQueries({ queryKey: ["systems"] });
+    },
+  });
+}
+
+export interface RestartServicesResult {
+  success: boolean;
+  status: "success" | "warning" | "failed" | "cancelled";
+  message: string;
+  restarted: string[];
+  failed: string[];
+}
+
+export function useRestartServices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, services }: { id: number; services: string[] }) =>
+      apiFetch<RestartServicesResult>(`/systems/${id}/restart-services`, {
+        method: "POST",
+        body: JSON.stringify({ services }),
+      }),
+    onSettled: async (_data, _error, { id }) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useUpdateServiceRestartSkipPatterns() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patterns }: { id: number; patterns: string[] | null }) =>
+      apiFetch<{ patterns: string[] | null }>(`/systems/${id}/service-restart-skip-patterns`, {
+        method: "PUT",
+        body: JSON.stringify({ patterns }),
+      }),
+    onSuccess: async (_data, { id }) => {
+      await qc.invalidateQueries({ queryKey: ["system", id] });
+      await qc.invalidateQueries({ queryKey: ["systems"] });
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

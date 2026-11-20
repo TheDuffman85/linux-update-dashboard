@@ -20,6 +20,7 @@ import {
   saveRepositorySource,
 } from "../services/repository-source-service";
 import { sanitizeOutput } from "../utils/sanitize";
+import { normalizeServiceSkipPatterns, parseServiceRestartInfo } from "../../shared/service-restart";
 import type { ApiTokenPermission } from "../../shared/api-token-permissions";
 import { resolveSystemCredential } from "../services/credential-service";
 import { getActivityHistoryLimit } from "../services/settings-service";
@@ -363,6 +364,10 @@ function serializeSystem(s: Record<string, unknown>) {
         : null,
     detectedPkgManagers: parseJsonArrayField(s.detectedPkgManagers as string | null),
     disabledPkgManagers: parseJsonArrayField(s.disabledPkgManagers as string | null),
+    serviceRestartInfo: parseServiceRestartInfo(s.serviceRestartInfo as string | null),
+    serviceRestartSkipPatterns: systemService.parseServiceRestartSkipPatterns(
+      s.serviceRestartSkipPatterns as string | null,
+    ),
     pkgManagerConfigs,
     // Credential IDs only; secret values are never serialized.
     pkgManagerSecretRefs: parsePackageManagerSecretRefs(
@@ -1194,6 +1199,44 @@ systems.post("/:id/reboot", async (c) => {
     return c.json({ ...result, error: result.message }, 500);
   }
   return c.json(result);
+});
+
+// Restart services that still run replaced binaries or libraries
+systems.post("/:id/restart-services", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (!systemService.getSystem(id)) return c.json({ error: "System not found" }, 404);
+  const body = asObject(await c.req.json().catch(() => null));
+  try {
+    const result = await updateService.restartServices(id, body?.services);
+    if (!result.success && result.status === "failed") {
+      return c.json({ ...result, error: result.message }, 500);
+    }
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof updateService.RestartServicesRequestError) {
+      return c.json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+});
+
+// Services listed but not restarted by default; null restores the defaults.
+systems.put("/:id/service-restart-skip-patterns", async (c) => {
+  const id = parseId(c.req.param("id"));
+  if (!id) return c.json({ error: "Invalid system ID" }, 400);
+  if (!systemService.getSystem(id)) return c.json({ error: "System not found" }, 404);
+  const body = asObject(await c.req.json().catch(() => null));
+  if (!body || !("patterns" in body)) return c.json({ error: "patterns is required" }, 400);
+  let patterns: string[] | null = null;
+  if (body.patterns !== null) {
+    const normalized = normalizeServiceSkipPatterns(body.patterns);
+    if ("error" in normalized) return c.json({ error: normalized.error }, 400);
+    patterns = normalized.patterns;
+  }
+  systemService.setServiceRestartSkipPatterns(id, patterns);
+  await notificationRuntime.syncSystemState(id);
+  return c.json({ patterns });
 });
 
 systems.put("/:id/script-overrides", async (c) => {

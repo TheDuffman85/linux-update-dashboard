@@ -23,6 +23,14 @@ import {
   resolveScript,
 } from "./script-service";
 import { getDistroEolWarningDays } from "./settings-service";
+import {
+  listRestartableServices,
+  normalizeServiceSkipPatterns,
+  parseServiceRestartInfo,
+  resolveServiceSkipPatterns,
+} from "../../shared/service-restart";
+
+export { parseServiceRestartInfo };
 
 const SYSTEM_CONNECTION_UNIQUE_CONSTRAINT =
   "systems.hostname, systems.port, systems.username";
@@ -684,6 +692,39 @@ export function createSystem(data: {
   }
 }
 
+interface ConnectionTargetFields {
+  hostname: string;
+  port: number;
+  username: string;
+  proxyJumpSystemId?: number | null;
+  trustedHostKeyFingerprintSha256?: string | null;
+}
+
+/**
+ * Identifies the machine an SSH connection reaches; results from one target
+ * never apply to another. The trusted host key is part of it, because a
+ * rebuilt or replaced machine at the same address gets a new key.
+ */
+export function connectionTargetKey(system: ConnectionTargetFields): string {
+  return JSON.stringify([
+    system.hostname,
+    system.port,
+    system.username,
+    system.proxyJumpSystemId ?? null,
+    system.trustedHostKeyFingerprintSha256 ?? null,
+  ]);
+}
+
+/** Columns that discard the service-restart scan when a write changes the SSH target. */
+function serviceRestartResetFor(
+  existing: ConnectionTargetFields,
+  next: ConnectionTargetFields,
+): { serviceRestartInfo?: null; serviceRestartCount?: 0 } {
+  return connectionTargetKey(existing) === connectionTargetKey(next)
+    ? {}
+    : { serviceRestartInfo: null, serviceRestartCount: 0 };
+}
+
 export function updateSystem(
   systemId: number,
   data: {
@@ -791,6 +832,8 @@ export function updateSystem(
     values.trustedHostKeyFingerprintSha256 = data.trustedHostKeyData.fingerprintSha256;
     values.hostKeyTrustedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
   }
+  // A scan describes the old machine, so restarting from it would hit the wrong services.
+  Object.assign(values, serviceRestartResetFor(existing, { ...existing, ...values } as ConnectionTargetFields));
 
   try {
     db.update(systems)
@@ -815,6 +858,64 @@ export function deleteSystem(systemId: number): void {
     throw new ProxyJumpDependencyError(dependents);
   }
   db.delete(systems).where(eq(systems.id, systemId)).run();
+}
+
+/** The system's own skip list, or null when it uses the defaults. */
+export function parseServiceRestartSkipPatterns(value: string | null | undefined): string[] | null {
+  if (!value) return null;
+  try {
+    const normalized = normalizeServiceSkipPatterns(JSON.parse(value));
+    return "patterns" in normalized ? normalized.patterns : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Marks the stored scan as out of date once restarts start from it, and drops
+ * the services that restarted. Only a new scan clears the mark. Does nothing
+ * when the system now points at another machine than `connectedSystem`.
+ */
+export function markServiceRestartScanStale(
+  systemId: number,
+  restartedUnits: string[],
+  connectedSystem: ConnectionTargetFields,
+): void {
+  const current = getSystem(systemId);
+  if (!current || connectionTargetKey(current) !== connectionTargetKey(connectedSystem)) return;
+  const info = parseServiceRestartInfo(current.serviceRestartInfo);
+  if (!info) return;
+  const next = {
+    ...info,
+    stale: true,
+    services: info.services.filter((service) => !restartedUnits.includes(service.unit)),
+  };
+  getDb().update(systems)
+    .set({
+      serviceRestartInfo: JSON.stringify(next),
+      serviceRestartCount: listRestartableServices(
+        next,
+        resolveServiceSkipPatterns(parseServiceRestartSkipPatterns(current.serviceRestartSkipPatterns)),
+      ).length,
+    })
+    .where(eq(systems.id, systemId))
+    .run();
+}
+
+/** Saves a system's skip list (null restores the defaults) and recounts its flagged services. */
+export function setServiceRestartSkipPatterns(systemId: number, patterns: string[] | null): void {
+  const existing = getSystem(systemId);
+  if (!existing) throw new Error("System not found");
+  const info = parseServiceRestartInfo(existing.serviceRestartInfo);
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  getDb().update(systems)
+    .set({
+      serviceRestartSkipPatterns: patterns ? JSON.stringify(patterns) : null,
+      serviceRestartCount: listRestartableServices(info, resolveServiceSkipPatterns(patterns)).length,
+      updatedAt: now,
+    })
+    .where(eq(systems.id, systemId))
+    .run();
 }
 
 export function dismissNeedsReboot(systemId: number): void {
@@ -985,14 +1086,29 @@ export function updateSystemUpgradeAllExclusion(systemId: number, excluded: bool
 export async function updateSystemInfo(
   systemId: number,
   sshManager: SSHConnectionManager,
-  conn: Client
+  conn: Client,
+  /** The system record `conn` was opened with; defaults to the current record. */
+  connectedSystem?: ConnectionTargetFields & Record<string, unknown>,
 ): Promise<{ systemId: number; systemName: string; packages: string[] } | undefined> {
   const previous = getSystem(systemId);
+  if (!previous) return undefined;
+  const connectedTarget = connectedSystem ?? (previous as ConnectionTargetFields & Record<string, unknown>);
+  const expectedTarget = connectionTargetKey(connectedTarget);
+  // The entry may have been pointed at another machine since `conn` was opened.
+  // Check before every command, so nothing, not even the sudo password, is sent
+  // over a connection that no longer belongs to this entry.
+  const targetUnchanged = () => {
+    const current = getSystem(systemId);
+    return !!current && connectionTargetKey(current) === expectedTarget;
+  };
+  if (!targetUnchanged()) return undefined;
   const script = resolveScript(systemId, "system_info", null);
   const steps = resolveRuntimeSteps({ systemId, operation: "system_info" });
-  const sudoPassword = previous ? getSudoPassword(previous as Record<string, unknown>) : undefined;
+  // The password of the machine `conn` reaches, not of whatever the row says now.
+  const sudoPassword = getSudoPassword(connectedTarget);
   let stdout = "";
   for (const step of steps) {
+    if (!targetUnchanged()) return undefined;
     const result = await sshManager.runCommand(conn, step.command, undefined, sudoPassword);
     stdout += `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}\n`;
   }
@@ -1004,6 +1120,14 @@ export async function updateSystemInfo(
   const { info } = parsed;
   const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const db = getDb();
+  // Re-read now: the system may have been edited during the scan. No await
+  // follows before the write below, so another edit cannot slip in between.
+  const current = getSystem(systemId);
+  // The entry now points at another machine; this output describes the old one.
+  if (!current || connectionTargetKey(current) !== expectedTarget) return undefined;
+  const skipPatterns = resolveServiceSkipPatterns(
+    parseServiceRestartSkipPatterns(current.serviceRestartSkipPatterns ?? null),
+  );
 
   db.update(systems)
     .set({
@@ -1022,6 +1146,8 @@ export async function updateSystemInfo(
       disk: info.disk,
       bootId: info.bootId || previous?.bootId || null,
       needsReboot: parsed.needsReboot ? 1 : 0,
+      serviceRestartInfo: info.serviceRestart ? JSON.stringify(info.serviceRestart) : null,
+      serviceRestartCount: listRestartableServices(info.serviceRestart, skipPatterns).length,
       rebootDismissedBootId: parsed.dismissalExpired
         ? null
         : previous?.rebootDismissedBootId ?? null,
@@ -1264,9 +1390,13 @@ export function persistTrustedHostKey(
   systemId: number,
   approvedHostKey: ApprovedHostKeyInput
 ): void {
+  const existing = getSystem(systemId);
   getDb()
     .update(systems)
     .set({
+      ...(existing
+        ? serviceRestartResetFor(existing, { ...existing, trustedHostKeyFingerprintSha256: approvedHostKey.fingerprintSha256 })
+        : {}),
       trustedHostKey: approvedHostKey.rawKey,
       trustedHostKeyAlgorithm: approvedHostKey.algorithm,
       trustedHostKeyFingerprintSha256: approvedHostKey.fingerprintSha256,
@@ -1277,9 +1407,11 @@ export function persistTrustedHostKey(
 }
 
 export function clearTrustedHostKey(systemId: number): void {
+  const existing = getSystem(systemId);
   getDb()
     .update(systems)
     .set({
+      ...(existing ? serviceRestartResetFor(existing, { ...existing, trustedHostKeyFingerprintSha256: null }) : {}),
       trustedHostKey: null,
       trustedHostKeyAlgorithm: null,
       trustedHostKeyFingerprintSha256: null,

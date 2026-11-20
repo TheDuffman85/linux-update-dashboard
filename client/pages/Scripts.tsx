@@ -61,6 +61,7 @@ const OPERATION_LABELS: Record<ScriptOperation, string> = {
   upgrade_selected: "Upgrade selected",
   system_info: "System info",
   reboot: "Reboot",
+  restart_services: "Restart services",
   pre_upgrade: "Pre-upgrade",
   post_upgrade: "Post-upgrade",
 };
@@ -75,6 +76,7 @@ const OPERATION_LABEL_KEYS: Record<ScriptOperation, string> = {
   upgrade_selected: "pages.scripts.operation.upgradeSelected",
   system_info: "pages.scripts.operation.systemInfo",
   reboot: "pages.scripts.operation.reboot",
+  restart_services: "pages.scripts.operation.restartServices",
   pre_upgrade: "pages.scripts.operation.preUpgrade",
   post_upgrade: "pages.scripts.operation.postUpgrade",
 };
@@ -200,6 +202,18 @@ const FALLBACK_OPERATION_PROFILES: ScriptOperationProfile[] = [
     defaultStepBadge: "streamed only",
   },
   {
+    operation: "restart_services",
+    label: OPERATION_LABELS.restart_services,
+    allowedTypes: ["system"],
+    purpose: "Restarts services that still run replaced binaries or libraries after an upgrade.",
+    stepBehavior: "The steps run once per selected service, with {{service}} set to that service, and stop at the first failed step.",
+    outputConsumer: "Output is streamed live and stored in activity history, then system info is collected again to refresh the list.",
+    parserBehavior: "No parser configuration is used.",
+    exitCodeBehavior: "A non-zero exit code marks that service's restart as failed; the other selected services still restart.",
+    relevantPlaceholders: ["{{service}}", "{{sudo:COMMAND}}"],
+    defaultStepBadge: "streamed only",
+  },
+  {
     operation: "pre_upgrade",
     label: OPERATION_LABELS.pre_upgrade,
     allowedTypes: ["system"],
@@ -234,7 +248,7 @@ const PACKAGE_MANAGER_OPERATIONS: ScriptOperation[] = [
   "full_upgrade_all",
   "upgrade_selected",
 ];
-const SYSTEM_OPERATIONS: ScriptOperation[] = ["system_info", "reboot", "pre_upgrade", "post_upgrade"];
+const SYSTEM_OPERATIONS: ScriptOperation[] = ["system_info", "reboot", "restart_services", "pre_upgrade", "post_upgrade"];
 const BUILTIN_PACKAGE_MANAGERS = ["apt", "dnf", "yum", "pacman", "apk", "flatpak", "snap", "deb-get"];
 const BUILTIN_PACKAGE_MANAGER_LABELS: Record<string, string> = {
   apt: "APT",

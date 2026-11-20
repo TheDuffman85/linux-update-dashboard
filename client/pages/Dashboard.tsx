@@ -360,7 +360,7 @@ function getStatsGridClass(stats: { needsReboot: number; lifecycleWarnings: numb
       : "lg:grid-cols-6";
 }
 
-function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "osLifecycleStatus" | "osLifecycleEolDate" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd" | "osLifecycleLabel" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
+function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id" | "name" | "hostname" | "port" | "osName" | "isReachable" | "updateCount" | "securityCount" | "keptBackCount" | "needsReboot" | "serviceRestartCount" | "osLifecycleStatus" | "osLifecycleEolDate" | "osLifecycleDaysUntilEol" | "osLifecycleDaysUntilSupportEnd" | "osLifecycleLabel" | "cacheAge" | "cacheTimestamp" | "isStale" | "lastCheck" | "activeOperation">; upgrading: boolean; checking: boolean }) {
   const { t } = useI18n();
   const updateState = deriveSystemUpdateState(system, { upgrading, checking });
   const maintaining = updateState === "maintaining";
@@ -426,6 +426,9 @@ function SystemCard({ system, upgrading, checking }: { system: Pick<System, "id"
             )}
             {lifecycleBadge && (
               <Badge variant={lifecycleBadge.variant} small>{lifecycleBadge.label}</Badge>
+            )}
+            {(system.serviceRestartCount ?? 0) > 0 && (
+              <Badge variant="warning" small>{t("pages.dashboard.countServicesToRestart", { count: system.serviceRestartCount })}</Badge>
             )}
             {system.needsReboot === 1 && (
               <span className="text-amber-500" title={t("pages.dashboard.rebootRequired")}>

@@ -191,6 +191,12 @@ export const systems = sqliteTable("systems", {
   updatePriority: integer("update_priority").notNull().default(1),
   hidden: integer("hidden").notNull().default(0),
   needsReboot: integer("needs_reboot").notNull().default(0),
+  /** Latest service-restart scan as JSON (ServiceRestartInfo), or null when not collected. */
+  serviceRestartInfo: text("service_restart_info"),
+  /** Flagged services that are not on the skip list; kept for lists and stats. */
+  serviceRestartCount: integer("service_restart_count").notNull().default(0),
+  /** JSON array of skip patterns; null uses the default skip list. */
+  serviceRestartSkipPatterns: text("service_restart_skip_patterns"),
   postUpgradePendingAt: text("post_upgrade_pending_at"),
   systemInfoUpdatedAt: text("system_info_updated_at"),
   isReachable: integer("is_reachable").notNull().default(0),

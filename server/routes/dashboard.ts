@@ -3,6 +3,7 @@ import * as systemService from "../services/system-service";
 import * as cacheService from "../services/cache-service";
 import * as updateService from "../services/update-service";
 import * as upgradeBatchService from "../services/upgrade-batch-service";
+import { parseServiceRestartInfo } from "../../shared/service-restart";
 
 const dashboard = new Hono();
 
@@ -107,6 +108,7 @@ dashboard.get("/systems", (c) => {
 
   const systemsWithMeta = allSystems.map((s) => withLifecycle({
     ...s,
+    serviceRestartInfo: parseServiceRestartInfo(s.serviceRestartInfo),
     lastCheck: lastChecks.get(s.id) ?? null,
     cacheAge: cacheService.getCacheAge(s.id),
     cacheTimestamp: cacheService.getCacheTimestamp(s.id),
